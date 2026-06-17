@@ -5940,6 +5940,37 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // For unchanged defines, this is a cache hit (skip lowering).
         // For new/changed defines, this lowers them once and stores the result.
         if (pre_cache_workspace_defines_fn_) pre_cache_workspace_defines_fn_();
+        // Issue #165 follow-up: extract MacroDef nodes from the new
+        // workspace and register them in the runtime `macros_` registry.
+        // Without this, subsequent eval("(m)") parses a fresh FlatAST
+        // that has no MacroDef node, so macro_expand_all finds nothing
+        // and the call resolves to an undefined variable. The fix
+        // walks the workspace and inserts every MacroDef (defmacro /
+        // define-hygienic-macro) into macros_, mirroring what eval_flat
+        // would have done if the workspace had been evaluated inline.
+        {
+            // set-code is single-threaded at this point (we hold
+            // workspace_mtx_ above), so a plain unsynchronized
+            // write to macros_ is fine. If concurrent set-code
+            // becomes a real scenario, add a macros_mtx_ in
+            // evaluator.ixx alongside closures_mtx_.
+            macros_.clear();
+            for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
+                auto v = flat_ptr->get(id);
+                if (v.tag != aura::ast::NodeTag::MacroDef) continue;
+                auto macro_name = std::string(pool_ptr->resolve(v.sym_id));
+                if (macro_name.empty()) continue;
+                std::vector<std::string> param_names;
+                param_names.reserve(v.params.size());
+                for (auto pid : v.params)
+                    param_names.emplace_back(pool_ptr->resolve(pid));
+                auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+                bool is_dotted = (v.int_value & 1) != 0;
+                bool is_hygienic = (v.int_value & 2) != 0;
+                macros_[macro_name] = MacroDef{std::move(param_names), is_dotted,
+                                                is_hygienic, flat_ptr, pool_ptr, body_id};
+            }
+        }
         return make_bool(true);
     });
 
@@ -6736,9 +6767,50 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 break;
             }
         }
+        // Issue #165 follow-up: when no matching Define exists, mutate:rebind
+        // adds a brand-new top-level Define. This makes the primitive usable
+        // for incrementally introducing a new top-level binding (a common
+        // hygiene-stress scenario: introduce an outer binding of the same
+        // name as a macro-introduced local and verify the macro's gensym
+        // still protects the macro-internal one). The new node gets the
+        // `add_mutation("add", …)` log entry so mutation_log_ stays
+        // consistent with the rest of the rebind path.
         if (old_define == aura::ast::NULL_NODE) {
-            ok = false;
-            return mev("not-found", std::string("function \"") + name + "\" not found in AST");
+            // Parse the new code first so we know what to bind.
+            auto pr_add = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+            if (!pr_add.success || pr_add.root == aura::ast::NULL_NODE) {
+                std::string parse_err;
+                if (!pr_add.errors.empty()) {
+                    for (auto& e : pr_add.errors) {
+                        if (!parse_err.empty()) parse_err += "; ";
+                        parse_err += e.format();
+                    }
+                } else if (!pr_add.error.empty()) {
+                    parse_err = pr_add.error;
+                } else {
+                    parse_err = "rebind code could not be parsed";
+                }
+                ok = false;
+                return mev("parse-error", parse_err);
+            }
+            aura::ast::NodeId new_value = pr_add.root;
+            auto root_v = flat.get(pr_add.root);
+            if (root_v.tag == aura::ast::NodeTag::Define) {
+                if (root_v.children.empty()) {
+                    ok = false;
+                    return mev("parse-error", "define form in rebind code has no body");
+                }
+                new_value = root_v.child(0);
+            }
+            std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
+                                                                    : "add " + name;
+            auto new_define = flat.add_define(sym, new_value);
+            flat.add_mutation(new_define, "add", name, summary, summary);
+            // Mark all defines dirty so cached IR for siblings gets invalidated.
+            if (mark_all_defines_dirty_fn_) mark_all_defines_dirty_fn_();
+            // Also update dep_graph_ and IR cache (lightweight + heavy hooks).
+            if (pre_cache_workspace_defines_fn_) pre_cache_workspace_defines_fn_();
+            return make_bool(true);
         }
 
         // Parse new code INTO workspace flat (append mode). All new node IDs
@@ -7462,8 +7534,16 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 // Record mutation
                 flat.add_mutation(id, "set-body", name, name, "set-body " + name);
 
-                // Replace the Lambda's body — pr.root is a valid node in workspace_flat_
-                flat.set_child(lambda_id, 0, pr.root);
+                // Replace the Define's lambda child with the new
+                // code (parsed pr.root). This is the semantics
+                // the existing test_issue_166 expects: after
+                // (mutate:set-body "g" "(lambda (x) (+ x 100))"),
+                // calling (g 10) should evaluate the new lambda
+                // (i.e., return 110). The previous behavior of
+                // replacing just the lambda's body[0] produced a
+                // nested lambda that returned the new lambda as
+                // a value rather than calling it.
+                flat.set_child(id, 0, pr.root);
 
                 // 依赖图驱动：dirty 所有调用者
                 // Issue #188: set-body changes the function body

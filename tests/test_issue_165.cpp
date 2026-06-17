@@ -76,6 +76,13 @@ static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src
     if (aura::compiler::types::is_int(v)) {
         return aura::compiler::types::as_int(v);
     }
+    // mutate:* primitives and other success-flag primitives return
+    // #t/#f. Treat #t as 1 so test code can check > 0 the same way
+    // it would for an int return. Mirrors the helper used in
+    // test_issue_166.
+    if (aura::compiler::types::is_bool(v)) {
+        return aura::compiler::types::as_bool(v) ? 1 : 0;
+    }
     return -1;
 }
 
