@@ -6,6 +6,15 @@ set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Fix #2: shared BMI cache. The launcher wraps every C++ compile,
+# runs g++ normally, then post-processes the cwd to copy newly
+# produced .gcm files into $BUILD_DIR/module_cache/ and symlink
+# them into every per-target dir. Test targets that DON'T include
+# the .ixx in their FILE_SET (and thus don't re-compile modules)
+# can still `import` them because their own CMakeFiles/<t>.dir/
+# has a symlink to the shared .gcm.
+set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_SOURCE_DIR}/cmake/aura_module_launcher.sh")
+
 add_executable(aura)
 set_property(TARGET aura PROPERTY CXX_MODULE_STD ON)
 
@@ -297,6 +306,14 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 #     -fno-rtti compile flag; kept as per-test deltas)
 #   - Per-test observability headers (h-only; not compiled)
 #   - LLVM link / AURA_HAVE_LLVM defines (per-binary)
+# Fix #2: shared BMI cache. aura_test_objects emits each .ixx once
+# into ${CMAKE_BINARY_DIR}/module_cache/<name>.gcm. Test targets
+# (and `aura`) consume the prebuilt BMIs via the symlinks the
+# launcher installs in their per-target dirs, eliminating the
+# per-binary re-emission that previously made every test_issue_*
+# re-compile the full set of .ixx modules.
+set(AURA_MODULE_BMI_DIR ${CMAKE_BINARY_DIR}/module_cache)
+file(MAKE_DIRECTORY ${AURA_MODULE_BMI_DIR})
 add_library(aura_test_objects STATIC
     src/core/ast_impl.cpp
     src/core/type_impl.cpp
@@ -354,7 +371,9 @@ target_sources(aura_test_objects PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
+    src/compiler/type_checker.ixx
+    src/compiler/ir_soa.ixx
+    src/compiler/type_concepts.ixx)
 target_include_directories(aura_test_objects PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura_test_objects PUBLIC cxx_std_26)
 target_compile_options(aura_test_objects PRIVATE -Wall -Wextra -Wpedantic
@@ -377,14 +396,11 @@ function(aura_add_issue_test NAME)
     add_executable(${NAME} tests/${NAME}.cpp)
     set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)
     target_include_directories(${NAME} PRIVATE src)
-    # Common public modules (core layers + basic value/diag — safe
-    # for nearly all tests). .ixx modules are still per-binary because
-    # CMake FILE_SET doesn't support cross-target BMI sharing yet.
-    target_sources(${NAME} PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-        src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-        src/core/type_arena.ixx src/core/type.ixx
-        src/compiler/value.ixx
-        src/compiler/diag.ixx)
+    # Fix #2: no FILE_SET .ixx here. The prebuilt BMIs in
+    # AURA_MODULE_BMI_DIR (built by aura_test_objects) are made
+    # visible in the per-target dir via the launcher-installed
+    # symlinks, so test_issue_* binaries can `import` modules
+    # without re-compiling the .ixx themselves.
     target_compile_options(${NAME} PRIVATE -Wall -Wextra -Wpedantic
         -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
         -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -409,14 +425,6 @@ target_include_directories(test_issue_115 PRIVATE src)
 # Phase 2 pilot-44: converted using early helper. Light (serve + parser + core + value + type_checker; helper base + deltas).
 aura_add_issue_test(test_issue_116)
 target_include_directories(test_issue_116 PRIVATE src)
-target_sources(test_issue_116 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #117 verification: full re-simulation mode for linear
 # ownership + gradual+Linear boundary check. Standalone
@@ -425,14 +433,6 @@ target_sources(test_issue_116 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # Phase 2 pilot-45: converted using early helper. Light (serve + parser + core + value + type_checker; base + deltas).
 aura_add_issue_test(test_issue_117)
 target_include_directories(test_issue_117 PRIVATE src)
-target_sources(test_issue_117 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #118 verification: solver timeout returns
 # SolveResult (not bool) and unbound-variable / module-member
@@ -441,22 +441,11 @@ target_sources(test_issue_117 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 add_executable(test_issue_118 tests/test_issue_118.cpp)
 set_property(TARGET test_issue_118 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_118 PRIVATE src)
-target_sources(test_issue_118 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx src/compiler/diag.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_compile_options(test_issue_118 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_118 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_118 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_118_verification COMMAND ./test_issue_118)
 
 # Issue #119 verification: proper-blocking fiber:join (eventfd
@@ -465,22 +454,11 @@ add_test(NAME issue_118_verification COMMAND ./test_issue_118)
 add_executable(test_issue_119 tests/test_issue_119.cpp)
 set_property(TARGET test_issue_119 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_119 PRIVATE src)
-target_sources(test_issue_119 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx src/compiler/diag.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_compile_options(test_issue_119 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_119 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_119 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_119_verification COMMAND ./test_issue_119)
 
 # Issue #120 verification: define-hygienic-macro + clone_macro_body
@@ -490,21 +468,11 @@ add_test(NAME issue_119_verification COMMAND ./test_issue_119)
 add_executable(test_issue_120 tests/test_issue_120.cpp)
 set_property(TARGET test_issue_120 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_120 PRIVATE src)
-target_sources(test_issue_120 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx src/compiler/diag.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_compile_options(test_issue_120 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_120 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_120 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_120_verification COMMAND ./test_issue_120)
 
 # Issue #121 verification: gensym / symbol-append primitives +
@@ -513,22 +481,11 @@ add_test(NAME issue_120_verification COMMAND ./test_issue_120)
 add_executable(test_issue_121 tests/test_issue_121.cpp)
 set_property(TARGET test_issue_121 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_121 PRIVATE src)
-target_sources(test_issue_121 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx src/compiler/diag.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_compile_options(test_issue_121 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_121 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_121 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_121_verification COMMAND ./test_issue_121)
 
 # Issue #122 verification: compile-time reflection exposed as
@@ -537,22 +494,11 @@ add_test(NAME issue_121_verification COMMAND ./test_issue_121)
 add_executable(test_issue_122 tests/test_issue_122.cpp)
 set_property(TARGET test_issue_122 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_122 PRIVATE src)
-target_sources(test_issue_122 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx src/compiler/diag.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_compile_options(test_issue_122 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_122 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_122 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_122_verification COMMAND ./test_issue_122)
 
 # Issue #123 verification: IR-level pre-execution for require.
@@ -561,22 +507,11 @@ add_test(NAME issue_122_verification COMMAND ./test_issue_122)
 add_executable(test_issue_123 tests/test_issue_123.cpp)
 set_property(TARGET test_issue_123 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_123 PRIVATE src)
-target_sources(test_issue_123 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx src/compiler/diag.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_compile_options(test_issue_123 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_123 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_123 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_123_verification COMMAND ./test_issue_123)
 
 # Issue #124 verification: try/catch exception support in IR +
@@ -585,23 +520,11 @@ add_test(NAME issue_123_verification COMMAND ./test_issue_123)
 add_executable(test_issue_124 tests/test_issue_124.cpp)
 set_property(TARGET test_issue_124 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_124 PRIVATE src)
-target_sources(test_issue_124 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx src/compiler/diag.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/ir.ixx)
 target_compile_options(test_issue_124 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_124 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_124 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_124_verification COMMAND ./test_issue_124)
 
 # Issue #125 verification: per-module dirty tracking + skip
@@ -613,22 +536,11 @@ target_include_directories(test_issue_125 PRIVATE src src/compiler)
 target_sources(test_issue_125 PRIVATE
 src/compiler/observability_metrics.h
 )
-target_sources(test_issue_125 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx src/compiler/diag.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_compile_options(test_issue_125 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_125 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_125 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_125_verification COMMAND ./test_issue_125)
 
 # Issue #126 verification: pure functions extracted from
@@ -638,19 +550,11 @@ add_test(NAME issue_125_verification COMMAND ./test_issue_125)
 add_executable(test_issue_126 tests/test_issue_126.cpp)
 set_property(TARGET test_issue_126 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_126 PRIVATE src)
-target_sources(test_issue_126 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/diag.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx)
 target_compile_options(test_issue_126 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_126 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_126 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_126_verification COMMAND ./test_issue_126)
 
 # Issue #127 verification: Result<T> pipeline-stage
@@ -663,22 +567,11 @@ target_include_directories(test_issue_127 PRIVATE src src/compiler)
 target_sources(test_issue_127 PRIVATE
 src/compiler/observability_metrics.h
 )
-target_sources(test_issue_127 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx src/compiler/value.ixx
-    src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx)
 target_compile_options(test_issue_127 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_127 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_127 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_127_verification COMMAND ./test_issue_127)
 
 # Issue #128 verification: std::span adoption in hot
@@ -688,23 +581,11 @@ add_test(NAME issue_127_verification COMMAND ./test_issue_127)
 add_executable(test_issue_128 tests/test_issue_128.cpp)
 set_property(TARGET test_issue_128 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_128 PRIVATE src)
-target_sources(test_issue_128 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx src/compiler/value.ixx
-    src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/type_checker.ixx)
 target_compile_options(test_issue_128 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_128 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_128 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_128_verification COMMAND ./test_issue_128)
 
 # Issue #130 verification: cache hit rate metric.
@@ -713,22 +594,14 @@ add_test(NAME issue_128_verification COMMAND ./test_issue_128)
 add_executable(test_issue_130 tests/test_issue_130.cpp)
 set_property(TARGET test_issue_130 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_130 PRIVATE src)
-target_sources(test_issue_130 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx src/compiler/value.ixx
-    src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx)
+# Fix #2: consume prebuilt BMIs from AURA_MODULE_BMI_DIR (produced by
+# aura_test_objects). No more per-binary re-emission of the 17 .ixx
+# modules previously listed here.
 target_compile_options(test_issue_130 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_130 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_130 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_130_verification COMMAND ./test_issue_130)
 
 # Issue #131 verification: FFI primitives extracted from
@@ -737,22 +610,11 @@ add_test(NAME issue_130_verification COMMAND ./test_issue_130)
 add_executable(test_issue_131 tests/test_issue_131.cpp)
 set_property(TARGET test_issue_131 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_131 PRIVATE src)
-target_sources(test_issue_131 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx src/compiler/value.ixx
-    src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_compile_options(test_issue_131 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_131 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_131 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_131_verification COMMAND ./test_issue_131)
 
 # Phase 2 dedup (post-5.2 per roadmap): aura_add_issue_test helper.
@@ -788,8 +650,6 @@ aura_add_issue_test(test_harness_pilot)
 # Only the test-specific extra (ast_walkers) is appended; base covers core.
 aura_add_issue_test(test_issue_132)
 # Specific to this test (ast_walkers pure extraction from #132)
-target_sources(test_issue_132 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/compiler/ast_walkers.ixx)
 
 # Issue #134 verification: ADT (datatype ...) form.
 # Standalone binary that exercises parse_datatype
@@ -803,11 +663,6 @@ target_include_directories(test_issue_134 PRIVATE src/compiler)
 target_sources(test_issue_134 PRIVATE
 src/compiler/observability_metrics.h
 )
-target_sources(test_issue_134 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #135 verification: True parallel multi-agent
 # orchestration (fiber:join + orch:parallel + WorkspaceTree).
@@ -820,32 +675,6 @@ target_sources(test_issue_134 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # LLVM bits, rtti flags, extra includes).
 add_executable(test_issue_135 tests/test_issue_135.cpp)
 set_property(TARGET test_issue_135 PROPERTY CXX_MODULE_STD ON)
-target_sources(test_issue_135 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_135 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -858,7 +687,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_135 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_135 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_135 PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_135 PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_135 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -901,27 +730,6 @@ src/compiler/observability_snapshot.h
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_137 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_include_directories(test_issue_137 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_137 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_137 PRIVATE ${llvm_libs})
@@ -940,27 +748,6 @@ src/compiler/observability_snapshot.h
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_158 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_include_directories(test_issue_158 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_158 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_158 PRIVATE ${llvm_libs})
@@ -979,27 +766,6 @@ src/compiler/observability_snapshot.h
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_159 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_include_directories(test_issue_159 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_159 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_159 PRIVATE ${llvm_libs})
@@ -1010,8 +776,6 @@ target_link_libraries(test_issue_159 PRIVATE ${llvm_libs})
 # Phase 2 pilot-10: converted using early helper (light parser-only test).
 # Base covers core + value/diag/value_impl; append the parser modules + parser impls.
 aura_add_issue_test(test_issue_161)
-target_sources(test_issue_161 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx)
 
 # Issue #162 Phase 1 verification: Type Concepts for the type
 # system. Verifies concept TypeConstraint + 2 concrete constraint
@@ -1020,11 +784,6 @@ target_sources(test_issue_161 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # compile-time-checked via static_assert inside type_concepts.ixx.
 # Phase 2 pilot-11: converted using early helper. Base covers core + value/diag/value_impl; append the parser + type concepts specifics.
 aura_add_issue_test(test_issue_162)
-target_sources(test_issue_162 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/type_concepts.ixx)
 target_sources(test_issue_162 PRIVATE
 src/compiler/type_concepts_impl.cpp
 )
@@ -1035,15 +794,6 @@ src/compiler/type_concepts_impl.cpp
 # (stateful class reduction).
 # Phase 2 pilot-12: converted using early helper. Base covers core + value/diag/value_impl; append the parser + type/pass_manager specifics.
 aura_add_issue_test(test_issue_163)
-target_sources(test_issue_163 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/ir.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/pass_manager.ixx)
 
 # Issue #164 verification: fiber:join spin-fallback elimination.
 # Verifies (1) basic fiber:join still works, (2) no spin even
@@ -1063,33 +813,6 @@ target_sources(test_issue_163 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 add_executable(test_issue_164 tests/test_issue_164.cpp)
 set_property(TARGET test_issue_164 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_164 PRIVATE src src/compiler)
-target_sources(test_issue_164 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/value.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/service.ixx)
 target_sources(test_issue_164 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -1102,7 +825,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_164 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_164 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_164 PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_164 PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_164 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1120,33 +843,6 @@ add_test(NAME issue_164_verification COMMAND ./test_issue_164)
 add_executable(test_issue_184 tests/test_issue_184.cpp)
 set_property(TARGET test_issue_184 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_184 PRIVATE src src/compiler)
-target_sources(test_issue_184 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/value.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/service.ixx)
 target_sources(test_issue_184 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1158,7 +854,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_184 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_184 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_184 PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_184 PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_184 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1182,32 +878,6 @@ add_test(NAME issue_184_verification COMMAND ./test_issue_184)
 add_executable(test_issue_165 tests/test_issue_165.cpp)
 set_property(TARGET test_issue_165 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_165 PRIVATE src src/compiler)
-target_sources(test_issue_165 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/value.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/service.ixx)
 target_sources(test_issue_165 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -1220,7 +890,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_165 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_165 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_165 PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_165 PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_165 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1235,32 +905,6 @@ add_test(NAME issue_165_verification COMMAND ./test_issue_165)
 add_executable(test_issue_166 tests/test_issue_166.cpp)
 set_property(TARGET test_issue_166 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_166 PRIVATE src src/compiler)
-target_sources(test_issue_166 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/value.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/service.ixx)
 target_sources(test_issue_166 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -1273,7 +917,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_166 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_166 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_166 PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_166 PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_166 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1288,9 +932,6 @@ add_test(NAME issue_166_verification COMMAND ./test_issue_166)
 # Phase 2 pilot-16: converted using early helper (light IR API test).
 # Base covers core + value/diag/value_impl; append the ir + ir_soa specifics.
 aura_add_issue_test(test_issue_167)
-target_sources(test_issue_167 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/compiler/ir.ixx
-    src/compiler/ir_soa.ixx)
 
 # Issue #168 verification: incremental type cache safety
 # (Phase 1: epoch gate). Verifies the set_cache_epoch API +
@@ -1298,10 +939,6 @@ target_sources(test_issue_167 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # Phase 2 pilot-17: converted using early helper (light type/cache test).
 # Base covers core + value/diag/value_impl; append the parser + type_checker specifics.
 aura_add_issue_test(test_issue_168)
-target_sources(test_issue_168 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #169 verification: Fine-grained Incremental Compilation
 # v3 (Phase 1: config flag). Verifies the IncrementalStrictness
@@ -1309,33 +946,6 @@ target_sources(test_issue_168 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 add_executable(test_issue_169 tests/test_issue_169.cpp)
 set_property(TARGET test_issue_169 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_169 PRIVATE src src/compiler)
-target_sources(test_issue_169 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/value.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/service.ixx)
 target_sources(test_issue_169 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1347,7 +957,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_169 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_169 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_169 PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_169 PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_169 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1364,6 +974,7 @@ add_test(NAME issue_169_verification COMMAND ./test_issue_169)
 # Phase 2 pilot-18: converted using early helper (light JIT AOT test).
 # Base covers core + value/diag/value_impl; append the jit + messaging + spec_jit specifics + LLVM bits.
 aura_add_issue_test(test_issue_170)
+target_include_directories(test_issue_170 PRIVATE src/compiler)
 target_sources(test_issue_170 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1381,32 +992,6 @@ target_link_libraries(test_issue_170 PRIVATE ${llvm_libs})
 add_executable(test_issue_159_bench tests/test_issue_159_bench.cpp)
 set_property(TARGET test_issue_159_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_159_bench PRIVATE src src/compiler)
-target_sources(test_issue_159_bench PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_159_bench PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -1419,7 +1004,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_159_bench PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_159_bench PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_159_bench PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_159_bench PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_159_bench PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1441,32 +1026,6 @@ add_test(NAME issue_159_bench COMMAND ./test_issue_159_bench)
 add_executable(test_issue_138 tests/test_issue_138.cpp)
 set_property(TARGET test_issue_138 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_138 PRIVATE src src/compiler)
-target_sources(test_issue_138 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_138 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -1479,7 +1038,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_138 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_138 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_138 PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_138 PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_138 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1495,32 +1054,6 @@ add_test(NAME issue_138_verification COMMAND ./test_issue_138)
 add_executable(test_issue_139 tests/test_issue_139.cpp)
 set_property(TARGET test_issue_139 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_139 PRIVATE src src/compiler)
-target_sources(test_issue_139 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_139 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -1533,7 +1066,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_139 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_139 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_139 PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_139 PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_139 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1549,32 +1082,6 @@ add_test(NAME issue_139_verification COMMAND ./test_issue_139)
 add_executable(test_issue_140 tests/test_issue_140.cpp)
 set_property(TARGET test_issue_140 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_140 PRIVATE src src/compiler)
-target_sources(test_issue_140 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_140 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -1587,7 +1094,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_140 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_140 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_140 PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_140 PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_140 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1602,32 +1109,6 @@ add_test(NAME issue_140_verification COMMAND ./test_issue_140)
 add_executable(test_issue_141 tests/test_issue_141.cpp)
 set_property(TARGET test_issue_141 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_141 PRIVATE src src/compiler)
-target_sources(test_issue_141 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_141 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -1640,7 +1121,7 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_141 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_141 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_141 PRIVATE ${llvm_libs})
+target_link_libraries(test_issue_141 PRIVATE aura_test_objects ${llvm_libs})
 target_compile_options(test_issue_141 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1656,29 +1137,6 @@ add_test(NAME issue_141_verification COMMAND ./test_issue_141)
 # Phase 2 pilot-23: converted using early helper. Base covers core + value/diag/value_impl; append the heavy parser/serve/evaluator/JIT/LLVM + query/mutate specifics + observability headers + rtti/LLVM bits (heavy like 141/140).
 aura_add_issue_test(test_issue_142)
 target_include_directories(test_issue_142 PRIVATE src src/compiler)
-target_sources(test_issue_142 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_142 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -1701,31 +1159,6 @@ target_link_libraries(test_issue_142 PRIVATE ${llvm_libs})
 add_executable(test_gc_evaluator_integration tests/test_gc_evaluator_integration.cpp)
 set_property(TARGET test_gc_evaluator_integration PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_gc_evaluator_integration PRIVATE src)
-target_sources(test_gc_evaluator_integration PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/value.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_gc_evaluator_integration PRIVATE
     src/serve/fiber.cpp
     src/serve/worker.cpp
@@ -1949,29 +1382,6 @@ target_link_libraries(aura PRIVATE linenoise)
 # Phase 2 pilot-24: converted using early helper. Base covers core + value/diag/value_impl; append heavy parser/serve/evaluator/JIT/LLVM + observability headers + rtti/LLVM bits.
 aura_add_issue_test(test_issue_143)
 target_include_directories(test_issue_143 PRIVATE src src/compiler)
-target_sources(test_issue_143 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_143 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -1992,29 +1402,6 @@ target_link_libraries(test_issue_143 PRIVATE ${llvm_libs})
 # Phase 2 pilot-25: converted using early helper. Base + append for heavy (parser/serve/eval + jit + llvm + contract_handler.cpp + shape_profiler + observability). Note traditional headers in .cpp (shape.h before modules).
 aura_add_issue_test(test_issue_144)
 target_include_directories(test_issue_144 PRIVATE src src/compiler)
-target_sources(test_issue_144 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_144 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/core/contract_handler.cpp
@@ -2037,32 +1424,6 @@ target_link_libraries(test_issue_144 PRIVATE ${llvm_libs})
 # Phase 2 pilot-26: converted using early helper. Consolidated split config (bare early decl + late full block) to aura_add + deltas. Heavy (jit, serve, shape, lowering etc.; note rtti comment shared with 146).
 aura_add_issue_test(test_issue_145)
 target_include_directories(test_issue_145 PRIVATE src src/compiler)
-target_sources(test_issue_145 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_145 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -2088,29 +1449,6 @@ target_link_libraries(test_issue_145 PRIVATE ${llvm_libs})
 # Phase 2 pilot-27: converted using early helper. Leverages new evaluator_pure module (modernization). Heavy (jit, serve etc.).
 aura_add_issue_test(test_issue_146)
 target_include_directories(test_issue_146 PRIVATE src src/compiler)
-target_sources(test_issue_146 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_146 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -2127,29 +1465,6 @@ target_link_libraries(test_issue_146 PRIVATE ${llvm_libs})
 # Phase 2 pilot-28: converted using early helper (heavy like 146/145).
 aura_add_issue_test(test_issue_147)
 target_include_directories(test_issue_147 PRIVATE src src/compiler)
-target_sources(test_issue_147 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_147 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -2166,29 +1481,6 @@ target_link_libraries(test_issue_147 PRIVATE ${llvm_libs})
 # Phase 2 pilot-29: converted using early helper. Heavy (full parser/serve/eval/jit/LLVM + type_checker).
 aura_add_issue_test(test_issue_148)
 target_include_directories(test_issue_148 PRIVATE src src/compiler)
-target_sources(test_issue_148 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_148 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -2205,29 +1497,6 @@ target_link_libraries(test_issue_148 PRIVATE ${llvm_libs})
 # Phase 2 pilot-30: converted using early helper. Heavy (jit, serve, type etc.).
 aura_add_issue_test(test_issue_149)
 target_include_directories(test_issue_149 PRIVATE src src/compiler)
-target_sources(test_issue_149 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_sources(test_issue_149 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
@@ -2254,24 +1523,11 @@ target_link_libraries(test_issue_149 PRIVATE ${llvm_libs})
 add_executable(test_issue_171 tests/test_issue_171.cpp)
 set_property(TARGET test_issue_171 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_171 PRIVATE src src/compiler)
-target_sources(test_issue_171 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx
-    src/compiler/ir.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/pass_manager.ixx)
 target_compile_options(test_issue_171 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_171 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_171 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_171_verification COMMAND ./test_issue_171)
 
 # Issue #204 verification: GC env_frames_ walk integration
@@ -2287,7 +1543,7 @@ target_compile_options(test_issue_204 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_204 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_204 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_204_verification COMMAND ./test_issue_204)
 
 # Issue #205 verification: caller-side env_frames_ walk
@@ -2309,7 +1565,7 @@ target_compile_options(test_issue_205 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_link_libraries(test_issue_205 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_205 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_205_verification COMMAND ./test_issue_205)
 
 # Issue #173 verification: stable-id type aliases (Phase 2 of
@@ -2363,27 +1619,6 @@ src/compiler/observability_snapshot.h
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_187 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 target_include_directories(test_issue_187 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_187 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_187 PRIVATE ${llvm_libs})
@@ -2410,30 +1645,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_188 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_188 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_188 PRIVATE ${llvm_libs})
-target_sources(test_issue_188 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #189 verification: race condition fix + observability
 # (P0 concurrency). Tests the memory-ordering fix (26 callsites
@@ -2454,30 +1665,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_189 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_189 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_189 PRIVATE ${llvm_libs})
-target_sources(test_issue_189 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #190 verification: SyntaxMarker::MacroIntroduced full
 # pipeline integration (P0 hygiene). Tests the cloned_marker
@@ -2499,30 +1686,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_190 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_190 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_190 PRIVATE ${llvm_libs})
-target_sources(test_issue_190 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #191 verification: StableNodeRef + generation bump on
 # structural mutate (P0 EDSL). Tests the StableNodeRef struct,
@@ -2544,30 +1707,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_191 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_191 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_191 PRIVATE ${llvm_libs})
-target_sources(test_issue_191 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #192 verification: atomic batch mutate (P0 EDSL).
 # Tests the mutate:atomic-batch primitive and
@@ -2587,30 +1726,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_192 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_192 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_192 PRIVATE ${llvm_libs})
-target_sources(test_issue_192 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #193 verification: per-function unhandled-opcode
 # threshold for SpecJITController (jit). The threshold
@@ -2631,31 +1746,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_193 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_193 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_193 PRIVATE ${llvm_libs})
-target_sources(test_issue_193 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx
-)
 
 # Issue #194 verification: per-lowering runtime→intrinsic
 # migration observability (jit, #170 follow-up). The
@@ -2678,30 +1768,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_194 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_194 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_194 PRIVATE ${llvm_libs})
-target_sources(test_issue_194 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #195 verification: structured EH (#170 follow-up).
 # The full LLVM-native replacement (invoke + landingpad +
@@ -2725,30 +1791,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_195 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_195 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_195 PRIVATE ${llvm_libs})
-target_sources(test_issue_195 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #196 verification: incremental recompilation
 # observability primitives (compile:cache-size, dirty-count,
@@ -2769,30 +1811,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_196 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_196 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_196 PRIVATE ${llvm_libs})
-target_sources(test_issue_196 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #224: per-block re-lower consumer (cycle 2 of the
 # smarter-re-lower follow-up to #196). The helper
@@ -2818,30 +1836,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_224 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_224 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_224 PRIVATE ${llvm_libs})
-target_sources(test_issue_224 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #197: branch-aware inliner + parameter renaming
 # (extends InlinePass from #171). Predicate + single-block
@@ -2856,24 +1850,11 @@ target_sources(test_issue_224 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 add_executable(test_issue_197 tests/test_issue_197.cpp)
 set_property(TARGET test_issue_197 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_197 PRIVATE src src/compiler)
-target_sources(test_issue_197 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx
-    src/compiler/ir.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/pass_manager.ixx)
 target_compile_options(test_issue_197 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_197 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_197 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_197_verification COMMAND ./test_issue_197)
 
 # Issue #197 observability: (compile:inline-pass-stats)
@@ -2894,30 +1875,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_197_observability PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_197_observability PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_197_observability PRIVATE ${llvm_libs})
-target_sources(test_issue_197_observability PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #206 verification: GC sweep compact + remap +
 # resolve_X helpers. Tests the compact_pairs() and
@@ -2934,30 +1891,6 @@ target_compile_definitions(test_issue_206 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_206 PRIVATE ${llvm_libs})
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_206 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #174 Cycle 1 verification: Env::bindings_ migration
 # scaffold. Tests bindings_symid_iter(), bindings_with_names(),
@@ -2974,30 +1907,6 @@ target_compile_definitions(test_issue_174 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_174 PRIVATE ${llvm_libs})
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_174 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #208 Cycle 2 verification: bindings_legacy_uses
 # metric in the integration path. Tests the metric +
@@ -3015,30 +1924,6 @@ target_compile_definitions(test_issue_208 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_208 PRIVATE ${llvm_libs})
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_208 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #210 Cycle 4 verification: env cleanup-readiness
 # tests. The actual `drop bindings_` commit is deferred
@@ -3057,30 +1942,6 @@ target_compile_definitions(test_issue_210 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_210 PRIVATE ${llvm_libs})
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_210 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #211 verification: (tag, arity) index for
 # query:pattern primitive. Verifies the index is built
@@ -3098,30 +1959,6 @@ target_compile_definitions(test_issue_211 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_211 PRIVATE ${llvm_libs})
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_211 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 
 # Issue #212 verification: pure-function extraction of
 # constant_folding (Cycle 1). Verifies the new
@@ -3132,19 +1969,6 @@ target_sources(test_issue_211 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # this is a pure module test, exercised against
 # hand-built IRFunctions.
 aura_add_issue_test(test_issue_212)
-target_sources(test_issue_212 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/diag.ixx
-    src/compiler/ir.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/pass_manager.ixx)
 
 # Issue #212 Phase 4: pure-function path benchmark.
 # Measures the perf cost of the pure-function extraction
@@ -3196,19 +2020,6 @@ target_sources(issue_212_bench PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/compute_kind_impl.cpp
     tests/_stubs/issue_212_runtime_stubs.cpp)
-target_sources(issue_212_bench PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/diag.ixx
-    src/compiler/ir.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/pass_manager.ixx)
 target_link_libraries(issue_212_bench PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_212_bench COMMAND ./issue_212_bench)
 
@@ -3233,30 +2044,6 @@ target_compile_definitions(test_issue_213 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_213 PRIVATE ${llvm_libs})
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_213 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 add_test(NAME issue_213_verification COMMAND ./test_issue_213)
 
 # Issue #213 verification: integration-level smoke test for
@@ -3280,30 +2067,6 @@ target_compile_definitions(test_issue_177 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_177 PRIVATE ${llvm_libs})
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_177 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 add_test(NAME issue_177_verification COMMAND ./test_issue_177)
 
 # Companion to tests/test_issue_213.cpp (unit-level) and
@@ -3328,30 +2091,6 @@ target_compile_definitions(test_issue_213_panic_fiber PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_213_panic_fiber PRIVATE ${llvm_libs})
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_sources(test_issue_213_panic_fiber PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 add_test(NAME issue_213_panic_fiber_verification COMMAND ./test_issue_213_panic_fiber)
 
 # Issue #214 Cycle 1: reflect_module_exports + stdlib source
@@ -3367,7 +2106,7 @@ set_property(TARGET test_issue_214 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_214 PRIVATE src)
 target_compile_options(test_issue_214 PRIVATE -freflection -Wall)
 target_compile_features(test_issue_214 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_214 PRIVATE stdc++ pthread)
+target_link_libraries(test_issue_214 PRIVATE aura_test_objects stdc++ pthread)
 add_test(NAME issue_214_verification COMMAND ./test_issue_214)
 
 # Issue #215: auto_deserialize for containers + nested struct
@@ -3381,7 +2120,7 @@ set_property(TARGET test_issue_215 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_215 PRIVATE src)
 target_compile_options(test_issue_215 PRIVATE -freflection -Wall)
 target_compile_features(test_issue_215 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_215 PRIVATE stdc++ pthread)
+target_link_libraries(test_issue_215 PRIVATE aura_test_objects stdc++ pthread)
 add_test(NAME issue_215_verification COMMAND ./test_issue_215)
 
 # Issue #216: query:schema + mutate integration
@@ -3397,7 +2136,7 @@ set_property(TARGET test_issue_216 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_216 PRIVATE src)
 target_compile_options(test_issue_216 PRIVATE -freflection -Wall)
 target_compile_features(test_issue_216 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_216 PRIVATE stdc++ pthread)
+target_link_libraries(test_issue_216 PRIVATE aura_test_objects stdc++ pthread)
 add_test(NAME issue_216_verification COMMAND ./test_issue_216)
 
 # Issue #217: AST/IR migration to reflect_members +
@@ -3410,7 +2149,7 @@ set_property(TARGET test_issue_217 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_217 PRIVATE src)
 target_compile_options(test_issue_217 PRIVATE -freflection -Wall)
 target_compile_features(test_issue_217 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_217 PRIVATE stdc++ pthread)
+target_link_libraries(test_issue_217 PRIVATE aura_test_objects stdc++ pthread)
 add_test(NAME issue_217_verification COMMAND ./test_issue_217)
 
 # Issue #219: gap-buffer child_data_ for O(1) insert/remove
@@ -3422,7 +2161,7 @@ add_executable(test_issue_219 tests/test_issue_219.cpp)
 target_include_directories(test_issue_219 PRIVATE src)
 target_compile_options(test_issue_219 PRIVATE -Wall -Wextra)
 target_compile_features(test_issue_219 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_219 PRIVATE stdc++ pthread)
+target_link_libraries(test_issue_219 PRIVATE aura_test_objects stdc++ pthread)
 add_test(NAME issue_219_verification COMMAND ./test_issue_219)
 
 # Issue #220: per-node children linked list (Issue #179 Cycle 2).
@@ -3438,7 +2177,7 @@ add_executable(test_issue_220 tests/test_issue_220.cpp)
 target_include_directories(test_issue_220 PRIVATE src)
 target_compile_options(test_issue_220 PRIVATE -Wall -Wextra)
 target_compile_features(test_issue_220 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_220 PRIVATE stdc++ pthread)
+target_link_libraries(test_issue_220 PRIVATE aura_test_objects stdc++ pthread)
 add_test(NAME issue_220_verification COMMAND ./test_issue_220)
 
 # Issue #221: persistent child vectors (Issue #179 Cycle 3,
@@ -3450,7 +2189,7 @@ add_executable(test_issue_221 tests/test_issue_221.cpp)
 target_include_directories(test_issue_221 PRIVATE src)
 target_compile_options(test_issue_221 PRIVATE -Wall -Wextra)
 target_compile_features(test_issue_221 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_221 PRIVATE stdc++ pthread)
+target_link_libraries(test_issue_221 PRIVATE aura_test_objects stdc++ pthread)
 add_test(NAME issue_221_verification COMMAND ./test_issue_221)
 
 # Issue #222: structural mutation concurrency safety (Issue #179
@@ -3464,7 +2203,7 @@ add_executable(test_issue_222 tests/test_issue_222.cpp)
 target_include_directories(test_issue_222 PRIVATE src)
 target_compile_options(test_issue_222 PRIVATE -Wall -Wextra)
 target_compile_features(test_issue_222 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_222 PRIVATE stdc++ pthread)
+target_link_libraries(test_issue_222 PRIVATE aura_test_objects stdc++ pthread)
 add_test(NAME issue_222_verification COMMAND ./test_issue_222)
 
 # Issue #223: closure-bridge epoch counter for lifetime tracking
@@ -3478,7 +2217,7 @@ add_executable(test_issue_223 tests/test_issue_223.cpp)
 target_include_directories(test_issue_223 PRIVATE src)
 target_compile_options(test_issue_223 PRIVATE -Wall -Wextra)
 target_compile_features(test_issue_223 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_223 PRIVATE stdc++ pthread)
+target_link_libraries(test_issue_223 PRIVATE aura_test_objects stdc++ pthread)
 add_test(NAME issue_223_verification COMMAND ./test_issue_223)
 
 # Issue #224 cycle 2: shared_ptr-based bridge ownership.
@@ -3500,30 +2239,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_224_closure_bridge PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_224_closure_bridge PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_224_closure_bridge PRIVATE ${llvm_libs})
-target_sources(test_issue_224_closure_bridge PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 add_test(NAME issue_224_closure_bridge_verification COMMAND ./test_issue_224_closure_bridge)
 
 # Issue #225 cycle 3: bridge invalidation. Tests verify
@@ -3545,30 +2260,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_225_bridge_invalidation PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_225_bridge_invalidation PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_225_bridge_invalidation PRIVATE ${llvm_libs})
-target_sources(test_issue_225_bridge_invalidation PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 add_test(NAME issue_225_bridge_invalidation_verification COMMAND ./test_issue_225_bridge_invalidation)
 
 # Issue #226 Cycle 4: closure-bridge tests + invariants + TSan
@@ -3591,30 +2282,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_226 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_226 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_226 PRIVATE ${llvm_libs})
-target_sources(test_issue_226 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 add_test(NAME issue_226_closure_bridge_stress_verification COMMAND ./test_issue_226)
 
 # Issue #227: Occurrence Typing narrowing + ADT exhaustiveness
@@ -3638,30 +2305,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_227 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_227 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_227 PRIVATE ${llvm_libs})
-target_sources(test_issue_227 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 add_test(NAME issue_227_occurrence_narrowing_verification COMMAND ./test_issue_227)
 
 # Issue #228: Hardware IR Dependent Type System for Agentic EDA.
@@ -3683,30 +2326,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_228 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_228 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_228 PRIVATE ${llvm_libs})
-target_sources(test_issue_228 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
 add_test(NAME issue_228_dependent_type_system_verification COMMAND ./test_issue_228)
 
 # Issue #178 Cycle 5: production NodeView migration to
@@ -3720,13 +2339,11 @@ add_test(NAME issue_228_dependent_type_system_verification COMMAND ./test_issue_
 add_executable(test_issue_178 tests/test_issue_178.cpp)
 set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_178 PRIVATE src)
-target_sources(test_issue_178 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx src/core/type_arena.ixx src/core/type.ixx)
 target_compile_options(test_issue_178 PRIVATE -freflection -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
     -Wno-parentheses)
-target_link_libraries(test_issue_178 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_link_libraries(test_issue_178 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_178_verification COMMAND ./test_issue_178)
 
 # ── Aggregate target: build all test_issue_* binaries in one ninja invocation ──
