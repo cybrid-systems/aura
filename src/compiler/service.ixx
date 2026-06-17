@@ -735,6 +735,15 @@ public:
             "rollback",
             "mutation-log",
             "query-mutation-log",
+            // Mutation primitives (issue #165/#166): tree-walker so the
+            // returned bool/Int propagates correctly. The IR pipeline
+            // either silently drops unknown primitives or wraps them as
+            // ConstI64 0, breaking the success checks in
+            // test_issue_165/166 (e.g. "mutate > 0").
+            "mutate:rebind",
+            "mutate:set-body",
+            "mutate:remove-node",
+            "mutate:move-node",
             "intend",
             "fiber:spawn",
             "define-strategy",
@@ -897,17 +906,28 @@ public:
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
         // Fix #165/#166 tests: workspace-aware eval shortcut. When a
-        // workspace is set (via (set-code ...)) AND the input is a
-        // bare identifier, look it up directly in the workspace's
-        // top-level defines. Without this, eval("x") parses a fresh
-        // FlatAST where "x" is undefined, even though
-        // (set-code "(define x 10)") had just installed x = 10 in
-        // the workspace.
+        // workspace is set (via (set-code ...)), short-circuit bare
+        // identifiers and top-level function calls so they find their
+        // definitions in workspace_flat_ instead of being parsed into a
+        // fresh FlatAST where workspace bindings are invisible.
         //
-        // (Function calls like "(f 5)" still need a real param-binding
-        // path through the evaluator; that's tracked as a follow-up
-        // because the env-binding plumbing doesn't have a public
-        // extend-with-frame entry point yet.)
+        // Path A (bare identifier): eval("x") — look up x's body in
+        // workspace, eval body in top_env.
+        //
+        // Path B (function call): eval("(f arg1 arg2 ...)") — find f's
+        // define in workspace, eval each arg in top_env, build a child
+        // env with param bindings, eval f's body in that env. This
+        // covers the common case (test_issue_166 tests 3 and 4 — calls
+        // after set-code) without forcing set-code to install workspace
+        // defines into top_env_ (which has been historically avoided
+        // because of env-pollution concerns across reset/cycles).
+        //
+        // Macros (define-hygienic-macro / defmacro) still fall through
+        // to the standard pipeline below, which runs macro_expand_all
+        // against the freshly parsed AST. Macro-defined bindings will
+        // still be picked up via Path A and Path B at the call-site
+        // level; hygiene-preserving re-expansion after mutate:rebind
+        // is a separate issue (#165 macro-re-expansion).
         if (evaluator_.workspace_flat() && evaluator_.workspace_pool()) {
             std::string trimmed(input);
             while (!trimmed.empty() && std::isspace((unsigned char)trimmed.front()))
@@ -922,9 +942,9 @@ public:
                     is_bare = false; break;
                 }
             }
+            auto* ws_flat = evaluator_.workspace_flat();
+            auto* ws_pool = evaluator_.workspace_pool();
             if (is_bare) {
-                auto* ws_flat = evaluator_.workspace_flat();
-                auto* ws_pool = evaluator_.workspace_pool();
                 for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
                     auto v = ws_flat->get(id);
                     if (v.tag != aura::ast::NodeTag::Define) continue;
@@ -939,6 +959,120 @@ public:
                 // Not in workspace — fall through to the normal
                 // pipeline (which will return an "undefined variable"
                 // diagnostic just as it would without the workspace).
+            } else if (!trimmed.empty() && trimmed.front() == '(') {
+                // Function-call shortcut: parse "(head arg1 arg2 ...)"
+                // directly to find the callee name without spinning up
+                // a full FlatAST. Only handle the simple case (head is
+                // a bare identifier matching a workspace define).
+                auto close = trimmed.find_last_of(')');
+                if (close != std::string::npos && close + 1 == trimmed.size()) {
+                    // Scan inside the outer parens for the head symbol.
+                    std::size_t i = 1;
+                    while (i < trimmed.size() && std::isspace((unsigned char)trimmed[i])) ++i;
+                    std::size_t head_start = i;
+                    while (i < trimmed.size() && !std::isspace((unsigned char)trimmed[i])
+                           && trimmed[i] != ')') ++i;
+                    std::string head_name = trimmed.substr(head_start, i - head_start);
+                    bool head_is_bare = !head_name.empty() &&
+                                        (std::isalpha((unsigned char)head_name[0]) ||
+                                         head_name[0] == '_' || head_name[0] == '-');
+                    for (char c : head_name) {
+                        if (!std::isalnum((unsigned char)c) && c != '_' && c != '-') {
+                            head_is_bare = false; break;
+                        }
+                    }
+                    if (head_is_bare) {
+                        // Look up head_name in workspace defines.
+                        aura::ast::NodeId def_body = aura::ast::NULL_NODE;
+                        std::vector<aura::ast::SymId> fn_params;
+                        bool dotted = false;
+                        for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                            auto v = ws_flat->get(id);
+                            if (v.tag != aura::ast::NodeTag::Define) continue;
+                            if (v.sym_id == aura::ast::INVALID_SYM) continue;
+                            if (v.children.empty()) continue;
+                            auto wname = std::string(ws_pool->resolve(v.sym_id));
+                            if (wname != head_name) continue;
+                            auto body_id = v.child(0);
+                            if (body_id >= ws_flat->size()) continue;
+                            auto body_v = ws_flat->get(body_id);
+                            if (body_v.tag != aura::ast::NodeTag::Lambda) continue;
+                            def_body = body_v.children.empty()
+                                           ? aura::ast::NULL_NODE
+                                           : body_v.child(0);
+                            fn_params.assign(body_v.params.begin(),
+                                             body_v.params.end());
+                            // Dotted flag is bit 0 of int_value (see ast.ixx
+                            // add_lambda encoding).
+                            dotted = (body_v.int_value & 1) != 0;
+                            break;
+                        }
+                        if (def_body != aura::ast::NULL_NODE) {
+                            // Tokenize the args between head_end and close.
+                            // Simple splitter: walks parens / strings.
+                            std::size_t arg_start = i;
+                            std::vector<std::string> arg_strs;
+                            int depth = 0;
+                            bool in_str = false;
+                            std::size_t tok_start = arg_start;
+                            for (std::size_t k = arg_start; k < close; ++k) {
+                                char ch = trimmed[k];
+                                if (in_str) {
+                                    if (ch == '\\' && k + 1 < close) { ++k; continue; }
+                                    if (ch == '"') in_str = false;
+                                    continue;
+                                }
+                                if (ch == '"') { in_str = true; continue; }
+                                if (ch == '(') { ++depth; continue; }
+                                if (ch == ')') { --depth; continue; }
+                                if (depth > 0) continue;
+                                if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+                                    if (tok_start < k) {
+                                        arg_strs.push_back(trimmed.substr(tok_start, k - tok_start));
+                                        tok_start = k + 1;
+                                    } else {
+                                        tok_start = k + 1;
+                                    }
+                                }
+                            }
+                            if (tok_start < close) {
+                                arg_strs.push_back(trimmed.substr(tok_start, close - tok_start));
+                            }
+                            // Evaluate args in top_env (recursively via eval()).
+                            std::vector<aura::compiler::types::EvalValue> arg_vals;
+                            arg_vals.reserve(arg_strs.size());
+                            for (auto& as : arg_strs) {
+                                auto ar = eval(as);
+                                if (!ar) return ar;
+                                arg_vals.push_back(*ar);
+                            }
+                            // Build a child env with param bindings.
+                            Env call_env(&evaluator_.top_env());
+                            call_env.set_primitives(&evaluator_.primitives());
+                            if (ws_pool) call_env.set_pool(ws_pool);
+                            std::size_t named = dotted && !fn_params.empty()
+                                                   ? fn_params.size() - 1
+                                                   : fn_params.size();
+                            for (std::size_t pi = 0; pi < named && pi < arg_vals.size(); ++pi) {
+                                call_env.bind_symid(fn_params[pi], std::move(arg_vals[pi]));
+                            }
+                            // Dotted-rest: collect remaining args into a pair list.
+                            if (dotted && !fn_params.empty() && arg_vals.size() > named) {
+                                types::EvalValue rest = types::make_void();
+                                for (std::size_t ri = arg_vals.size(); ri > named; --ri) {
+                                    std::size_t pid = evaluator_.pairs().size();
+                                    evaluator_.pairs().push_back({std::move(arg_vals[ri - 1]), rest});
+                                    rest = types::make_pair(pid);
+                                }
+                                call_env.bind_symid(fn_params.back(), rest);
+                            }
+                            return evaluator_.eval_flat(*ws_flat, *ws_pool, def_body, call_env);
+                        }
+                        // head is a Variable but no workspace define —
+                        // fall through to the normal pipeline (which
+                        // handles primitives, IR-cached calls, etc.).
+                    }
+                }
             }
         }
         // Phase 4: parse directly into FlatAST, evaluator reads FlatAST directly.

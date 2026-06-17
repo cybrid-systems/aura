@@ -45,6 +45,12 @@ static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src
     if (aura::compiler::types::is_int(v)) {
         return aura::compiler::types::as_int(v);
     }
+    // mutate:* primitives return #t/#f (bool). Treat #t as 1 (success)
+    // and #f as 0 (failure) so the test can check > 0 the same way
+    // it would for an int return.
+    if (aura::compiler::types::is_bool(v)) {
+        return aura::compiler::types::as_bool(v) ? 1 : 0;
+    }
     return -1;
 }
 
@@ -75,7 +81,7 @@ bool test_epoch_increments_on_mutation() {
     //   3. Mutating an unrelated binding
     //   4. Calling the function again — should still work,
     //      even though the epoch has bumped.
-    auto setup = run_int(cs, "(set-code \"(define (f x) (* x x))\")");
+    auto setup = run_int(cs, "(set-code \"(define (f x) (* x x))(define y 0)\")");
     auto v1 = run_int(cs, "(f 5)");
     CHECK(v1 == 25, "first call (f 5) = 25");
     auto m = run_int(cs, "(mutate:rebind \"y\" \"100\" \"bump y (unrelated)\")");
