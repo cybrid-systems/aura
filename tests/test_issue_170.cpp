@@ -29,6 +29,7 @@
 #include <thread>
 #include <vector>
 #include "aura_jit.h"
+#include "test_harness.hpp"   // Provides CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
 
 // Stub: the full definition lives in service.ixx (under the
 // AURA_HAVE_LLVM guard). The test_issue_170 target only links
@@ -262,7 +263,8 @@ bool test_exception_stack_nested() {
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
-#include "test_harness.hpp"
+// (Include moved to the top of the file so CHECK / g_passed /
+// g_failed are visible at the use sites above.)
 using aura::test::g_passed;
 using aura::test::g_failed;
 bool test_spec_jit_deopt_signal() {
