@@ -43,22 +43,10 @@ BUILD = ROOT / "build"
 #
 # Currently empty — all previously-tracked failures
 # (test_issue_136 mangle disambiguator, test_issue_184
-# version monotonicity) have been fixed in ba7737e.
-#
-# test_issue_164 — intermittent heap corruption in the
-# fiber:join + set-code + mutate:rebind combo path. Crashes
-# ~5-15% of runs with SIGSEGV or 'free(): invalid pointer'
-# BEFORE any output, so the runner shows 'no output' which
-# looks like a hang. Root cause: a closure with env_id ==
-# NULL_ENV_ID reaches materialize_call_env and trips the
-# 'id != NULL_ENV_ID' pre-condition. Tracked as a separate
-# follow-up; the CI should not fail on intermittent
-# pre-existing infrastructure issues. See Issue #145 P0
-# follow-up tracking. To clear this once the underlying
-# heap-corruption is fixed: just remove this entry.
-PRE_EXISTING_FAILURES: set[str] = {
-    "test_issue_164",
-}
+# version monotonicity) have been fixed in ba7737e, and
+# test_issue_164 heap corruption was fixed in <commit>
+# by adding shared_mutex on closures_ + env_frames_.
+PRE_EXISTING_FAILURES: set[str] = set()
 
 G = "\033[32m"
 R = "\033[31m"
