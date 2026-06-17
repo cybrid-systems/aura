@@ -272,7 +272,7 @@ bool test_fuzzer_many_batches() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int run_issue_192() {
+int main() {
     std::println("═══ Issue #192 verification tests ═══\n");
     std::println("AC #1: basic shape + bad-arg handling");
     test_atomic_batch_bad_arg_no_workspace();

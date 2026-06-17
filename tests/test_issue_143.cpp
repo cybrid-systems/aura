@@ -263,7 +263,7 @@ bool test_fixpoint_propagation() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int run_issue_143() {
+int main() {
     std::println("═══ Issue #143 verification tests (escape analysis) ═══\n");
 
     std::println("── AC #1: Wrap integrates as a pass ──");

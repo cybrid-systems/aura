@@ -326,7 +326,7 @@ void test_10_wire_format() {
     CHECK(pos == buf.size(), "all bytes consumed");
 }
 
-int run_issue_219() {
+int main() {
     test_1_basic();
     test_2_insert_positions();
     test_3_erase_positions();

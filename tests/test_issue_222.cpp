@@ -624,7 +624,7 @@ void test_7_high_iteration_stress() {
           "mutation log entries <= generation delta");
 }
 
-int run_issue_222() {
+int main() {
     SAFE_TEST(t1, test_1_single_thread);
     SAFE_TEST(t2, test_2_reader_lock);
     SAFE_TEST(t3, test_3_two_thread_smoke);

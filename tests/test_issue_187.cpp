@@ -515,7 +515,7 @@ bool test_contracts_on_allocate_raw() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int run_issue_187() {
+int main() {
     std::println("═══ Issue #187 verification tests ═══\n");
     std::println("AC #1: Arena/StringPool compaction primitives");
     test_arena_compact_estimate_empty();

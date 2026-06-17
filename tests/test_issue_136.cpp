@@ -144,7 +144,7 @@ bool test_mangle_empty_and_alphanumeric() {
     return true;
 }
 
-int run_issue_136() {
+int main() {
     std::println("═══ Issue #136 verification tests ═══\n");
 
     std::println("── Sub-task 3: AOT name mangling ──");

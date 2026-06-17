@@ -354,7 +354,7 @@ void test_occurrence_narrowing_invalidated() {
 // Main
 // ═════════════════════════════════════════════════════════════
 
-int run_issue_147() {
+int main() {
     std::println("═══ Issue #147 soundness tests ═══\n");
 
     std::println("── AC #1: post_mutation_invariant_check is exported ──");

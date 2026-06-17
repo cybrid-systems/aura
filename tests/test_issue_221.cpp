@@ -331,7 +331,7 @@ void test_9_wire_format() {
     CHECK(rt_empty.empty(), "deserialized empty is empty");
 }
 
-int run_issue_221() {
+int main() {
     test_1_basic();
     test_2_cow();
     test_3_back_references();

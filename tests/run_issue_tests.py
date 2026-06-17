@@ -192,6 +192,13 @@ def main():
             print(f"{R}No test_issue_* binaries available after build.{N}")
             return 1
 
+    # Always run the build step to pick up any new test
+    # files. Already-built binaries are not rebuilt (ninja
+    # handles incremental builds). This ensures fresh CI
+    # runs always include all test_issue_* files.
+    build_targets(discover_test_issue_targets())
+    bins = discover_test_issue_binaries()
+
     if args.build:
         # Build all targets. Pre-existing build failures (e.g.,
         # module dep issues, missing symbols) are reported but

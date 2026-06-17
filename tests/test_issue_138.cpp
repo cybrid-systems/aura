@@ -345,7 +345,7 @@ bool test_dirty_api_via_cpp() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int run_issue_138() {
+int main() {
     std::println("═══ Issue #138 verification tests ═══\n");
 
     std::println("── AC #1: Dirty propagation correctness ──");

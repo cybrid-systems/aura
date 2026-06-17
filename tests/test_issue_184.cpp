@@ -277,7 +277,7 @@ bool test_typed_mutate_parse_error_releases_guard() {
     return true;
 }
 
-int run_issue_184() {
+int main() {
     PRINTLN("=== test_issue_184: MutationBoundaryGuard + atomic defuse_version_ ===");
 
     test_defuse_version_is_atomic();

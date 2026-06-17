@@ -304,7 +304,7 @@ bool test_mark_define_dirty_cascades_to_blocks() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int run_issue_196() {
+int main() {
     std::println("═══ Issue #196 verification tests ═══\n");
     std::println("AC #1: 4 observability primitives registered");
     test_cache_size_primitive();

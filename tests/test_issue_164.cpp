@@ -174,7 +174,7 @@ bool test_fiber_join_50_stress() {
     return true;
 }
 
-int run_issue_164() {
+int main() {
     std::fprintf(stdout, "═══ Issue #164 — fiber:join spin-fallback elimination ═══\n");
 
     test_fiber_join_basic();

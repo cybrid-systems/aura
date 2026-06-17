@@ -252,7 +252,7 @@ void test_type_observability() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int run_issue_149() {
+int main() {
     std::println("═══ Issue #149 rich type propagation tests ═══\n");
 
     std::println("── AC #1: IRInstruction new fields default to 0 ──");
