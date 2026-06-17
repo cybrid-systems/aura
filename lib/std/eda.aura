@@ -285,3 +285,161 @@
   eda:display-signal eda:display-expr
   ; Query helpers
   eda:query:ports eda:query:wires eda:query:assigns eda:query:module-name)
+
+; ═══════════════════════════════════════════════════════════
+; Dependent type system (Issue #228 — Phase 1 minimum viable)
+; ═══════════════════════════════════════════════════════════
+;
+; Hardware IR's existing width fields are bare integers. This
+; section layers a DEPENDENT type system on top so agents can:
+;   1. Capture widths as first-class typed values (BitVec)
+;   2. Distinguish clock domains (ClockDomain phantom type)
+;   3. Distinguish reset semantics (ResetType phantom type)
+;   4. Run basic compatibility checks before mutate
+;
+; Scope-limited (matches the cycle plan: ship Phase 1 + tests,
+; document limitations, defer Phases 2-5).
+;
+; Phase 1 covers: BitVec + width compare + ClockDomain + ResetType
+; + basic Signal wrapping + compatibility checks.
+;
+; NOT in Phase 1 (deferred):
+;   - Full dependent types with constraint solving (Phase 2)
+;   - Protocol-aware transformations (Phase 3)
+;   - mutating primitives that type-check the new IR (Phase 4)
+;   - Constraint solver for refined types (Phase 5)
+;
+; All types are Aura values (lists + symbols), not C++ types.
+; The IR remains Aura-mutable via existing query/mutate primitives.
+
+; ── eda:bitvec ──
+;
+; Dependent bit vector with a (potentially parametric) width.
+; Two forms:
+;   (eda:bitvec <int>)            — concrete width
+;   (eda:bitvec-param <symbol>)   — parametric width (deferred)
+;
+; We use two separate tags (eda:bitvec and eda:bitvec-param)
+; rather than wrapping parametric widths inside eda:bitvec,
+; because Aura's symbol? predicate always returns #f (symbols
+; aren't first-class EvalValues). A separate tag lets us
+; distinguish concrete from parametric via car/equal? alone.
+(define (make-eda:bitvec width)
+  (list 'eda:bitvec width))
+(define (eda:bitvec? x)
+  (and (pair? x) (equal? (car x) 'eda:bitvec)))
+(define (eda:bitvec-param? x)
+  (and (pair? x) (equal? (car x) 'eda:bitvec-param)))
+(define (eda:bitvec-width bv)
+  (car (cdr bv)))
+; BitVec compatibility: widths must match. If either is
+; parametric, defer to Phase 5 (return 'parametric).
+(define (eda:bitvec-compatible? bv1 bv2)
+  (cond
+    ((or (eda:bitvec-param? bv1) (eda:bitvec-param? bv2)) 'parametric)
+    ((not (and (eda:bitvec? bv1) (eda:bitvec? bv2))) #f)
+    ((= (eda:bitvec-width bv1) (eda:bitvec-width bv2)) #t)
+    (else #f)))
+
+; ── eda:clock-domain ──
+;
+; Phantom type for clock domain. Distinct symbols denote
+; distinct domains (e.g., 'clk-fast, 'clk-slow). Crossing
+; between domains requires explicit synchronization (out of
+; scope for Phase 1).
+(define (make-eda:clock-domain name)
+  (list 'eda:clock-domain name))
+(define (eda:clock-domain? x)
+  (and (pair? x) (equal? (car x) 'eda:clock-domain)))
+(define (eda:clock-domain-name cd)
+  (car (cdr cd)))
+(define (eda:clock-domain? x)
+  (and (pair? x) (equal? (car x) 'eda:clock-domain)))
+; Same domain iff same symbol.
+(define (eda:clock-domain-compatible? cd1 cd2)
+  (and (eda:clock-domain? cd1) (eda:clock-domain? cd2)
+       (equal? (eda:clock-domain-name cd1)
+               (eda:clock-domain-name cd2))))
+
+; ── eda:reset-type ──
+;
+; Phantom type for reset semantics. Supported kinds:
+;   'async  — asynchronous reset
+;   'sync   — synchronous reset
+;   'none   — no reset (combinational / clock-gated)
+(define (make-eda:reset-type kind)
+  (list 'eda:reset-type kind))
+(define (eda:reset-type? x)
+  (and (pair? x) (equal? (car x) 'eda:reset-type)))
+(define (eda:reset-type-kind rt)
+  (car (cdr rt)))
+(define (eda:reset-type? x)
+  (and (pair? x) (equal? (car x) 'eda:reset-type)))
+; Compatible iff same kind. 'none is special: it's compatible
+; with itself only (a circuit without reset can't be combined
+; with one that requires async reset).
+(define (eda:reset-type-compatible? rt1 rt2)
+  (and (eda:reset-type? rt1) (eda:reset-type? rt2)
+       (equal? (eda:reset-type-kind rt1)
+               (eda:reset-type-kind rt2))))
+
+; ── eda:typed-signal ──
+;
+; A signal with full semantic info: bit-vector type + clock
+; domain + reset type. This complements the existing
+; eda:signal (which only has name + width + kind).
+;
+; Format: (eda:typed-signal name bitvec clock-domain reset-type)
+(define (make-eda:typed-signal name bitvec clock-domain reset-type)
+  (list 'eda:typed-signal name bitvec clock-domain reset-type))
+(define (eda:typed-signal? x)
+  (and (pair? x) (equal? (car x) 'eda:typed-signal)))
+(define (eda:typed-signal-name s) (car (cdr s)))
+(define (eda:typed-signal-bitvec s) (car (cdr (cdr s))))
+(define (eda:typed-signal-clock-domain s) (car (cdr (cdr (cdr s)))))
+(define (eda:typed-signal-reset-type s)
+  (car (cdr (cdr (cdr (cdr s))))))
+; Full compatibility: same bitvec + same clock domain + same
+; reset type. This is what `mutate` should call before allowing
+; a structural mutation (Phase 4 will wire this into mutate:*).
+(define (eda:typed-signal-compatible? s1 s2)
+  (and (eda:typed-signal? s1) (eda:typed-signal? s2)
+       (eda:bitvec-compatible? (eda:typed-signal-bitvec s1)
+                               (eda:typed-signal-bitvec s2))
+       (eda:clock-domain-compatible? (eda:typed-signal-clock-domain s1)
+                                      (eda:typed-signal-clock-domain s2))
+       (eda:reset-type-compatible? (eda:typed-signal-reset-type s1)
+                                    (eda:typed-signal-reset-type s2))))
+
+; ── Convenience constructors ──
+
+; Default clock domain (the "main" clock). Use when you don't
+; have multi-clock designs.
+(define eda:default-clock-domain (make-eda:clock-domain 'main))
+; Default reset type (sync reset to the main clock).
+(define eda:default-reset-type (make-eda:reset-type 'sync))
+; Common bit widths
+(define (make-eda:bitvec-8) (make-eda:bitvec 8))
+(define (make-eda:bitvec-16) (make-eda:bitvec 16))
+(define (make-eda:bitvec-32) (make-eda:bitvec 32))
+(define (make-eda:bitvec-64) (make-eda:bitvec 64))
+; Parametric bitvec (width is a symbol, deferred to Phase 5)
+(define (make-eda:bitvec-param name)
+  (list 'eda:bitvec-param name))
+
+(export
+  ; BitVec
+  make-eda:bitvec make-eda:bitvec-8 make-eda:bitvec-16
+  make-eda:bitvec-32 make-eda:bitvec-64 make-eda:bitvec-param
+  eda:bitvec? eda:bitvec-param? eda:bitvec-width eda:bitvec-compatible?
+  ; ClockDomain
+  make-eda:clock-domain eda:default-clock-domain
+  eda:clock-domain? eda:clock-domain-name eda:clock-domain-compatible?
+  ; ResetType
+  make-eda:reset-type eda:default-reset-type
+  eda:reset-type? eda:reset-type-kind eda:reset-type-compatible?
+  ; TypedSignal
+  make-eda:typed-signal eda:typed-signal?
+  eda:typed-signal-name eda:typed-signal-bitvec
+  eda:typed-signal-clock-domain eda:typed-signal-reset-type
+  eda:typed-signal-compatible?)
