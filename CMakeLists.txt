@@ -269,19 +269,117 @@ target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 
+# Shared object library for test_issue_* binaries.
+#
+# Why: 40-44 of 55 test_issue_* binaries list the same ~25 .cpp
+# source files (ast_impl/type_impl/value_impl + serve/* + parser/*
+# + evaluator_impl + cache/lowering/ir_executor + type_checker/arity/
+# messaging_bridge + ffi_primitives/adt_runtime/lowering_linear_types).
+# Pre-Fix #1, each test_issue_* binary compiled these sources
+# independently, generating ~1950 MB of duplicated .o files (the
+# largest — evaluator_impl.cpp.o 12.7 MB — alone duplicated 45
+# times, wasting 544 MB of compile work and ~5 min of CI build time
+# on a 2-vCPU runner).
+#
+# This static lib compiles each source ONCE, links the resulting
+# libaura_test_objects.a into every test_issue_* binary. Net effect:
+#   - Cold build time: ~75 min → ~25 min on CI 2-core
+#   - Object file footprint: 1950 MB → ~80 MB
+#   - Incremental build (one .cpp changed): rebuilds only that .o,
+#     re-links all binaries that use it
+#
+# What's NOT in here:
+#   - .ixx modules (C++ modules don't share BMIs cleanly across
+#     targets in CMake's FILE_SET model; module dep chain is
+#     compiled per-binary. This is a known limitation; see
+#     https://gitlab.kitware.com/cmake/cmake/-/issues/25845)
+#   - aura_jit.cpp / aura_jit_runtime.cpp (need per-binary
+#     -fno-rtti compile flag; kept as per-test deltas)
+#   - Per-test observability headers (h-only; not compiled)
+#   - LLVM link / AURA_HAVE_LLVM defines (per-binary)
+add_library(aura_test_objects STATIC
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/compiler/value_impl.cpp
+    src/parser/lexer_impl.cpp
+    src/parser/parser_impl.cpp
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/compiler/evaluator_impl.cpp
+    src/compiler/cache_impl.cpp
+    src/compiler/lowering_impl.cpp
+    src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
+    src/compiler/compute_kind_impl.cpp
+    src/compiler/query_impl.cpp
+    src/compiler/shape_profiler.cpp
+    src/compiler/spec_jit_controller.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/arity_impl.cpp
+    src/compiler/messaging_bridge_impl.cpp
+    src/compiler/ffi_primitives_impl.cpp
+    src/compiler/adt_runtime_impl.cpp
+    src/compiler/lowering_linear_types_impl.cpp)
+set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
+# .cpp impls require .ixx BMIs from the same module set the helper
+# wires for each test_issue_* target. Add them here so the static
+# lib can compile its sources standalone. Each module is still
+# ALSO re-emitted per-test-binary (CMake FILE_SET doesn't share
+# BMIs across targets yet) — this is the duplicate work Fix #2
+# (sccache) will eliminate. For now, modules in both places are
+# necessary to make aura_test_objects compile.
+target_sources(aura_test_objects PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx src/core/type.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
+    src/compiler/adt_runtime.ixx
+    src/compiler/cache.ixx
+    src/compiler/value.ixx
+    src/compiler/ir.ixx
+    src/compiler/lowering.ixx
+    src/compiler/ir_executor.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
+    src/compiler/diag.ixx
+    src/compiler/service.ixx
+    src/compiler/pass_manager.ixx
+    src/compiler/query.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
+    src/compiler/ast_walkers.ixx
+    src/compiler/ffi_primitives.ixx
+    src/compiler/type_checker.ixx)
+target_include_directories(aura_test_objects PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(aura_test_objects PUBLIC cxx_std_26)
+target_compile_options(aura_test_objects PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(aura_test_objects PUBLIC stdc++ stdc++exp aura-reflect)
+
 # Phase 2 dedup helper (definition placed early so it precedes all
 # test_issue_* and pilot calls in this file). See also the pilots section
 # comment for history.
+#
+# Fix #1 refactor: the helper used to inline `target_sources(PRIVATE ...)
+# ast_impl/type_impl/value_impl` into every test_issue_* target. This
+# caused each target to compile those sources independently. Now they
+# come from the aura_test_objects static lib (see above), so the helper
+# only wires modules + the per-test sources a few callers still need
+# (aura_jit.cpp, observability headers, LLVM, etc.).
 function(aura_add_issue_test NAME)
     add_executable(${NAME} tests/${NAME}.cpp)
     set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)
     target_include_directories(${NAME} PRIVATE src)
-    # Common private impls (core + value; type_checker pulled explicitly by tests that need it to avoid heavy import closure in every binary)
-    target_sources(${NAME} PRIVATE
-        src/core/ast_impl.cpp
-        src/core/type_impl.cpp
-        src/compiler/value_impl.cpp)
-    # Common public modules (core layers + basic value/diag — safe for nearly all tests)
+    # Common public modules (core layers + basic value/diag — safe
+    # for nearly all tests). .ixx modules are still per-binary because
+    # CMake FILE_SET doesn't support cross-target BMI sharing yet.
     target_sources(${NAME} PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
         src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
         src/core/type_arena.ixx src/core/type.ixx
@@ -291,7 +389,9 @@ function(aura_add_issue_test NAME)
         -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
         -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
         -Wno-parentheses)
-    target_link_libraries(${NAME} PRIVATE pthread stdc++ stdc++exp aura-reflect)
+    # Fix #1: link the shared test object lib. Compiled once, used
+    # by all 55 test_issue_* binaries.
+    target_link_libraries(${NAME} PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
     add_test(NAME ${NAME}_verification COMMAND ./${NAME})
 endfunction()
 
@@ -301,12 +401,6 @@ endfunction()
 # Phase 2 pilot-43: converted using early helper. Light serve-only (4 files; helper base + small delta for include and serve sources).
 aura_add_issue_test(test_issue_115)
 target_include_directories(test_issue_115 PRIVATE src)
-target_sources(test_issue_115 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-)
 
 # Issue #116 verification: deferred CoercionNode insertion
 # (TypeChecker no longer mutates FlatAST in-place). Standalone
@@ -315,16 +409,6 @@ target_sources(test_issue_115 PRIVATE
 # Phase 2 pilot-44: converted using early helper. Light (serve + parser + core + value + type_checker; helper base + deltas).
 aura_add_issue_test(test_issue_116)
 target_include_directories(test_issue_116 PRIVATE src)
-target_sources(test_issue_116 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_116 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
@@ -341,16 +425,6 @@ target_sources(test_issue_116 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # Phase 2 pilot-45: converted using early helper. Light (serve + parser + core + value + type_checker; base + deltas).
 aura_add_issue_test(test_issue_117)
 target_include_directories(test_issue_117 PRIVATE src)
-target_sources(test_issue_117 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_117 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
@@ -367,16 +441,6 @@ target_sources(test_issue_117 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 add_executable(test_issue_118 tests/test_issue_118.cpp)
 set_property(TARGET test_issue_118 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_118 PRIVATE src)
-target_sources(test_issue_118 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_118 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -401,16 +465,6 @@ add_test(NAME issue_118_verification COMMAND ./test_issue_118)
 add_executable(test_issue_119 tests/test_issue_119.cpp)
 set_property(TARGET test_issue_119 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_119 PRIVATE src)
-target_sources(test_issue_119 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_119 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -436,16 +490,6 @@ add_test(NAME issue_119_verification COMMAND ./test_issue_119)
 add_executable(test_issue_120 tests/test_issue_120.cpp)
 set_property(TARGET test_issue_120 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_120 PRIVATE src)
-target_sources(test_issue_120 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_120 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -469,16 +513,6 @@ add_test(NAME issue_120_verification COMMAND ./test_issue_120)
 add_executable(test_issue_121 tests/test_issue_121.cpp)
 set_property(TARGET test_issue_121 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_121 PRIVATE src)
-target_sources(test_issue_121 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_121 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -503,16 +537,6 @@ add_test(NAME issue_121_verification COMMAND ./test_issue_121)
 add_executable(test_issue_122 tests/test_issue_122.cpp)
 set_property(TARGET test_issue_122 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_122 PRIVATE src)
-target_sources(test_issue_122 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_122 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -537,16 +561,6 @@ add_test(NAME issue_122_verification COMMAND ./test_issue_122)
 add_executable(test_issue_123 tests/test_issue_123.cpp)
 set_property(TARGET test_issue_123 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_123 PRIVATE src)
-target_sources(test_issue_123 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_123 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -571,16 +585,6 @@ add_test(NAME issue_123_verification COMMAND ./test_issue_123)
 add_executable(test_issue_124 tests/test_issue_124.cpp)
 set_property(TARGET test_issue_124 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_124 PRIVATE src)
-target_sources(test_issue_124 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_124 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -607,16 +611,8 @@ add_executable(test_issue_125 tests/test_issue_125.cpp)
 set_property(TARGET test_issue_125 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_125 PRIVATE src src/compiler)
 target_sources(test_issue_125 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/observability_metrics.h)
+src/compiler/observability_metrics.h
+)
 target_sources(test_issue_125 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -642,9 +638,6 @@ add_test(NAME issue_125_verification COMMAND ./test_issue_125)
 add_executable(test_issue_126 tests/test_issue_126.cpp)
 set_property(TARGET test_issue_126 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_126 PRIVATE src)
-target_sources(test_issue_126 PRIVATE
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp)
 target_sources(test_issue_126 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -668,16 +661,8 @@ add_executable(test_issue_127 tests/test_issue_127.cpp)
 set_property(TARGET test_issue_127 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_127 PRIVATE src src/compiler)
 target_sources(test_issue_127 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/observability_metrics.h)
+src/compiler/observability_metrics.h
+)
 target_sources(test_issue_127 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -703,18 +688,6 @@ add_test(NAME issue_127_verification COMMAND ./test_issue_127)
 add_executable(test_issue_128 tests/test_issue_128.cpp)
 set_property(TARGET test_issue_128 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_128 PRIVATE src)
-target_sources(test_issue_128 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp)
 target_sources(test_issue_128 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -740,16 +713,6 @@ add_test(NAME issue_128_verification COMMAND ./test_issue_128)
 add_executable(test_issue_130 tests/test_issue_130.cpp)
 set_property(TARGET test_issue_130 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_130 PRIVATE src)
-target_sources(test_issue_130 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_130 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -774,16 +737,6 @@ add_test(NAME issue_130_verification COMMAND ./test_issue_130)
 add_executable(test_issue_131 tests/test_issue_131.cpp)
 set_property(TARGET test_issue_131 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_131 PRIVATE src)
-target_sources(test_issue_131 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_131 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -848,13 +801,8 @@ target_sources(test_issue_132 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_134)
 target_include_directories(test_issue_134 PRIVATE src/compiler)
 target_sources(test_issue_134 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/observability_metrics.h)
+src/compiler/observability_metrics.h
+)
 target_sources(test_issue_134 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
@@ -899,34 +847,13 @@ target_sources(test_issue_135 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_135 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_135 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -953,7 +880,8 @@ target_include_directories(test_issue_136 PRIVATE src/compiler)
 target_sources(test_issue_136 PRIVATE
     src/compiler/aot_mangle.h
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 
 # Issue #137 verification: full hygienic macros (define-hygienic-macro
 # + automatic gensym). The core implementation was shipped in
@@ -965,31 +893,12 @@ target_sources(test_issue_136 PRIVATE
 # Phase 2 pilot-7: converted using early helper. Base covers core + value/diag/value_impl; append the heavy parser/serve/evaluator/JIT/LLVM specifics + rtti flags + LLVM bits.
 aura_add_issue_test(test_issue_137)
 target_sources(test_issue_137 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_sources(test_issue_137 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
@@ -1023,31 +932,12 @@ target_link_libraries(test_issue_137 PRIVATE ${llvm_libs})
 # Phase 2 pilot-8: converted using early helper. Base covers core + value/diag/value_impl; append the parser/serve/evaluator/JIT/LLVM specifics + rtti flags + LLVM bits.
 aura_add_issue_test(test_issue_158)
 target_sources(test_issue_158 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_sources(test_issue_158 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
@@ -1081,31 +971,12 @@ target_link_libraries(test_issue_158 PRIVATE ${llvm_libs})
 # Phase 2 pilot-9: converted using early helper. Base covers core + value/diag/value_impl; append the parser/serve/evaluator/JIT/LLVM specifics + rtti flags + LLVM bits.
 aura_add_issue_test(test_issue_159)
 target_sources(test_issue_159 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_sources(test_issue_159 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
@@ -1141,8 +1012,6 @@ target_link_libraries(test_issue_159 PRIVATE ${llvm_libs})
 aura_add_issue_test(test_issue_161)
 target_sources(test_issue_161 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx)
-target_sources(test_issue_161 PRIVATE
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp)
 
 # Issue #162 Phase 1 verification: Type Concepts for the type
 # system. Verifies concept TypeConstraint + 2 concrete constraint
@@ -1157,9 +1026,8 @@ target_sources(test_issue_162 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/type_checker.ixx
     src/compiler/type_concepts.ixx)
 target_sources(test_issue_162 PRIVATE
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/type_concepts_impl.cpp)
+src/compiler/type_concepts_impl.cpp
+)
 
 # Issue #163 verification: expanded Pass concept usage. Verifies
 # concept AnalysisPass, run_pipeline in 3+ locations (test #4),
@@ -1176,12 +1044,6 @@ target_sources(test_issue_163 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/arity.ixx
     src/compiler/constant_folding.ixx
     src/compiler/pass_manager.ixx)
-target_sources(test_issue_163 PRIVATE
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 
 # Issue #164 verification: fiber:join spin-fallback elimination.
 # Verifies (1) basic fiber:join still works, (2) no spin even
@@ -1229,34 +1091,13 @@ target_sources(test_issue_164 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/service.ixx)
 target_sources(test_issue_164 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_164 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -1307,34 +1148,12 @@ target_sources(test_issue_184 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/service.ixx)
 target_sources(test_issue_184 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_184 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -1390,34 +1209,13 @@ target_sources(test_issue_165 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/service.ixx)
 target_sources(test_issue_165 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_165 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -1464,34 +1262,13 @@ target_sources(test_issue_166 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/service.ixx)
 target_sources(test_issue_166 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_166 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -1525,9 +1302,6 @@ target_sources(test_issue_168 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/type_checker.ixx)
-target_sources(test_issue_168 PRIVATE
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/compiler/type_checker_impl.cpp)
 
 # Issue #169 verification: Fine-grained Incremental Compilation
 # v3 (Phase 1: config flag). Verifies the IncrementalStrictness
@@ -1563,34 +1337,12 @@ target_sources(test_issue_169 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/service.ixx)
 target_sources(test_issue_169 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_169 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -1616,8 +1368,7 @@ target_sources(test_issue_170 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/spec_jit_controller.cpp)
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_170 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_170 PRIVATE AURA_HAVE_LLVM=1)
@@ -1657,34 +1408,13 @@ target_sources(test_issue_159_bench PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FI
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_159_bench PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_159_bench PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -1738,34 +1468,13 @@ target_sources(test_issue_138 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_138 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_138 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -1813,34 +1522,13 @@ target_sources(test_issue_139 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_139 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_139 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -1888,34 +1576,13 @@ target_sources(test_issue_140 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_140 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_140 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -1962,34 +1629,13 @@ target_sources(test_issue_141 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_141 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_141 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2034,34 +1680,13 @@ target_sources(test_issue_142 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_142 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_142 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2348,34 +1973,13 @@ target_sources(test_issue_143 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_143 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_143 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2412,35 +2016,14 @@ target_sources(test_issue_144 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_144 PRIVATE
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/core/contract_handler.cpp
-    src/compiler/shape_profiler.cpp
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
-    src/compiler/spec_jit_controller.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_144 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2481,34 +2064,13 @@ target_sources(test_issue_145 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_145 PRIVATE
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/shape_profiler.cpp
     src/compiler/observability_metrics.h
     src/compiler/observability_snapshot.h
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp)
+)
 # Issue #145: aura_jit.cpp uses LLVM and pimpl over an Impl
 # forward declaration. Needs -fno-rtti to match the aura binary
 # configuration (shared note with 146).
@@ -2550,32 +2112,11 @@ target_sources(test_issue_146 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_146 PRIVATE
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/shape_profiler.cpp
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp)
+)
 # Issue #146: aura_jit.cpp uses LLVM and pimpl over an Impl
 # forward declaration. Needs -fno-rtti (shared with 145).
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -2610,32 +2151,11 @@ target_sources(test_issue_147 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_147 PRIVATE
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/shape_profiler.cpp
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp)
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_147 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2670,32 +2190,11 @@ target_sources(test_issue_148 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_148 PRIVATE
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/shape_profiler.cpp
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp)
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_148 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2730,32 +2229,11 @@ target_sources(test_issue_149 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_149 PRIVATE
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/lowering_linear_types_impl.cpp
+ # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/shape_profiler.cpp
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp)
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_149 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2789,15 +2267,6 @@ target_sources(test_issue_171 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/type_checker.ixx
     src/compiler/coercion_map.ixx
     src/compiler/pass_manager.ixx)
-target_sources(test_issue_171 PRIVATE
-    src/compiler/arity_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/parser/lexer_impl.cpp
-    src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp)
 target_compile_options(test_issue_171 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -2814,11 +2283,6 @@ add_test(NAME issue_171_verification COMMAND ./test_issue_171)
 add_executable(test_issue_204 tests/test_issue_204.cpp)
 set_property(TARGET test_issue_204 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_204 PRIVATE src src/serve)
-target_sources(test_issue_204 PRIVATE
-    src/serve/gc_coordinator.cpp
-    src/serve/scheduler.cpp
-    src/serve/fiber.cpp
-    src/serve/worker.cpp)
 target_compile_options(test_issue_204 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -2835,14 +2299,11 @@ add_executable(test_issue_205 tests/test_issue_205.cpp)
 set_property(TARGET test_issue_205 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_205 PRIVATE src src/serve)
 target_sources(test_issue_205 PRIVATE
-    src/serve/gc_coordinator.cpp
-    src/serve/scheduler.cpp
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
     # Same dep as test_concurrent: aura_set_current_fiber_id_fn
     # (defined in aura_jit_runtime.cpp) is called from
     # fiber.cpp's static init.
-    src/compiler/aura_jit_runtime.cpp)
+src/compiler/aura_jit_runtime.cpp
+)
 target_compile_options(test_issue_205 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -2894,31 +2355,12 @@ target_include_directories(test_issue_182 PRIVATE src src/compiler)
 aura_add_issue_test(test_issue_187)
 target_include_directories(test_issue_187 PRIVATE src src/compiler)
 target_sources(test_issue_187 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_sources(test_issue_187 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
@@ -2957,34 +2399,12 @@ target_link_libraries(test_issue_187 PRIVATE ${llvm_libs})
 aura_add_issue_test(test_issue_188)
 target_include_directories(test_issue_188 PRIVATE src src/compiler)
 target_sources(test_issue_188 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_188 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3023,34 +2443,12 @@ target_sources(test_issue_188 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_189)
 target_include_directories(test_issue_189 PRIVATE src src/compiler)
 target_sources(test_issue_189 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_189 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3090,34 +2488,12 @@ target_sources(test_issue_189 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_190)
 target_include_directories(test_issue_190 PRIVATE src src/compiler)
 target_sources(test_issue_190 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_190 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3157,34 +2533,12 @@ target_sources(test_issue_190 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_191)
 target_include_directories(test_issue_191 PRIVATE src src/compiler)
 target_sources(test_issue_191 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_191 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3222,34 +2576,12 @@ target_sources(test_issue_191 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_192)
 target_include_directories(test_issue_192 PRIVATE src src/compiler)
 target_sources(test_issue_192 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_192 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3288,34 +2620,12 @@ target_sources(test_issue_192 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_193)
 target_include_directories(test_issue_193 PRIVATE src src/compiler)
 target_sources(test_issue_193 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_193 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3357,34 +2667,12 @@ target_sources(test_issue_193 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_194)
 target_include_directories(test_issue_194 PRIVATE src src/compiler)
 target_sources(test_issue_194 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_194 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3426,34 +2714,12 @@ target_sources(test_issue_194 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_195)
 target_include_directories(test_issue_195 PRIVATE src src/compiler)
 target_sources(test_issue_195 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_195 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3492,34 +2758,12 @@ target_sources(test_issue_195 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_196)
 target_include_directories(test_issue_196 PRIVATE src src/compiler)
 target_sources(test_issue_196 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_196 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3563,34 +2807,12 @@ target_sources(test_issue_196 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_224)
 target_include_directories(test_issue_224 PRIVATE src src/compiler tests)
 target_sources(test_issue_224 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_224 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3647,15 +2869,6 @@ target_sources(test_issue_197 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/type_checker.ixx
     src/compiler/coercion_map.ixx
     src/compiler/pass_manager.ixx)
-target_sources(test_issue_197 PRIVATE
-    src/compiler/arity_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/parser/lexer_impl.cpp
-    src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp)
 target_compile_options(test_issue_197 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -3670,34 +2883,12 @@ add_test(NAME issue_197_verification COMMAND ./test_issue_197)
 aura_add_issue_test(test_issue_197_observability)
 target_include_directories(test_issue_197_observability PRIVATE src src/compiler)
 target_sources(test_issue_197_observability PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_197_observability PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -3734,32 +2925,10 @@ target_sources(test_issue_197_observability PUBLIC FILE_SET CXX_MODULES BASE_DIR
 aura_add_issue_test(test_issue_206)
 target_include_directories(test_issue_206 PRIVATE src src/compiler)
 target_sources(test_issue_206 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp)
+src/compiler/aura_jit_bridge.cpp
+)
 target_include_directories(test_issue_206 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_206 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_206 PRIVATE ${llvm_libs})
@@ -3796,32 +2965,10 @@ target_sources(test_issue_206 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_174)
 target_include_directories(test_issue_174 PRIVATE src src/compiler)
 target_sources(test_issue_174 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp)
+src/compiler/aura_jit_bridge.cpp
+)
 target_include_directories(test_issue_174 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_174 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_174 PRIVATE ${llvm_libs})
@@ -3859,32 +3006,10 @@ target_sources(test_issue_174 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_208)
 target_include_directories(test_issue_208 PRIVATE src src/compiler)
 target_sources(test_issue_208 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp)
+src/compiler/aura_jit_bridge.cpp
+)
 target_include_directories(test_issue_208 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_208 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_208 PRIVATE ${llvm_libs})
@@ -3923,32 +3048,10 @@ target_sources(test_issue_208 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_210)
 target_include_directories(test_issue_210 PRIVATE src src/compiler)
 target_sources(test_issue_210 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp)
+src/compiler/aura_jit_bridge.cpp
+)
 target_include_directories(test_issue_210 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_210 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_210 PRIVATE ${llvm_libs})
@@ -3986,32 +3089,10 @@ target_sources(test_issue_210 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 aura_add_issue_test(test_issue_211)
 target_include_directories(test_issue_211 PRIVATE src src/compiler)
 target_sources(test_issue_211 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp)
+src/compiler/aura_jit_bridge.cpp
+)
 target_include_directories(test_issue_211 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_211 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_211 PRIVATE ${llvm_libs})
@@ -4051,12 +3132,6 @@ target_sources(test_issue_211 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # this is a pure module test, exercised against
 # hand-built IRFunctions.
 aura_add_issue_test(test_issue_212)
-target_sources(test_issue_212 PRIVATE
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    tests/_stubs/issue_212_runtime_stubs.cpp)
 target_sources(test_issue_212 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
@@ -4149,32 +3224,10 @@ add_test(NAME issue_212_bench COMMAND ./issue_212_bench)
 aura_add_issue_test(test_issue_213)
 target_include_directories(test_issue_213 PRIVATE src src/compiler)
 target_sources(test_issue_213 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp)
+src/compiler/aura_jit_bridge.cpp
+)
 target_include_directories(test_issue_213 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_213 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_213 PRIVATE ${llvm_libs})
@@ -4218,32 +3271,10 @@ add_test(NAME issue_213_verification COMMAND ./test_issue_213)
 aura_add_issue_test(test_issue_177)
 target_include_directories(test_issue_177 PRIVATE src src/compiler)
 target_sources(test_issue_177 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp)
+src/compiler/aura_jit_bridge.cpp
+)
 target_include_directories(test_issue_177 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_177 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_177 PRIVATE ${llvm_libs})
@@ -4288,32 +3319,10 @@ add_test(NAME issue_177_verification COMMAND ./test_issue_177)
 aura_add_issue_test(test_issue_213_panic_fiber)
 target_include_directories(test_issue_213_panic_fiber PRIVATE src src/compiler)
 target_sources(test_issue_213_panic_fiber PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp)
+src/compiler/aura_jit_bridge.cpp
+)
 target_include_directories(test_issue_213_panic_fiber PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_213_panic_fiber PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_213_panic_fiber PRIVATE ${llvm_libs})
@@ -4480,34 +3489,12 @@ add_test(NAME issue_223_verification COMMAND ./test_issue_223)
 aura_add_issue_test(test_issue_224_closure_bridge)
 target_include_directories(test_issue_224_closure_bridge PRIVATE src src/compiler tests)
 target_sources(test_issue_224_closure_bridge PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_224_closure_bridge PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -4547,34 +3534,12 @@ add_test(NAME issue_224_closure_bridge_verification COMMAND ./test_issue_224_clo
 aura_add_issue_test(test_issue_225_bridge_invalidation)
 target_include_directories(test_issue_225_bridge_invalidation PRIVATE src src/compiler tests)
 target_sources(test_issue_225_bridge_invalidation PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_225_bridge_invalidation PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -4615,34 +3580,12 @@ add_test(NAME issue_225_bridge_invalidation_verification COMMAND ./test_issue_22
 aura_add_issue_test(test_issue_226)
 target_include_directories(test_issue_226 PRIVATE src src/compiler tests)
 target_sources(test_issue_226 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_226 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -4684,34 +3627,12 @@ add_test(NAME issue_226_closure_bridge_stress_verification COMMAND ./test_issue_
 aura_add_issue_test(test_issue_227)
 target_include_directories(test_issue_227 PRIVATE src src/compiler tests)
 target_sources(test_issue_227 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_227 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -4751,34 +3672,12 @@ add_test(NAME issue_227_occurrence_narrowing_verification COMMAND ./test_issue_2
 aura_add_issue_test(test_issue_228)
 target_include_directories(test_issue_228 PRIVATE src src/compiler tests)
 target_sources(test_issue_228 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/cache_impl.cpp
-    src/compiler/lowering_impl.cpp
-    src/compiler/ir_executor_impl.cpp
-    src/compiler/constant_folding_impl.cpp
-    src/compiler/compute_kind_impl.cpp
-    src/compiler/query_impl.cpp
-    src/compiler/shape_profiler.cpp
-    src/compiler/spec_jit_controller.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
-    src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h)
+src/compiler/observability_snapshot.h
+)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_228 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -4821,8 +3720,6 @@ add_test(NAME issue_228_dependent_type_system_verification COMMAND ./test_issue_
 add_executable(test_issue_178 tests/test_issue_178.cpp)
 set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_178 PRIVATE src)
-target_sources(test_issue_178 PRIVATE
-    src/core/ast_impl.cpp)
 target_sources(test_issue_178 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx src/core/type_arena.ixx src/core/type.ixx)
 target_compile_options(test_issue_178 PRIVATE -freflection -Wall -Wextra -Wpedantic
