@@ -677,6 +677,16 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size()) {
         return ne;
     }
+    // Issue #145 P0 follow-up: hold env_frames_mtx_ shared
+    // lock for the duration of the frame read. The frame
+    // reference must remain valid through .bindings(),
+    // .bindings_symid_(), and .parent_id reads. Without
+    // this lock, a concurrent alloc_env_frame on the main
+    // thread (during eval, mutate:rebind, etc.) could
+    // reallocate the deque's map array, freeing the map
+    // pointer a fiber thread (running apply_closure →
+    // materialize_call_env) is reading.
+    std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
     const EnvFrame& fr = env_frame(cl.env_id);
     ne.bindings() = fr.bindings_;
     ne.bindings_symid_mut() = fr.bindings_symid_;
@@ -17336,24 +17346,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
     if (cl_found) {
         // Issue #145 Phase 2.3 — materialize the call env from
         // the SoA arena (env_frames_[cl.env_id]) -- legacy cl.env pointer path removed in P0.
-        // Hold the shared lock for the duration of the
-        // materialization so env_frames_ can't reallocate
-        // (deque map reallocation) underneath us. ASan caught
-        // the read-from-freed-map-pointer race when this
-        // wasn't locked.
-        Env ne;
-        EnvId parent_id = NULL_ENV_ID;
-        {
-            std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
-            const EnvFrame& fr = env_frame(cl_copy.env_id);
-            ne.bindings() = fr.bindings_;
-            ne.bindings_symid_mut() = fr.bindings_symid_;
-            parent_id = fr.parent_id;
-        }
-        if (parent_id != NULL_ENV_ID) {
-            ne.set_owner(this);
-            ne.set_parent_id(parent_id);
-        }
+        // materialize_call_env now takes env_frames_mtx_
+        // internally (Issue #145 P0 follow-up — env_frames_
+        // deque map-array reallocation race under fiber:spawn).
+        Env ne = materialize_call_env(cl_copy);
         ne.set_primitives(&primitives_);
 
         // Issue #145: set the pool so bind_symid can mirror
