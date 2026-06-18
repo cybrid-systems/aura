@@ -17553,9 +17553,31 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         case ast::NodeTag::Variable: {
             auto name = std::string(pool.resolve(v.sym_id));
+            // Issue #231: dedup by content so two quote literals
+            // of the same symbol produce the same string heap
+            // index. Without this, `(eq? 'eda:module 'eda:module)`
+            // returns #f because each quote creates a fresh
+            // string heap entry. Use short_str_cache_ for short
+            // symbols (the common case for symbols with colon
+            // prefixes like eda:module), and a heap scan for
+            // longer ones. Symbols are usually < 32 chars so the
+            // linear scan is bounded.
+            if (name.size() <= 6) {
+                auto it = short_str_cache_.find(name);
+                if (it != short_str_cache_.end())
+                    return it->second;
+            } else {
+                for (std::size_t i = 0; i < string_heap_.size(); ++i) {
+                    if (string_heap_[i] == name)
+                        return make_string(static_cast<std::int64_t>(i));
+                }
+            }
             auto idx = string_heap_.size();
             string_heap_.push_back(std::move(name));
-            return make_string(idx);
+            auto val = make_string(static_cast<std::int64_t>(idx));
+            if (name.size() <= 6)
+                short_str_cache_[name] = val;
+            return val;
         }
         case ast::NodeTag::Call: {
             EvalValue tail = make_void();
