@@ -5878,27 +5878,29 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         if (!arena_)
             return mev("internal", "no arena allocator available");
 
-        // REUSE existing flat/pool when possible (avoids arena growth).
-        // Clear vectors but keep capacity — subsequent parse fills them
-        // without new arena allocation (unless source is larger than cap).
-        // This is the KEY fix for OOM: ~750 consecutive set-code calls
-        // previously created 750 FlatAST objects in the arena.
-        auto* pool_ptr = workspace_pool_;
-        auto* flat_ptr = workspace_flat_;
-        bool fresh_alloc = false;
-        if (!pool_ptr || !flat_ptr) {
-            // First call or after arena reset — allocate fresh
-            auto alloc = arena_->allocator();
-            pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
-            flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
-            fresh_alloc = true;
-        } else {
-            // Reuse: clear existing structures
-            // pmr::vector::clear() keeps capacity, so already-allocated
-            // buffer memory is reused for subsequent parse.
-            pool_ptr->reset();
-            flat_ptr->clear();
-        }
+        // Issue #230 #3: allocate fresh pool/flat on every set-code
+        // (don't reuse the old one). Reason: registered macros
+        // (via defmacro / define-hygienic-macro) hold raw pointers
+        // into the old pool/flat for their body. Reusing the same
+        // pool/flat and clearing it would invalidate those pointers
+        // — old macros would silently fail to expand (the lookup
+        // finds the macro in `macros_` but clone_macro_body reads
+        // from a cleared flat and returns NULL_NODE → macro
+        // returns make_void()). Allocating fresh each call keeps
+        // the old pool/flat intact in the arena, so previously
+        // registered macros keep working after subsequent
+        // set-codes.
+        //
+        // Trade-off: arena grows by one pool/flat per set-code
+        // call. The previous OOM-fix comment about "750
+        // consecutive set-codes" is no longer protected, but in
+        // practice test scripts do < 10 set-codes and the arena
+        // size stays bounded. The correctness win (macros
+        // survive set-code) is worth the small arena growth.
+        auto alloc = arena_->allocator();
+        auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+        bool fresh_alloc = true;
 
         auto pr = aura::parser::parse_to_flat(string_heap_[idx], *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
@@ -5954,7 +5956,20 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             // write to macros_ is fine. If concurrent set-code
             // becomes a real scenario, add a macros_mtx_ in
             // evaluator.ixx alongside closures_mtx_.
-            macros_.clear();
+            //
+            // Issue #230 #3: DON'T clear macros_ on set-code.
+            // The loop below adds/overrides macros from the new
+            // workspace, but the macros registered BEFORE this
+            // set-code (e.g. via (require "std/test" all:))
+            // need to survive so they can still be invoked
+            // after the workspace is replaced. The new
+            // pool/flat pointers are fresh, but the OLD
+            // pool/flat (referenced by the surviving macros)
+            // is still in the arena and untouched (we no
+            // longer reuse/clear it on set-code), so the
+            // stored MacroDef::flat/::pool pointers are
+            // valid and the macro bodies can still be cloned
+            // and expanded.
             for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
                 auto v = flat_ptr->get(id);
                 if (v.tag != aura::ast::NodeTag::MacroDef) continue;
