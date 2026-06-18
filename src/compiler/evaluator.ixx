@@ -1481,6 +1481,12 @@ private:
     std::size_t sample_counter_ = 0;
     // Last logged warning level (so we don't spam the same warning).
     std::string last_warn_level_;
+    // Issue #236 follow-up: thread-local depth counter for
+    // MutationBoundaryGuard nesting. The outermost guard (depth
+    // 0→1) acquires the workspace write lock; nested guards just
+    // bump the depth counter. shared_mutex is not recursive, so
+    // a nested guard that tries to lock again would deadlock.
+    int mutation_boundary_depth_ = 0;
 
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_ = 1;
@@ -1855,44 +1861,60 @@ public:
     public:
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag) noexcept
             : ev_(&ev), flag_(success_flag),
-              // Issue #233: the unique_lock is now a MEMBER of
-              // the guard (was previously a local in
-              // enter_mutation_boundary() that destructed at
+              // Issue #233 + #236 follow-up: the unique_lock is
+              // now a MEMBER of the guard (was previously a local
+              // in enter_mutation_boundary() that destructed at
               // function return, releasing the lock immediately).
-              // Holding the lock across the boundary body is
-              // the whole point of the guard — without this,
-              // all mutate:* primitives ran UNLOCKED, defeating
-              // the workspace_mtx_ concurrency guard.
               //
               // enter_mutation_boundary() now does only the
               // version bump + log-size capture (no lock
               // acquire); this constructor acquires the
               // exclusive write lock and holds it for the
               // entire guard lifetime.
-              lock_(ev.workspace_mtx_) {
+              //
+              // NESTED GUARD HANDLING (test_issue_184 Test 5):
+              // shared_mutex is NOT recursive, so a nested guard
+              // would deadlock on the inner acquire. The fix:
+              // only the OUTERMOST guard acquires the lock.
+              // Track nesting depth via a member counter; only
+              // acquire when depth 0→1, release when 1→0.
+              // The depth is shared (static thread_local) so
+              // nested guards in the same thread cooperate.
+              lock_(ev.workspace_mtx_, std::defer_lock) {
             if (flag_) *flag_ = true;  // optimistic default
+            bool outermost = (++ev_->mutation_boundary_depth_ == 1);
+            if (outermost) lock_.lock();
             ev_->enter_mutation_boundary();
         }
         ~MutationBoundaryGuard() {
             if (!ev_) return;
             bool success = flag_ ? *flag_ : true;
-            // Lock is still held here; exit_mutation_boundary
-            // runs under the lock. Lock is released when
-            // `lock_` member destructs after this body.
+            // exit_mutation_boundary runs under the lock for
+            // the outermost guard; lockless for nested guards
+            // (lock is held by the outer guard).
+            bool outermost = (--ev_->mutation_boundary_depth_ == 0);
             ev_->exit_mutation_boundary(success);
-            // unique_lock destructor runs automatically here,
-            // releasing the workspace write lock.
+            if (outermost) lock_.unlock();
+            // unique_lock destructor runs automatically here.
         }
         MutationBoundaryGuard(const MutationBoundaryGuard&) = delete;
         MutationBoundaryGuard& operator=(const MutationBoundaryGuard&) = delete;
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
             : ev_(o.ev_), flag_(o.flag_),
               lock_(std::move(o.lock_)) {
+            // Move transfers the lock state; nested-depth
+            // bookkeeping stays put (the source guard is now
+            // empty but its depth contribution transfers via
+            // the moved-into guard's existing depth counter).
+            // In practice moves are rare; if the source was
+            // outermost, the moved-from guard must NOT release
+            // on its now-empty destruction. We mark the source
+            // ev_ = nullptr so its dtor no-ops, preserving the
+            // lock for the moved-into guard.
             o.ev_ = nullptr; o.flag_ = nullptr;
         }
         MutationBoundaryGuard& operator=(MutationBoundaryGuard&& o) noexcept {
             if (this != &o) {
-                // Exit current if any, then steal.
                 if (ev_) ev_->exit_mutation_boundary(flag_ ? *flag_ : true);
                 ev_ = o.ev_; flag_ = o.flag_;
                 lock_ = std::move(o.lock_);
@@ -1904,10 +1926,11 @@ public:
         Evaluator* ev_;
         bool* flag_;
         // Issue #233: hold the exclusive workspace write lock
-        // for the guard's lifetime. Without this member, the
-        // lock was acquired and immediately released inside
-        // enter_mutation_boundary(), defeating the purpose
-        // of the guard.
+        // for the guard's lifetime. The lock is initialized in
+        // deferred mode and only locked for the outermost guard
+        // (depth 0→1). Nested guards increment the depth counter
+        // but do NOT touch the mutex — the outer guard already
+        // holds it.
         std::unique_lock<std::shared_mutex> lock_;
     };
 public:
