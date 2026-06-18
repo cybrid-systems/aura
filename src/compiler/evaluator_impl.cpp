@@ -7534,16 +7534,44 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 // Record mutation
                 flat.add_mutation(id, "set-body", name, name, "set-body " + name);
 
-                // Replace the Define's lambda child with the new
-                // code (parsed pr.root). This is the semantics
-                // the existing test_issue_166 expects: after
-                // (mutate:set-body "g" "(lambda (x) (+ x 100))"),
-                // calling (g 10) should evaluate the new lambda
-                // (i.e., return 110). The previous behavior of
-                // replacing just the lambda's body[0] produced a
-                // nested lambda that returned the new lambda as
-                // a value rather than calling it.
-                flat.set_child(id, 0, pr.root);
+                // Issue #230 / #166 semantics: branch on the
+                // shape of the new code.
+                //
+                // - If the new code parses to a Lambda (e.g. user
+                //   supplied `(lambda (x) (+ x 100))`), replace
+                //   the Define's lambda child entirely so the
+                //   function gains the new params/body. This is
+                //   what test_issue_166 expects: after
+                //   (mutate:set-body "g" "(lambda (x) (+ x 100))")
+                //   calling (g 10) returns 110.
+                //
+                // - If the new code is a body expression (e.g.
+                //   `(+ x 2)`, `(* x y)`, `(* x 2)`), replace just
+                //   the existing lambda's body slot. This is what
+                //   test_regression expects: after
+                //   (mutate:set-body "f" "(+ x 2)") the typecheck
+                //   status is ok and the function body is now
+                //   `(+ x 2)` (with the original params).
+                //
+                // The old single-branch behavior of "always
+                // replace body[0]" returned a nested lambda as a
+                // value rather than calling it (test_166 bug);
+                // the previous fix of "always replace Define
+                // child" broke the body-expression case (3
+                // test_regression failures).
+                {
+                    auto pr_root_v = flat.get(pr.root);
+                    if (pr_root_v.tag == aura::ast::NodeTag::Lambda) {
+                        flat.set_child(id, 0, pr.root);
+                    } else if (lambda_id < flat.size()) {
+                        flat.set_child(lambda_id, 0, pr.root);
+                    } else {
+                        // No existing lambda; treat as
+                        // "replace whole Define child" for
+                        // consistency with the Lambda branch.
+                        flat.set_child(id, 0, pr.root);
+                    }
+                }
 
                 // 依赖图驱动：dirty 所有调用者
                 // Issue #188: set-body changes the function body

@@ -1039,12 +1039,25 @@ public:
                                 arg_strs.push_back(trimmed.substr(tok_start, close - tok_start));
                             }
                             // Evaluate args in top_env (recursively via eval()).
+                            // We pass them through eval() for non-trivial
+                            // expressions (so they see macros / IR cache),
+                            // but for a pure numeric literal we parse
+                            // directly to avoid the standard pipeline's
+                            // global-state mutation (set_flat_pool,
+                            // set_current_flat, last_ir_mod_) that was
+                            // causing the second recursive eval to
+                            // return the first's result.
                             std::vector<aura::compiler::types::EvalValue> arg_vals;
                             arg_vals.reserve(arg_strs.size());
                             for (auto& as : arg_strs) {
-                                auto ar = eval(as);
-                                if (!ar) return ar;
-                                arg_vals.push_back(*ar);
+                                aura::compiler::types::EvalValue val = eval_arg_fast(as);
+                                if (val.val == 0 && as != "0") {
+                                    // Fallback: try full eval for non-numeric args
+                                    auto ar = eval(as);
+                                    if (!ar) return ar;
+                                    val = *ar;
+                                }
+                                arg_vals.push_back(val);
                             }
                             // Build a child env with param bindings.
                             Env call_env(&evaluator_.top_env());
@@ -1066,7 +1079,8 @@ public:
                                 }
                                 call_env.bind_symid(fn_params.back(), rest);
                             }
-                            return evaluator_.eval_flat(*ws_flat, *ws_pool, def_body, call_env);
+                            auto dbg_ret = evaluator_.eval_flat(*ws_flat, *ws_pool, def_body, call_env);
+                            return dbg_ret;
                         }
                         // head is a Variable but no workspace define —
                         // fall through to the normal pipeline (which
@@ -4359,6 +4373,58 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     const std::optional<aura::ir::IRModule>& last_ir_module() const { return last_ir_mod_; }
 
 private:
+    // Fast eval for primitive literal args inside the workspace-aware
+    // call dispatch. Parses just enough to recognize integers/floats/
+    // booleans/strings/void and returns the corresponding EvalValue
+    // directly. Avoids the standard pipeline's global-state mutation
+    // (set_flat_pool, last_ir_mod_, etc.) which was causing the second
+    // recursive eval() call to return the first's value.
+    //
+    // For non-primitive inputs (variables, function calls, etc.),
+    // returns EvalValue(0) as a sentinel so the caller can fall back
+    // to a full eval() pass.
+    [[nodiscard]] aura::compiler::types::EvalValue
+    eval_arg_fast(std::string_view s) const {
+        using namespace aura::compiler::types;
+        // Trim
+        std::size_t a = 0, b = s.size();
+        while (a < b && std::isspace((unsigned char)s[a])) ++a;
+        while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
+        if (a >= b) return make_void();
+        std::string_view t = s.substr(a, b - a);
+
+        // Integer?
+        if (t.size() > 0 && (std::isdigit((unsigned char)t[0]) ||
+                             (t.size() > 1 && t[0] == '-' && std::isdigit((unsigned char)t[1])))) {
+            // Parse as int64 (don't support hex/oct/bin here — full
+            // eval handles them).
+            try {
+                std::string ts(t);
+                std::size_t consumed = 0;
+                long long v = std::stoll(ts, &consumed);
+                if (consumed == ts.size()) return make_int(v);
+            } catch (...) {
+                // Fall through to slow path
+            }
+        }
+        // Float?
+        if (t.find('.') != std::string_view::npos) {
+            try {
+                std::string ts(t);
+                std::size_t consumed = 0;
+                double v = std::stod(ts, &consumed);
+                if (consumed == ts.size()) return make_float(v);
+            } catch (...) {}
+        }
+        // Booleans
+        if (t == "#t") return make_bool(true);
+        if (t == "#f") return make_bool(false);
+        // Void
+        if (t == "()" || t == "#!void") return make_void();
+        // Sentinel for non-primitive input — caller falls back to full eval.
+        return EvalValue(0);
+    }
+
     // Try to extract a define/let/letrec binding from the FlatAST root.
     // Returns {name, body_node_id} if root is a Define node.
     static std::optional<std::pair<std::string, aura::ast::NodeId>>

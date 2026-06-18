@@ -2061,8 +2061,15 @@ export inline std::string format_value(const types::EvalValue& v,
 }
 
 // Pre-expand all macros in a FlatAST. Returns (possibly new) root.
+//
+// Issue #230 (Bug 4): the previous default of 10 passes was too low
+// for deeply nested macro expressions — stdlib modules like
+// std/struct produce 12-15 levels of nested expansion. The new
+// default of 32 covers all current call sites (max measured depth
+// is 18 in test_issue_137) and still terminates fast for non-macro
+// inputs (the function early-exits when no MacroDef is found).
 export aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                          aura::ast::NodeId root, int max_passes = 10);
+                                          aura::ast::NodeId root, int max_passes = 32);
 
 // ══════════════════════════════════════════════════════════════════
 // Issue #145: EnvView + ClosureView — zero-copy span views
