@@ -1662,13 +1662,25 @@ public:
     // writes the caller will make under the boundary to acquirers
     // on other threads).
     void enter_mutation_boundary() {
-        std::unique_lock<std::shared_mutex> lock(workspace_mtx_);
-        // Issue #213 Cycle 1: capture the mutation log size at
-        // entry so the exit(false) rollback knows how far to undo.
-        // The size is the log size *at the moment of the boundary
-        // entry* — any mutations recorded after this point (during
-        // the boundary body) will be appended to positions >=
-        // this size, and `rollback_to_size` will undo them.
+        // Issue #233: the workspace_mtx_ lock was previously
+        // acquired HERE as a local unique_lock that destructed
+        // at function return, releasing the lock immediately.
+        // That meant mutate:* primitives ran UNLOCKED — the
+        // MutationBoundaryGuard's whole purpose was defeated.
+        //
+        // The lock is now held by MutationBoundaryGuard as a
+        // member (so it survives across enter + body + exit).
+        // enter_mutation_boundary() no longer acquires the
+        // lock; it just does the version bump + log-size
+        // capture. The guard's destructor releases the lock
+        // after exit_mutation_boundary() runs.
+        //
+        // The bump performed by enter_mutation_boundary() is
+        // a release-store (publishes any writes the caller
+        // will make under the boundary to acquirers on other
+        // threads); the version increment is release (publishes any
+        // writes the caller will make under the boundary to acquirers
+        // on other threads).
         std::size_t log_size = workspace_flat_ ? workspace_flat_->all_mutations().size() : 0;
         // Issue #221: capture the per-node children_ vector. The
         // PCV's COW semantics make this a cheap copy (each PCV
@@ -1842,24 +1854,48 @@ public:
     class MutationBoundaryGuard {
     public:
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag) noexcept
-            : ev_(&ev), flag_(success_flag) {
+            : ev_(&ev), flag_(success_flag),
+              // Issue #233: the unique_lock is now a MEMBER of
+              // the guard (was previously a local in
+              // enter_mutation_boundary() that destructed at
+              // function return, releasing the lock immediately).
+              // Holding the lock across the boundary body is
+              // the whole point of the guard — without this,
+              // all mutate:* primitives ran UNLOCKED, defeating
+              // the workspace_mtx_ concurrency guard.
+              //
+              // enter_mutation_boundary() now does only the
+              // version bump + log-size capture (no lock
+              // acquire); this constructor acquires the
+              // exclusive write lock and holds it for the
+              // entire guard lifetime.
+              lock_(ev.workspace_mtx_) {
             if (flag_) *flag_ = true;  // optimistic default
             ev_->enter_mutation_boundary();
         }
         ~MutationBoundaryGuard() {
             if (!ev_) return;
             bool success = flag_ ? *flag_ : true;
+            // Lock is still held here; exit_mutation_boundary
+            // runs under the lock. Lock is released when
+            // `lock_` member destructs after this body.
             ev_->exit_mutation_boundary(success);
+            // unique_lock destructor runs automatically here,
+            // releasing the workspace write lock.
         }
         MutationBoundaryGuard(const MutationBoundaryGuard&) = delete;
         MutationBoundaryGuard& operator=(const MutationBoundaryGuard&) = delete;
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
-            : ev_(o.ev_), flag_(o.flag_) { o.ev_ = nullptr; o.flag_ = nullptr; }
+            : ev_(o.ev_), flag_(o.flag_),
+              lock_(std::move(o.lock_)) {
+            o.ev_ = nullptr; o.flag_ = nullptr;
+        }
         MutationBoundaryGuard& operator=(MutationBoundaryGuard&& o) noexcept {
             if (this != &o) {
                 // Exit current if any, then steal.
                 if (ev_) ev_->exit_mutation_boundary(flag_ ? *flag_ : true);
                 ev_ = o.ev_; flag_ = o.flag_;
+                lock_ = std::move(o.lock_);
                 o.ev_ = nullptr; o.flag_ = nullptr;
             }
             return *this;
@@ -1867,6 +1903,12 @@ public:
     private:
         Evaluator* ev_;
         bool* flag_;
+        // Issue #233: hold the exclusive workspace write lock
+        // for the guard's lifetime. Without this member, the
+        // lock was acquired and immediately released inside
+        // enter_mutation_boundary(), defeating the purpose
+        // of the guard.
+        std::unique_lock<std::shared_mutex> lock_;
     };
 public:
     // Issue #157 Phase 1: lock hooks for the JIT runtime bridges
