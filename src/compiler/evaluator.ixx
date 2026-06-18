@@ -338,6 +338,16 @@ export struct MacroDef {
     // can't be captured by the call-site context, and
     // call-site bindings can't be captured by the macro.
     bool hygienic = false;
+    // Issue #230 #2: when true, macro expansion binds the call's
+    // args in a child env (env-binding path) instead of AST-
+    // substituting them into the body. This is the right semantics
+    // for symbol-generating macros like define-struct: the body
+    // builds code that references the user's actual struct name
+    // (a symbol) and field list (a list), and the env-binding path
+    // makes these available as Variable lookups in the body,
+    // matching what the non-hygienic `defmacro` path does. Set
+    // by `define-hygienic-macro*` (the * variant).
+    bool preserved = false;
     ast::FlatAST* flat = nullptr;
     ast::StringPool* pool = nullptr;
     ast::NodeId body_id = ast::NULL_NODE;

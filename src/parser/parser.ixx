@@ -90,7 +90,8 @@ aura::ast::NodeId parse_begin(ParserState& s);
 aura::ast::NodeId parse_set(ParserState& s);
 aura::ast::NodeId parse_quote(ParserState& s);
 aura::ast::NodeId parse_cond(ParserState& s);
-aura::ast::NodeId parse_defmacro(ParserState& s, bool hygienic = false);
+aura::ast::NodeId parse_defmacro(ParserState& s, bool hygienic = false,
+                              bool preserve_dotted = false);
 aura::ast::NodeId parse_match(ParserState& s);
 aura::ast::NodeId parse_linear(ParserState& s);
 aura::ast::NodeId parse_move(ParserState& s);

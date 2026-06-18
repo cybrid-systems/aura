@@ -977,12 +977,22 @@ private:
     }
 
     [[nodiscard]] NodeId add_macrodef(SymId name, const std::vector<SymId>& params, NodeId body,
-                                      bool dotted = false, bool hygienic = false) {
+                                      bool dotted = false, bool hygienic = false,
+                                      bool preserved = false) {
         auto id = add_node(NodeTag::MacroDef);
         sym_id_[id] = name;
-        // Issue #120: encode dotted in bit 0 and hygienic in bit 1 of
-        // int_val_ (the existing unused slot for MacroDef).
-        int_val_[id] = (hygienic ? 2 : 0) | (dotted ? 1 : 0);
+        // Issue #120: dotted in bit 0, hygienic in bit 1.
+        // Issue #230 #2: bit 2 = preserved. When set, this macro
+        // uses the env-binding expansion path (params bound in a
+        // child env, no AST subst) instead of the AST-subst
+        // path. The env-binding path is what symbol-generating
+        // macros like define-struct need: the body can reference
+        // the user's actual struct name and field list as
+        // Variables and get the literal values back. The `&`
+        // sigil in the param list is just a marker for
+        // readability — if the macro is `define-hygienic-macro*`
+        // (preserved), ALL params use the env-binding semantics.
+        int_val_[id] = (preserved ? 4 : 0) | (hygienic ? 2 : 0) | (dotted ? 1 : 0);
         children_[id] = PersistentChildVector<NodeId>(
             1, [&](std::size_t i) -> NodeId {
                 return body;
@@ -1004,6 +1014,14 @@ private:
     bool is_dotted_macrodef(NodeId id) const {
         if (id >= int_val_.size()) return false;
         return (int_val_[id] & 1) != 0;
+    }
+    // Issue #230 #2: query the preserved flag (set by
+    // `define-hygienic-macro*`). When true, the macro uses
+    // env-binding expansion (params bound in a child env)
+    // instead of AST substitution.
+    bool is_preserved_macrodef(NodeId id) const {
+        if (id >= int_val_.size()) return false;
+        return (int_val_[id] & 4) != 0;
     }
 
     [[nodiscard]] NodeId add_quote(NodeId val) {
