@@ -2277,6 +2277,14 @@ add_test(NAME issue_225_bridge_invalidation_verification COMMAND ./test_issue_22
 #   4. doomsday stress (200 fibers, random ops)
 aura_add_issue_test(test_issue_226)
 target_include_directories(test_issue_226 PRIVATE src src/compiler tests)
+
+# Issue #237: AOT end-to-end test (spawns aura --emit-binary as subprocess,
+# verifies the resulting ELF runs and produces expected output).
+# This is a pure-POSIX integration test; no Aura runtime imports needed.
+add_executable(test_issue_237 tests/test_issue_237.cpp)
+target_include_directories(test_issue_237 PRIVATE tests)
+target_link_libraries(test_issue_237 PRIVATE aura_test_objects)
+add_test(NAME issue_237_verification COMMAND ./test_issue_237)
 target_sources(test_issue_226 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
