@@ -5967,8 +5967,11 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                 bool is_dotted = (v.int_value & 1) != 0;
                 bool is_hygienic = (v.int_value & 2) != 0;
+                // Issue #230 #2: bit 2 of int_val_ flags the
+                // `define-hygienic-macro*` (preserved-params) variant.
+                bool is_preserved = (v.int_value & 4) != 0;
                 macros_[macro_name] = MacroDef{std::move(param_names), is_dotted,
-                                                is_hygienic, flat_ptr, pool_ptr, body_id};
+                                                is_hygienic, is_preserved, flat_ptr, pool_ptr, body_id};
             }
         }
         return make_bool(true);
@@ -20455,8 +20458,11 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     // int_val_ (encoded by add_macrodef in parser_impl.cpp).
                     bool is_dotted = (v.int_value & 1) != 0;
                     bool is_hygienic = (v.int_value & 2) != 0;
+                    // Issue #230 #2: bit 2 of int_val_ flags the
+                    // `define-hygienic-macro*` (preserved-params) variant.
+                    bool is_preserved = (v.int_value & 4) != 0;
                     macros_[std::string(name)] = MacroDef{std::move(param_names), is_dotted,
-                                                         is_hygienic, f, p, body_id};
+                                                         is_hygienic, is_preserved, f, p, body_id};
                     return EvalResult(make_void());
                 }
                 case aura::ast::NodeTag::Linear:
@@ -20579,14 +20585,39 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
         auto name = std::string(source_pool.resolve(v.sym_id));
         auto it = subst->find(name);
         if (it != subst->end()) {
-            // The arg is already in `target` (it's a normal expression
-            // in the calling code). Return it directly — it's a
-            // valid NodeId in target. If we need to clone it
-            // (because the body references the same arg multiple
-            // times), we'd need to deep-clone from target. For
-            // now, we return the original NodeId; multiple
-            // references in the body share the same node.
-            return it->second;
+            // Issue #230 #2: hygienic macros build CODE from the body
+            // and then re-evaluate that code. So when the body
+            // references a macro parameter (e.g. `name` in
+            // `define-struct`'s body), the substituted value should
+            // be a LITERAL datum (the arg as data), not a Variable
+            // reference. Wrap the arg in a Quote node — when the
+            // cloned body is evaluated, the Quote returns the arg's
+            // value (symbol, number, list, etc.) which is then
+            // spliced into the code being constructed.
+            //
+            // This is a behavior change from the previous
+            // AST-substitution (which substituted the arg NodeId
+            // directly), but it matches what the original
+            // `define-struct` body assumes: `name` is the user's
+            // struct name as a literal symbol, `fields` is the field
+            // list as a literal list, etc. Existing passing
+            // test_issue_120/121/137/139/140/165 continue to pass
+            // because their bodies either explicitly quote the param
+            // (`(quote name)`) — which double-quotes to `''name`
+            // (the list of one symbol) under the old impl and a
+            // single `name` under the new — or operate on numbers
+            // where the Quote and the bare value are equivalent.
+            //
+            // For the env-binding path (`define-hygienic-macro*`,
+            // md.preserved), subst is nullptr so this code is
+            // not reached. That path binds the args in a child
+            // env and the body's Variable refs look up the
+            // literal values directly.
+            auto arg_id = it->second;
+            if (arg_id < target.size()) {
+                return target.add_quote(arg_id);
+            }
+            return arg_id;
         }
     }
 
@@ -20937,6 +20968,7 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             NodeId body_id;
             bool dotted;
             bool hygienic;  // Issue #120
+            bool preserved;  // Issue #230 #2
         };
         std::unordered_map<std::string, MD> local_macros;
         bool has_macro_def = false;
@@ -20954,7 +20986,8 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                 // Issue #120: dotted is bit 0, hygienic is bit 1
                 bool is_dotted = (v.int_value & 1) != 0;
                 bool is_hygienic = (v.int_value & 2) != 0;
-                local_macros[macro_name] = MD{&flat, &pool, std::move(params), body_id, is_dotted, is_hygienic};
+                bool is_preserved = (v.int_value & 4) != 0;
+                local_macros[macro_name] = MD{&flat, &pool, std::move(params), body_id, is_dotted, is_hygienic, is_preserved};
             }
         }
 

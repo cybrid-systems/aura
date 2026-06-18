@@ -336,6 +336,16 @@ NodeId parse_list(ParserState& s) {
             return parse_defmacro(s);
         if (kw == "define-hygienic-macro")
             return parse_defmacro(s, /*hygienic=*/true);
+        // Issue #230 #2: the `*` suffix variant. Behaves like
+        // define-hygienic-macro (gensyms all macro-introduced locals)
+        // BUT params prefixed with `.` are kept as their literal
+        // names instead of being gensym'd. Use this for
+        // symbol-generating macros like define-struct, where the
+        // macro body needs the user's actual struct name to build
+        // (make-struct field1 field2 ...) at expansion time.
+        if (kw == "define-hygienic-macro*")
+            return parse_defmacro(s, /*hygienic=*/true,
+                                  /*preserve_dotted=*/true);
         if (kw == "match")
             return parse_match(s);
         if (kw == "cast")
@@ -1112,7 +1122,7 @@ NodeId parse_cond(ParserState& s) {
     return result;
 }
 
-NodeId parse_defmacro(ParserState& s, bool hygienic) {
+NodeId parse_defmacro(ParserState& s, bool hygienic, bool preserve_dotted) {
     auto tok = s.lex.consume(); // 'defmacro'
     if (s.lex.consume().kind != TokenKind::LParen) {
         skip_rparen(s);
@@ -1124,8 +1134,30 @@ NodeId parse_defmacro(ParserState& s, bool hygienic) {
         return NULL_NODE;
     }
     std::vector<SymId> params;
+    bool preserved_macro = false;
     bool dotted = false;
     while (s.lex.peek().kind != TokenKind::RParen) {
+        // Issue #230 #2: with preserve_dotted=true, a param prefixed
+        // with '&' (e.g. '&name') is marked as "do not gensym" — its
+        // literal name flows through to the expanded body. The '&'
+        // is consumed and stripped from the interned name. This is
+        // the er-macro-style escape hatch for symbol-generating macros
+        // that need access to the user's actual identifier (struct
+        // name, port name, etc.) rather than a gensym'd shadow.
+        //
+        // We use '&' rather than '.' to avoid conflict with the
+        // dotted-rest-parameter syntax `(name . rest)` where '.' is
+        // a separate token between params.
+        if (preserve_dotted && s.lex.peek().kind == TokenKind::Identifier) {
+            std::string_view ptext = s.lex.peek().text;
+            if (ptext.size() > 1 && ptext[0] == '&') {
+                s.lex.consume(); // consume '&name'
+                preserved_macro = true;
+                // Strip the leading '&' and intern the rest.
+                params.push_back(s.pool.intern(std::string(ptext.substr(1))));
+                continue;
+            }
+        }
         // Check for dotted rest parameter: (name . rest)
         if (s.lex.peek().kind == TokenKind::Dot) {
             s.lex.consume(); // consume '.'
@@ -1172,7 +1204,7 @@ NodeId parse_defmacro(ParserState& s, bool hygienic) {
         s.lex.consume();
     if (body_exprs.size() > 1)
         body = s.flat.add_begin(body_exprs);
-    auto mid = s.flat.add_macrodef(s.pool.intern(std::string(name.text)), params, body, dotted, hygienic);
+    auto mid = s.flat.add_macrodef(s.pool.intern(std::string(name.text)), params, body, dotted, hygienic, preserved_macro);
     s.flat.set_loc(mid, tok.line, tok.column);
     return mid;
 }
