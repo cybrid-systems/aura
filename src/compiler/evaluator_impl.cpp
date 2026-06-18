@@ -18045,6 +18045,8 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
 // Macro bodies produce data (lists) via cons/quote chains.
 // This function interprets that data as code and evaluates it.
 // flat/pool are needed for lambda and define-shorthand handling.
+//
+// Issue #230 #2 follow-up: unwrap Quote-wrapping on set! targets.
 EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env& env,
                                         ast::FlatAST* flat, ast::StringPool* pool) {
     // Not a pair → literal value (number, string, bool, void)
@@ -18167,11 +18169,29 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 }
                 auto cl_alloc = target_arena->allocator();
                 auto* cl_flat = target_arena->create<aura::ast::FlatAST>(cl_alloc);
-                auto* cl_pool = target_arena->create<aura::ast::StringPool>(cl_alloc);
+                // Issue #334: keep the closure's body symids in the SAME
+                // pool as the macro's `pool` and the env's bindings. If
+                // we use a fresh cl_pool for the cloned body, the body's
+                // Variable symids and the env's symids are in different
+                // pools, so Env::lookup_by_symid (the fast path) misses
+                // and the body's lambda params are reported as unbound.
+                // Using the macro's pool here aligns the body's Variables
+                // with the env's bindings at lookup time.
+                auto* cl_pool = pool;
                 auto cloned_body =
                     clone_macro_body(*cl_flat, *cl_pool, *flat, *pool, body_node, nullptr,
                                      /*name_map=*/nullptr,
                                      /*cloned_marker=*/aura::ast::SyntaxMarker::User);
+                // Issue #230 #2 follow-up: undo the Quote-wrap on set!
+                // targets. The Quote-wrap was added to give symbol-
+                // generating macros access to the literal arg value,
+                // but it broke set! semantics for normal macros. The
+                // pass walks the body, finds `(set! <target> <value>)`
+                // calls, and replaces the <target> Quote with the
+                // inner Variable. This is safe to run on every
+                // macro body — bodies that don't use set! have no
+                // set! calls, so the pass is a no-op for them.
+                // unwrap_set_quotes removed (Quote-wrap reverted)
                 cl_flat->root = cloned_body;
                 // P0: register captured for SoA, no legacy env pointer in Closure.
                 EnvId cap_id = alloc_env_frame_from_env(env);
@@ -18976,6 +18996,12 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                                                  md.body_id, &subst, &rename_map,
                                                                  /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
                                 if (expanded == aura::ast::NULL_NODE) return make_void();
+                                // Issue #230 #2 follow-up: undo the Quote-wrap
+                                // on set! targets. Same rationale as the
+                                // lambda case in eval_data_as_code — the
+                                // Quote-wrap helps symbol-generating macros
+                                // but breaks set! semantics.
+                                // unwrap_set_quotes removed (Quote-wrap reverted)
                                 // Issue #121: recursively expand any nested
                                 // macro calls in the cloned body using the
                                 // runtime `macros_` registry. The cloned body
@@ -19044,7 +19070,18 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 eval_flat(*md.flat, md.pool ? *md.pool : *p, md.body_id, *tail_env);
                             if (!template_result)
                                 return template_result;
-                            // Re-evaluate the template data as code
+                            // Issue #334 (deferred): the simpler
+                            // data_to_flat path was tried here and
+                            // reverted — it can't work because the
+                            // first eval_flat (line above) already
+                            // fails when the macro body references
+                            // lambda-local Variables (e.g. `args` of a
+                            // generated `(lambda (args) ...)`) that
+                            // aren't bound in tail_env at expansion
+                            // time. The proper fix for #1/#2
+                            // (define-struct) is the env-binding path
+                            // (issue 334), not a refactor of the
+                            // defmacro expansion here.
                             return eval_data_as_code(*template_result, eval_env, f, p);
                         }
                     }
@@ -20600,39 +20637,18 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
         auto name = std::string(source_pool.resolve(v.sym_id));
         auto it = subst->find(name);
         if (it != subst->end()) {
-            // Issue #230 #2: hygienic macros build CODE from the body
-            // and then re-evaluate that code. So when the body
-            // references a macro parameter (e.g. `name` in
-            // `define-struct`'s body), the substituted value should
-            // be a LITERAL datum (the arg as data), not a Variable
-            // reference. Wrap the arg in a Quote node — when the
-            // cloned body is evaluated, the Quote returns the arg's
-            // value (symbol, number, list, etc.) which is then
-            // spliced into the code being constructed.
-            //
-            // This is a behavior change from the previous
-            // AST-substitution (which substituted the arg NodeId
-            // directly), but it matches what the original
-            // `define-struct` body assumes: `name` is the user's
-            // struct name as a literal symbol, `fields` is the field
-            // list as a literal list, etc. Existing passing
-            // test_issue_120/121/137/139/140/165 continue to pass
-            // because their bodies either explicitly quote the param
-            // (`(quote name)`) — which double-quotes to `''name`
-            // (the list of one symbol) under the old impl and a
-            // single `name` under the new — or operate on numbers
-            // where the Quote and the bare value are equivalent.
-            //
-            // For the env-binding path (`define-hygienic-macro*`,
-            // md.preserved), subst is nullptr so this code is
-            // not reached. That path binds the args in a child
-            // env and the body's Variable refs look up the
-            // literal values directly.
-            auto arg_id = it->second;
-            if (arg_id < target.size()) {
-                return target.add_quote(arg_id);
-            }
-            return arg_id;
+            // Issue #334 follow-up: REVERTED Quote-wrap from commit
+            // 6b90641. The Quote-wrap made Variables in macro
+            // bodies evaluate to the literal arg value (helped
+            // define-struct), but it broke `set!` semantics in
+            // normal macros: the set! target became a literal
+            // symbol (the arg name) instead of the caller's
+            // variable, causing test_issue_137/190 to fail. The
+            // original AST subst (returning the arg NodeId
+            // directly) is restored for now. The proper fix for
+            // #230 #1 (define-struct) is the env-binding path
+            // (tracked in issue 334), not Quote-wrap.
+            return it->second;
         }
     }
 
