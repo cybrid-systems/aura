@@ -146,3 +146,11 @@ conflates the two.
 - Issue #230's #4 (max_passes 10→32) and #3 (defmacro
   survives set-code) are already shipped. This issue is purely
   about #1 (define-struct) and #2 (dhm* preserve semantics).
+
+## Status (2026-06-18)
+
+✅ **SHIPPED** in commit 5171113 (also closes #230). The
+env-binding path is implemented, lib/std/struct.aura
+rewritten, data_to_flat default Call handler updated to
+add_variable, all tests green. See the close comments on
+issue #230 and #334 for the full shipped details.
