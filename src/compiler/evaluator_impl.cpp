@@ -230,6 +230,26 @@ aura::compiler::Evaluator::active_mutation_stack_static() {
     return g_main_thread_stack;
 }
 
+// Issue #236 follow-up: per-Evaluator, per-thread depth slot
+// for MutationBoundaryGuard. We use a thread_local
+// std::unordered_map keyed by Evaluator* address. Each fiber
+// has its own slot for each Evaluator it touches. When the
+// last guard for a (thread, evaluator) pair destructs, the
+// map entry stays (cheap) so we don't churn the heap.
+//
+// Returns a pointer to an int initialized to 0 the first
+// time it's accessed for a given (thread, evaluator).
+int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev) {
+    struct Slot {
+        std::unordered_map<Evaluator*, int> depths;
+    };
+    thread_local Slot* slot = new Slot();
+    auto it = slot->depths.find(ev);
+    if (it == slot->depths.end()) {
+        it = slot->depths.emplace(ev, 0).first;
+    }
+    return &it->second;
+}
 
 // ── ADT state now in adt_runtime_ (refactor Step 2.3, FFI pattern) ───────
 // The old global g_adt_constructors + AdtCtorEntry struct have been

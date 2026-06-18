@@ -1481,12 +1481,6 @@ private:
     std::size_t sample_counter_ = 0;
     // Last logged warning level (so we don't spam the same warning).
     std::string last_warn_level_;
-    // Issue #236 follow-up: thread-local depth counter for
-    // MutationBoundaryGuard nesting. The outermost guard (depth
-    // 0→1) acquires the workspace write lock; nested guards just
-    // bump the depth counter. shared_mutex is not recursive, so
-    // a nested guard that tries to lock again would deadlock.
-    int mutation_boundary_depth_ = 0;
 
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_ = 1;
@@ -1785,6 +1779,17 @@ public:
     // accessors that don't have an Evaluator instance handy.
     static std::vector<MutationCheckpoint>& active_mutation_stack_static();
 
+    // Issue #236 follow-up: per-fiber (thread_local) depth
+    // counter for MutationBoundaryGuard nesting. The
+    // implementation lives in evaluator_impl.cpp and uses
+    // a `thread_local std::unordered_map<Evaluator*, int>`
+    // keyed by this address. thread_local gives us LIFO
+    // ordering on each fiber's call stack; multiple fibers
+    // on the same Evaluator are independent (each fiber's
+    // guard scope is its own stack). Cross-fiber serialization
+    // happens at the unique_lock layer.
+    static int* mutation_boundary_depth_slot(Evaluator* ev);
+
     // Issue #189: reader-side version snapshot API. Fibers /
     // JIT-compiled code / closure dispatch that need to detect
     // concurrent mutations capture a snapshot via
@@ -1882,7 +1887,15 @@ public:
               // nested guards in the same thread cooperate.
               lock_(ev.workspace_mtx_, std::defer_lock) {
             if (flag_) *flag_ = true;  // optimistic default
-            bool outermost = (++ev_->mutation_boundary_depth_ == 1);
+            // Issue #236 fix-up: thread_local depth counter
+            // keyed by Evaluator address. Each fiber has its
+            // own LIFO call stack, so nested guards on a
+            // single fiber are always outermost-then-inner
+            // (destructed innermost-first). Cross-fiber
+            // synchronization happens at the unique_lock.
+            int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
+            int prev = ++(*slot);
+            bool outermost = (prev == 1);
             if (outermost) lock_.lock();
             ev_->enter_mutation_boundary();
         }
@@ -1892,7 +1905,12 @@ public:
             // exit_mutation_boundary runs under the lock for
             // the outermost guard; lockless for nested guards
             // (lock is held by the outer guard).
-            bool outermost = (--ev_->mutation_boundary_depth_ == 0);
+            // exit_mutation_boundary runs under the lock for
+            // the outermost guard; lockless for nested guards
+            // (lock is held by the outer guard).
+            int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
+            int prev = (*slot)--;
+            bool outermost = (prev == 1);
             ev_->exit_mutation_boundary(success);
             if (outermost) lock_.unlock();
             // unique_lock destructor runs automatically here.
@@ -1902,15 +1920,14 @@ public:
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
             : ev_(o.ev_), flag_(o.flag_),
               lock_(std::move(o.lock_)) {
-            // Move transfers the lock state; nested-depth
-            // bookkeeping stays put (the source guard is now
-            // empty but its depth contribution transfers via
-            // the moved-into guard's existing depth counter).
-            // In practice moves are rare; if the source was
-            // outermost, the moved-from guard must NOT release
-            // on its now-empty destruction. We mark the source
-            // ev_ = nullptr so its dtor no-ops, preserving the
-            // lock for the moved-into guard.
+            // Move transfers the lock state (the unique_lock
+            // member moves its ownership to the new guard).
+            // The depth counter was already incremented by
+            // the source's ctor — it stays. The source's
+            // dtor will see ev_=nullptr and no-op, so the
+            // depth stays correctly at the same value.
+            // The new guard will decrement it once when it
+            // destructs.
             o.ev_ = nullptr; o.flag_ = nullptr;
         }
         MutationBoundaryGuard& operator=(MutationBoundaryGuard&& o) noexcept {
