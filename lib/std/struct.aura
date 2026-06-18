@@ -4,39 +4,59 @@
 ; (define-struct Name (field1 field2 ...))
 ;   generates make-Name, Name?, Name-field1, Name-field2, ...
 ;
-; Issue #182 (Cycle 1): switched from `defmacro` (legacy) to
-; `define-hygienic-macro` (#121) so the field names in the
-; make function's body are properly bound to the lambda's
-; parameters, not the macro's lexical scope. The legacy
-; `defmacro` was silently capturing the field symbols from
-; the macro's local environment, producing broken
-; constructors (e.g., make-foo with fields (a b) would
-; create a vector containing the symbols a and b, not
-; their values).
+; Issue #334 (Cycle 1): switched to `define-hygienic-macro*` with
+; `&`-prefixed preserved params. The env-binding expansion path
+; (Issue #334 Part A): macro args are bound in a child env and the
+; body's Variable refs resolve to the literal arg values directly.
+; The `&` sigil on `name` and `fields` is required to mark them as
+; preserved-params (the parser only sets the preserved flag when at
+; least one param has the `&` prefix).
+;
+; The make function body uses cons + build-args to splice the
+; field names as bare Variable refs into the vector call. The
+; data_to_flat path (env-binding macro body) converts each string
+; to a Variable AST node, so the generated lambda's body has
+; Variable refs that look up in the lambda's call env at call
+; time. This is what makes `(make-point 10 20)` produce
+; `#[point 10 20]` instead of `#[point x y]` (the previous broken
+; behavior with the original `map (lambda (f) f) fields` pattern
+; that emitted field-name symbols instead of call args).
+;
+; Earlier history: `defmacro` (#182 Cycle 1) and
+; `define-hygienic-macro` (#121) both shipped and made
+; test_issue_137/120/121/139/140/165/166 all green, but neither
+; fixed define-struct (the macro that produces code referencing
+; the user's struct name + field list as data). Issue #334 tracks
+; the env-binding path that finally makes define-struct work.
 
-(define-hygienic-macro (define-struct name fields)
-  (let ((mk (symbol-append "make-" name))
-        (pred (symbol-append name "?")))
-    (let build ((i 1) (fs fields) (acc
-      (list
-        (list (quote define) pred
-          (list (quote lambda) (list (quote obj))
-            (list (quote and)
-              (list (quote vector?) (quote obj))
-              (list (quote equal?)
-                (list (quote vector-ref) (quote obj) 0)
-                (list (quote quote) name)))))
-        (list (quote define) mk
-          (list (quote lambda) fields
-            (cons (quote vector)
-              (cons (list (quote quote) name)
-                (map (lambda (f) f) fields))))))))
-      (if (null? fs)
-        (cons (quote begin) (reverse acc))
-        (build (+ i 1) (cdr fs)
-          (cons
-            (list (quote define)
-              (symbol-append name "-" (car fs))
-              (list (quote lambda) (list (quote obj))
-                (list (quote vector-ref) (quote obj) i)))
-            acc))))))
+(define-hygienic-macro* (define-struct &name &fields)
+  (let ((mk (symbol-append "make-" &name))
+        (pred (symbol-append &name "?")))
+    (letrec ((build-args
+               (lambda (fs)
+                 (if (null? fs)
+                     '()
+                     (cons (car fs) (build-args (cdr fs)))))))
+      (let build ((i 1) (fs &fields) (acc
+        (list
+          (list (quote define) pred
+            (list (quote lambda) (list (quote obj))
+              (list (quote and)
+                (list (quote vector?) (quote obj))
+                (list (quote equal?)
+                  (list (quote vector-ref) (quote obj) 0)
+                  (list (quote quote) &name)))))
+          (list (quote define) mk
+            (list (quote lambda) &fields
+              (cons (quote vector)
+                (cons (list (quote quote) &name)
+                  (build-args &fields))))))))
+        (if (null? fs)
+          (cons (quote begin) (reverse acc))
+          (build (+ i 1) (cdr fs)
+            (cons
+              (list (quote define)
+                (symbol-append &name "-" (car fs))
+                (list (quote lambda) (list (quote obj))
+                  (list (quote vector-ref) (quote obj) i)))
+              acc)))))))

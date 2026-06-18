@@ -18021,7 +18021,18 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
                 if (sidx < string_heap_.size()) {
                     auto name = string_heap_[sidx];
                     auto ssid = pool.intern(name);
-                    args.push_back(flat.add_literalstring(ssid));
+                    // Issue #334 (Cycle 1): use add_variable
+                    // instead of add_literalstring. In a macro
+                    // body, strings represent identifier names
+                    // (e.g. field names spliced into a lambda
+                    // body), and we want runtime lookup, not a
+                    // literal value. This affects ALL callers
+                    // of data_to_flat, but the change is
+                    // behaviorally a no-op for code that doesn't
+                    // have bare-string args in non-quote
+                    // positions — LiteralString args would
+                    // always have been rare and unusual.
+                    args.push_back(flat.add_variable(ssid));
                 }
             } else {
                 auto a = data_to_flat(arg_data, flat, pool, depth + 1);
@@ -18961,6 +18972,82 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         if (macro_it != macros_.end()) {
                             auto& md = macro_it->second;
                             bool is_rest = md.dotted;
+
+                            // Issue #334: env-binding path for
+                            // `define-hygienic-macro*` (md.preserved).
+                            // The macro args are bound in a child env
+                            // (name → ast_to_data), and the body is
+                            // evaluated in that env. This makes the
+                            // body's Variable refs resolve to the
+                            // literal arg values directly — the same
+                            // behavior as the legacy `defmacro` path.
+                            // Used by symbol-generating macros like
+                            // define-struct where `name` should
+                            // resolve to the literal symbol and
+                            // `fields` to the literal field list.
+                            if (md.preserved) {
+                                if (is_rest) {
+                                    // Rest params on preserved
+                                    // macros are not yet supported
+                                    // — fall through to a "no
+                                    // expansion" return.
+                                    return make_void();
+                                }
+                                // Bind macro args as data in tail_env
+                                std::size_t regular_count =
+                                    md.params.size();
+                                tail_env.emplace(&eval_env);
+                                tail_env->set_primitives(&primitives_);
+                                for (std::size_t i = 0;
+                                     i < regular_count && i + 1 < v.children.size();
+                                     ++i) {
+                                    tail_env->bind(
+                                        md.params[i],
+                                        ast_to_data(*f, *p, v.child(i + 1)));
+                                }
+                                // Issue #334: use md.pool if set (the
+                                // macro was defined in a different
+                                // workspace), else use the current pool
+                                // p. The body's Variables look up by
+                                // string name in tail_env, so pool
+                                // alignment doesn't matter for the
+                                // Variable case (it just needs a valid
+                                // pool to resolve symids into strings).
+                                auto* mb_pool =
+                                    md.pool ? md.pool : p;
+                                auto* mb_flat =
+                                    md.pool ? md.flat : f;
+                                auto template_result = eval_flat(
+                                    *mb_flat, *mb_pool,
+                                    md.body_id, *tail_env);
+                                if (!template_result)
+                                    return template_result;
+                                // Issue #334 (Cycle 1): convert the
+                                // macro body data to FlatAST via
+                                // data_to_flat. eval_data_as_code
+                                // (the legacy path used here before)
+                                // treats strings as literal values,
+                                // so Variable references in the body
+                                // become string values rather than
+                                // runtime lookups — meaning
+                                // symbol-generating macros that
+                                // splice field names into the lambda
+                                // body get the field-name strings
+                                // baked into the vector instead of
+                                // the call args. data_to_flat
+                                // converts each string to a Variable
+                                // AST node (add_variable), so the
+                                // resulting lambda body has proper
+                                // Variable refs that look up in the
+                                // lambda's call env at call time.
+                                auto ast_root = data_to_flat(
+                                    *template_result, *f, *p, /*depth=*/0);
+                                if (ast_root == aura::ast::NULL_NODE)
+                                    return std::unexpected(aura::diag::Diagnostic{
+                                        aura::diag::ErrorKind::InternalError,
+                                        "data_to_flat returned NULL for env-binding macro body"});
+                                return eval_flat(*f, *p, ast_root, eval_env);
+                            }
 
                             // Issue #120: hygienic macros use clone_macro_body
                             // with a name_map (single-eval AST substitution +
