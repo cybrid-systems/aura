@@ -6680,6 +6680,66 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         return result;
     });
 
+    // Issue #235: (query:stable-ref node-id) — Returns a
+    // stable reference to a node as (node-id . current-gen).
+    // The stable-ref can be passed back to mutate:* primitives
+    // which will verify the generation matches before applying
+    // the mutation. If the generation has changed (i.e., a
+    // structural mutation has happened since the ref was
+    // captured), the primitive fails with a "stale-ref" error
+    // instead of silently operating on a wrong node.
+    //
+    // The result is a 2-element list `(id . gen)` so the agent
+    // can capture it as a single value and pass it through
+    // multi-round edit pipelines.
+    primitives_.add("query:stable-ref", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (query:stable-ref node-id)");
+        if (!workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (node >= flat.size())
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+        auto gen = flat.generation();
+        // Build (node-id . gen) pair
+        auto gen_pid = pairs_.size();
+        pairs_.push_back({make_int(static_cast<std::int64_t>(gen)), make_void()});
+        auto pair_pid = pairs_.size();
+        pairs_.push_back({make_int(static_cast<std::int64_t>(node)), make_pair(gen_pid)});
+        return make_pair(pair_pid);
+    });
+
+    // Issue #235: (mutate:check-stable-ref stable-ref) — Verify
+    // a stable-ref is still valid. Returns #t if the captured
+    // node-id still has the same generation, #f otherwise.
+    // Useful for agents that want to do an early validity check
+    // before invoking a more expensive mutation.
+    primitives_.add("mutate:check-stable-ref", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        if (!is_pair(a[0]))
+            return mev("bad-arg", "usage: (mutate:check-stable-ref (id . gen))");
+        if (!workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto& flat = *workspace_flat_;
+        // Unpack the (id . gen) pair
+        auto outer = as_pair_idx(a[0]);
+        if (!is_int(pairs_[outer].car))
+            return mev("bad-arg", "stable-ref car must be a node id (int)");
+        auto node = static_cast<aura::ast::NodeId>(as_int(pairs_[outer].car));
+        auto cdr = pairs_[outer].cdr;
+        if (!is_pair(cdr))
+            return mev("bad-arg", "stable-ref cdr must be a pair (gen . nil)");
+        auto inner = as_pair_idx(cdr);
+        if (!is_int(pairs_[inner].car))
+            return mev("bad-arg", "stable-ref gen must be an int");
+        auto captured_gen = static_cast<std::uint16_t>(as_int(pairs_[inner].car));
+        // Validity check: in-range AND same generation
+        bool valid = (node < flat.size()) && (flat.generation() == captured_gen);
+        return make_bool(valid);
+    });
+
     // (query:calls name) — Find all call sites of a named function
     primitives_.add("query:calls", [this, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
