@@ -9118,10 +9118,44 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             if (!is_string(op_name_ev)) { ok = false; break; }
             std::vector<EvalValue> op_args = list_to_vec(pair_cdr(op));
             std::string op_name = string_heap_[as_string_idx(op_name_ev)];
-            auto prim_opt = primitives_.lookup(op_name);
-            if (!prim_opt) { ok = false; break; }
-            EvalValue result = (*prim_opt)(op_args);
-            if (is_bool(result) && !as_bool(result)) {
+            // Issue #236: route through the lockless helpers
+            // instead of primitives_.lookup. The old code
+            // re-entered the full primitive (which acquires its
+            // own MutationBoundaryGuard), deadlocking on the
+            // non-recursive shared_mutex — the batch already
+            // holds the lock via its outer guard.
+            //
+            // Sub-op name mapping:
+            //   "mutate:rebind"       -> eval_flat_apply_mutate_rebind
+            //   "mutate:replace-value" -> eval_flat_apply_mutate_replace_value
+            //   "mutate:tweak-literal" -> eval_flat_apply_mutate_tweak_literal
+            // Anything else: unsupported (would need to acquire
+            // the lock, which deadlocks; fail fast).
+            EvalResult sub_result{types::make_void()};
+            if (op_name == "mutate:rebind") {
+                sub_result = eval_flat_apply_mutate_rebind(op_args);
+            } else if (op_name == "mutate:replace-value") {
+                sub_result = eval_flat_apply_mutate_replace_value(op_args);
+            } else if (op_name == "mutate:tweak-literal") {
+                sub_result = eval_flat_apply_mutate_tweak_literal(op_args);
+            } else {
+                // For other ops (insert-child / remove-node / etc.)
+                // that aren't extracted to lockless helpers yet,
+                // error out instead of deadlocking on a nested
+                // guard acquire.
+                workspace_flat_->rollback_since(initial_log_size);
+                atomic_batch_rollbacks_++;
+                guard_ok = false;
+                return make_merr("batch-unsupported-op",
+                    ("mutate:atomic-batch does not yet support '" + op_name +
+                     "' (only :rebind / :replace-value / :tweak-literal; the others need lockless helper extraction)").c_str());
+            }
+            if (!sub_result) {
+                ok = false;
+                break;
+            }
+            // Heuristic: bool-false result from the helper is a failure
+            if (types::is_bool(*sub_result) && !types::as_bool(*sub_result)) {
                 ok = false;
                 break;
             }
@@ -18774,6 +18808,98 @@ static bool coerce_value(types::EvalValue& val, aura::core::TypeTag from, aura::
 }
 
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
+
+// Issue #236: helper implementations for mutate:atomic-batch.
+// The existing atomic-batch (line ~9071) called the sub-primitive
+// via primitives_.lookup which re-enters MutationBoundaryGuard
+// in each sub-op, deadlocking on the non-recursive shared_mutex.
+// These helpers do the same work WITHOUT the guard — the batch's
+// outer guard already holds the lock for the entire batch body.
+//
+// MVP scope: :rebind works for the "old Define exists" path.
+// :replace-value and :tweak-literal are stubs (error-out) so
+// they fail fast rather than deadlocking the batch. Follow-up
+// to extract those internals.
+EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalValue> a) {
+    if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ArityMismatch,
+            "batch :rebind requires name and code (string args)"});
+    if (!workspace_flat_ || !workspace_pool_)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :rebind: no workspace loaded"});
+    auto name_idx = as_string_idx(a[0]);
+    auto code_idx = as_string_idx(a[1]);
+    if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size())
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :rebind: string index out of range"});
+    auto& flat = *workspace_flat_;
+    auto name = string_heap_[name_idx];
+    auto sym = canonical_pool()->intern(name);
+    aura::ast::NodeId old_define = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        auto v = flat.get(id);
+        if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
+            old_define = id;
+            break;
+        }
+    }
+    if (old_define == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ArityMismatch,
+            "batch :rebind: no existing Define for '" + name + "' (new-binding path not yet supported; use standalone mutate:rebind)"});
+    auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ParseError,
+            "batch :rebind: parse failed for new code"});
+    aura::ast::NodeId new_value = pr.root;
+    auto root_v = flat.get(pr.root);
+    if (root_v.tag == aura::ast::NodeTag::Define) {
+        if (root_v.children.empty())
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ParseError,
+                "batch :rebind: define form has no body"});
+        new_value = root_v.child(0);
+    }
+    std::string summary = (a.size() > 2 && is_string(a[2]))
+                              ? string_heap_[as_string_idx(a[2])]
+                              : "batch rebind " + name;
+    auto old_v = flat.get(old_define);
+    auto old_value_node = old_v.children.empty() ? aura::ast::NULL_NODE : old_v.child(0);
+    auto mid = flat.add_mutation_with_rollback(
+        old_define, "batch-rebind",
+        std::string("Define:") + name, std::string("Define:") + name,
+        summary, aura::ast::MutationStatus::Committed,
+        0, static_cast<std::uint64_t>(old_value_node),
+        static_cast<std::uint64_t>(new_value), true);
+    flat.set_child(old_define, 0, new_value);
+    flat.mark_dirty_upward(old_define);
+    return make_int(static_cast<std::int64_t>(mid));
+}
+
+EvalResult Evaluator::eval_flat_apply_mutate_replace_value(
+    std::span<const types::EvalValue> a) {
+    // TODO #236 follow-up: extract the inner logic from
+    // mutate:replace-value (LiteralInt / LiteralFloat /
+    // LiteralString / sym_id field updates) so it can run
+    // under an outer guard. For MVP, error out so the agent
+    // falls back to standalone (and accepts no transactionality).
+    (void)a;
+    return std::unexpected(aura::diag::Diagnostic{
+        aura::diag::ErrorKind::InternalError,
+        "batch :replace-value not yet supported (use standalone mutate:replace-value)"});
+}
+
+EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(
+    std::span<const types::EvalValue> a) {
+    (void)a;
+    return std::unexpected(aura::diag::Diagnostic{
+        aura::diag::ErrorKind::InternalError,
+        "batch :tweak-literal not yet supported (use standalone mutate:tweak-literal)"});
+}
 
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,

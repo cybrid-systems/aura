@@ -1958,6 +1958,23 @@ public:
     // which DOES include messaging_bridge.h.
     void yield_mutation_boundary();
 
+    // Issue #236: helpers used by mutate:atomic-batch to apply
+    // sub-ops WITHOUT acquiring the workspace write lock (the
+    // batch's outer MutationBoundaryGuard already holds it —
+    // calling the existing primitives from inside the batch
+    // would cause each sub-op to try to acquire the same lock
+    // a second time, triggering a deadlock via std::shared_mutex
+    // which is not recursive).
+    //
+    // The MVP supports :rebind (the most common refactor op);
+    // :replace-value and :tweak-literal are stubs that return
+    // a "not yet supported in batch" error. Agents needing those
+    // ops can fall back to the standalone primitive (and accept
+    // that those ops aren't transactional with the batch).
+    EvalResult eval_flat_apply_mutate_rebind(std::span<const types::EvalValue> a);
+    EvalResult eval_flat_apply_mutate_replace_value(std::span<const types::EvalValue> a);
+    EvalResult eval_flat_apply_mutate_tweak_literal(std::span<const types::EvalValue> a);
+
     // Issue #165 Phase 1B: post-mutation macro re-expansion.
     // Walks the affected subtree of a mutation record looking
     // for MacroDef nodes (the macro's body was mutated) or
