@@ -1883,7 +1883,31 @@ public:
     // Move-only (the lock + state can't be safely copied); do
     // not copy. Construction blocks until the exclusive lock
     // is acquired.
+    //
+    // Issue #241 (panic-checkpoint integration): the Guard now
+    // owns the panic-checkpoint lifecycle for mutate:* primitives.
+    // Previously each primitive had to manually call
+    //   save_panic_checkpoint()  // at entry
+    //   ... body ...
+    //   commit_panic_checkpoint()   // on success
+    //   restore_panic_checkpoint()  // on failure (with auto_rollback)
+    // The Guard now does all three automatically:
+    //   - ctor: save_panic_checkpoint() — captures the current
+    //     `current-source` so a panic / typecheck-failure can be
+    //     recovered via restore.
+    //   - dtor (outermost only): based on `flag_`:
+    //       ok == true                       → commit (clear checkpoint)
+    //       ok == false + panic_auto_rollback_ → restore (source reverted)
+    //       ok == false + !panic_auto_rollback_ → leave alive (caller
+    //                                                may retry)
+    //   - nested guards (depth > 1) skip the panic-checkpoint
+    //     step — only the outermost owns the checkpoint, matching
+    //     the lock-ownership rule.
     class MutationBoundaryGuard {
+        // Issue #241: did we capture a panic checkpoint at ctor?
+        // (save_panic_checkpoint returns false if no source is loaded
+        //  or if (current-source) isn't registered.)
+        bool had_panic_checkpoint_ = false;
     public:
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag) noexcept
             : ev_(&ev), flag_(success_flag),
@@ -1919,6 +1943,16 @@ public:
             bool outermost = (prev == 1);
             if (outermost) lock_.lock();
             ev_->enter_mutation_boundary();
+            // Issue #241: capture panic checkpoint at the OUTERMOST
+            // guard only (nested guards share the outer checkpoint).
+            // save_panic_checkpoint() snapshots `current-source` so
+            // the source can be restored if the mutation rolls back.
+            // It returns false if there's no workspace / no source /
+            // no (current-source) primitive — in those cases the
+            // Guard just skips the checkpoint step.
+            if (outermost) {
+                had_panic_checkpoint_ = ev_->save_panic_checkpoint();
+            }
         }
         ~MutationBoundaryGuard() {
             if (!ev_) return;
@@ -1934,6 +1968,26 @@ public:
             bool outermost = (prev == 1);
             ev_->exit_mutation_boundary(success);
             if (outermost) lock_.unlock();
+            // Issue #241: panic-checkpoint commit / restore.
+            // Only the outermost guard owns the checkpoint;
+            // nested guards (which can't fail independently
+            // of their outer) don't touch it.
+            if (outermost && had_panic_checkpoint_) {
+                if (success) {
+                    // Mutation succeeded — checkpoint is no
+                    // longer needed; clear so the next
+                    // mutation starts fresh.
+                    ev_->commit_panic_checkpoint();
+                } else if (ev_->panic_auto_rollback_) {
+                    // Mutation failed + auto-rollback enabled —
+                    // restore the saved source via (set-code).
+                    ev_->restore_panic_checkpoint();
+                }
+                // else: failed + !auto-rollback — leave the
+                // checkpoint alive so a subsequent retry can
+                // roll back to it. (Pre-#241 behavior on
+                // failure was to leave the checkpoint.)
+            }
             // unique_lock destructor runs automatically here.
         }
         MutationBoundaryGuard(const MutationBoundaryGuard&) = delete;
