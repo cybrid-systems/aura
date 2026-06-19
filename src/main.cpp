@@ -2217,8 +2217,42 @@ int main(int argc, char* argv[]) {
             cs.metrics().aot_fallbacks.fetch_add(1, std::memory_order_relaxed);
         }
 
-        // ── Step 4: Fallback → shell wrapper ────────────────────
+        // ── Step 4: Failure handling ──────────────────────────────
+        // Issue #237: distinguish two failure modes:
+        //
+        //   (A) flat_fn_array is non-empty AND AOT failed
+        //       → real AOT compile/link error (e.g. x86_64 PIE
+        //         mismatch, missing runtime.c, LLVM internal error).
+        //       The caller asked for a real native binary; giving
+        //       them a shell wrapper script that re-invokes aura
+        //       is not a native binary and breaks downstream
+        //       tooling (e.g. test_issue_237's is_elf() check).
+        //       → Return rc=1 with a clear error message.
+        //
+        //   (B) flat_fn_array is empty (all functions were
+        //       filtered out as Evolution-region) AND the C
+        //       wrapper fallback also failed
+        //       → no AOT was possible, C wrapper also failed.
+        //       Shell-wrapper fallback is the last resort for
+        //       this case so the user still gets a runnable
+        //       script (rare — requires no cc + no Evolution-
+        //       AOT to be possible).
         if (!compiled) {
+            // Case A: real AOT failure with functions to AOT-compile.
+            // Bail out loudly with the LLVM/bridge stderr above.
+            if (!flat_fn_array.empty()) {
+                std::println(stderr,
+                    "AOT: failed to emit native binary for {} function(s). "
+                    "See AOT: errors above. Common causes: x86_64 PIE/PIC "
+                    "mismatch, missing lib/runtime.c, LLVM internal error. "
+                    "Not falling back to shell wrapper (--emit-binary "
+                    "contract is a real ELF executable).",
+                    flat_fn_array.size());
+                return 1;
+            }
+
+            // Case B: empty AOT batch + C wrapper failure.
+            // Fall back to shell wrapper as a last-resort script.
             std::string self_path = std::string(argv[0]);
             // Issue #237: log every step of the shell-wrapper fallback
             // so CI can see exactly where the failure mode hits. The

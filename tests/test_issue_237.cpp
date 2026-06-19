@@ -216,7 +216,14 @@ bool test_emit_binary_lambda() {
     }
     CHECK(res.ok, "aura --emit-binary exited 0");
     CHECK(fs::exists(out_path), "output file exists");
-    if (!fs::exists(out_path)) return false;
+    if (!fs::exists(out_path)) {
+        // Issue #237: surface the aura failure context even on the
+        // early-return path so CI logs can pinpoint what went wrong.
+        std::println("       [test_237 early-return] aura returned {} but {} does not exist",
+                     res.ok ? "ok" : "non-ok", out_path);
+        return false;
+    }
+    CHECK(is_elf(out_path), "output is ELF (magic 0x7f 'E' 'L' 'F')");
     std::string output = run_capture_stdout(out_path);
     CHECK(!output.empty(), "exec captured output");
     CHECK(output.find("49") != std::string::npos, "output contains '49'");
