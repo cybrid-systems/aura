@@ -2255,6 +2255,34 @@ private:
     // Requires TypeRegistry for name resolution
     void resolve_type_ids(class aura::core::TypeRegistry& reg, StringPool& pool);
 
+    // Issue #249: stable child / parent accessors. These return
+    // StableNodeRef (a NodeId + generation pair) so the caller
+    // can safely hold the result across structural mutations.
+    // If a structural mutation happens after capturing, the
+    // ref's generation no longer matches FlatAST::generation_,
+    // and is_valid(ref) returns false. This is the recommended
+    // way to use NodeIds in EDSL / query / mutate code that
+    // may span multiple mutating calls.
+    [[nodiscard]] StableNodeRef parent_stable(NodeId id) const noexcept {
+        if (id >= parent_.size()) return StableNodeRef{};
+        auto pid = parent_[id];
+        if (pid == NULL_NODE) return StableNodeRef{};
+        return StableNodeRef{pid, generation_};
+    }
+
+    [[nodiscard]] std::vector<StableNodeRef> children_stable(NodeId id) const {
+        std::vector<StableNodeRef> out;
+        if (id >= children_.size()) return out;
+        const auto& pcv = children_[id];
+        out.reserve(pcv.size());
+        for (std::size_t i = 0; i < pcv.size(); ++i) {
+            auto cid = pcv[i];
+            if (cid == NULL_NODE) continue;
+            out.push_back(StableNodeRef{cid, generation_});
+        }
+        return out;
+    }
+
     NodeId root = NULL_NODE;
 };
 
