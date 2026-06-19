@@ -717,6 +717,25 @@ public:
     // Get the safe checkpoint source (for introspection).
     const std::string& panic_safe_source() const { return panic_safe_source_; }
 
+    // Issue #242: arena-size snapshots for diagnostics + tests.
+    // These reflect the sizes of the 4 pmr/append-only arenas at
+    // the most recent save_panic_checkpoint() call. They're used by
+    // restore_panic_checkpoint to truncate back; exposed here so
+    // tests can verify the snapshot behavior without poking at
+    // private members.
+    std::size_t panic_safe_cells_size() const { return panic_safe_cells_size_; }
+    std::size_t panic_safe_pairs_size() const { return panic_safe_pairs_size_; }
+    std::size_t panic_safe_string_heap_size() const { return panic_safe_string_heap_size_; }
+    std::size_t panic_safe_env_frames_size() const { return panic_safe_env_frames_size_; }
+    // Test-only setters for the arena-size snapshots. Production
+    // code sets them via save_panic_checkpoint(); tests use these
+    // to set up pre-conditions without going through the full
+    // save + restore cycle.
+    void set_panic_safe_cells_size_for_test(std::size_t v) { panic_safe_cells_size_ = v; }
+    void set_panic_safe_pairs_size_for_test(std::size_t v) { panic_safe_pairs_size_ = v; }
+    void set_panic_safe_string_heap_size_for_test(std::size_t v) { panic_safe_string_heap_size_ = v; }
+    void set_panic_safe_env_frames_size_for_test(std::size_t v) { panic_safe_env_frames_size_ = v; }
+
     // Set/get a shared workspace tree (for cross-session workspace sharing in serve mode).
     void set_workspace_tree(void* wt) { workspace_tree_ = wt; }
     // Set the AST/pool that source-reading primitives (current-source,
@@ -1434,6 +1453,19 @@ private:
     //     memory_order_acquire — synchronizes with prior releases.
     //   - read for stats / debug: memory_order_relaxed is fine.
     std::atomic<std::uint64_t> defuse_version_{0};
+public:
+    // Test-only accessor for defuse_version_. Production code
+    // reads via member access from inside the class; tests need
+    // a public way to read it (and the companion setter below
+    // to bump it without going through MutationBoundaryGuard,
+    // which would also acquire the lock + mutate the stack).
+    std::uint64_t defuse_version_for_test() const {
+        return defuse_version_.load(std::memory_order_acquire);
+    }
+    void bump_defuse_version_for_test() {
+        defuse_version_.fetch_add(1, std::memory_order_acq_rel);
+    }
+private:
     // Issue #189: total mutations counter (for observability).
     // Bumped alongside defuse_version_ so dashboards can see
     // "how many mutations has this evaluator processed" without
