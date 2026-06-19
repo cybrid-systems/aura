@@ -6695,6 +6695,63 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         return result;
     });
 
+    // Issue #249: (query:children-stable node-id) — Get children
+    // as a list of (node-id . generation) stable-ref pairs. Use
+    // this instead of (query:children ...) when the result is
+    // stored in a variable that may be used after a mutate call.
+    // The captured generation lets validate the ref later (via
+    // (mutate:check-stable-ref) or pass it back to a mutate
+    // primitive that supports stable-ref inputs.
+    primitives_.add("query:children-stable", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_)
+            return mev("bad-arg", "usage: (query:children-stable node-id)");
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (node >= flat.size())
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+        auto stable_children = flat.children_stable(node);
+        auto gen = flat.generation();
+        // Build a list of (node-id . gen) pairs, in the same
+        // order as the underlying children span.
+        EvalValue result = make_void();
+        for (auto it = stable_children.rbegin(); it != stable_children.rend(); ++it) {
+            // Build (node-id . gen) pair
+            auto gen_pid = pairs_.size();
+            pairs_.push_back({make_int(static_cast<std::int64_t>(gen)), make_void()});
+            auto pair_pid = pairs_.size();
+            pairs_.push_back({make_int(static_cast<std::int64_t>(it->id)), make_pair(gen_pid)});
+            auto pair_ev = make_pair(pair_pid);
+            // Prepend to result
+            auto list_pid = pairs_.size();
+            pairs_.push_back({pair_ev, result});
+            result = make_pair(list_pid);
+        }
+        return result;
+    });
+
+    // Issue #249: (query:parent-stable node-id) — Get the
+    // parent as a (node-id . generation) stable-ref pair. Returns
+    // an empty list if the node has no parent.
+    primitives_.add("query:parent-stable", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_)
+            return mev("bad-arg", "usage: (query:parent-stable node-id)");
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (node >= flat.size())
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+        auto pref = flat.parent_stable(node);
+        if (pref.id == aura::ast::NULL_NODE) return make_void();
+        auto gen = flat.generation();
+        // Build (parent-id . gen) pair
+        auto gen_pid = pairs_.size();
+        pairs_.push_back({make_int(static_cast<std::int64_t>(gen)), make_void()});
+        auto pair_pid = pairs_.size();
+        pairs_.push_back({make_int(static_cast<std::int64_t>(pref.id)), make_pair(gen_pid)});
+        return make_pair(pair_pid);
+    });
+
     // (query:root) — Return the current workspace root node ID, or #f if no workspace
     primitives_.add("query:root", [this, mev](const auto&) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
