@@ -3867,6 +3867,37 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         s.aot_fallbacks = metrics_.aot_fallbacks.load(std::memory_order_relaxed);
         s.arena_bytes_used = metrics_.arena_bytes_used.load(std::memory_order_relaxed);
         s.arena_bytes_peak = metrics_.arena_bytes_peak.load(std::memory_order_relaxed);
+        // Issue #247: populate marker distribution by walking
+        // workspace_flat_->marker_column(). We grab a
+        // shared_lock on workspace_mtx_ to keep the flat
+        // pointer stable during the read. If no workspace is
+        // set (workspace_flat_ is null), all counts stay 0.
+        //
+        // Note: snapshot() is const but lock_workspace_shared is
+        // non-const (it modifies the mutex's internal state). We
+        // const_cast the Evaluator reference. This is safe
+        // because the shared_mutex's internal state is mutable
+        // (its lock/unlock operations don't change the logical
+        // contents of the Evaluator).
+        {
+            auto& eval_mut = const_cast<Evaluator&>(evaluator_);
+            eval_mut.lock_workspace_shared();
+            struct UnlockGuard {
+                Evaluator& e;
+                ~UnlockGuard() { e.unlock_workspace_shared(); }
+            } guard{eval_mut};
+            const auto* wf = eval_mut.workspace_flat();
+            if (wf) {
+                const auto& markers = wf->marker_column();
+                s.marker_total_count = markers.size();
+                for (auto m : markers) {
+                    auto val = static_cast<int>(m);
+                    if (val == 0) ++s.marker_user_count;
+                    else if (val == 1) ++s.marker_macro_introduced_count;
+                    else if (val == 2) ++s.marker_bool_literal_count;
+                }
+            }
+        }
         // Populate per-function metrics from the JIT cache
         {
             std::shared_lock cache_read(jit_cache_mtx_);

@@ -7578,6 +7578,61 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         return result;
     });
 
+    // (query:marker-stats) — Issue #247: aggregate SyntaxMarker
+    // distribution in the workspace. Returns a 4-element list:
+    //   (user-count macro-introduced-count bool-literal-count total-count)
+    //
+    // Equivalent to (syntax-marker-counts) but returns a simple
+    // list instead of a hash table. Use this when you want to
+    // pipe the result through list operations (e.g., assert all
+    // counts are > 0 except for some category). For dashboards
+    // and key/value lookups, (syntax-marker-counts) is the
+    // better choice.
+    //
+    // Returns a proper list of 4 integers:
+    //   (user macro-introduced bool-literal total)
+    //
+    // If no workspace is set, returns '().
+    primitives_.add("query:marker-stats", [this, mev](const auto&) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        if (!workspace_flat_) return mev("no-workspace", "no workspace AST loaded");
+
+        std::size_t user = 0, macro = 0, bool_lit = 0, total = 0;
+        const auto& markers = workspace_flat_->marker_column();
+        for (auto m : markers) {
+            ++total;
+            auto val = static_cast<int>(m);
+            if (val == 0) ++user;
+            else if (val == 1) ++macro;
+            else if (val == 2) ++bool_lit;
+        }
+        // Build a proper 4-element list: (user macro bool total).
+        // Use make_pair chaining (cdr-then-prepend pattern).
+        // The list reads (total . (bool . (macro . (user . ())))) — i.e.
+        // car=total, cdr=(bool ...). But we want (user macro bool total).
+        // So build in reverse and then return as-is (the result is
+        // a list whose first element is total). The Aura code can
+        // destructure via pattern match.
+        //
+        // Actually, building the list in REVERSE order (push each
+        // onto the head) would give (total . (bool . (macro . (user))))
+        // which when iterated left-to-right yields total, bool, macro,
+        // user. That's the wrong order. Build FORWARD: prepend each
+        // new element to the previous list.
+        EvalValue result = make_void();
+        auto append = [&](std::int64_t v) {
+            auto pid = pairs_.size();
+            pairs_.push_back({make_int(v), result});
+            result = make_pair(pid);
+        };
+        append(static_cast<std::int64_t>(user));
+        append(static_cast<std::int64_t>(macro));
+        append(static_cast<std::int64_t>(bool_lit));
+        append(static_cast<std::int64_t>(total));
+        // Now result is (user (macro (bool (total . ()))))
+        return result;
+    });
+
     // ═══════════════════════════════════════════════════════════════
     // P8: Query/Transform EDSL 扩展 — pattern matching
     // ═══════════════════════════════════════════════════════════════
