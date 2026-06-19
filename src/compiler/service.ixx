@@ -462,6 +462,38 @@ public:
                 std::string n = name ? std::string(name) : std::string();
                 return clear_block_dirty_v2(n, func_idx, block_idx);
             });
+        // Issue #240: per-node occurrence-dirty hook. The
+        // hook reads / writes the kOccurrenceDirty bit on
+        // the workspace FlatAST's dirty bitmask
+        // (DirtyReason::kOccurrenceDirty = 0x04). The bit
+        // gates find_occurrence_contexts in
+        // type_checker_impl.cpp so the post-mutation
+        // invariant check scopes its diagnostic to
+        // contexts where narrowing is genuinely stale.
+        //
+        // The hook returns the PRIOR bit state (true if
+        // it was already set, false otherwise). This lets
+        // the read-only (compile:narrowing-dirty?) primitive
+        // peek the state via a no-op set/restore pair.
+        evaluator_.set_set_occurrence_dirty_fn(
+            [this](std::uint32_t node_id, bool set) -> bool {
+                auto* ws = evaluator_.workspace_flat();
+                if (!ws || node_id >= ws->size()) return false;
+                bool prior = ws->is_dirty_for(
+                    node_id,
+                    static_cast<std::uint8_t>(
+                        aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
+                if (set) {
+                    ws->mark_dirty(node_id,
+                        static_cast<std::uint8_t>(
+                            aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
+                } else {
+                    ws->clear_dirty_for(node_id,
+                        static_cast<std::uint8_t>(
+                            aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
+                }
+                return prior;
+            });
         // Issue #197: hook for (compile:inline-pass-stats).
         // The hook reads the static lifetime counters
         // maintained by InlinePass (process-wide totals).

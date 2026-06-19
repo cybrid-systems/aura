@@ -2322,6 +2322,29 @@ target_compile_definitions(test_issue_227 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_227 PRIVATE ${llvm_libs})
 add_test(NAME issue_227_occurrence_narrowing_verification COMMAND ./test_issue_227)
 
+# Issue #240: per-node occurrence-dirty bit (fine-grained scoping
+# for find_occurrence_contexts). Tests the new Aura primitives
+# (compile:mark-narrowing-dirty!, compile:narrowing-dirty?) and
+# verifies that post_mutation_invariant_check scopes its
+# diagnostic to kOccurrenceDirty-tagged nodes vs the conservative
+# general-dirty fallback. Uses CompilerService + FlatAST dirty
+# bitmask (from #188) — no JIT needed.
+aura_add_issue_test(test_issue_240)
+target_include_directories(test_issue_240 PRIVATE src src/compiler tests)
+target_sources(test_issue_240 PRIVATE
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+src/compiler/observability_snapshot.h
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_240 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_240 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_240 PRIVATE ${llvm_libs})
+add_test(NAME issue_240_per_node_occurrence_dirty_verification COMMAND ./test_issue_240)
+
 # Issue #228: Hardware IR Dependent Type System for Agentic EDA.
 # Phase 1 minimum viable — tests the Aura-level dependent type
 # library extension (lib/std/eda.aura Phase 1 addition: BitVec,
@@ -2466,3 +2489,7 @@ add_dependencies(all_test_issue_targets test_issue_224)
 add_dependencies(all_test_issue_targets test_issue_224_closure_bridge)
 add_dependencies(all_test_issue_targets test_issue_225_bridge_invalidation)
 add_dependencies(all_test_issue_targets test_issue_226)
+add_dependencies(all_test_issue_targets test_issue_227)
+add_dependencies(all_test_issue_targets test_issue_228)
+add_dependencies(all_test_issue_targets test_issue_237)
+add_dependencies(all_test_issue_targets test_issue_240)
