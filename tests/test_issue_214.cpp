@@ -22,6 +22,12 @@
 
 #include "reflect/reflect.hh"
 
+// Unified test harness (Issue #226). Provides
+// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
+#include "test_harness.hpp"
+using aura::test::g_passed;
+using aura::test::g_failed;
+
 
 
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
@@ -153,14 +159,6 @@ bool test_json_roundtrip() {
 // built.
 #include <cstdlib>
 #include <sstream>
-
-// Unified test harness (Issue #226). Provides
-// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
-// g_passed / g_failed / CHECK macro above are removed;
-// this file now uses the harness's versions.
-#include "test_harness.hpp"
-using aura::test::g_passed;
-using aura::test::g_failed;
 
 static std::string exec_aura(const std::string& code) {
     std::string cmd = "cd /home/dev/code/aura && echo '" + code +

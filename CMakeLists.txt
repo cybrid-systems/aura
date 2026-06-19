@@ -79,7 +79,8 @@ target_sources(aura PRIVATE
     src/compiler/git_ctx.cpp
     src/main.cpp)
 
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
  
 
 
@@ -243,7 +244,8 @@ target_sources(test_ir PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp)
 
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic
     -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter
@@ -270,6 +272,7 @@ target_sources(test_concurrent PRIVATE
     # hook. Without this dependency, the linker fails with
     # "undefined reference to aura_set_current_fiber_id_fn".
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 )
 target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -315,7 +318,9 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 set(AURA_MODULE_BMI_DIR ${CMAKE_BINARY_DIR}/module_cache)
 file(MAKE_DIRECTORY ${AURA_MODULE_BMI_DIR})
 add_library(aura_test_objects STATIC
+    src/core/contract_stub.cpp
     src/core/ast_impl.cpp
+    src/core/contract_handler.cpp
     src/core/type_impl.cpp
     src/compiler/value_impl.cpp
     src/parser/lexer_impl.cpp
@@ -422,6 +427,7 @@ target_sources(test_issue_115 PRIVATE
     # (defined in aura_jit_runtime.cpp) is called from
     # fiber.cpp's static init in libaura_test_objects.a.
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 )
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 
@@ -687,6 +693,7 @@ target_sources(test_issue_135 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -732,6 +739,7 @@ target_sources(test_issue_137 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -750,6 +758,7 @@ target_sources(test_issue_158 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -767,6 +776,7 @@ aura_add_issue_test(test_issue_159)
 target_sources(test_issue_159 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -825,6 +835,7 @@ target_sources(test_issue_164 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -853,6 +864,7 @@ target_include_directories(test_issue_184 PRIVATE src src/compiler)
 target_sources(test_issue_184 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -890,6 +902,7 @@ target_sources(test_issue_165 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -916,6 +929,7 @@ target_sources(test_issue_166 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -957,6 +971,7 @@ target_sources(test_issue_169 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -986,6 +1001,7 @@ target_sources(test_issue_170 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_170 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -1003,6 +1019,7 @@ target_sources(test_issue_159_bench PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1038,6 +1055,7 @@ target_sources(test_issue_138 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1065,6 +1083,7 @@ target_sources(test_issue_139 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1094,6 +1113,7 @@ target_sources(test_issue_140 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1120,6 +1140,7 @@ target_sources(test_issue_141 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1148,6 +1169,7 @@ target_sources(test_issue_142 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1332,7 +1354,8 @@ add_executable(test_jit_metrics tests/test_jit_metrics.cpp
 target_include_directories(test_jit_metrics PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 target_sources(test_jit_metrics PRIVATE src/core/contract_handler.cpp)
 target_link_libraries(test_jit_metrics PRIVATE stdc++ stdc++exp pthread aura-reflect)
 if(LLVM_FOUND)
@@ -1354,7 +1377,8 @@ add_executable(test_jit_concurrent_compile tests/test_jit_concurrent_compile.cpp
 target_include_directories(test_jit_concurrent_compile PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 target_sources(test_jit_concurrent_compile PRIVATE src/core/contract_handler.cpp)
 target_link_libraries(test_jit_concurrent_compile PRIVATE stdc++ stdc++exp pthread aura-reflect)
 if(LLVM_FOUND)
@@ -1394,6 +1418,7 @@ target_sources(test_issue_143 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1415,6 +1440,7 @@ target_sources(test_issue_144 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1435,6 +1461,7 @@ target_sources(test_issue_145 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
     src/compiler/observability_snapshot.h
@@ -1461,6 +1488,7 @@ target_sources(test_issue_146 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
 )
 # Issue #146: aura_jit.cpp uses LLVM and pimpl over an Impl
 # forward declaration. Needs -fno-rtti (shared with 145).
@@ -1476,6 +1504,7 @@ target_sources(test_issue_147 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -1493,6 +1522,7 @@ target_sources(test_issue_148 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -1508,6 +1538,7 @@ target_sources(test_issue_149 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -1551,6 +1582,7 @@ target_sources(test_issue_204 PRIVATE
     # (defined in aura_jit_runtime.cpp) is called from
     # fiber.cpp's static init in libaura_test_objects.a.
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 )
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_compile_options(test_issue_204 PRIVATE -Wall -Wextra -Wpedantic
@@ -1573,6 +1605,7 @@ target_sources(test_issue_205 PRIVATE
     # (defined in aura_jit_runtime.cpp) is called from
     # fiber.cpp's static init.
 src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 )
 target_compile_options(test_issue_205 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -1628,6 +1661,7 @@ target_sources(test_issue_187 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1651,6 +1685,7 @@ target_sources(test_issue_188 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1670,6 +1705,7 @@ target_include_directories(test_issue_189 PRIVATE src src/compiler)
 target_sources(test_issue_189 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1692,6 +1728,7 @@ target_sources(test_issue_190 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1713,6 +1750,7 @@ target_sources(test_issue_191 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1731,6 +1769,7 @@ target_include_directories(test_issue_192 PRIVATE src src/compiler)
 target_sources(test_issue_192 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1751,6 +1790,7 @@ target_include_directories(test_issue_193 PRIVATE src src/compiler)
 target_sources(test_issue_193 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1773,6 +1813,7 @@ target_include_directories(test_issue_194 PRIVATE src src/compiler)
 target_sources(test_issue_194 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1797,6 +1838,7 @@ target_sources(test_issue_195 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1816,6 +1858,7 @@ target_include_directories(test_issue_196 PRIVATE src src/compiler)
 target_sources(test_issue_196 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1841,6 +1884,7 @@ target_include_directories(test_issue_224 PRIVATE src src/compiler tests)
 target_sources(test_issue_224 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1894,6 +1938,7 @@ target_sources(test_issue_247 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1912,6 +1957,7 @@ target_include_directories(test_issue_248 PRIVATE src src/compiler)
 target_sources(test_issue_248 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1932,6 +1978,7 @@ target_sources(test_issue_249 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1949,6 +1996,7 @@ target_include_directories(test_issue_250 PRIVATE src src/compiler)
 target_sources(test_issue_250 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -1970,6 +2018,7 @@ target_sources(test_issue_197_observability PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -1987,6 +2036,7 @@ target_include_directories(test_issue_206 PRIVATE src src/compiler)
 target_sources(test_issue_206 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.cpp
 )
 target_include_directories(test_issue_206 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2003,6 +2053,7 @@ target_include_directories(test_issue_174 PRIVATE src src/compiler)
 target_sources(test_issue_174 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.cpp
 )
 target_include_directories(test_issue_174 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2020,6 +2071,7 @@ target_include_directories(test_issue_208 PRIVATE src src/compiler)
 target_sources(test_issue_208 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.cpp
 )
 target_include_directories(test_issue_208 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2038,6 +2090,7 @@ target_include_directories(test_issue_210 PRIVATE src src/compiler)
 target_sources(test_issue_210 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.cpp
 )
 target_include_directories(test_issue_210 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2055,6 +2108,7 @@ target_include_directories(test_issue_211 PRIVATE src src/compiler)
 target_sources(test_issue_211 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.cpp
 )
 target_include_directories(test_issue_211 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2072,6 +2126,43 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 # this is a pure module test, exercised against
 # hand-built IRFunctions.
 aura_add_issue_test(test_issue_212)
+# C++26 contract enforcement: test_212 calls
+# arithmetic_div_pure which has a `pre(...)` contract. The
+# contract violation handler is __tu_has_violation, a
+# weak runtime symbol provided by GCC's -fcontracts
+# enforcement. The aura target gets -fcontracts; the
+# per-test helper does not. Enable here to match.
+# Note: -fno-contracts is also tried first (see below).
+# The aura.compiler.constant_folding module is built with
+# -fcontracts and embeds a contract check on
+# arithmetic_div_pure. The check generates a call to
+# __tu_has_violation in the test's .o file. The
+# libaura_test_objects.a archive has __tu_has_violation as
+# a LOCAL symbol (compiler-generated, "t" in nm), which
+# static libraries do not export. We work around this by
+# providing a default-visibility stub at the bottom of
+# test_issue_212.cpp.
+target_sources(test_issue_212 PRIVATE
+    # aura_alloc_float / aura_float_ref are defined in
+    # aura_jit.cpp (LLVM-emitted extern "C" helpers used
+    # by the runtime float pool). test_212 calls
+    # types::make_float / types::as_float, which reference
+    # these symbols. The libaura_test_objects.a archive
+    # does not include aura_jit.cpp (per-binary compile
+    # flag constraint), so the test must include it as a
+    # per-target source. We also need aura_jit_runtime.cpp
+    # (Impl definition for AuraJIT's pImpl) and LLVM libs
+    # since aura_jit.cpp pulls in LLVM headers.
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_212 PRIVATE src src/compiler)
+target_compile_definitions(test_issue_212 PRIVATE AURA_HAVE_LLVM=1)
+target_include_directories(test_issue_212 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_libraries(test_issue_212 PRIVATE ${llvm_libs})
 
 # Issue #212 Phase 4: pure-function path benchmark.
 # Measures the perf cost of the pure-function extraction
@@ -2147,6 +2238,7 @@ target_include_directories(test_issue_213 PRIVATE src src/compiler)
 target_sources(test_issue_213 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.cpp
 )
 target_include_directories(test_issue_213 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2170,6 +2262,7 @@ target_include_directories(test_issue_177 PRIVATE src src/compiler)
 target_sources(test_issue_177 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.cpp
 )
 target_include_directories(test_issue_177 PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2194,6 +2287,7 @@ target_include_directories(test_issue_213_panic_fiber PRIVATE src src/compiler)
 target_sources(test_issue_213_panic_fiber PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.cpp
 )
 target_include_directories(test_issue_213_panic_fiber PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -2341,6 +2435,7 @@ target_sources(test_issue_224_closure_bridge PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -2361,6 +2456,7 @@ target_include_directories(test_issue_225_bridge_invalidation PRIVATE src src/co
 target_sources(test_issue_225_bridge_invalidation PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -2392,6 +2488,7 @@ target_sources(test_issue_226 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -2414,6 +2511,7 @@ target_include_directories(test_issue_227 PRIVATE src src/compiler tests)
 target_sources(test_issue_227 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -2438,6 +2536,7 @@ target_sources(test_issue_240 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -2460,6 +2559,7 @@ target_include_directories(test_issue_242 PRIVATE src src/compiler tests)
 target_sources(test_issue_242 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
@@ -2504,6 +2604,7 @@ target_sources(test_issue_244 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
 )
@@ -2524,6 +2625,7 @@ target_include_directories(test_issue_228 PRIVATE src src/compiler tests)
 target_sources(test_issue_228 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
 src/compiler/observability_snapshot.h
