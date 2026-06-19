@@ -1890,6 +1890,25 @@ target_compile_definitions(test_issue_247 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_247 PRIVATE ${llvm_libs})
 add_test(NAME issue_247_marker_observability_verification COMMAND ./test_issue_247)
 
+# Issue #248 verification: query:schema-of-marker primitive.
+# Observability side of macro-type-tracking. Integration test
+# (uses CompilerService).
+aura_add_issue_test(test_issue_248)
+target_include_directories(test_issue_248 PRIVATE src src/compiler)
+target_sources(test_issue_248 PRIVATE
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+src/compiler/observability_snapshot.h
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_248 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_248 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_248 PRIVATE ${llvm_libs})
+add_test(NAME issue_248_schema_of_marker_verification COMMAND ./test_issue_248)
+
 # Issue #197 observability: (compile:inline-pass-stats)
 # Aura primitive. Tests the Aura-level hook + hash return
 # shape. Pattern matches test_issue_194 (small Aura-level
