@@ -2389,6 +2389,28 @@ target_include_directories(test_issue_243 PRIVATE src src/compiler tests)
 # end-to-end emit-binary path.
 add_test(NAME issue_243_aot_bridge_enhancement_verification COMMAND ./test_issue_243)
 
+# Issue #244: SyntaxMarker query primitives + :marker field
+# in query:where. Phase 1 (scope-limited close) ships:
+#   - :marker field for (where :marker "MacroIntroduced"|"User"|"BoolLiteral")
+#   - (query:by-marker marker-name) primitive
+#   - (query:macro-introduced) shortcut
+# Deferred: mutate:* guards for MacroIntroduced nodes.
+aura_add_issue_test(test_issue_244)
+target_include_directories(test_issue_244 PRIVATE src src/compiler)
+target_sources(test_issue_244 PRIVATE
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+src/compiler/observability_snapshot.h
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_244 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_244 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_244 PRIVATE ${llvm_libs})
+add_test(NAME issue_244_syntax_marker_query_verification COMMAND ./test_issue_244)
+
 # Issue #228: Hardware IR Dependent Type System for Agentic EDA.
 # Phase 1 minimum viable — tests the Aura-level dependent type
 # library extension (lib/std/eda.aura Phase 1 addition: BitVec,
