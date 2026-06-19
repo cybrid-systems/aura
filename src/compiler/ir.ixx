@@ -433,6 +433,14 @@ export struct IRFunction {
     std::uint32_t arg_count = 0;   // number of arguments
     bool variadic = false;         // dotted rest param
     Region region = Region::Default;
+    // Issue #246: SyntaxMarker from the source AST node that
+    // produced this IRFunction. 0 = User (default), 1 =
+    // MacroIntroduced (lambda body inserted by a hygienic
+    // macro via clone_macro_body), 2 = BoolLiteral.
+    // Mirrors aura::ast::SyntaxMarker. The InlinePass consults
+    // this to decide whether to be conservative with macro-
+    // introduced code (respect_macro_hygiene_ flag, default on).
+    std::uint8_t marker = 0;
     // Issue #61 Iter 1: shape this function was specialized for.
     // 0 = no specialization (generic version). When non-zero, the
     // IRFunction entry must contain a GuardShape (Iter 2) that

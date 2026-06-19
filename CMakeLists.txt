@@ -1857,6 +1857,20 @@ target_compile_options(test_issue_197 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_197 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_197_verification COMMAND ./test_issue_197)
 
+# Issue #246 verification: Inliner MacroIntroduced-awareness.
+# Scope-limited close: IRFunction.marker + InlinePass consults
+# it via respect_macro_hygiene_ static flag (default true).
+# Pure C++ test on IRModule + IRFunction + InlinePass, no Aura.
+add_executable(test_issue_246 tests/test_issue_246.cpp)
+set_property(TARGET test_issue_246 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_246 PRIVATE src src/compiler)
+target_compile_options(test_issue_246 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_246 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_246_inliner_macro_hygiene_verification COMMAND ./test_issue_246)
+
 # Issue #197 observability: (compile:inline-pass-stats)
 # Aura primitive. Tests the Aura-level hook + hash return
 # shape. Pattern matches test_issue_194 (small Aura-level
