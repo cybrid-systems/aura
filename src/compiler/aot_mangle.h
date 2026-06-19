@@ -1,4 +1,4 @@
-// aot_mangle.h — AOT symbol name mangler (Issue #136)
+// aot_mangle.h — AOT symbol name mangler (Issue #136, #243)
 //
 // Pure helper function used by the AOT bridge to generate valid
 // C identifiers from Aura function names. Exposed as a header
@@ -21,16 +21,33 @@ namespace aura::compiler {
 // trailing underscores, so reserved names like `__top__` are
 // kept verbatim).
 //
+// Issue #243 Phase 1: version suffix support. The mangled name
+// now includes a `_vN` suffix derived from the Evaluator's
+// `defuse_version_`. This lets the AOT binary self-identify
+// which mutation epoch it was generated from, so a stale .o
+// file (e.g. from a previous Aura session that mutated code
+// after a hot-reload) can be detected at runtime before it
+// dispatches to an out-of-date function body. The default
+// `defuse_version=0` is the "unversioned" baseline; existing
+// tests using the no-version path keep working.
+//
 // Parameters:
-//   original       - the Aura function name to mangle
-//   disambiguator  - per-function unique counter (skipped for
-//                    __top__ which is the canonical entry point)
+//   original        - the Aura function name to mangle
+//   disambiguator   - per-function unique counter (skipped for
+//                     __top__ which is the canonical entry point)
+//   defuse_version  - the Evaluator's defuse_version_ at emit
+//                     time. Appended as `_v<N>` to the result.
+//                     Defaults to 0 for backward compatibility
+//                     with callers that don't track version
+//                     (e.g. standalone tests).
 //
 // Returns:
 //   A valid C identifier that's unlikely to collide with other
-//   names.
+//   names. The version suffix ensures names from different
+//   mutation epochs never collide with each other.
 inline std::string mangle_aot_name(const std::string& original,
-                                    std::uint32_t disambiguator) {
+                                    std::uint32_t disambiguator,
+                                    std::uint64_t defuse_version = 0) {
     // Step 1: replace any non-alphanumeric with `_`
     std::string out;
     out.reserve(original.size() + 16);
@@ -79,6 +96,15 @@ inline std::string mangle_aot_name(const std::string& original,
     if (original != "__top__") {
         result += "_";
         result += std::to_string(disambiguator);
+    }
+    // Issue #243 Phase 1: append the defuse_version suffix.
+    // The format is `_v<N>` so a mangle result for a function
+    // emitted at defuse_version=7 looks like `my_fn_2_v7` —
+    // the `_v` prefix prevents accidental collision with names
+    // that legitimately end in a digit.
+    if (defuse_version != 0) {
+        result += "_v";
+        result += std::to_string(defuse_version);
     }
     return result;
 }

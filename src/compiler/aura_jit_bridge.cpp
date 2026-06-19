@@ -10,6 +10,7 @@
 #include <cstring>
 #include <vector>
 #include <unordered_set>
+#include <cstdint>  // Issue #243: std::uint64_t for g_aot_defuse_version
 
 // Helper: convert aura::ir::IRFunction to aura::jit::FlatFunction
 // This bridges between the compiler's IR types and the JIT's FlatFunction.
@@ -37,6 +38,30 @@ static std::string g_prim_reg_c_code;
 // ── Global: string pool for OpConstString ───────────────────────
 // Set by aura_set_string_pool() before aura_emit_native_file().
 static std::vector<std::string> g_string_pool;
+
+// ── Global: current defuse_version at emit time ────────────────
+// Issue #243: the AOT bridge now records the defuse_version_
+// of the Evaluator that triggered the AOT emission. This value
+// flows into mangle_aot_name (so the .o file's symbols carry
+// the version) and into the emitted registration .c (so the
+// registration table records which version it belongs to).
+// Set by aura_set_aot_defuse_version() before
+// aura_emit_native_file(); defaults to 0 (the "unversioned"
+// baseline that pre-#243 callers expect).
+static std::uint64_t g_aot_defuse_version = 0;
+
+// C-linkage setter for g_aot_defuse_version. Called from
+// aura_jit.cpp's emit_native_object_llvm (or wherever the
+// Evaluator's current defuse_version_ is known). Default 0
+// preserves the pre-#243 behavior.
+extern "C" void aura_set_aot_defuse_version(std::uint64_t v) {
+    g_aot_defuse_version = v;
+}
+
+// C-linkage getter for diagnostics / tests.
+extern "C" std::uint64_t aura_get_aot_defuse_version(void) {
+    return g_aot_defuse_version;
+}
 
 // ── Global: string pool conversion for C linkage ────────────────
 // Writes the string pool to a temp file for compiled code to include.
@@ -87,21 +112,50 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
 
     // Compute mangled names once (used for both extern decls
     // and the constructor body).
+    //
+    // Issue #243: mangle_aot_name now takes the defuse_version
+    // as a 3rd arg (defaults to 0 for back-compat). The
+    // emit-time version is captured in the g_aot_defuse_version
+    // global (set by aura_set_aot_defuse_version before
+    // aura_emit_native_file). This way, the .o file's symbols
+    // carry the version, and the registration .c records the
+    // expected version for runtime staleness checks.
     std::vector<std::string> mangled_names(num_functions);
+    const std::uint64_t emit_version = g_aot_defuse_version;
     for (unsigned int i = 0; i < num_functions; ++i) {
-        mangled_names[i] = aura::compiler::mangle_aot_name(functions[i].name, i);
+        mangled_names[i] = aura::compiler::mangle_aot_name(functions[i].name, i, emit_version);
     }
     // Issue #136: detect collisions. The new mangler adds a
     // disambiguator to every non-__top__ name, so collisions
     // only happen for __top__ (which is unique by construction).
     // Still, log a warning if a collision is detected (defensive).
+    //
+    // Issue #243 Phase 3: surface the AOT emit version in the
+    // registration .c so the resulting binary carries an
+    // `aot_emit_version` symbol that runtime code can read to
+    // detect stale AOT binaries (the runtime's current
+    // defuse_version_ won't match the AOT emit version).
     std::unordered_set<std::string> seen;
     for (unsigned i = 0; i < num_functions; ++i) {
         if (!seen.insert(mangled_names[i]).second) {
-            fprintf(stderr, "AOT warning: mangled name collision for '%s' (both %s)\n",
-                    functions[i].name, mangled_names[i].c_str());
+            fprintf(stderr, "AOT warning: mangled name collision for '%s' (both %s) "
+                            "[emit_version=%llu]\n",
+                    functions[i].name, mangled_names[i].c_str(),
+                    static_cast<unsigned long long>(emit_version));
         }
     }
+    // Issue #243 Phase 3: emit an AOT version symbol that the
+    // runtime can read. The registration .c defines a
+    // `const unsigned long long aot_emit_version` that the
+    // runtime can use to detect a stale AOT binary (if the
+    // runtime's current defuse_version_ > aot_emit_version,
+    // the binary is from a pre-mutation epoch and should be
+    // treated as stale). The symbol is a plain definition
+    // (no `extern` initializer) to avoid the
+    // "initialized and declared 'extern'" warning.
+    fprintf(f, "\n// Issue #243: AOT emit version (for staleness detection)\n");
+    fprintf(f, "const unsigned long long aot_emit_version = %llull;\n",
+            static_cast<unsigned long long>(emit_version));
 
     // Generate extern declarations
     for (unsigned int i = 0; i < num_functions; ++i) {
@@ -130,13 +184,42 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
 
     std::vector<std::string> obj_files;
 
+    // Issue #243 Phase 3: AOT observability — emit a clear
+    // start banner so CI logs can see that the pipeline
+    // entered with the expected function count and version.
+    // The version is captured from g_aot_defuse_version so
+    // the banner also documents the AOT emit epoch.
+    fprintf(stderr, "AOT: starting native emit: %u function(s), "
+                    "out=%s, defuse_version=%llu\n",
+            num_functions, out_path.c_str(),
+            static_cast<unsigned long long>(g_aot_defuse_version));
+
     // Step 1: Compile each FlatFunction to .o via LLVM IR + llc
     for (unsigned int i = 0; i < num_functions; ++i) {
         std::string obj_path = out_path + ".func" + std::to_string(i) + ".o";
+        // Issue #243 Phase 3: log per-function progress so
+        // a CI failure can pinpoint WHICH function's emit
+        // call (out of N) is the culprit. Previously the
+        // error was emitted at this point with no surrounding
+        // context, which made it hard to correlate with the
+        // input.
+        fprintf(stderr, "AOT: [%u/%u] emitting '%s' (region=%d) -> %s\n",
+                i + 1, num_functions, functions[i].name,
+                static_cast<int>(functions[i].region), obj_path.c_str());
         bool ok = aura::jit::emit_native_object(functions[i], obj_path,
                                                    g_string_pool.empty() ? nullptr : &g_string_pool);
         if (!ok) {
-            fprintf(stderr, "AOT: failed to compile function '%s'\n", functions[i].name);
+            // Issue #243 Phase 3: include the function name,
+            // index, total count, and the current defuse_version_
+            // in the error so CI logs can immediately tell
+            // (a) which function failed, (b) how many other
+            // functions were in the batch, and (c) which
+            // emit epoch this batch belonged to.
+            fprintf(stderr, "AOT: failed to compile function '%s' "
+                            "[index=%u/%u, defuse_version=%llu]. "
+                            "See LLVM/emit_native_object output above.\n",
+                    functions[i].name, i, num_functions,
+                    static_cast<unsigned long long>(g_aot_defuse_version));
             for (auto& p : obj_files)
                 std::remove(p.c_str());
             return false;
@@ -245,7 +328,10 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
         std::remove(p.c_str());
 
     if (rc == 0) {
-        fprintf(stderr, "AOT: emitted native binary: %s\n", out_path.c_str());
+        fprintf(stderr, "AOT: emitted native binary: %s (defuse_version=%llu, %u function(s))\n",
+                out_path.c_str(),
+                static_cast<unsigned long long>(g_aot_defuse_version),
+                num_functions);
         return true;
     }
 

@@ -43,6 +43,10 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
 extern "C" void aura_reset_runtime();  // Issue #137: cleanup at exit
 extern "C" void aura_set_prim_registration(const char* c_code);
 extern "C" void aura_set_string_pool(const char** strings, unsigned int count);
+// Issue #243: defuse_version_ setter/getter so the AOT
+// bridge can mangle + register with the current emit epoch.
+extern "C" void aura_set_aot_defuse_version(std::uint64_t v);
+extern "C" std::uint64_t aura_get_aot_defuse_version(void);
 
 // Issue #157 Phase 5: jit:metrics --serve command accessors.
 // Exposes the runtime telemetry counters (bypass_count /
@@ -2191,6 +2195,15 @@ int main(int argc, char* argv[]) {
                 raw_pool[i] = pool[i].c_str();
             aura_set_string_pool(raw_pool.data(), static_cast<unsigned>(raw_pool.size()));
         }
+
+        // Issue #243 Phase 1: propagate the Evaluator's current
+        // defuse_version_ into the AOT bridge so the emitted
+        // .o + .reg.c carry the version. The bridge uses this
+        // for both mangle suffixing and the registration
+        // record. We use the test accessor (defuse_version_for_test)
+        // since there is no production-only accessor yet; this
+        // path is hot but the cost is one atomic load.
+        aura_set_aot_defuse_version(cs.evaluator().defuse_version_for_test());
 
         // ── Step 4: Compile via LLVM AOT pipeline ────────────────
         bool compiled = aura_emit_native_file(

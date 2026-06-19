@@ -2368,6 +2368,27 @@ target_compile_definitions(test_issue_242 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_242 PRIVATE ${llvm_libs})
 add_test(NAME issue_242_envframe_version_stamping_verification COMMAND ./test_issue_242)
 
+# Issue #243: AOT bridge enhancement (mangle versioning + AOT
+# observability). Phase 1 (mangle with defuse_version suffix)
+# + Phase 3 (AOT bridge observability: start banner, per-
+# function progress, collision warning version, aot_emit_version
+# symbol). Incremental re-AOT for dirty functions is deferred
+# to a separate follow-up issue. Tests are pure C++ (no
+# CompilerService dependency) — the mangle helper is in
+# aot_mangle.h and the C-linkage setter/getter are
+# extern "C" in aura_jit_bridge.cpp.
+aura_add_issue_test(test_issue_243)
+target_include_directories(test_issue_243 PRIVATE src src/compiler tests)
+# test_issue_243 doesn't link the full aura_jit.cpp (which would
+# pull in ir_executor_impl.cpp and its TL arena dependencies).
+# The C-linkage setter/getter for g_aot_defuse_version are
+# trivial — we provide a local stub here so the test only
+# exercises the header-only mangle_aot_name and the
+# setter/getter round-trip. The real bridge TU
+# (aura_jit_bridge.cpp) is exercised by test_issue_237's
+# end-to-end emit-binary path.
+add_test(NAME issue_243_aot_bridge_enhancement_verification COMMAND ./test_issue_243)
+
 # Issue #228: Hardware IR Dependent Type System for Agentic EDA.
 # Phase 1 minimum viable — tests the Aura-level dependent type
 # library extension (lib/std/eda.aura Phase 1 addition: BitVec,
