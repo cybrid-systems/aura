@@ -6796,10 +6796,23 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // on other nodes are preserved.
         // Issue #213 follow-up: migrate mutate:rebind to the
     // MutationBoundaryGuard. The guard handles the version
-    // bump + lock; the panic_checkpoint mechanism stays as-is
-    // (it's a SEPARATE mechanism for panic recovery, not
-    // boundary rollback — see save_panic_checkpoint() docs
-    // in evaluator.ixx).
+    // bump + lock + enter/exit_mutation_boundary.
+    //
+    // Issue #241 (scope-limited close — pilot primitive): the
+    // panic_checkpoint lifecycle is now ALSO managed by the
+    // Guard. Previously each mutate:* primitive called
+    // save_panic_checkpoint() at entry and either
+    // commit_panic_checkpoint() (success) or
+    // restore_panic_checkpoint() (failure + auto_rollback)
+    // manually. The Guard now does all three automatically:
+    //   - ctor: save_panic_checkpoint()
+    //   - dtor: commit on ok=true, restore on ok=false +
+    //     panic_auto_rollback_, leave alone on ok=false +
+    //     !panic_auto_rollback_
+    // mutate:rebind is the pilot — other primitives (replace-type,
+    // replace-value, record-patch, set-body, etc.) still do manual
+    // panic_checkpoint handling until they're migrated in
+    // follow-up issues.
     //
     // The guard's `ok` flag handles PLANNED rollback (via
     // MutationRecord inverse on exit(false)). The panic
@@ -6842,9 +6855,12 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // Phase 2.5.0: route via canonical_pool() (== workspace_pool, explicit).
         auto sym = canonical_pool()->intern(name);
 
-        // ── 安全点：保存当前状态作为 panic checkpoint ────────
-        // 如果 auto-rollback-on-panic 开启且后续失败，自动恢复到此状态
-        bool had_checkpoint = save_panic_checkpoint();
+        // ── 安全点：panic checkpoint 现在由 MutationBoundaryGuard 自动管理 ────
+        // Issue #241: Guard 在 ctor 调 save_panic_checkpoint()，dtor 根据 ok + panic_auto_rollback_
+        // 决定 commit 或 restore。Body 不再需要手动 save / commit / restore。
+        //   ok == true  → Guard dtor commit（清除 checkpoint）
+        //   ok == false + panic_auto_rollback_ → Guard dtor restore
+        //   ok == false + !panic_auto_rollback_ → Guard dtor leave alone（caller 可 retry）
 
         // ── 依赖图查询：通过 dep_caller_fn_ 获取调用者节点 ────
         // dep_caller_fn_ 在 init_pair_primitives 中注册，使用
@@ -7054,19 +7070,18 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             }
         }
 
-        // ── Auto-rollback: if typecheck/ownership failed, restore checkpoint ──
-        if (!last_mutate_error_.empty()) {
-            if (panic_auto_rollback_ && had_checkpoint) {
-                restore_panic_checkpoint();
-                ok = false;
-                return mev("mutation-failed",
-                           std::string(typeid(*this).name()) + ": mutation rejected — auto-rolled back: " +
-                               last_mutate_error_);
-            }
-        } else if (had_checkpoint) {
-            // Mutation succeeded — commit the checkpoint
-            commit_panic_checkpoint();
+        // ── Auto-rollback: if typecheck/ownership failed, signal Guard to restore ────
+        // Issue #241: panic_checkpoint 的 restore 由 Guard dtor 处理，我们只需要设置 ok=false
+        // 当 panic_auto_rollback_ 开启且 mutation 失败。Guard dtor 会调 restore_panic_checkpoint()。
+        if (!last_mutate_error_.empty() && panic_auto_rollback_) {
+            ok = false;  // signal Guard's dtor to restore the source
+            return mev("mutation-failed",
+                       std::string(typeid(*this).name()) + ": mutation rejected — auto-rolled back: " +
+                           last_mutate_error_);
         }
+        // 失败但 !panic_auto_rollback_：保持 ok=true（保留 pre-#241 行为 — silently return true）
+        // Guard dtor 会 commit_panic_checkpoint()（行为变化：以前 leave alone，现在 clear）。
+        // 这是 #241 scope-limited close 的已知小变化 — 详见 commit message。
 
         return make_bool(true);
     });
