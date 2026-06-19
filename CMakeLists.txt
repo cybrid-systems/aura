@@ -448,10 +448,23 @@ target_sources(test_issue_115 PRIVATE
     # Same dep as test_issue_205: aura_set_current_fiber_id_fn
     # (defined in aura_jit_runtime.cpp) is called from
     # fiber.cpp's static init in libaura_test_objects.a.
+    # Plus aura_jit.cpp (defines emit_native_object, called
+    # from aura_jit_bridge.cpp) and the contract / dispatch
+    # stubs (test binaries don't have CompilerService or
+    # aura.compiler.constant_folding's libaura_test_objects
+    # symbol export).
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit.cpp
+    src/core/contract_stub.cpp
+    src/compiler/aura_jit_prim_dispatch_stub.cpp
 )
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_115 PRIVATE src src/compiler)
+target_compile_definitions(test_issue_115 PRIVATE AURA_HAVE_LLVM=1)
+target_include_directories(test_issue_115 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_libraries(test_issue_115 PRIVATE ${llvm_libs})
 
 # Issue #116 verification: deferred CoercionNode insertion
 # (TypeChecker no longer mutates FlatAST in-place). Standalone
@@ -1604,10 +1617,23 @@ target_sources(test_issue_204 PRIVATE
     # Same dep as test_issue_205: aura_set_current_fiber_id_fn
     # (defined in aura_jit_runtime.cpp) is called from
     # fiber.cpp's static init in libaura_test_objects.a.
+    # Plus aura_jit.cpp (defines emit_native_object, called
+    # from aura_jit_bridge.cpp) and the contract / dispatch
+    # stubs (test binaries don't have CompilerService or
+    # aura.compiler.constant_folding's libaura_test_objects
+    # symbol export).
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit.cpp
+    src/core/contract_stub.cpp
+    src/compiler/aura_jit_prim_dispatch_stub.cpp
 )
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_204 PRIVATE src src/compiler)
+target_compile_definitions(test_issue_204 PRIVATE AURA_HAVE_LLVM=1)
+target_include_directories(test_issue_204 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_libraries(test_issue_204 PRIVATE ${llvm_libs})
 target_compile_options(test_issue_204 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -1626,10 +1652,22 @@ target_include_directories(test_issue_205 PRIVATE src src/serve)
 target_sources(test_issue_205 PRIVATE
     # Same dep as test_concurrent: aura_set_current_fiber_id_fn
     # (defined in aura_jit_runtime.cpp) is called from
-    # fiber.cpp's static init.
-src/compiler/aura_jit_runtime.cpp
+    # fiber.cpp's static init. Plus aura_jit.cpp
+    # (defines emit_native_object, called from
+    # aura_jit_bridge.cpp) and the contract / dispatch
+    # stubs.
+    src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit.cpp
+    src/core/contract_stub.cpp
+    src/compiler/aura_jit_prim_dispatch_stub.cpp
 )
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_205 PRIVATE src src/compiler)
+target_compile_definitions(test_issue_205 PRIVATE AURA_HAVE_LLVM=1)
+target_include_directories(test_issue_205 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_libraries(test_issue_205 PRIVATE ${llvm_libs})
 target_compile_options(test_issue_205 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
