@@ -2207,11 +2207,28 @@ int main(int argc, char* argv[]) {
         // ── Step 4: Fallback → shell wrapper ────────────────────
         if (!compiled) {
             std::string self_path = std::string(argv[0]);
+            // Issue #237: log every step of the shell-wrapper fallback
+            // so CI can see exactly where the failure mode hits. The
+            // previous version silently fell through to rc=1 when the
+            // LLVM AOT + C-fallback both failed; this verbose trace
+            // makes the failure mode visible.
+            std::println(stderr, "[#237] AOT failed; entering shell wrapper fallback");
+            std::println(stderr, "[#237]   out_path={}", out_path);
+            std::println(stderr, "[#237]   self_path={}", self_path);
             {
                 std::ofstream sf(out_path);
+                if (!sf) {
+                    std::println(stderr, "[#237] ERROR: cannot open {} for write (rc=1)",
+                                 out_path);
+                    return 1;
+                }
                 sf << "#!/bin/bash\n";
                 sf << "# Aura compiled binary (shell wrapper fallback)\n";
                 sf << "exec " << self_path << " --load " << out_path << ".tmp.aura \"$@\"\n";
+                if (!sf) {
+                    std::println(stderr, "[#237] ERROR: write to {} failed (rc=1)", out_path);
+                    return 1;
+                }
             }
             std::filesystem::permissions(out_path,
                 std::filesystem::perms::owner_all |
@@ -2220,12 +2237,19 @@ int main(int argc, char* argv[]) {
             // Save source for --load
             {
                 std::ofstream sf(out_path + ".tmp.aura");
+                if (!sf) {
+                    std::println(stderr, "[#237] ERROR: cannot open {}.tmp.aura for write (rc=1)",
+                                 out_path);
+                    return 1;
+                }
                 sf << input;
             }
             if (std::filesystem::exists(out_path)) {
                 std::println("emitted binary: {} (shell wrapper)", out_path);
                 return 0;
             }
+            std::println(stderr, "[#237] ERROR: out_path {} does not exist after write (rc=1)",
+                         out_path);
             std::println(std::cerr, "error: cannot create binary");
             return 1;
         }
