@@ -11,6 +11,7 @@
 #include <vector>
 #include <unordered_set>
 #include <cstdint>  // Issue #243: std::uint64_t for g_aot_defuse_version
+#include <unistd.h>  // Issue #237 v4: readlink for /proc/self/exe lookup
 
 // Helper: convert aura::ir::IRFunction to aura::jit::FlatFunction
 // This bridges between the compiler's IR types and the JIT's FlatFunction.
@@ -173,6 +174,94 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "}\n");
     fclose(f);
     return true;
+}
+
+// ── Issue #237 v4: robust runtime.c discovery ───────────────
+//
+// Why this exists
+// ────────────────
+// The pre-#237-v4 implementation tried only two relative
+// paths from the current working directory:
+//   - "lib/runtime.c"          (relative to CWD)
+//   - "../lib/runtime.c"       (sibling dir)
+// plus an AURA_RUNTIME_DIR env override. On a typical dev
+// machine this works because the user runs `aura` from the
+// build dir which is a sibling of the source repo's `lib/`.
+//
+// On CI x86_64, however, the test binary runs from a
+// different working directory than the aura binary (the
+// test_executor and aura live in different places in the
+// CI checkout). The CWD-based lookup fails, the AOT
+// pipeline returns false, and `aura --emit-binary`
+// consequently fails (see test_issue_237's CI failure
+// pattern: 1 passed + 4 failed).
+//
+// The robust fix
+// ───────────────
+// Try a list of candidate paths in order, where the list
+// is built from runtime-environment signals rather than
+// hard-coded relative paths. The candidate list, in order:
+//
+//   1. AURA_RUNTIME_DIR env var (explicit override).
+//   2. The directory containing the aura binary itself
+//      (resolved via readlink("/proc/self/exe") on Linux).
+//      From there, walk up looking for `lib/runtime.c` in
+//      any parent directory. This handles these layouts:
+//        build/aura + ../../aura/lib/runtime.c (typical dev)
+//        build/aura + ../../../lib/runtime.c    (CI build tree)
+//        install/bin/aura + ../lib/runtime.c   (install layout)
+//   3. Fall back to the legacy CWD-relative paths
+//      ("lib/runtime.c" and "../lib/runtime.c") for
+//      backwards compat with existing test scripts.
+//
+// Returns the first path that fopens successfully, or
+// empty string if nothing worked (caller then returns
+// false to surface a clear "AOT: cannot find runtime.c"
+// error instead of silently failing later in cc).
+static std::string find_runtime_c() {
+    // (1) AURA_RUNTIME_DIR env override
+    if (auto* env = ::getenv("AURA_RUNTIME_DIR")) {
+        std::string p = std::string(env) + "/runtime.c";
+        if (FILE* f = std::fopen(p.c_str(), "r")) { std::fclose(f); return p; }
+    }
+
+    // (2) Walk up from the aura binary's directory looking
+    //     for `lib/runtime.c` in each parent. This is the
+    //     robust CI-friendly path.
+    char exe_path[4096] = {0};
+    ssize_t n = ::readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (n > 0) {
+        exe_path[n] = '\0';
+        // exe_path is the full path to the running binary.
+        // Walk up the directory tree from there, looking
+        // for `lib/runtime.c` at each level.
+        std::string cur = exe_path;
+        // Strip the basename to get the directory.
+        auto slash = cur.find_last_of('/');
+        if (slash != std::string::npos) {
+            cur = cur.substr(0, slash);
+        }
+        // Walk up to 8 levels (handles build/build_type/bin/
+        // and source/repo layouts).
+        for (int i = 0; i < 8; ++i) {
+            std::string candidate = cur + "/lib/runtime.c";
+            if (FILE* f = std::fopen(candidate.c_str(), "r")) {
+                std::fclose(f);
+                return candidate;
+            }
+            // Go up one level.
+            slash = cur.find_last_of('/');
+            if (slash == std::string::npos || slash == 0) break;
+            cur = cur.substr(0, slash);
+        }
+    }
+
+    // (3) Legacy CWD-relative fallbacks (dev-machine layout).
+    for (const char* rel : {"lib/runtime.c", "../lib/runtime.c"}) {
+        if (FILE* f = std::fopen(rel, "r")) { std::fclose(f); return rel; }
+    }
+
+    return "";  // not found
 }
 
 static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* functions,
@@ -417,28 +506,23 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
         }
 
         // Find runtime.c path (contains main(), closures, cells, pairs, I/O)
-        std::string runtime_dir;
-        {
-            auto* env = std::getenv("AURA_RUNTIME_DIR");
-            if (env)
-                runtime_dir = env;
-            else
-                runtime_dir = "lib";
+        // Issue #237 v4: use the robust find_runtime_c() helper that
+        // tries (1) AURA_RUNTIME_DIR, (2) walks up from the aura binary's
+        // directory, and (3) falls back to legacy CWD-relative paths.
+        // The pre-v4 inline lookup only tried CWD-relative paths and
+        // was the root cause of the CI x86_64 test_issue_237 failure
+        // (aura binary and test binary had different CWDs in CI).
+        std::string runtime_c = find_runtime_c();
+        if (runtime_c.empty()) {
+            fprintf(stderr, "AOT: cannot find lib/runtime.c. Tried:\n"
+                            "  - $AURA_RUNTIME_DIR/runtime.c\n"
+                            "  - <aura-binary-dir>/lib/runtime.c and 7 ancestor dirs\n"
+                            "  - lib/runtime.c (CWD)\n"
+                            "  - ../lib/runtime.c (CWD)\n"
+                            "Set AURA_RUNTIME_DIR or run aura from a directory where lib/ exists.\n");
+            return false;
         }
-        std::string runtime_c = runtime_dir + "/runtime.c";
-        std::string alt_runtime_c = "../lib/runtime.c";
-        {
-            FILE* f = std::fopen(runtime_c.c_str(), "r");
-            if (!f) {
-                f = std::fopen(alt_runtime_c.c_str(), "r");
-                if (f) {
-                    runtime_c = alt_runtime_c;
-                    fclose(f);
-                }
-            } else {
-                fclose(f);
-            }
-        }
+        fprintf(stderr, "AOT: using runtime.c at %s\n", runtime_c.c_str());
 
         bool ok = aot_flat_functions_to_binary(aot_fns.data(), static_cast<unsigned int>(aot_fns.size()),
                                                 std::string(out_path),
