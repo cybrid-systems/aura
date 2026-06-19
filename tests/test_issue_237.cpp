@@ -62,29 +62,76 @@ std::string find_aura_binary() {
 }
 
 // Run aura --emit-binary on stdin source, return true on success.
-bool run_emit_binary(const std::string& aura, const std::string& src,
-                     const std::string& out_path) {
-    int pipefd[2];
-    if (pipe(pipefd) != 0) return false;
+// Captures stderr + the wait status so the test can surface
+// aura's actual failure mode (crash vs error message vs clean
+// exit) when the binary fails on a CI architecture we can't
+// reproduce locally (e.g. x86_64 segfaults).
+struct EmitResult {
+    bool ok;               // true iff aura exited 0
+    bool crashed;          // true iff aura was killed by signal (SIGSEGV, etc.)
+    int exit_code;         // raw exit status
+    int signal;            // signal number if killed, else 0
+    std::string stderr;    // captured stderr
+};
+EmitResult run_emit_binary(const std::string& aura, const std::string& src,
+                            const std::string& out_path) {
+    EmitResult res{};
+    int in_pipe[2], err_pipe[2];
+    if (pipe(in_pipe) != 0) { res.exit_code = -1; return res; }
+    if (pipe(err_pipe) != 0) { close(in_pipe[0]); close(in_pipe[1]); res.exit_code = -1; return res; }
 
     pid_t pid = fork();
-    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return false; }
+    if (pid < 0) {
+        close(in_pipe[0]); close(in_pipe[1]);
+        close(err_pipe[0]); close(err_pipe[1]);
+        res.exit_code = -1;
+        return res;
+    }
     if (pid == 0) {
-        // child: wire stdin to pipe, exec aura --emit-binary out_path
-        dup2(pipefd[0], STDIN_FILENO);
-        close(pipefd[0]); close(pipefd[1]);
+        // child: wire stdin to in_pipe, stderr to err_pipe, exec aura
+        dup2(in_pipe[0], STDIN_FILENO);
+        dup2(err_pipe[1], STDERR_FILENO);
+        close(in_pipe[0]); close(in_pipe[1]);
+        close(err_pipe[0]); close(err_pipe[1]);
         execl(aura.c_str(), aura.c_str(), "--emit-binary", out_path.c_str(),
               static_cast<char*>(nullptr));
         _exit(127);
     }
-    // parent: write source to pipe, close, wait
-    close(pipefd[0]);
-    ssize_t w = write(pipefd[1], src.data(), src.size());
+    // parent: write source to in_pipe, close, then drain err_pipe, wait
+    close(in_pipe[0]);
+    ssize_t w = write(in_pipe[1], src.data(), src.size());
     (void)w;
-    close(pipefd[1]);
+    close(in_pipe[1]);
+    close(err_pipe[1]);
+    // Drain stderr into res.stderr
+    char buf[4096];
+    ssize_t n;
+    while ((n = read(err_pipe[0], buf, sizeof(buf))) > 0) {
+        res.stderr.append(buf, n);
+    }
+    close(err_pipe[0]);
+
     int status = 0;
     waitpid(pid, &status, 0);
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (WIFEXITED(status)) {
+        res.exit_code = WEXITSTATUS(status);
+        res.ok = (res.exit_code == 0);
+    } else if (WIFSIGNALED(status)) {
+        res.signal = WTERMSIG(status);
+        res.crashed = true;
+        res.ok = false;
+        // Append the signal name to stderr for diagnostics
+        res.stderr += "\n[signal] aura killed by SIG";
+        switch (res.signal) {
+            case SIGSEGV: res.stderr += "SEGV"; break;
+            case SIGBUS:  res.stderr += "BUS"; break;
+            case SIGABRT: res.stderr += "ABRT"; break;
+            case SIGILL:  res.stderr += "ILL"; break;
+            default:      res.stderr += std::to_string(res.signal); break;
+        }
+        res.stderr += " (likely a crash in aura's IR pipeline / LLVM / linker)";
+    }
+    return res;
 }
 
 // Run an executable, capture stdout. Returns true on exit-0.
@@ -129,8 +176,20 @@ bool test_emit_binary_simple_add() {
     std::string aura = find_aura_binary();
     std::string out_path = "/tmp/test_issue_237_add_bin";
     fs::remove(out_path);
-    bool ok = run_emit_binary(aura, "(+ 1 2)", out_path);
-    CHECK(ok, "aura --emit-binary exited 0");
+    EmitResult res = run_emit_binary(aura, "(+ 1 2)", out_path);
+    if (!res.ok) {
+        // Surface aura's stderr + exit status so the failure mode
+        // is visible (was it a clean error? a crash? a non-zero
+        // exit code?). Especially important on CI x86_64 where
+        // the IR pipeline is known to segfault on certain inputs
+        // (see src/main.cpp:293 + :2116).
+        std::println("       [aura failure] exit={} signal={} crashed={}",
+                     res.exit_code, res.signal, res.crashed);
+        if (!res.stderr.empty()) {
+            std::println("       [aura stderr] {}", res.stderr);
+        }
+    }
+    CHECK(res.ok, "aura --emit-binary exited 0");
     CHECK(fs::exists(out_path), "output file exists");
     if (!fs::exists(out_path)) return false;
     CHECK(is_elf(out_path), "output is ELF (magic 0x7f 'E' 'L' 'F')");
@@ -147,8 +206,15 @@ bool test_emit_binary_lambda() {
     std::string out_path = "/tmp/test_issue_237_lambda_bin";
     fs::remove(out_path);
     std::string src = "(define f (lambda (x) (* x x))) (f 7)";
-    bool ok = run_emit_binary(aura, src, out_path);
-    CHECK(ok, "aura --emit-binary exited 0");
+    EmitResult res = run_emit_binary(aura, src, out_path);
+    if (!res.ok) {
+        std::println("       [aura failure] exit={} signal={} crashed={}",
+                     res.exit_code, res.signal, res.crashed);
+        if (!res.stderr.empty()) {
+            std::println("       [aura stderr] {}", res.stderr);
+        }
+    }
+    CHECK(res.ok, "aura --emit-binary exited 0");
     CHECK(fs::exists(out_path), "output file exists");
     if (!fs::exists(out_path)) return false;
     std::string output = run_capture_stdout(out_path);
@@ -163,8 +229,8 @@ bool test_emit_binary_handles_errors() {
     std::string aura = find_aura_binary();
     std::string out_path = "/tmp/test_issue_237_empty_bin";
     fs::remove(out_path);
-    bool ok = run_emit_binary(aura, "", out_path);
-    CHECK(!ok, "empty input causes non-zero exit");
+    EmitResult res = run_emit_binary(aura, "", out_path);
+    CHECK(!res.ok, "empty input causes non-zero exit");
     return true;
 }
 
