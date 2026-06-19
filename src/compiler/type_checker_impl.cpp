@@ -3375,13 +3375,46 @@ static void find_occurrence_contexts(const FlatAST& flat, const StringPool& pool
         if (v.children.empty()) continue;
         NodeId cond_id = v.child(0);
         if (cond_id == NULL_NODE) continue;
-        // analyze_predicate_flat is file-static in this TU; we are
-        // inside aura::compiler, so the call resolves.
+        // Issue #240: per-node occurrence-dirty filter. The
+        // pre-#240 implementation flagged every if-context in
+        // the dirty scope as suspect, which produced a flood of
+        // false positives under WarningsOnly mode (any if-context
+        // whose enclosing define was mutated would fire). With the
+        // per-node dirty bitmask (#188), the structural mutation
+        // can be tagged with DirtyReason::kOccurrenceDirty when
+        // it actually affects narrowing (e.g. mutating the
+        // predicate node itself or the bound variable's type).
+        // We skip nodes that aren't tagged with the
+        // occurrence-dirty reason, focusing the diagnostic on
+        // contexts where narrowing may genuinely be stale.
+        //
+        // Fallback: if the node has the generic dirty bit but
+        // NOT the occurrence-specific one, the conservative
+        // pre-#240 path still flags it (so we don't miss a real
+        // narrowing invalidation just because the mutator didn't
+        // bother to set the reason bit). The cost is the same
+        // as pre-#240 behavior for callers that don't yet
+        // track reasons.
+        const std::uint8_t kOccurrenceBit =
+            static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
+        bool has_occ_bit = flat.is_dirty_for(id, kOccurrenceBit);
+        bool has_general_only = flat.is_dirty(id) && !has_occ_bit;
+        // Analyze the predicate to confirm it actually carries
+        // narrowing. (Skip if not an if-context with a narrowing
+        // predicate — avoids emitting spurious notes.)
         auto occ = analyze_predicate_flat(flat, pool, cond_id, reg);
         if (!occ) continue;
+        if (!has_occ_bit && !has_general_only) continue;
         OwnershipNote note;
         note.node = id;
-        note.kind = "invalidated-occurrence-narrowing";
+        // Issue #240: tag with finer-grained kind when the
+        // occurrence-dirty bit is set explicitly. This lets
+        // callers distinguish "this if-context was specifically
+        // flagged for narrowing invalidation" from
+        // "conservative: dirty scope contains an if-context".
+        note.kind = has_occ_bit
+                        ? "invalidated-occurrence-narrowing"
+                        : "invalidated-occurrence-narrowing-conservative";
         note.message = "occurrence narrowing on '" + occ->var_name +
                        "' in dirty scope may be invalidated by mutation";
         notes_out.push_back(std::move(note));

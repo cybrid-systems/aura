@@ -631,6 +631,27 @@ public:
     void set_clear_block_dirty_fn(std::function<ClearBlockDirtyFn> fn) {
         clear_block_dirty_fn_ = std::move(fn);
     }
+
+    // Issue #240: per-node occurrence-dirty bit hooks.
+    // Mutation primitives that affect occurrence narrowing
+    // (e.g., mutating the predicate of an if-context whose
+    // predicate narrows a variable) call these to tag the
+    // affected node with DirtyReason::kOccurrenceDirty so
+    // find_occurrence_contexts in type_checker_impl.cpp
+    // can scope the diagnostic precisely (vs the conservative
+    // pre-#240 path that flagged every if-context in the
+    // dirty scope).
+    //
+    // Returns true if the hook is installed and the operation
+    // succeeded; false otherwise. The hook signature takes a
+    // node id (from the workspace FlatAST) and a "set" flag.
+    // When `set` is true, marks the node with the occurrence
+    // dirty reason; when false, clears it.
+    using SetOccurrenceDirtyFn = bool(std::uint32_t /*node_id*/, bool /*set*/);
+    std::function<SetOccurrenceDirtyFn> set_occurrence_dirty_fn_ = nullptr;
+    void set_set_occurrence_dirty_fn(std::function<SetOccurrenceDirtyFn> fn) {
+        set_occurrence_dirty_fn_ = std::move(fn);
+    }
     // Issue #197: hook to query the inliner's lifetime
     // total counters. The InlinePass tracks
     // total_inlined (pre-#197 constant-substitution path)
