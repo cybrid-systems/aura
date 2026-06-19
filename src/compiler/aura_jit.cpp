@@ -2003,7 +2003,23 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
     }
 
     auto tm = std::unique_ptr<llvm::TargetMachine>(
-        target->createTargetMachine(triple, "generic", {}, {}, {}));
+        target->createTargetMachine(triple, "generic", {}, {},
+                                    // Issue #237: explicitly force
+                                    // Reloc::Static so the emitted .o file
+                                    // uses absolute (R_X86_64_64 /
+                                    // R_X86_64_32S) relocations instead
+                                    // of position-independent ones. On
+                                    // x86_64 modern toolchains (default
+                                    // PIE), PIC .o files cannot be linked
+                                    // into a `-no-pie` executable — the
+                                    // link fails with "relocation
+                                    // R_X86_64_32S ... can not be used
+                                    // when making a PIE". This matches
+                                    // the existing `-fno-pie` flag on
+                                    // the runtime.o / reg.o / prim.o
+                                    // compile steps in
+                                    // aura_jit_bridge.cpp.
+                                    llvm::Reloc::Static));
     if (!tm) {
         fprintf(stderr, "AOT: cannot create TargetMachine for %s\n", std::string(triple.str()).c_str());
         return false;

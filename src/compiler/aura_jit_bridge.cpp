@@ -154,14 +154,19 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     std::string pic_flag = "-fPIC -fno-pie";
     std::string runtime_o = out_path + ".runtime.o";
     {
-        std::string cmd = cc + " -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>/dev/null";
+        // Issue #237: removed `2>/dev/null` so the actual compile error
+        // reaches stderr. The previous silent-failure mode meant the
+        // aura binary returned rc=1 from `--emit-binary` on CI x86_64
+        // with NO diagnostic information to debug the failure.
+        std::string cmd = cc + " -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>&1";
         int rc = ::system(cmd.c_str());
         if (rc != 0) {
-            cmd = "clang -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>/dev/null";
+            cmd = "clang -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>&1";
             rc = ::system(cmd.c_str());
         }
         if (rc != 0) {
-            fprintf(stderr, "AOT: cannot compile runtime '%s'\n", runtime_c_path.c_str());
+            fprintf(stderr, "AOT: cannot compile runtime '%s' (cc=%s). Check above for the gcc/clang error.\n",
+                    runtime_c_path.c_str(), cc.c_str());
             for (auto& p : obj_files)
                 std::remove(p.c_str());
             return false;
@@ -180,14 +185,18 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     std::string reg_c_path = out_path + "._reg.c";
     std::string reg_o_path = out_path + "._reg.o";
     if (generate_registration_c(functions, func_ids.data(), num_functions, reg_c_path)) {
-        std::string cmd = cc + " -c " + pic_flag + " " + reg_c_path + " -o " + reg_o_path + " 2>/dev/null";
+        // Issue #237: surface the actual cc/clang error instead of
+        // swallowing it. CI x86_64 was failing silently here.
+        std::string cmd = cc + " -c " + pic_flag + " " + reg_c_path + " -o " + reg_o_path + " 2>&1";
         int rc = ::system(cmd.c_str());
         if (rc != 0) {
-            cmd = "clang -c " + reg_c_path + " -o " + reg_o_path + " 2>/dev/null";
+            cmd = "clang -c " + pic_flag + " " + reg_c_path + " -o " + reg_o_path + " 2>&1";
             rc = ::system(cmd.c_str());
         }
         if (rc == 0) {
             obj_files.push_back(reg_o_path);
+        } else {
+            fprintf(stderr, "AOT: cannot compile _reg.c (cc=%s). Check above.\n", cc.c_str());
         }
         std::remove(reg_c_path.c_str());
     }
@@ -218,10 +227,17 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     // Issue #62 hardening: explicit -no-pie to defeat gcc's default-PIE on
     // x86_64 modern toolchains. Without it, the link fails with
     // "cannot use a PIE object with a non-PIE executable" or similar.
+    //
+    // Issue #237 strengthening: `-Wl,--no-pie` is added as a belt-and-
+    // suspenders defense. Some toolchains interpret `-no-pie` as a
+    // driver flag that doesn't propagate to the linker; -Wl,--no-pie
+    // forces the linker-side PIE flag off regardless of driver behavior.
+    // Combined with the Reloc::Static change in aura_jit.cpp's
+    // TargetMachine setup, this should make the x86_64 link reliable.
     std::string link_cmd = cc;
     for (auto& p : obj_files)
         link_cmd += " " + p;
-    link_cmd += " -o " + out_path + " -no-pie -lm 2>&1";
+    link_cmd += " -o " + out_path + " -no-pie -Wl,--no-pie -lm 2>&1";
     int rc = ::system(link_cmd.c_str());
 
     // Cleanup temp .o files
@@ -233,7 +249,13 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
         return true;
     }
 
-    fprintf(stderr, "AOT: link failed (symbols missing)\n");
+    // The previous misleading "symbols missing" message is replaced
+    // with the actual link error (which now reaches stderr thanks to
+    // the 2>&1 + removed 2>/dev/null above). Print a clear banner so
+    // the CI test runner can see what really failed.
+    fprintf(stderr, "AOT: link failed (rc=%d) — see gcc/clang output above. "
+                    "Common causes on x86_64: PIE/PIC mismatch, missing runtime symbols.\n",
+                    rc);
     return false;
 }
 
