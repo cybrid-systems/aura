@@ -48,6 +48,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 
 target_sources(aura PRIVATE
     src/core/contract_handler.cpp
+    src/core/contract_stub.cpp
     src/core/ast_impl.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
@@ -217,6 +218,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/type_checker.ixx)
 target_sources(test_ir PRIVATE
     src/core/contract_handler.cpp
+    src/core/contract_stub.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/thread_pool.cpp
@@ -273,7 +275,21 @@ target_sources(test_concurrent PRIVATE
     # "undefined reference to aura_set_current_fiber_id_fn".
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    # aura_jit.cpp defines emit_native_object (called from
+    # aura_jit_bridge.cpp's aot_flat_functions_to_binary).
+    # contract_handler.cpp provides the global
+    # __tu_has_violation symbol for C++26 contract checks
+    # (aura_jit.cpp is built with -fcontracts).
+    src/compiler/aura_jit.cpp
+    src/core/contract_handler.cpp
+    src/core/contract_stub.cpp
 )
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_concurrent PRIVATE src src/compiler)
+target_compile_definitions(test_concurrent PRIVATE AURA_HAVE_LLVM=1)
+target_include_directories(test_concurrent PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_libraries(test_concurrent PRIVATE ${llvm_libs})
 target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
@@ -321,6 +337,7 @@ add_library(aura_test_objects STATIC
     src/core/contract_stub.cpp
     src/core/ast_impl.cpp
     src/core/contract_handler.cpp
+    src/core/contract_stub.cpp
     src/core/type_impl.cpp
     src/compiler/value_impl.cpp
     src/parser/lexer_impl.cpp
@@ -1437,6 +1454,7 @@ target_include_directories(test_issue_144 PRIVATE src src/compiler)
 target_sources(test_issue_144 PRIVATE
  # ADT extraction (FFI pattern, hygiene 3.2)
     src/core/contract_handler.cpp
+    src/core/contract_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
