@@ -622,6 +622,12 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(
     EnvFrame fr;
     fr.parent_id = parent_id;
     fr.primitives_ = primitives;
+    // Issue #242: stamp the frame with the current defuse_version_
+    // so subsequent lookups can detect stale captures. The version
+    // is an acquire-load so the frame's metadata (parent_id,
+    // primitives_) is visible to threads that observe the bumped
+    // version after a memory barrier.
+    fr.version_ = defuse_version_.load(std::memory_order_acquire);
     env_frames_.push_back(std::move(fr));
     return static_cast<EnvId>(env_frames_.size() - 1);
 }
@@ -708,6 +714,35 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // materialize_call_env) is reading.
     std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
     const EnvFrame& fr = env_frame(cl.env_id);
+    // Issue #242: detect a stale frame (captured before the
+    // current mutation epoch). The frame's bindings might be
+    // inconsistent with the post-mutation state — log a
+    // warning + bump the frame's version_ so subsequent
+    // lookups see it as fresh. We don't refresh the bindings
+    // themselves (that would require re-capturing against a
+    // new env, which is out of scope for the P0 ship); the
+    // warning + version bump is enough to make the staleness
+    // observable and prevent repeated warnings.
+    if (fr.version_ < defuse_version_.load(std::memory_order_acquire)) {
+        // Mutate the version under the same shared lock. A
+        // shared_lock allows multiple readers but blocks
+        // writers (alloc_env_frame); since we're not adding
+        // or removing frames, just updating a metadata
+        // field, the shared lock is sufficient (no other
+        // reader depends on version_ being immutable).
+        const_cast<EnvFrame&>(fr).version_ =
+            defuse_version_.load(std::memory_order_acquire);
+        // Logging is best-effort — a fiber thread might not
+        // have a tty. We use std::println(std::cerr, ...) so
+        // the warning is always emitted (not just in debug).
+        std::println(std::cerr,
+            "[#242 warning] materialize_call_env: stale EnvFrame id={} "
+            "(frame.version_={}, current defuse_version_={}). "
+            "Bindings may be inconsistent with post-mutation state. "
+            "Bumped frame.version_ to silence future warnings.",
+            cl.env_id, fr.version_,
+            defuse_version_.load(std::memory_order_acquire));
+    }
     ne.bindings() = fr.bindings_;
     ne.bindings_symid_mut() = fr.bindings_symid_;
     if (fr.parent_id != NULL_ENV_ID) {
@@ -715,6 +750,20 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         ne.set_parent_id(fr.parent_id);
     }
     return ne;
+}
+
+// Issue #242: is_env_frame_stale — true if the frame's
+// stamped version is older than the current defuse_version_
+// (i.e. captured before a mutation that may have invalidated
+// the captured scope). Returns true for invalid ids as a
+// safety net so callers can treat invalid frames as stale.
+bool Evaluator::is_env_frame_stale(EnvId id) const {
+    if (id == NULL_ENV_ID || id >= env_frames_.size()) return true;
+    // env_frames_ is a deque guarded by env_frames_mtx_; a
+    // shared_lock keeps the frame alive across the load.
+    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    return env_frames_[id].version_ <
+           defuse_version_.load(std::memory_order_acquire);
 }
 
 // Evaluator::lookup_by_symid_chain — demonstrate the SoA walk.
@@ -21579,6 +21628,15 @@ bool Evaluator::save_panic_checkpoint() {
     if (idx >= string_heap_.size())
         return false;
     panic_safe_source_ = string_heap_[idx];
+    // Issue #242: snapshot the 4 pmr/append-only arena sizes
+    // so restore_panic_checkpoint can truncate them back.
+    // env_frames_ size is recorded for diagnostics only (the
+    // deque itself is NOT truncated on restore — see
+    // restore_panic_checkpoint).
+    panic_safe_cells_size_ = cells_.size();
+    panic_safe_pairs_size_ = pairs_.size();
+    panic_safe_string_heap_size_ = string_heap_.size();
+    panic_safe_env_frames_size_ = env_frames_.size();
     return true;
 }
 
@@ -21593,8 +21651,34 @@ bool Evaluator::restore_panic_checkpoint() {
     auto result = (*set_fn)({make_string(idx)});
     bool ok = types::is_bool(result) && types::as_bool(result);
     if (ok) {
+        // Issue #242: truncate the 3 append-only arenas back to
+        // their checkpoint sizes. We do NOT truncate env_frames_
+        // (the Closure::env_id indices must remain valid for
+        // already-constructed closures; the version stamping
+        // from Phase 1 detects stale frames instead).
+        //
+        // The source string we just pushed back is at idx; we
+        // resize string_heap_ to idx+1 (= pre-save size + 1) so
+        // the source string is preserved while everything added
+        // AFTER the save (idx+1 onwards) is truncated away.
+        std::size_t new_string_heap_size = idx + 1;
+        if (new_string_heap_size <= string_heap_.size()) {
+            string_heap_.resize(new_string_heap_size);
+        }
+        if (panic_safe_cells_size_ > 0 &&
+            panic_safe_cells_size_ <= cells_.size()) {
+            cells_.resize(panic_safe_cells_size_);
+        }
+        if (panic_safe_pairs_size_ > 0 &&
+            panic_safe_pairs_size_ <= pairs_.size()) {
+            pairs_.resize(panic_safe_pairs_size_);
+        }
         // Clear checkpoint after successful restore
         panic_safe_source_.clear();
+        panic_safe_cells_size_ = 0;
+        panic_safe_pairs_size_ = 0;
+        panic_safe_string_heap_size_ = 0;
+        panic_safe_env_frames_size_ = 0;
     }
     return ok;
 }

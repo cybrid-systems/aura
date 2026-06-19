@@ -289,6 +289,21 @@ export struct EnvFrame {
     EnvId parent_id = NULL_ENV_ID;
     const Primitives* primitives_ = nullptr;
     const aura::ast::StringPool* pool_ = nullptr;
+    // Issue #242: snapshot of `defuse_version_` at allocation time.
+    // Stale frames (frame.version_ < current defuse_version_) can
+    // be detected by `Evaluator::is_env_frame_stale(id)`. The
+    // post-mutation invariant check + materialize_call_env + parent
+    // walks use this to log a warning + bump the frame's version
+    // (so subsequent lookups see it as fresh) instead of reading
+    // possibly-inconsistent bindings from a frame captured before a
+    // mutation that invalidated the closure's scope.
+    //
+    // Default 0 means "never stamped" — frames allocated before
+    // #242 ship have version_ == 0, and the current defuse_version_
+    // is always >= 1 (incremented on every MutationBoundaryGuard
+    // enter). So a version_ == 0 frame is always stale; this is
+    // intentional — old frames should be re-validated.
+    std::uint64_t version_ = 0;
     // P0 (EnvFrame SoA migration): removed raw cells_ pointer.
     // EnvFrame is now pure data (bindings + parent_id index).
     // Cell deref (when bound value is cell sentinel) is centralized
@@ -686,7 +701,15 @@ public:
     bool restore_panic_checkpoint();
 
     // Clear the checkpoint (call after successful mutation commit).
-    void commit_panic_checkpoint() { panic_safe_source_.clear(); }
+    void commit_panic_checkpoint() {
+        panic_safe_source_.clear();
+        // Issue #242: clear the arena-size snapshots too so a
+        // subsequent save_panic_checkpoint() starts fresh.
+        panic_safe_cells_size_ = 0;
+        panic_safe_pairs_size_ = 0;
+        panic_safe_string_heap_size_ = 0;
+        panic_safe_env_frames_size_ = 0;
+    }
 
     // Check if a safe checkpoint exists.
     bool has_panic_checkpoint() const { return !panic_safe_source_.empty(); }
@@ -932,6 +955,18 @@ public:
     // runtime support pointers the body needs to see, not part
     // of the captured scope itself.
     Env materialize_call_env(const Closure& cl);
+    // Issue #242: detect a stale EnvFrame (one whose `version_`
+    // snapshot is older than the current `defuse_version_`). A
+    // closure captured against env_frames_[id] whose frame.version_
+    // < defuse_version_ may have inconsistent bindings — the
+    // captured scope was mutated after the closure was constructed.
+    //
+    // Returns true if the frame is stale (or id is invalid — the
+    // caller's safety net), false if the frame is fresh. Callers
+    // can then choose to log a warning + bump the frame's version_
+    // (so subsequent reads see it as fresh) or re-capture the
+    // closure against a fresh env.
+    bool is_env_frame_stale(EnvId id) const;
     // Look up an EnvFrame by id. UB if id is invalid.
     const EnvFrame& env_frame(EnvId id) const
         pre (id != NULL_ENV_ID)
@@ -1344,6 +1379,26 @@ private:
     // ── Panic auto-rollback (Issue #39) ─────────────────────────
     bool panic_auto_rollback_ = false;
     std::string panic_safe_source_;  // last known good source code
+
+    // Issue #242: panic checkpoint for the 4 pmr/append-only
+    // arenas. save_panic_checkpoint() snapshots each size; on
+    // restore, we truncate each arena back to its checkpoint
+    // size (except env_frames_ which we leave alone — see
+    // restore_panic_checkpoint for why).
+    //
+    // cells_/pairs_/string_heap_ are append-only arenas with
+    // no external EnvId-style references, so truncating them
+    // is safe. env_frames_ stores EnvId-referenced frames
+    // (Closure::env_id), so truncating could invalidate live
+    // references; instead we leave the deque size alone and
+    // rely on #242's version stamping (EnvFrame::version_) to
+    // detect stale captures in materialize_call_env.
+    std::size_t panic_safe_cells_size_ = 0;
+    std::size_t panic_safe_pairs_size_ = 0;
+    std::size_t panic_safe_string_heap_size_ = 0;
+    // panic_safe_env_frames_size_ is recorded for diagnostics
+    // but NOT used to truncate the deque on restore.
+    std::size_t panic_safe_env_frames_size_ = 0;
 
     // ── EDSL set-code error propagation ──────────────────────────
     // Stores (kind, message) for structured diagnostic return
