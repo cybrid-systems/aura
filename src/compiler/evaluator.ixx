@@ -1481,6 +1481,11 @@ private:
     std::atomic<std::uint64_t> atomic_batch_count_{0};
     std::atomic<std::uint64_t> atomic_batch_ops_total_{0};
     std::atomic<std::uint64_t> atomic_batch_rollbacks_{0};
+    // Issue #250: how many per-op generation bumps were
+    // suppressed by atomic batches (lifetime total). The
+    // sum of (saved per batch) across all successful batches.
+    // Exposed via observability snapshot.
+    std::atomic<std::uint64_t> atomic_batch_bumps_saved_total_{0};
     // Issue #164: per-join defuse_version_ snapshot. Set at the
     // start of fiber:join's wait, re-checked at wakeup to detect
     // mutations that happened DURING the join (the "transient
@@ -1943,6 +1948,20 @@ public:
     // and the legacy fetch_add callsites.
     [[nodiscard]] std::uint64_t total_mutations() const noexcept {
         return total_mutations_.load(std::memory_order_relaxed);
+    }
+
+    // ── Issue #250: atomic-batch accessors ───────────
+    [[nodiscard]] std::uint64_t atomic_batch_count() const noexcept {
+        return atomic_batch_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_ops_total() const noexcept {
+        return atomic_batch_ops_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_rollbacks() const noexcept {
+        return atomic_batch_rollbacks_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_bumps_saved_total() const noexcept {
+        return atomic_batch_bumps_saved_total_.load(std::memory_order_relaxed);
     }
 
     // ── Issue #184: MutationBoundaryGuard (RAII) ─────────────

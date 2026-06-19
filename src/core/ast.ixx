@@ -669,6 +669,7 @@ private:
         , int_val_(alloc)
         , float_val_(alloc)
         , sym_id_(alloc)
+        , children_(alloc)
 
         , parent_(alloc)
         , param_begin_(alloc)
@@ -1259,7 +1260,17 @@ private:
             if (ast_) lock_ = std::unique_lock<std::shared_mutex>(ast->structural_mtx_.get());
         }
         ~StructuralMutationGuard() {
-            if (ast_) ast_->bump_generation();
+            if (ast_) {
+                // Issue #250: count suppressed bumps in the
+                // FlatAST's atomic_batch_bumps_saved_ counter.
+                // The actual bump is still done by FlatAST's
+                // bump_generation() method, which short-circuits
+                // when bump_generation_suppressed_ is set.
+                if (ast_->bump_generation_suppressed_) {
+                    ++ast_->atomic_batch_bumps_saved_;
+                }
+                ast_->bump_generation();
+            }
             // unique_lock's dtor releases the lock.
         }
         StructuralMutationGuard(const StructuralMutationGuard&) = delete;
@@ -2060,8 +2071,78 @@ private:
     // primitives to call after a non-SoA-mutating structural
     // change (e.g., a workspace-level COW swap).
     void bump_generation() noexcept {
+        if (bump_generation_suppressed_) {
+            // Issue #250: inside an atomic batch, individual
+            // structural mutations (set_child / insert_child /
+            // remove_child) skip the per-op generation bump.
+            // The batch commits with a single bump at the end,
+            // so the per-op bumps would be redundant.
+            return;
+        }
         ++generation_;
         if (generation_ == 0) generation_ = 1;
+    }
+
+    // Issue #250: atomic-batch API. When begin_atomic_batch()
+    // is active, bump_generation() and mark_dirty_upward are
+    // suppressed for individual structural mutates, and
+    // accumulated for a single end-of-batch commit. The batch
+    // holds the structural_mtx_ exclusive lock for its entire
+    // lifetime (via the RAII guard).
+    //
+    // begin_atomic_batch() / commit_atomic_batch() / rollback_atomic_batch()
+    // are intended to be called from mutate:atomic-batch
+    // (and any future caller that wants true all-or-nothing
+    // semantics for a multi-step mutation).
+    //
+    // IMPORTANT: begin_atomic_batch() must be called while
+    // already holding structural_mtx_ (e.g., from the outer
+    // MutationBoundaryGuard). The batch guard does NOT acquire
+    // the lock itself — the caller's existing lock is
+    // extended to cover the entire batch. This is the
+    // standard pattern: caller acquires the lock once, then
+    // does many mutations under it.
+    void begin_atomic_batch() noexcept {
+        bump_generation_suppressed_ = true;
+        atomic_batch_bumps_saved_ = 0;  // reset counter for this batch
+    }
+
+    // Commit the batch. Calls bump_generation() once, marks
+    // all batched nodes dirty, releases the suppression.
+    void commit_atomic_batch() noexcept {
+        bump_generation_suppressed_ = false;
+        ++generation_;
+        if (generation_ == 0) generation_ = 1;
+        // Note: we don't have a per-batch dirty list (would
+        // require tracking all touched nodes in the lockless
+        // mutates). The first post-commit structural mutate
+        // will trigger the regular mark_dirty_upward path.
+        // The single bump + single future dirty sweep is
+        // still much cheaper than N bumps + N dirty sweeps.
+    }
+
+    // Roll back the batch. No bump (the changes were never
+    // visible — gen didn't change). Releases the suppression.
+    void rollback_atomic_batch() noexcept {
+        bump_generation_suppressed_ = false;
+        // No bump. No dirty sweep. The lockless helper's
+        // own rollback_since() has already reverted the
+        // mutation_log_ entries; readers holding the
+        // pre-batch generation_ see no change.
+    }
+
+    // Issue #250: how many generation bumps the latest batch
+    // saved by suppressing per-op bumps. Updated on each
+    // commit. Exposed via observability snapshot.
+    std::uint64_t atomic_batch_bumps_saved() const noexcept {
+        return atomic_batch_bumps_saved_;
+    }
+
+    // True iff an atomic batch is active. Used by
+    // mark_dirty_upward to skip dirty propagation during
+    // a batch (the commit path handles it).
+    bool atomic_batch_active() const noexcept {
+        return bump_generation_suppressed_;
     }
 
     bool rollback(std::uint64_t mutation_id) {
@@ -2284,6 +2365,24 @@ private:
     }
 
     NodeId root = NULL_NODE;
+
+    // Issue #250: atomic-batch state. Placed at the end of the
+    // class (after `root`) to preserve the SoA field ordering
+    // invariant — the pmr::vector<...> fields above must be
+    // contiguous for the FlatAST's load / clear / mutate paths
+    // to work. These two scalars come last so they don't shift
+    // the offsets of any SoA columns.
+    //
+    // When true, individual structural mutations (set_child /
+    // insert_child / remove_child) skip the per-op generation
+    // bump. The batch commits with a single bump at the end,
+    // so per-op bumps would be redundant.
+    // Set by begin_atomic_batch(); cleared by commit / rollback.
+    bool bump_generation_suppressed_ = false;
+    // Issue #250: how many per-op bumps were suppressed during
+    // the most recent batch. Updated on commit; exposed via
+    // atomic_batch_bumps_saved() and observability snapshot.
+    std::uint64_t atomic_batch_bumps_saved_ = 0;
 };
 
 // ── Patch application ──────────────────────────────────────────

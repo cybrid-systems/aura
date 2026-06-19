@@ -9534,6 +9534,13 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto pair_cdr = [this](EvalValue v) -> EvalValue {
             return pairs_[as_pair_idx(v)].cdr;
         };
+        // Issue #250: begin the atomic batch. This sets
+        // bump_generation_suppressed_ on the FlatAST, so all
+        // per-op structural mutations (via the lockless helpers
+        // below) skip their per-op generation bump. The batch
+        // commits with a single bump at the end. We track the
+        // saved-bumps count via workspace_flat_->atomic_batch_bumps_saved().
+        workspace_flat_->begin_atomic_batch();
         while (is_pair(op_list)) {
             EvalValue op = pair_car(op_list);
             op_list = pair_cdr(op_list);
@@ -9568,6 +9575,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 // error out instead of deadlocking on a nested
                 // guard acquire.
                 workspace_flat_->rollback_since(initial_log_size);
+                workspace_flat_->rollback_atomic_batch();
                 atomic_batch_rollbacks_++;
                 guard_ok = false;
                 return make_merr("batch-unsupported-op",
@@ -9587,12 +9595,19 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         }
         if (!ok) {
             workspace_flat_->rollback_since(initial_log_size);
+            workspace_flat_->rollback_atomic_batch();
             atomic_batch_rollbacks_++;
             guard_ok = false;
             return make_bool(false);
         }
+        // Issue #250: commit the batch. This performs the single
+        // generation bump (consolidated from the per-op bumps
+        // that were suppressed). Records the saved-bumps count.
+        std::uint64_t saved = workspace_flat_->atomic_batch_bumps_saved();
+        workspace_flat_->commit_atomic_batch();
         atomic_batch_count_++;
         atomic_batch_ops_total_ += op_count;
+        atomic_batch_bumps_saved_total_ += saved;
         return make_bool(true);
     });
     // (atomic-batch:stats) — Issue #192: observability for
@@ -9639,6 +9654,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             {"ops-total", make_int(static_cast<std::int64_t>(atomic_batch_ops_total_))},
             {"rollback-count", make_int(static_cast<std::int64_t>(atomic_batch_rollbacks_))},
             {"ops-per-batch", make_int(static_cast<std::int64_t>(avg))},
+            // Issue #250: how many per-op generation bumps the
+            // batches suppressed (lifetime total). Useful for
+            // dashboards ("how much churn did batching save?").
+            {"bumps-saved-total", make_int(static_cast<std::int64_t>(atomic_batch_bumps_saved_total_))},
         };
         return build_hash(kv);
     });

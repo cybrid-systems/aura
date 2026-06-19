@@ -3867,6 +3867,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         s.aot_fallbacks = metrics_.aot_fallbacks.load(std::memory_order_relaxed);
         s.arena_bytes_used = metrics_.arena_bytes_used.load(std::memory_order_relaxed);
         s.arena_bytes_peak = metrics_.arena_bytes_peak.load(std::memory_order_relaxed);
+        // Issue #250: atomic-batch observability.
+        s.atomic_batch_count = evaluator_.atomic_batch_count();
+        s.atomic_batch_ops_total = evaluator_.atomic_batch_ops_total();
+        s.atomic_batch_rollbacks = evaluator_.atomic_batch_rollbacks();
+        s.atomic_batch_bumps_saved_total = evaluator_.atomic_batch_bumps_saved_total();
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
         // shared_lock on workspace_mtx_ to keep the flat

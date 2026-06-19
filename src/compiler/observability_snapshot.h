@@ -29,6 +29,17 @@ struct CompilerSnapshot {
     std::uint64_t aot_fallbacks = 0;
     std::uint64_t arena_bytes_used = 0;
     std::uint64_t arena_bytes_peak = 0;
+    // Issue #250: atomic-batch observability. atomics are
+    // loaded with relaxed order in CompilerService::snapshot().
+    // - atomic_batch_count: total successful batches
+    // - atomic_batch_ops_total: total ops across all batches
+    // - atomic_batch_rollbacks: total rollbacks
+    // - atomic_batch_bumps_saved_total: how many per-op
+    //   generation bumps the batches suppressed (lifetime)
+    std::uint64_t atomic_batch_count = 0;
+    std::uint64_t atomic_batch_ops_total = 0;
+    std::uint64_t atomic_batch_rollbacks = 0;
+    std::uint64_t atomic_batch_bumps_saved_total = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).
