@@ -417,6 +417,13 @@ endfunction()
 # Phase 2 pilot-43: converted using early helper. Light serve-only (4 files; helper base + small delta for include and serve sources).
 aura_add_issue_test(test_issue_115)
 target_include_directories(test_issue_115 PRIVATE src)
+target_sources(test_issue_115 PRIVATE
+    # Same dep as test_issue_205: aura_set_current_fiber_id_fn
+    # (defined in aura_jit_runtime.cpp) is called from
+    # fiber.cpp's static init in libaura_test_objects.a.
+    src/compiler/aura_jit_runtime.cpp
+)
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 
 # Issue #116 verification: deferred CoercionNode insertion
 # (TypeChecker no longer mutates FlatAST in-place). Standalone
@@ -1539,6 +1546,13 @@ add_test(NAME issue_171_verification COMMAND ./test_issue_171)
 add_executable(test_issue_204 tests/test_issue_204.cpp)
 set_property(TARGET test_issue_204 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_204 PRIVATE src src/serve)
+target_sources(test_issue_204 PRIVATE
+    # Same dep as test_issue_205: aura_set_current_fiber_id_fn
+    # (defined in aura_jit_runtime.cpp) is called from
+    # fiber.cpp's static init in libaura_test_objects.a.
+    src/compiler/aura_jit_runtime.cpp
+)
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_compile_options(test_issue_204 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
