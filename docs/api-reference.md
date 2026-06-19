@@ -37,10 +37,10 @@
 `set-code` `current-source` `eval-current` `eval-current-output`
 
 **查询**
-`query:find` `query:children` `query:parent` `query:siblings` `query:root` `query:node` `query:node-type` `query:pattern` `query:calls` `query:def-use` `query:reaches` `query:effects` `query:build-index` `query:index-stats`
+`query:find` `query:children` `query:parent` `query:siblings` `query:root` `query:node` `query:node-type` `query:pattern` `query:where` `query:filter` `query:by-marker` `query:macro-introduced` `query:calls` `query:def-use` `query:reaches` `query:effects` `query:build-index` `query:index-stats`
 
 **变异**
-`mutate:rebind` `mutate:set-body` `mutate:replace-type` `mutate:replace-value` `mutate:splice` `mutate:wrap` `mutate:remove-node` `mutate:insert-child` `mutate:move-node` `mutate:tweak-literal` `mutate:replace-pattern` `mutate:record-patch` `mutate:rename-symbol` `mutate:extract-function` `mutate:inline-call`
+`mutate:rebind` `mutate:set-body` `mutate:replace-type` `mutate:replace-value` `mutate:splice` `mutate:wrap` `mutate:remove-node` `mutate:insert-child` `mutate:move-node` `mutate:tweak-literal` `mutate:replace-pattern` `mutate:query-and-replace` `mutate:record-patch` `mutate:rename-symbol` `mutate:extract-function` `mutate:inline-call`
 
 **版本化**
 `ast:snapshot` `ast:restore` `ast:list-snapshots` `ast:diff` `ast:summary` `mutation-count` `mutation-history` `rollback rollback-since`
@@ -182,3 +182,18 @@
 | `std/struct` | `define-struct` |
 | `std/test` | test framework |
 | `std/require` | module loader |
+
+## Examples
+
+For end-to-end runnable examples combining `query:pattern`,
+`mutate:query-and-replace`, hygienic macros, and safe
+snapshot/rollback, see
+[`docs/examples/macro-edsl-transforms.md`](examples/macro-edsl-transforms.md).
+
+The examples cover:
+
+1. Simple constant substitution (`(+ x 1)` → `(+ x 2)`)
+2. Function wrapping (`if` → `cond`)
+3. Call-site rewriting (inline `+` → named `add`)
+4. Macro-introduced code instrumentation
+5. Snapshot → mutate → verify → rollback safety pattern
