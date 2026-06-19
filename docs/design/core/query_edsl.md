@@ -134,6 +134,68 @@
 ; `...` 是 Ellipsis token，由 lexer 识别三个连续的点号
 ```
 
+#### 2.3.1 语义（Issue #182 Cycle 1 实装）
+
+`query:pattern` 是结构性的 S-表达式模式匹配器。它在 workspace AST
+上做线性扫描，匹配所有**结构相等**于 pattern 的子树。匹配规则：
+
+- **字面原子**（数字、字符串、bool）：必须相等才匹配。
+  例子：`(query:pattern "42")` 只匹配值为 42 的节点。
+- **符号名**：当作**变量**，匹配任意符号（`Variable` 节点），
+  不会匹配字面符号（`Symbol` 节点）。
+  例子：`(query:pattern "(+ n 1)")` 匹配 `(+ x 1)`、`(+ foo 1)`、
+  `(+ y 1)`，但**不**匹配 `(+ 1 1)`（中间是字面 int）。
+- **`...` 通配符**（三个连续点号，由 lexer 识别）：匹配**任意
+  数量**的子表达式（0 个或更多）。**只支持扁平 `...`**（嵌套
+  `...` 还没实装，Deferred #360）。
+  例子：`(query:pattern "(fib ...)")` 匹配 `(fib)`、
+  `(fib x)`、`(fib x y z)`、`(fib (+ 1 2))`。
+
+#### 2.3.2 性能与复杂度
+
+- O(Nodes × PatternDepth) — 线性扫描所有节点。
+- 实测 ~50μs / 1000 个节点的 workspace（详见
+  `docs/benchmark.md` §3.4）。
+- 多次查询应该**批量化**到一次 `query:filter` 调用，而不是循环里
+  一次一个 `query:pattern`。
+
+#### 2.3.3 常见使用陷阱
+
+- **区分符号 vs 字面量**：`(query:pattern "(if x y)")` 匹配
+  `if` 表达式中第一个子节点是 `Variable` 的，**不**匹配第一个
+  子节点是字面 int（如 `42`）的。要匹配字面 int 用 `(query:pattern
+  "(if 42 y)")`。
+- **子表达式不递归**：`(query:pattern "(+ ...)")` 匹配
+  `(+ 1 2)`、`(+ x (* y z))` 等，但**不**会匹配 `(+ 1 2 3)` 中
+  的 `(* y z)` 子节点。要递归匹配用 `query:find` + `query:node-type`
+  组合。
+- **`...` 不能跨层**：(a b ... c) 中 `...` 只匹配中间连续的子
+  节点，不匹配前后的。
+- **不支持 guard 表达式**：目前 pattern 不能带 `when` 条件。
+  Deferred #360 包含 nested `...` + guard 支持。
+
+#### 2.3.4 `query:pattern` 与 `mutate:query-and-replace` 组合
+
+`query:pattern` 是 read-only 的搜索。要做结构替换，用
+`mutate:query-and-replace`（#110 实装）：
+
+```scheme
+; 把所有 (+ x 1) 替换成 (+ x 2)  (注意 pattern 中 x 是变量匹配)
+(mutate:query-and-replace
+  "(+ x 1)"      ; pattern
+  "(+ x 2)"      ; replacement
+  "increment 1 → 2")
+```
+
+`mutate:query-and-replace` 内部用 `query:pattern` 找到所有匹配
+节点，然后对每个匹配做 substitution（pattern 中的变量绑定在
+replacement 中可用）。这才是**宏式变换**（macro-style transform）
+的入口原语。
+
+详见 §3 “Query + Transform 组合”与
+[docs/examples/macro-edsl-transforms.md](../examples/macro-edsl-transforms.md)
+的 4-5 个运行示例。
+
 ### 2.4 谓词 + 过滤（#110 后实装）
 
 ```scheme
