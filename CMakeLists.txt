@@ -283,6 +283,11 @@ target_sources(test_concurrent PRIVATE
     src/compiler/aura_jit.cpp
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
+    # Stub for aura_jit_prim_dispatch (real one in service.ixx).
+    # test_concurrent has no CompilerService context; the stub
+    # returns 0 (no primitive found). See
+    # src/compiler/aura_jit_prim_dispatch_stub.cpp for details.
+    src/compiler/aura_jit_prim_dispatch_stub.cpp
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
