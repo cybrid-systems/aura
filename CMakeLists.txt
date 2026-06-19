@@ -2345,6 +2345,29 @@ target_compile_definitions(test_issue_240 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_240 PRIVATE ${llvm_libs})
 add_test(NAME issue_240_per_node_occurrence_dirty_verification COMMAND ./test_issue_240)
 
+# Issue #242: EnvFrame/EnvId SoA dual-path consistency +
+# version stamping + arena rollback hardening. Tests Phase 1
+# (version stamping in alloc_env_frame), Phase 2 (is_env_frame_stale
+# + materialize_call_env detection), Phase 3 (save/restore panic
+# checkpoint snapshots 4 pmr arena sizes). Uses CompilerService
+# for layer 2 (closure capture + mutate + consistency); direct
+# C++ tests for layers 1+3.
+aura_add_issue_test(test_issue_242)
+target_include_directories(test_issue_242 PRIVATE src src/compiler tests)
+target_sources(test_issue_242 PRIVATE
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+src/compiler/observability_snapshot.h
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_242 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_242 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_242 PRIVATE ${llvm_libs})
+add_test(NAME issue_242_envframe_version_stamping_verification COMMAND ./test_issue_242)
+
 # Issue #228: Hardware IR Dependent Type System for Agentic EDA.
 # Phase 1 minimum viable — tests the Aura-level dependent type
 # library extension (lib/std/eda.aura Phase 1 addition: BitVec,
@@ -2493,3 +2516,4 @@ add_dependencies(all_test_issue_targets test_issue_227)
 add_dependencies(all_test_issue_targets test_issue_228)
 add_dependencies(all_test_issue_targets test_issue_237)
 add_dependencies(all_test_issue_targets test_issue_240)
+add_dependencies(all_test_issue_targets test_issue_242)
