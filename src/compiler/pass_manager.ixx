@@ -1480,6 +1480,23 @@ public:
     std::size_t run_inlined_branch_aware() const {
         return run_inlined_branch_aware_;
     }
+
+    // Issue #246: macro-hygiene toggle. When true (the default),
+    // the inliner refuses to inline callees whose IRFunction.marker
+    // is SyntaxMarker::MacroIntroduced. This is the conservative
+    // policy: macro-introduced code can do anything (gensym'd
+    // locals, captured caller-side variables, EDSL-side effects),
+    // and inlining it into user code could break hygiene invariants.
+    // Setter:
+    //   InlinePass::set_respect_macro_hygiene(false)
+    //   → opt in to inlining macro-introduced code.
+    static void set_respect_macro_hygiene(bool v) {
+        respect_macro_hygiene_ = v;
+    }
+    static bool get_respect_macro_hygiene() {
+        return respect_macro_hygiene_;
+    }
+
 private:
     // True if the function is a "constant-returning single-block
     // function" that can be inlined trivially. Specifically:
@@ -1487,6 +1504,19 @@ private:
     //   - The block has 2 instructions: a ConstXxx + a Return
     //   - The Return's source is the ConstXxx's result slot
     static bool is_trivial_inlinable(const aura::ir::IRFunction& func) {
+        // Issue #246: macro-hygiene guard. When respect_macro_hygiene_
+        // is on (the default) and the callee's SyntaxMarker is
+        // MacroIntroduced (1), skip inlining. This is the most
+        // conservative default: macro-introduced code can be anything,
+        // and inlining it into user code could break hygiene
+        // invariants (e.g., gensym'd locals leaking into the caller,
+        // capture of caller-side variables becoming visible inside
+        // macro-introduced body). Trivial inlining (constant
+        // substitution) is normally safe even for macro-introduced
+        // code, but we apply the same guard for consistency.
+        if (respect_macro_hygiene_ && func.marker == 1 /*MacroIntroduced*/) {
+            return false;
+        }
         if (func.blocks.size() != 1) return false;
         const auto& block = func.blocks[0];
         if (block.instructions.size() != 2) return false;
@@ -1632,6 +1662,14 @@ private:
     // goal is correctness over coverage. Aggressive cases
     // (loops, calls inside callee, etc.) are follow-ups.
     static bool is_inlinable_branch_aware(const aura::ir::IRFunction& func) {
+        // Issue #246: macro-hygiene guard. See the rationale in
+        // is_trivial_inlinable. Default behavior: skip macro-
+        // introduced callees. Set respect_macro_hygiene_ = false
+        // via set_respect_macro_hygiene(false) to opt in to
+        // inlining macro-introduced code.
+        if (respect_macro_hygiene_ && func.marker == 1 /*MacroIntroduced*/) {
+            return false;
+        }
         // Size heuristic: avoid blowing up the caller.
         if (func.blocks.empty()) return false;
         if (func.blocks.size() > 8) return false;
@@ -2108,6 +2146,10 @@ private:
     // counts are reset.
     static inline std::size_t total_inlined_ = 0;
     static inline std::size_t total_inlined_branch_aware_ = 0;
+    // Issue #246: macro-hygiene policy toggle. Default true
+    // (skip inlining macro-introduced callees). See
+    // set_respect_macro_hygiene() for the opt-in.
+    static inline bool respect_macro_hygiene_ = true;
     // Issue #171: func_id → IRFunction* index for O(1) lookup.
     std::vector<const aura::ir::IRFunction*> func_index_;
     // Issue #203: SCC membership per func_id. Rebuilt on

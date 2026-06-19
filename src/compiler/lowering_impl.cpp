@@ -966,6 +966,15 @@ static std::uint32_t lower_flat_expr(
             if (!state.current_pool)
                 std::println("DEBUG: current_pool NULL at lambda bridge data");
             auto fid = state.module.add_function(std::move(func));
+            // Issue #246: propagate the SyntaxMarker from the
+            // source Lambda node into the IRFunction. The
+            // inliner consults this to apply macro-hygiene
+            // policy (skip inlining into/from macro-introduced
+            // code by default).
+            if (state.current_flat) {
+                state.module.functions[fid].marker =
+                    static_cast<std::uint8_t>(state.current_flat->marker(v.id));
+            }
             // Store bridge data for tree-walker compatibility
             if (state.current_flat && state.current_pool) {
                 // Issue #224 Cycle 2: shared_ptr-based bridge. The
