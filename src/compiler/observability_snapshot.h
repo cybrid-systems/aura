@@ -29,6 +29,18 @@ struct CompilerSnapshot {
     std::uint64_t aot_fallbacks = 0;
     std::uint64_t arena_bytes_used = 0;
     std::uint64_t arena_bytes_peak = 0;
+    // Issue #247: SyntaxMarker distribution in the current
+    // workspace. Populated by CompilerService::snapshot() by
+    // walking workspace_flat_->marker_column() (when set).
+    // - marker_user_count: nodes written by the user
+    // - marker_macro_introduced_count: nodes inserted by hygienic
+    //   macros (clone_macro_body)
+    // - marker_bool_literal_count: auto-generated #t / #f nodes
+    // - marker_total_count: total nodes in the marker column
+    std::uint64_t marker_user_count = 0;
+    std::uint64_t marker_macro_introduced_count = 0;
+    std::uint64_t marker_bool_literal_count = 0;
+    std::uint64_t marker_total_count = 0;
     // Per-function metrics (built up from jit_cache_ + shape metrics)
     std::vector<FnMetrics> functions;
 };
