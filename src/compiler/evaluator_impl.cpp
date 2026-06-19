@@ -7213,6 +7213,12 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     //   :tag        — alias for :node-type
     //   :has-child  — node has at least one child with the given NodeTag name
     //   :depth      — node is at the given depth from root (e.g. "0" = root)
+    //   :marker     — Issue #244: match SyntaxMarker name
+    //                 ("User" / "MacroIntroduced" / "BoolLiteral").
+    //                 Useful for EDSL queries that want to operate
+    //                 only on macro-introduced code, or only on
+    //                 user-written code, after hygienic macro
+    //                 expansion.
     //
     // Returns a predicate descriptor (a tagged pair) that query:filter
     // applies to each candidate node.
@@ -7390,6 +7396,23 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     }
                     if (actual_depth != target_depth) { match = false; break; }
                 }
+                else if (p.field == ":marker") {
+                    // Issue #244: match SyntaxMarker by name.
+                    // The marker column is populated by clone_macro_body
+                    // (Issue #190) and persists in workspace_flat_ across
+                    // mutations. Marker names (case-sensitive):
+                    //   "User"           — code the user wrote directly
+                    //   "MacroIntroduced" — code inserted by a hygienic macro
+                    //   "BoolLiteral"    — auto-generated #t / #f nodes
+                    auto m = flat.marker(id);
+                    const char* mname = nullptr;
+                    switch (m) {
+                        case aura::ast::SyntaxMarker::User:           mname = "User"; break;
+                        case aura::ast::SyntaxMarker::MacroIntroduced: mname = "MacroIntroduced"; break;
+                        case aura::ast::SyntaxMarker::BoolLiteral:    mname = "BoolLiteral"; break;
+                    }
+                    if (!mname || p.value != mname) { match = false; break; }
+                }
                 else {
                     return mev("unknown-field",
                                std::string("unknown where field: \"") + p.field + "\"");
@@ -7440,6 +7463,116 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 auto pid = pairs_.size();
                 pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
                 result = make_pair(pid);
+            }
+        }
+        return result;
+    });
+
+    // (query:by-marker marker-name) — Issue #244: general marker
+    // query. Returns all nodes with the given SyntaxMarker.
+    // marker-name is a string: "User" / "MacroIntroduced" /
+    // "BoolLiteral". The opposite of (query:macro-introduced)
+    // (which hard-codes MacroIntroduced); this primitive lets
+    // callers query by any marker.
+    //
+    // Returns a list of NodeIds (same encoding as
+    // query:node-type / query:filter).
+    //
+    // Optional 2nd arg: integer limit N. Only the first N
+    // matches are returned. Default: no limit.
+    primitives_.add("query:by-marker", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        if (a.empty() || a.size() > 2 || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query:by-marker marker-name) or (query:by-marker marker-name limit-int)");
+        if (!workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
+
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return mev("bad-arg", "marker name string index out of range");
+        auto marker_name = string_heap_[idx];
+
+        // Map name → SyntaxMarker enum
+        aura::ast::SyntaxMarker target;
+        if (marker_name == "User") {
+            target = aura::ast::SyntaxMarker::User;
+        } else if (marker_name == "MacroIntroduced") {
+            target = aura::ast::SyntaxMarker::MacroIntroduced;
+        } else if (marker_name == "BoolLiteral") {
+            target = aura::ast::SyntaxMarker::BoolLiteral;
+        } else {
+            return mev("unknown-marker",
+                       std::string("unknown marker name: \"") + marker_name +
+                       "\" (expected User / MacroIntroduced / BoolLiteral)");
+        }
+
+        std::int64_t limit = -1;
+        if (a.size() == 2) {
+            if (!is_int(a[1]))
+                return mev("bad-arg", "limit must be an integer");
+            limit = as_int(a[1]);
+            if (limit < 0)
+                return mev("bad-arg", "limit must be non-negative");
+        }
+
+        auto& flat = *workspace_flat_;
+        EvalValue result = make_void();
+        std::int64_t emitted = 0;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (limit >= 0 && emitted >= limit) break;
+            if (flat.marker(id) == target) {
+                auto pid = pairs_.size();
+                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+                ++emitted;
+            }
+        }
+        return result;
+    });
+
+    // (query:macro-introduced) — Issue #244: shortcut for
+    // (query:filter (where :marker "MacroIntroduced")).
+    // Returns a list of NodeIds whose SyntaxMarker is
+    // SyntaxMarker::MacroIntroduced (i.e. code inserted by
+    // a hygienic macro via clone_macro_body). Used by
+    // AI agents and self-mod code to identify which AST
+    // nodes are macro-introduced (and thus might need
+    // hygiene-safe handling when mutating).
+    //
+    // Returns a list of node IDs (same encoding as
+    // query:node-type / query:filter).
+    //
+    // Optional arg: an integer limit N. If provided, only
+    // the first N matching node IDs are returned. Default
+    // (no arg) returns all matches. Useful for the common
+    // "do any macro-introduced nodes exist?" check
+    // (pass limit=1).
+    primitives_.add("query:macro-introduced", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        if (a.size() > 1)
+            return mev("bad-arg", "usage: (query:macro-introduced) or (query:macro-introduced limit-int)");
+        if (!workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
+
+        std::int64_t limit = -1;  // -1 = no limit
+        if (a.size() == 1) {
+            if (!is_int(a[0]))
+                return mev("bad-arg", "limit must be an integer");
+            limit = as_int(a[0]);
+            if (limit < 0)
+                return mev("bad-arg", "limit must be non-negative");
+        }
+
+        auto& flat = *workspace_flat_;
+        EvalValue result = make_void();
+        std::int64_t emitted = 0;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (limit >= 0 && emitted >= limit) break;
+            if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+                auto pid = pairs_.size();
+                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+                ++emitted;
             }
         }
         return result;
