@@ -462,47 +462,39 @@ bool test_closure_has_env_id_field_default() {
     std::println("\n--- Test 8.3: Closure::env_id default is NULL_ENV_ID ---");
     aura::compiler::Closure cl;
     CHECK(cl.env_id == aura::compiler::NULL_ENV_ID,
-          "Closure::env_id default == NULL_ENV_ID (legacy pointer path)");
-    CHECK(cl.env == nullptr,
-          "Closure::env default == nullptr (default-constructed)");
+          "Closure::env_id default == NULL_ENV_ID (SoA capture index)");
+    // Phase 2.3: legacy Closure::env pointer removed. Closure
+    // captures are now exclusively via env_id + env_frames_ SoA.
+    // The struct has no `env` field; this comment documents that
+    // the legacy path is gone.
     return true;
 }
 
 bool test_closure_view_mirrors_env_id() {
     std::println("\n--- Test 8.4: ClosureView mirrors env_id ---");
     aura::compiler::Closure cl;
-    cl.env = nullptr;
     cl.env_id = 7;  // simulate a registered closure
     auto v = aura::compiler::make_closure_view(cl);
     CHECK(v.env_id == 7,
           "ClosureView mirrors Closure::env_id (SoA capture index)");
-    CHECK(v.env == nullptr,
-          "ClosureView mirrors Closure::env (legacy pointer, may be null)");
+    // Phase 2.3: ClosureView.env pointer also removed.
     return true;
 }
 
-bool test_materialize_call_env_legacy_when_env_id_null() {
-    std::println("\n--- Test 8.5: materialize_call_env uses legacy path when env_id == NULL_ENV_ID ---");
+bool test_materialize_call_env_with_env_id() {
+    std::println("\n--- Test 8.5: materialize_call_env uses env_id path ---");
     aura::compiler::Evaluator ev;
-    // Build a Closure with env_id NULL_ENV_ID (legacy path).
-    // Set up a non-null `env` raw pointer pointing at an env
-    // with a known binding, then materialize.
-    aura::compiler::Env e;
-    e.bind("legacy-var", aura::compiler::types::make_int(99));
+    // Phase 2.3: Closure has only env_id (no legacy env pointer).
+    // The materialize path is env_id-based: the helper rebuilds
+    // the call env from env_frames_[cl.env_id]. NULL_ENV_ID
+    // means the closure was created without a captured env.
     aura::compiler::Closure cl;
-    cl.env = &e;
     cl.env_id = aura::compiler::NULL_ENV_ID;
     cl.pool = nullptr;
-    // materialize_call_env is private; observe behavior via
-    // the captured env's bindings (env_id NULL_ENV_ID means
-    // the helper copies from cl.env directly).
-    // Direct check: the helper's behavior is observable through
-    // apply_closure in larger tests, so this is a structural
-    // test that env_id NULL_ENV_ID triggers the legacy branch.
     CHECK(cl.env_id == aura::compiler::NULL_ENV_ID,
-          "test precondition: env_id == NULL_ENV_ID triggers legacy path");
-    CHECK(cl.env != nullptr,
-          "test precondition: cl.env is set (legacy path uses it)");
+          "test precondition: env_id == NULL_ENV_ID is the only path");
+    // The actual materialize_call_env behavior is exercised
+    // through apply_closure in larger integration tests.
     return true;
 }
 
@@ -552,7 +544,7 @@ int main() {
     test_alloc_env_frame_from_env_inherits_parent();
     test_closure_has_env_id_field_default();
     test_closure_view_mirrors_env_id();
-    test_materialize_call_env_legacy_when_env_id_null();
+    test_materialize_call_env_with_env_id();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,

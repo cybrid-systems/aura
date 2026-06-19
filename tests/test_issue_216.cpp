@@ -19,6 +19,12 @@
 
 #include "reflect/reflect_schema.hh"
 
+// Unified test harness (Issue #226). Provides
+// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
+#include "test_harness.hpp"
+using aura::test::g_passed;
+using aura::test::g_failed;
+
 
 
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
@@ -80,13 +86,6 @@ bool test_schema_primitive() {
 // ── Test 3: query:schema Aura primitive (shell-out) ───────
 #include <cstdio>
 
-// Unified test harness (Issue #226). Provides
-// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
-// g_passed / g_failed / CHECK macro above are removed;
-// this file now uses the harness's versions.
-#include "test_harness.hpp"
-using aura::test::g_passed;
-using aura::test::g_failed;
 static std::string exec_aura(const std::string& code) {
     std::string cmd = "cd /home/dev/code/aura && echo '" + code +
                       "' | ./build/aura 2>/dev/null";
