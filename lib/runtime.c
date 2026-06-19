@@ -193,15 +193,33 @@ int64_t aura_pair_cdr(int64_t pair_val) {
     return pairs[id].cdr;
 }
 
-// L2 specialization: unchecked pair access (skips bounds/live checks).
-// Only safe when caller has verified the value is a valid pair via shape guard.
+// L2 specialization: unchecked pair access (skips the live-flag check + lock).
+// The bounds check is NOT skipped — it's a single unsigned compare and
+// protects against segfaults when pair_val is a non-pair value
+// (string sentinel, integer, special sentinel, or out-of-range pair id).
+// The "unchecked" name refers to the live-flag check (drop semantics)
+// and the lock (concurrency), not the array bounds — those are
+// architecture-dependent and missing them causes x86_64 to segfault
+// while aarch64 may happen to read mapped-but-garbage memory.
+//
+// Why the bounds check stays: aura_pair_car_unchecked is called from
+// the L2 SHAPE_PAIR fast path (OpCar / OpCdr) when the shape guard
+// passes. The shape guard is correct in the JIT pipeline but the
+// Aura runtime can call this same C entry point with arbitrary
+// user-supplied values (e.g. when (car non-pair) is invoked from
+// generated primitive code like aura_append, aura_member, aura_map).
+// On aarch64 those reads may read mapped memory (silently corrupted);
+// on x86_64 they segfault. The bounds check makes the fast path
+// safe across architectures at the cost of one comparison.
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
     uint64_t id = (uint64_t)(pair_val >> 2);
+    if (id >= pair_count) return 0;
     return pairs[id].car;
 }
 
 int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
     uint64_t id = (uint64_t)(pair_val >> 2);
+    if (id >= pair_count) return 0;
     return pairs[id].cdr;
 }
 
