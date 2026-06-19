@@ -41,13 +41,22 @@ namespace {
 
 // Locate the aura binary relative to this test binary. The CMake
 // target puts both in the same build directory.
+//
+// IMPORTANT: must check is_regular_file(), not just access(X_OK).
+// access(X_OK) returns 0 for directories (X_OK = "search
+// permission", which directories always have for the owner).
+// Without the is_regular_file check, a CWD-relative path like
+// `../aura` would resolve to the project root itself (since
+// `..` from inside /home/dev/code/aura is /home/dev/code/ and
+// `aura` from there is the same directory), pass the existence
+// check, and then execl() would fail with ENOEXEC (exit=127).
 std::string find_aura_binary() {
     // Try ./aura first (most common layout)
-    if (fs::exists("./aura") && access("./aura", X_OK) == 0) {
+    if (fs::is_regular_file("./aura") && access("./aura", X_OK) == 0) {
         return fs::absolute("./aura").string();
     }
     // Try ../aura (in case test runs from a subdirectory)
-    if (fs::exists("../aura") && access("../aura", X_OK) == 0) {
+    if (fs::is_regular_file("../aura") && access("../aura", X_OK) == 0) {
         return fs::absolute("../aura").string();
     }
     // Try via /proc/self/exe — go up to the build/ dir
@@ -56,7 +65,7 @@ std::string find_aura_binary() {
     if (n > 0) {
         fs::path p(buf);
         fs::path candidate = p.parent_path() / "aura";
-        if (fs::exists(candidate)) return candidate.string();
+        if (fs::is_regular_file(candidate)) return candidate.string();
     }
     return "aura";  // fallback: PATH lookup
 }
