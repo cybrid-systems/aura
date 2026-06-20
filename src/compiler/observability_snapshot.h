@@ -72,6 +72,14 @@ struct CompilerSnapshot {
     std::uint64_t is_valid_check_count = 0;
     std::uint64_t stable_ref_invalidations = 0;
     std::uint64_t atomic_batch_commits = 0;
+    // Issue #256: AST operation observability. Mirrors
+    // CompilerMetrics::{children_call_count,
+    // parent_of_call_count, mark_dirty_upward_call_count,
+    // mark_dirty_total_nodes}.
+    std::uint64_t children_call_count = 0;
+    std::uint64_t parent_of_call_count = 0;
+    std::uint64_t mark_dirty_upward_call_count = 0;
+    std::uint64_t mark_dirty_total_nodes = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).

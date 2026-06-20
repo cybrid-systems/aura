@@ -9883,6 +9883,74 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         };
         return build_hash(kv);
     });
+
+    // (compile:ast-ops-stats) — Issue #256: observability for
+    // the hand-written AST operations (children, parent_of,
+    // mark_dirty_upward). Hash with 4 counters:
+    //   - children-call-count: total children() calls
+    //   - parent-of-call-count: total parent_of() calls
+    //   - mark-dirty-upward-call-count: mark_dirty_upward()
+    //     invocations
+    //   - mark-dirty-total-nodes: total nodes touched across
+    //     all mark_dirty_upward() calls. Divided by
+    //     mark-dirty-upward-call-count gives the average
+    //     dirty-propagation depth — the key metric for
+    //     deciding if the std::meta refactor is worth it.
+    // Returns a hash with the counts (all 0 if no workspace
+    // is set). Companion to (compile:invalidations-stats).
+    primitives_.add("compile:ast-ops-stats", [this](const auto&) -> EvalValue {
+        // Re-use the build_hash pattern from above primitives.
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t children_calls = 0, parent_calls = 0,
+                      dirty_calls = 0, dirty_nodes = 0;
+        // Counters live on the workspace FlatAST (set up in
+        // ast.ixx). Get the FlatAST via the Evaluator's
+        // workspace_flat() accessor.
+        if (auto* ws_flat = workspace_flat()) {
+            children_calls = ws_flat->children_call_count();
+            parent_calls   = ws_flat->parent_of_call_count();
+            dirty_calls    = ws_flat->mark_dirty_upward_call_count();
+            dirty_nodes    = ws_flat->mark_dirty_total_nodes();
+        }
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"children-call-count", make_int(static_cast<std::int64_t>(children_calls))},
+            {"parent-of-call-count", make_int(static_cast<std::int64_t>(parent_calls))},
+            {"mark-dirty-upward-call-count", make_int(static_cast<std::int64_t>(dirty_calls))},
+            {"mark-dirty-total-nodes", make_int(static_cast<std::int64_t>(dirty_nodes))},
+        };
+        return build_hash(kv);
+    });
 }
 
 

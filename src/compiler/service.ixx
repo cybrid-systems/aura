@@ -3932,6 +3932,13 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             s.is_valid_check_count = ws_flat->is_valid_check_count();
             s.stable_ref_invalidations = ws_flat->stable_ref_invalidations();
             s.atomic_batch_commits = ws_flat->atomic_batch_commits_v();
+            // Issue #256: AST operation observability counters
+            // (children/parent_of/mark_dirty_upward call counts
+            // + total nodes marked dirty).
+            s.children_call_count = ws_flat->children_call_count();
+            s.parent_of_call_count = ws_flat->parent_of_call_count();
+            s.mark_dirty_upward_call_count = ws_flat->mark_dirty_upward_call_count();
+            s.mark_dirty_total_nodes = ws_flat->mark_dirty_total_nodes();
         }
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
