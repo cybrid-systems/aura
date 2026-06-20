@@ -26,6 +26,7 @@ Post-fix: main arena stays under the budget.
 Usage:
   python3 tests/arena_owner_invariant.py [--budget-mb N]
 """
+
 import argparse
 import os
 import re
@@ -51,10 +52,14 @@ def parse_arena_stats(s: str) -> dict[str, tuple[float, float]]:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--budget-mb", type=float, default=0.50,
-                   help="Fail if main arena exceeds this after the workload. "
-                        "Default 0.5MB is tight; current unfixed builds grow "
-                        "by ~0.20-0.30MB from 50 mixed iterations.")
+    p.add_argument(
+        "--budget-mb",
+        type=float,
+        default=0.50,
+        help="Fail if main arena exceeds this after the workload. "
+        "Default 0.5MB is tight; current unfixed builds grow "
+        "by ~0.20-0.30MB from 50 mixed iterations.",
+    )
     p.add_argument("--iterations", type=int, default=200)
     p.add_argument("--timeout", type=int, default=120)
     args = p.parse_args()
@@ -86,16 +91,22 @@ def main():
         f"        (loop (+ i 1)))"
         f" (gc-arena-stats))))"
     )
-    lines.append("(display _s0)(display \"\\n\")")
-    lines.append("(display _s1)(display \"\\n\")")
-    lines.append("(display (gc-arena-stats))(display \"\\n\")")
-    lines.append("(display (gc-stats))(display \"\\n\")")
+    lines.append('(display _s0)(display "\\n")')
+    lines.append('(display _s1)(display "\\n")')
+    lines.append('(display (gc-arena-stats))(display "\\n")')
+    lines.append('(display (gc-stats))(display "\\n")')
 
     program = "\n".join(lines) + "\n"
 
     try:
-        r = subprocess.run([str(AURA)], input=program, capture_output=True,
-                           text=True, timeout=args.timeout, env=env)
+        r = subprocess.run(
+            [str(AURA)],
+            input=program,
+            capture_output=True,
+            text=True,
+            timeout=args.timeout,
+            env=env,
+        )
     except subprocess.TimeoutExpired:
         print("ERROR: aura timed out", file=sys.stderr)
         return 2
@@ -106,7 +117,7 @@ def main():
             print(f"stderr: {r.stderr[:500]}", file=sys.stderr)
         return 4
 
-    out_lines = [l for l in r.stdout.splitlines() if l.strip()]
+    out_lines = [line for line in r.stdout.splitlines() if line.strip()]
     if len(out_lines) < 4:
         print("FAIL: expected 4 output lines, got:", file=sys.stderr)
         print(r.stdout, file=sys.stderr)
@@ -114,8 +125,8 @@ def main():
 
     s0 = parse_arena_stats(out_lines[0])  # _s0: before loop
     s1 = parse_arena_stats(out_lines[1])  # _s1: after loop
-    arena_str = out_lines[2]              # final gc-arena-stats
-    stats_str = out_lines[3]              # final gc-stats
+    arena_str = out_lines[2]  # final gc-arena-stats
+    stats_str = out_lines[3]  # final gc-stats
     main_before = s0.get("main", (0, 0))[0]
     main_after = s1.get("main", (0, 0))[0]
     main_delta = main_after - main_before
@@ -136,21 +147,43 @@ def main():
     # Use the delta measurement (before vs after the loop) to filter out
     # pre-existing main arena usage from the program setup.
     if main_delta > args.budget_mb:
-        print(f"FAIL: main arena grew by {main_delta:+.2f}MB during workload "
-              f"(budget {args.budget_mb}MB)", file=sys.stderr)
+        print(
+            f"FAIL: main arena grew by {main_delta:+.2f}MB during workload (budget {args.budget_mb}MB)",
+            file=sys.stderr,
+        )
         print("  Possible leak sources:", file=sys.stderr)
-        print("    - src/compiler/evaluator_impl.cpp:2842 (suite check form)", file=sys.stderr)
-        print("    - src/compiler/evaluator_impl.cpp:4142 (set-code 2nd path)", file=sys.stderr)
+        print(
+            "    - src/compiler/evaluator_impl.cpp:2842 (suite check form)",
+            file=sys.stderr,
+        )
+        print(
+            "    - src/compiler/evaluator_impl.cpp:4142 (set-code 2nd path)",
+            file=sys.stderr,
+        )
         print("    - src/compiler/evaluator_impl.cpp:4180 (eval-expr)", file=sys.stderr)
-        print("    - src/compiler/evaluator_impl.cpp:5174 (query:pattern)", file=sys.stderr)
-        print("    - src/compiler/evaluator_impl.cpp:5526 (mutate:replace-pattern)", file=sys.stderr)
-        print("    - src/compiler/evaluator_impl.cpp:13347 (require dynamic import)", file=sys.stderr)
-        print("    - src/compiler/evaluator_impl.cpp:13932 (functor instantiation)", file=sys.stderr)
+        print(
+            "    - src/compiler/evaluator_impl.cpp:5174 (query:pattern)",
+            file=sys.stderr,
+        )
+        print(
+            "    - src/compiler/evaluator_impl.cpp:5526 (mutate:replace-pattern)",
+            file=sys.stderr,
+        )
+        print(
+            "    - src/compiler/evaluator_impl.cpp:13347 (require dynamic import)",
+            file=sys.stderr,
+        )
+        print(
+            "    - src/compiler/evaluator_impl.cpp:13932 (functor instantiation)",
+            file=sys.stderr,
+        )
         return 6
 
     if n_per_mod < 3:
-        print(f"FAIL: expected at least 3 per-module arenas, got {n_per_mod}",
-              file=sys.stderr)
+        print(
+            f"FAIL: expected at least 3 per-module arenas, got {n_per_mod}",
+            file=sys.stderr,
+        )
         return 7
 
     print("PASS")

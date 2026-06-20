@@ -17,12 +17,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install pexpect for CI
+    - name: Install Python CI deps
       run: |
-        pip install --break-system-packages pexpect
+        pip install --break-system-packages pexpect ruff
         python3 -c "import pexpect; print('✅ pexpect installed for', pexpect.__file__)"
+        ruff --version
 
-    # build.py check runs docs --check first, then build + core/safety/fuzz/issue tests
+    # build.py check runs docs --check, lint, then build + core/safety/fuzz/issue tests
     - name: Build & Core Tests
       run: python3 build.py check
 

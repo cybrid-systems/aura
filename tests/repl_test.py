@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """REPL black-box integration tests using pexpect."""
-import subprocess
-import pexpect
-import sys
+
 import os
+import sys
+
+import pexpect
 
 AURA_BIN = "./build/aura"
 TIMEOUT = 5
@@ -13,7 +14,7 @@ def spawn_repl():
     """Spawn REPL with TERM=dumb to avoid ANSI escape sequences."""
     env = os.environ.copy()
     env["TERM"] = "dumb"
-    child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT, env=env, encoding='utf-8', codec_errors='replace')
+    child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT, env=env, encoding="utf-8", codec_errors="replace")
     child.delaybeforesend = 0.1
     return child
 

@@ -22,6 +22,7 @@ arena that can be freed via (gc-module ...).
 Usage:
   python3 tests/functor_instantiate_leak.py [--iterations N]
 """
+
 import argparse
 import os
 import re
@@ -61,10 +62,10 @@ def main():
 
     # Define a trivial functor and instantiate it N times. Each (Box T)
     # call goes through the leak at line 13932.
-    setup = '(define-module (Box T) (define (get x) x))'
-    instantiations = "\n".join(f"(Box {t})" for t in
-                               (["Int", "Float", "String", "Bool", "Char"] *
-                                (args.iterations // 5 + 1)))[:args.iterations * 20]
+    setup = "(define-module (Box T) (define (get x) x))"
+    instantiations = "\n".join(
+        f"(Box {t})" for t in (["Int", "Float", "String", "Bool", "Char"] * (args.iterations // 5 + 1))
+    )[: args.iterations * 20]
 
     program = (
         "(gc-freeze)\n"
@@ -73,15 +74,21 @@ def main():
         f"{instantiations}\n"
         "(define _n1 (gc-module-count))\n"
         "(define _s0 (gc-arena-stats))\n"
-        "(display _n0)(display \" \")\n"
-        "(display _n1)(display \" \")\n"
-        "(display (- _n1 _n0))(display \"\\n\")\n"
-        "(display _s0)(display \"\\n\")\n"
+        '(display _n0)(display " ")\n'
+        '(display _n1)(display " ")\n'
+        '(display (- _n1 _n0))(display "\\n")\n'
+        '(display _s0)(display "\\n")\n'
     )
 
     try:
-        r = subprocess.run([str(AURA)], input=program, capture_output=True,
-                           text=True, timeout=args.timeout, env=env)
+        r = subprocess.run(
+            [str(AURA)],
+            input=program,
+            capture_output=True,
+            text=True,
+            timeout=args.timeout,
+            env=env,
+        )
     except subprocess.TimeoutExpired:
         print("ERROR: aura timed out", file=sys.stderr)
         return 2
@@ -92,7 +99,7 @@ def main():
             print(f"stderr: {r.stderr[:500]}", file=sys.stderr)
         return 4
 
-    lines = [l for l in r.stdout.splitlines() if l.strip()]
+    lines = [line for line in r.stdout.splitlines() if line.strip()]
     if len(lines) < 2:
         print("FAIL: expected 2 output lines, got:", file=sys.stderr)
         print(r.stdout, file=sys.stderr)
@@ -124,15 +131,19 @@ def main():
     # args.iterations. Each duplicate instantiation must NOT grow modules_.
     expected_new = 5  # Int/Float/String/Bool/Char
     if delta > expected_new + 2:  # small slack for any module the define-module itself adds
-        print(f"FAIL: instantiating the same 5 functors {args.iterations} times "
-              f"added {delta} modules (expected {expected_new}). "
-              f"Likely cause: functor instance cache not deduping, OR "
-              f"src/compiler/evaluator_impl.cpp:13932 leaking per instantiation.",
-              file=sys.stderr)
+        print(
+            f"FAIL: instantiating the same 5 functors {args.iterations} times "
+            f"added {delta} modules (expected {expected_new}). "
+            f"Likely cause: functor instance cache not deduping, OR "
+            f"src/compiler/evaluator_impl.cpp:13932 leaking per instantiation.",
+            file=sys.stderr,
+        )
         return 6
     if main_after > args.max_main_mb:
-        print(f"FAIL: main arena at {main_after:.2f}MB exceeds {args.max_main_mb}MB",
-              file=sys.stderr)
+        print(
+            f"FAIL: main arena at {main_after:.2f}MB exceeds {args.max_main_mb}MB",
+            file=sys.stderr,
+        )
         return 7
     print("PASS")
     return 0

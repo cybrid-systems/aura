@@ -45,8 +45,8 @@ TESTS = ROOT / "tests"
 
 # Files to skip entirely
 SKIP_FILES = {
-    "test_issue_159_bench.cpp",   # benchmark, not a test
-    "test_issue_224.cpp",         # already migrated
+    "test_issue_159_bench.cpp",  # benchmark, not a test
+    "test_issue_224.cpp",  # already migrated
 }
 
 # Pattern: `static int g_passed = 0;` (or `g_passed = 0;`)
@@ -74,9 +74,7 @@ def needs_migration(content: str) -> bool:
         return False
     if not G_PASSED_RE.search(content):
         return False
-    if not G_FAILED_RE.search(content):
-        return False
-    return True
+    return G_FAILED_RE.search(content)
 
 
 def migrate(content: str) -> tuple[str, bool]:
@@ -98,7 +96,7 @@ def migrate(content: str) -> tuple[str, bool]:
 
     # 4. Add `#include "test_harness.hpp"` after the last #include
     #    (or after the import block if no #include follows).
-    if "#include \"test_harness.hpp\"" not in new:
+    if '#include "test_harness.hpp"' not in new:
         # Find the last #include line
         last_include_idx = -1
         for m in re.finditer(r"^#include[^\n]*\n", new, re.MULTILINE):
@@ -110,7 +108,7 @@ def migrate(content: str) -> tuple[str, bool]:
                 + "// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local\n"
                 + "// g_passed / g_failed / CHECK macro above are removed;\n"
                 + "// this file now uses the harness's versions.\n"
-                + "#include \"test_harness.hpp\"\n"
+                + '#include "test_harness.hpp"\n'
                 + new[last_include_idx:]
             )
         else:
@@ -118,20 +116,15 @@ def migrate(content: str) -> tuple[str, bool]:
             first_import = re.search(r"^import\s+", new, re.MULTILINE)
             if first_import:
                 new = (
-                    new[:first_import.start()]
+                    new[: first_import.start()]
                     + "// Unified test harness (Issue #226).\n"
-                    + "#include \"test_harness.hpp\"\n"
+                    + '#include "test_harness.hpp"\n'
                     + "\n"
-                    + new[first_import.start():]
+                    + new[first_import.start() :]
                 )
             else:
                 # Plain file — insert at top
-                new = (
-                    "// Unified test harness (Issue #226).\n"
-                    + "#include \"test_harness.hpp\"\n"
-                    + "\n"
-                    + new
-                )
+                new = "// Unified test harness (Issue #226).\n" + '#include "test_harness.hpp"\n' + "\n" + new
 
     # 5. If g_passed / g_failed are still referenced in the
     #    file (e.g., a custom summary format in main() like
@@ -139,15 +132,12 @@ def migrate(content: str) -> tuple[str, bool]:
     #    they resolve to the harness's globals. Must run
     #    AFTER the #include insertion so the replace() can
     #    find the include line.
-    if "g_passed" in new or "g_failed" in new:
-        if "using aura::test::g_passed" not in new:
-            new = new.replace(
-                "#include \"test_harness.hpp\"",
-                "#include \"test_harness.hpp\"\n"
-                "using aura::test::g_passed;\n"
-                "using aura::test::g_failed;",
-                1,
-            )
+    if ("g_passed" in new or "g_failed" in new) and "using aura::test::g_passed" not in new:
+        new = new.replace(
+            '#include "test_harness.hpp"',
+            '#include "test_harness.hpp"\nusing aura::test::g_passed;\nusing aura::test::g_failed;',
+            1,
+        )
 
     return new, True
 

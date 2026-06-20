@@ -16,6 +16,7 @@
 """
 
 import concurrent.futures
+import contextlib
 import fcntl
 import http.client
 import json
@@ -42,6 +43,7 @@ class ModelConfig:
         self.key = key
         self.base_url = base_url
 
+
 # Default routing: phase → model, with task-category overrides
 # Set LLM_MODEL_ROUTING=1 to enable; configure via env vars:
 #   LLM_PRIMARY=deepseek-v4-flash  (for coarse)
@@ -50,13 +52,14 @@ class ModelConfig:
 # Default endpoint per model prefix (used when LLM_BASE_URL is unset).
 # Mirrors `tests/mutation_loop.py:known_endpoints`; minimax added here.
 _MODEL_ENDPOINTS = {
-    "deepseek":  "https://api.deepseek.com/v1",
-    "grok":      "https://api.x.ai/v1",
-    "minimax":   "https://api.minimax.chat/v1",
-    "openai":    "https://api.openai.com/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "grok": "https://api.x.ai/v1",
+    "minimax": "https://api.minimax.chat/v1",
+    "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com/v1",
-    "google":    "https://generativelanguage.googleapis.com/v1beta",
+    "google": "https://generativelanguage.googleapis.com/v1beta",
 }
+
 
 def _default_url_for_model(model_id):
     """Pick a default base_url based on model name prefix.
@@ -71,6 +74,7 @@ def _default_url_for_model(model_id):
             return _MODEL_ENDPOINTS[prefix]
     return "https://api.deepseek.com/v1"
 
+
 def _parse_model_cfg(name_key, model_key, url_key, key_name):
     model = os.environ.get(model_key, "")
     key = os.environ.get(name_key, "")
@@ -79,15 +83,13 @@ def _parse_model_cfg(name_key, model_key, url_key, key_name):
         return None
     return ModelConfig(key_name, model, key, url)
 
+
 # Primary model (used for coarse/rewrite attempts)
-_MODEL_PRIMARY = _parse_model_cfg(
-    "LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "primary")
+_MODEL_PRIMARY = _parse_model_cfg("LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "primary")
 # Secondary model (used for fine/putt, type/ffi tasks)
-_MODEL_SECONDARY = _parse_model_cfg(
-    "LLM_API_KEY_2", "LLM_MODEL_2", "LLM_BASE_URL_2", "secondary")
+_MODEL_SECONDARY = _parse_model_cfg("LLM_API_KEY_2", "LLM_MODEL_2", "LLM_BASE_URL_2", "secondary")
 # Cheap model (used for simple tasks, last-resort fallback)
-_MODEL_CHEAP = _parse_model_cfg(
-    "LLM_API_KEY_3", "LLM_MODEL_3", "LLM_BASE_URL_3", "cheap")
+_MODEL_CHEAP = _parse_model_cfg("LLM_API_KEY_3", "LLM_MODEL_3", "LLM_BASE_URL_3", "cheap")
 # If no routing configured, use the primary model for everything
 _MODEL_ROUTING_ENABLED = bool(_MODEL_SECONDARY or _MODEL_CHEAP)
 
@@ -113,7 +115,7 @@ def _route_model(task_name, phase):
     """Select model config based on task name and phase.
     Returns a ModelConfig or None (caller falls back to original params)."""
     if not _MODEL_ROUTING_ENABLED:
-        return (_MODEL_PRIMARY if _MODEL_PRIMARY else None)
+        return _MODEL_PRIMARY if _MODEL_PRIMARY else None
     # Phase-based routing
     level = _PHASE_ROUTES.get(phase, "primary")
     # Task-category override
@@ -125,7 +127,8 @@ def _route_model(task_name, phase):
         return _MODEL_SECONDARY
     if level == "cheap" and _MODEL_CHEAP:
         return _MODEL_CHEAP
-    return (_MODEL_PRIMARY if _MODEL_PRIMARY else None)
+    return _MODEL_PRIMARY if _MODEL_PRIMARY else None
+
 
 # ── 任务定义 ─────────────────────────────────────────────
 # ── 从 tasks/ 子目录加载任务 ────────────────────────────
@@ -195,7 +198,7 @@ class ServeClient:
             try:
                 self.proc.stdout.close()
                 self.proc.stdin.close()
-            except:
+            except Exception:
                 pass
             self.proc.wait()
         self.proc = subprocess.Popen(
@@ -244,7 +247,7 @@ class ServeClient:
                         more = os.read(fd, 4096)
                         if more:
                             buf += more.decode("utf-8", errors="replace")
-                    except:
+                    except Exception:
                         pass
                     break
                 time.sleep(0.05)
@@ -254,10 +257,8 @@ class ServeClient:
                 self._restart()
                 return False, "", "serve hang (" + str(read_timeout) + "s), restarted"
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 fcntl.fcntl(fd, fcntl.F_SETFL, old_flags)
-            except:
-                pass
 
         # Find the JSON suffix - always the last {...} block
         stripped = buf.strip()
@@ -287,74 +288,11 @@ class ServeClient:
                 out = val if val not in ("()", "") else ""
             return True, out.strip(), ""
         if status == "closure":
-            return False, "#<procedure>", "program returned an uncalled function (closure)"
-        return False, display_text, resp.get("msg", str(resp))
-
-        def reader():
-            try:
-                line = self.proc.stdout.readline()
-                if (
-                    my_gen == self._gen
-                ):  # only accept if we're still the active generation
-                    result.append(line)
-            except:
-                if my_gen == self._gen:
-                    result.append(None)
-            done.set()
-
-        t = threading.Thread(target=reader, daemon=True)
-        t.start()
-        if not done.wait(read_timeout):
-            self.proc.kill()
-            self.proc.wait()
-            self._restart()
-            return False, "", "serve timeout (" + str(read_timeout) + "s), restarted"
-        line = (result[0] or "") if result else ""
-        if not line:
-            self._restart()
-            return False, "", "serve response empty, restarted"
-        stripped = line.strip()
-        if stripped.startswith("{"):
-            json_line = stripped
-            display_text = ""
-        else:
-            # Find LAST { (HTTP response body may contain {})
-            brace = stripped.rfind("{")
-            if brace >= 0:
-                display_text = stripped[:brace]
-                json_line = stripped[brace:]
-            else:
-                print(
-                    f"  [EXEC DEBUG] no JSON: {repr(stripped[:200])}", file=sys.stderr
-                )
-                if stripped and not stripped.startswith("{"):
-                    try:
-                        if self.proc.stderr:
-                            pass  # time is already imported globally
-                            time.sleep(0.2)
-                            err_all = self.proc.stderr.read()
-                            if err_all and err_all.strip():
-                                print(
-                                    f"  [EXEC DEBUG] stderr ({len(err_all)}b): {repr(err_all[:300])}",
-                                    file=sys.stderr,
-                                )
-                    except:
-                        pass
-                return False, stripped, "no JSON in response"
-        try:
-            resp = json.loads(json_line)
-        except json.JSONDecodeError:
-            return False, stripped, "invalid JSON"
-        status = resp.get("status", "error")
-        if status == "ok":
-            val = resp.get("value", "")
-            if display_text:
-                out = display_text + (" " + val if val not in ("()", "") else "")
-            else:
-                out = val if val not in ("()", "") else ""
-            return True, out.strip(), ""
-        if status == "closure":
-            return False, "#<procedure>", "program returned an uncalled function (closure)"
+            return (
+                False,
+                "#<procedure>",
+                "program returned an uncalled function (closure)",
+            )
         return False, display_text, resp.get("msg", str(resp))
 
     def exec_batch(self, codes, read_timeout=3):
@@ -397,15 +335,13 @@ class ServeClient:
                         more = os.read(fd, 4096)
                         if more:
                             buf += more.decode("utf-8", errors="replace")
-                    except:
+                    except Exception:
                         pass
                     break
                 time.sleep(0.05)
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 fcntl.fcntl(fd, fcntl.F_SETFL, old_flags)
-            except:
-                pass
 
         # Parse responses (one per line)
         lines = buf.strip().split("\n")
@@ -470,18 +406,11 @@ def llm_complete(model, base_url, key, messages, retries=3):
     extra_params = {}
     if "minimax" in model_lower:
         # Use correct model ID (case-sensitive)
-        if "m3" in model_lower:
-            model = "MiniMax-M3"
-        else:
-            model = "MiniMax-M2.7"
+        model = "MiniMax-M3" if "m3" in model_lower else "MiniMax-M2.7"
         extra_params["reasoning_split"] = True
     for attempt in range(retries):
         try:
-            conn_cls = (
-                http.client.HTTPSConnection
-                if parsed.scheme == "https"
-                else http.client.HTTPConnection
-            )
+            conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
             h = conn_cls(parsed.netloc, timeout=request_timeout)
             body = {
                 "model": model,
@@ -509,7 +438,10 @@ def llm_complete(model, base_url, key, messages, retries=3):
                 content = d.get("choices", [{}])[0].get("message", {}).get("reasoning_details", "")
             # Debug: see what the API actually returned
             if not content and os.environ.get("LLM_DEBUG"):
-                print(f"  [LLM debug] status={r.status} model={model} body[:600]={raw[:600]!r}", file=sys.stderr)
+                print(
+                    f"  [LLM debug] status={r.status} model={model} body[:600]={raw[:600]!r}",
+                    file=sys.stderr,
+                )
             if content:
                 return content
         except Exception as e:
@@ -536,11 +468,9 @@ def extract_code(text):
         for p in masked.split("```"):
             lines = p.strip().split("\n")
             lines = [
-                l
-                for l in lines
-                if not l.startswith(
-                    ("aura", "scheme", "lisp", "racket", "python", "#lang", "#!")
-                )
+                line
+                for line in lines
+                if not line.startswith(("aura", "scheme", "lisp", "racket", "python", "#lang", "#!"))
             ]
             c = "\n".join(lines).strip()
             # Skip blocks that look like plain text (no parens at
@@ -594,9 +524,22 @@ def extract_code(text):
             code_start = i
             break
         # Lines containing key Lisp patterns
-        if any(kw in stripped_line for kw in
-               ("define", "require", "lambda", "import", "set-code",
-                "query:", "mutate:", "eval-current", "c-func", "display", ":")):
+        if any(
+            kw in stripped_line
+            for kw in (
+                "define",
+                "require",
+                "lambda",
+                "import",
+                "set-code",
+                "query:",
+                "mutate:",
+                "eval-current",
+                "c-func",
+                "display",
+                ":",
+            )
+        ):
             code_start = i
             break
     if code_start >= 0:
@@ -625,7 +568,7 @@ def extract_code(text):
 
     # Step 6: Trim trailing Chinese/natural language after code
     if stripped:
-        last_paren = stripped.rfind(")")
+        stripped.rfind(")")
         for kw in [")。", "<br>", "\n\n"]:
             idx = stripped.find(kw)
             if idx >= 0:
@@ -641,9 +584,7 @@ def extract_code(text):
 
 def test_aura(code, timeout=10):
     try:
-        r = subprocess.run(
-            [AURA], input=code, capture_output=True, text=True, timeout=timeout
-        )
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=timeout)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
     except subprocess.TimeoutExpired:
         return -1, "", "timeout"
@@ -677,9 +618,18 @@ def check_success(out, expected):
     # If output looks like an error message, be more strict
     # to prevent false positives from diagnostic strings that
     # happen to contain expected keywords.
-    is_error_like = is_structured_error or any(m in norm_out.lower() for m in
-        ["error:", "parse error", "unbound variable",
-         "type error", "syntax error", "invalid syntax", "expected expression"])
+    is_error_like = is_structured_error or any(
+        m in norm_out.lower()
+        for m in [
+            "error:",
+            "parse error",
+            "unbound variable",
+            "type error",
+            "syntax error",
+            "invalid syntax",
+            "expected expression",
+        ]
+    )
 
     for kw in expected:
         if not kw:
@@ -690,7 +640,8 @@ def check_success(out, expected):
             if is_error_like and len(kw) <= 5:
                 try:
                     import re
-                    if re.search(r'\\b' + re.escape(kw) + r'\\b', norm_out):
+
+                    if re.search(r"\\b" + re.escape(kw) + r"\\b", norm_out):
                         return True
                 except Exception:
                     return True  # fall back to substring match
@@ -708,9 +659,7 @@ def get_api_ref():
     try:
         modules = '"std/list" "std/hash" "std/json" "std/string" "std/math"'
         code = f'(require "std/adaptive" all:)(display (get-api-ref (list {modules})))'
-        r = subprocess.run(
-            [AURA], input=code, capture_output=True, text=True, timeout=10
-        )
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
         if r.returncode == 0:
             ref = r.stdout.strip()
             if ref and len(ref) > 100:
@@ -718,7 +667,6 @@ def get_api_ref():
     except Exception:
         pass
     return ""
-
 
 
 PROMPT_SECTIONS = {
@@ -741,14 +689,14 @@ PROMPT_SECTIONS = {
         "\nTYPE ANNOTATIONS:\n  (: x Int 42)          → bind x:Int with value 42\n"
         "  ((lambda ((: x Int)) (+ x 1)) 41)  → lambda with typed param\n"
         "  (define (f (: x Int)) (+ x 1))    → define with typed param\n"
-        "  (: x String \"hello\") → string type annotation\n"
+        '  (: x String "hello") → string type annotation\n'
         "\nFUNCTOR / MODULE:\n"
         "  (define-module (Stack :T) (export push pop)\n"
         "    (define (push s x) (cons x s)))\n"
         "  (Stack Int)            → instantiate functor with Int\n"
-        "  (module-get (Stack Int) \"push\") → get function from instance\n"
+        '  (module-get (Stack Int) "push") → get function from instance\n'
         "\nEDSL (self-modification):\n"
-        "  (set-code \"(define (f x) (+ x 1))\") → load code into workspace\n"
+        '  (set-code "(define (f x) (+ x 1))") → load code into workspace\n'
         "  (query:root)            → get root node ID\n"
         "  (query:children node)   → get children of a node\n"
         "  (mutate:rebind name new-code)  → replace function definition\n"
@@ -761,9 +709,9 @@ PROMPT_SECTIONS = {
         "  (workspace-state)       → multi-line string with WORKSPACE: <n> defines header\n"
         "                              (use to count defines / show current state)\n"
         "\nMODULE / IMPORT:\n"
-        "  (require \"std/list\" all:)  → load stdlib module\n"
-        "  (import \"path\")            → import module\n"
-        "  (generate-type-sigs \"path\") → generate .aura-type file\n"
+        '  (require "std/list" all:)  → load stdlib module\n'
+        '  (import "path")            → import module\n'
+        '  (generate-type-sigs "path") → generate .aura-type file\n'
         "\nTYPES:\n  Int, String, Bool, Float, Void, List, Pair, Hash\n"
         "\n=== END REFERENCE ===\n"
     ),
@@ -822,14 +770,9 @@ def _ada_list(items):
 def call_adaptive(rc, output, expected_list):
     exp_list = _ada_list(expected_list)
     out_esc = _ada_esc(output)
-    code = (
-        '(require "std/adaptive" all:)'
-        '(pid:analyze "' + out_esc + '" ' + exp_list + ')'
-    )
+    code = '(require "std/adaptive" all:)(pid:analyze "' + out_esc + '" ' + exp_list + ")"
     try:
-        r = subprocess.run(
-            [AURA], input=code, capture_output=True, text=True, timeout=10
-        )
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
         if r.returncode != 0:
             return "fine", 0.0, "(ada-unavail)", ""
         # Parse pid:analyze output: (phase ratio diagnosis feedback)
@@ -841,21 +784,21 @@ def call_adaptive(rc, output, expected_list):
             depth = 0
             current = ""
             for c in inner:
-                if c == '(': depth += 1
-                elif c == ')': depth -= 1
-                if depth == 0 and c == ' ' and current.strip():
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                if depth == 0 and c == " " and current.strip():
                     parts.append(current.strip())
                     current = ""
-                elif depth > 0 or c != ' ':
-                    current += c
-                elif c != ' ' or current:
+                elif depth > 0 or c != " " or c != " " or current:
                     current += c
             if current.strip():
                 parts.append(current.strip())
             phase = parts[0].strip('"') if len(parts) >= 1 else "fine"
             try:
                 ratio = float(parts[1]) if len(parts) >= 2 else 0.0
-            except:
+            except Exception:
                 ratio = 0.0
             diag = parts[2].strip('"') if len(parts) >= 3 else ""
             fb = parts[3].strip('"') if len(parts) >= 4 else ""
@@ -871,9 +814,7 @@ def call_api_ref(stdlib_list):
     lst = "(list " + " ".join('"' + m + '"' for m in stdlib_list) + ")"
     code = '(require "std/adaptive" all:)(display (get-api-ref ' + lst + "))"
     try:
-        r = subprocess.run(
-            [AURA], input=code, capture_output=True, text=True, timeout=5
-        )
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=5)
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()
     except Exception:
@@ -882,9 +823,7 @@ def call_api_ref(stdlib_list):
 
 
 # ── 共享的 Adaptive 反馈逻辑 ──────────────────────────────
-def build_adaptive_feedback(
-    name, actual_output, expected, stdlib, sys_prompt, prompt, current_src=""
-):
+def build_adaptive_feedback(name, actual_output, expected, stdlib, sys_prompt, prompt, current_src=""):
     """Build structured feedback for adaptive retry via pure Aura pid:analyze.
     Shared between --fix and --intend modes.
     Returns (structured_feedback, phase, temperature, max_tokens).
@@ -918,7 +857,6 @@ def build_adaptive_feedback(
                 fb.append("")
                 fb.append("=== Connection Errors ===")
                 fb.append(trace_err[:200])
-
 
     if diag and diag != "":
         fb.append("")
@@ -963,16 +901,12 @@ def _find_reference(code, expected):
     for m in re.finditer(r"(?<![a-zA-Z])(\d+)(?![a-zA-Z])", code):
         nums.add(int(m.group(1)))
     for kw in expected:
-        try:
+        with contextlib.suppress(ValueError):
             nums.add(int(kw))
-        except ValueError:
-            pass
     ref = None
     if expected:
-        try:
+        with contextlib.suppress(ValueError, IndexError):
             ref = int(float(expected[0]))
-        except (ValueError, IndexError):
-            pass
     return ref, sorted(nums)
 
 
@@ -1078,11 +1012,11 @@ def _gen_edsl_variants(code, expected):
                     new_val = max(0, val + delta)
                     if new_val == val:
                         continue
-                    mod_body = (
-                        raw_body[: lm.start()] + str(new_val) + raw_body[lm.end() :]
-                    )
+                    mod_body = raw_body[: lm.start()] + str(new_val) + raw_body[lm.end() :]
                     mod_esc = mod_body.replace("\\", "\\\\").replace('"', '\\"')
-                    cmd = f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {mod_esc})")(eval-current)'
+                    cmd = (
+                        f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {mod_esc})")(eval-current)'
+                    )
                     yield cmd, f"edsl {fn_name} lit {val}->{new_val}"
 
         # d) Condition flip in body: swap if then/else branches
@@ -1091,25 +1025,25 @@ def _gen_edsl_variants(code, expected):
             then_expr = m.group(2).strip()
             else_expr = m.group(3).strip()
             if then_expr != else_expr:
-                mod_body = raw_body[:m.start()] + f"(if {cond} {else_expr} {then_expr})" + raw_body[m.end():]
+                mod_body = raw_body[: m.start()] + f"(if {cond} {else_expr} {then_expr})" + raw_body[m.end() :]
                 mod_esc = mod_body.replace("\\", "\\\\").replace('"', '\\"')
                 cmd = f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {mod_esc})")(eval-current)'
                 yield cmd, f"edsl {fn_name} cond-flip"
 
         # e) Operator swap in body
-        swaps = {
-            "<": "<=",
-            "<=": "<",
-            ">": ">=",
-            ">=": ">",
-            "=": "not=",
-            "not=": "=",
-            "<": ">",
-            ">": "<",
-            "<=": ">=",
-            ">=": "<=",
-        }
-        for old_op, new_op in swaps.items():
+        swaps = [
+            ("<", "<="),
+            ("<=", "<"),
+            (">", ">="),
+            (">=", ">"),
+            ("=", "not="),
+            ("not=", "="),
+            ("<", ">"),
+            (">", "<"),
+            ("<=", ">="),
+            (">=", "<="),
+        ]
+        for old_op, new_op in swaps:
             if old_op in raw_body.split():
                 mod_body = re.sub(
                     r"(?<![a-zA-Z])" + re.escape(old_op) + r"(?![a-zA-Z])",
@@ -1118,7 +1052,9 @@ def _gen_edsl_variants(code, expected):
                 )
                 if mod_body != raw_body:
                     mod_esc = mod_body.replace("\\", "\\\\").replace('"', '\\"')
-                    cmd = f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {mod_esc})")(eval-current)'
+                    cmd = (
+                        f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {mod_esc})")(eval-current)'
+                    )
                     yield cmd, f"edsl {fn_name} op {old_op}->{new_op}"
 
     # 2. Display format changes (fallback: full code replacement)
@@ -1149,9 +1085,7 @@ def _gen_edsl_variants(code, expected):
                 "(hash-values " + arg + ")",
                 "(hash-length " + arg + ")",
             ]:
-                variant = (
-                    code[: m.start()] + "(display " + wrapper + ")" + code[m.end() :]
-                )
+                variant = code[: m.start()] + "(display " + wrapper + ")" + code[m.end() :]
                 yield variant, f"full {wrapper[:25]}"
             if any(kw in expected for kw in ["#t", "#f", "true", "false"]):
                 variant = code[: m.start()] + "(display #t)" + code[m.end() :]
@@ -1194,9 +1128,7 @@ def _colony_load_pheromone(serve, task_name):
     if _COLONY_PHEROMONE.get("initialized"):
         export_json = _COLONY_PHEROMONE.get("export", "")
         if export_json:
-            serve.exec(
-                '(require "std/ant" all:)(pheromone:import "' + export_json + '")'
-            )
+            serve.exec('(require "std/ant" all:)(pheromone:import "' + export_json + '")')
 
 
 def _colony_save_pheromone(serve):
@@ -1214,7 +1146,7 @@ def _colony_save_pheromone(serve):
                 json.loads(phero_json)
                 _COLONY_PHEROMONE["export"] = phero_json
                 _COLONY_PHEROMONE["initialized"] = True
-            except:
+            except Exception:
                 pass
 
 
@@ -1232,17 +1164,12 @@ def internal_colony_search(serve, last_code, expected, phase, task_name=""):
     colony_start = time.time()
 
     # Convert expected list to comma-separated string
-    if isinstance(expected, list):
-        expected_str = ",".join(expected)
-    else:
-        expected_str = str(expected)
+    expected_str = ",".join(expected) if isinstance(expected, list) else str(expected)
 
     # Single exec: pure Aura colony search
     # Escape expected string for Aura
-    esc_expected = expected_str.replace('\\', '\\\\').replace('"', '\\"')
-    ok, out, err = serve.exec(
-        f'(require "std/ant" all:)(colony:search "{esc_expected}" {pid_limit})'
-    )
+    esc_expected = expected_str.replace("\\", "\\\\").replace('"', '\\"')
+    ok, out, err = serve.exec(f'(require "std/ant" all:)(colony:search "{esc_expected}" {pid_limit})')
     if not ok:
         return False, out or "", err or "colony:serve-error"
 
@@ -1251,7 +1178,7 @@ def internal_colony_search(serve, last_code, expected, phase, task_name=""):
     if result_str.startswith("(#t"):
         elapsed = time.time() - colony_start
         # Extract output (second element)
-        parts = result_str.split("\"")
+        parts = result_str.split('"')
         captured = parts[1] if len(parts) > 1 else ""
         return True, captured, f"colony:aura in {elapsed:.1f}s"
 
@@ -1268,9 +1195,7 @@ def get_execution_trace(code_str, timeout=10):
     esc = code_str.replace("\\", "\\\\").replace('"', '\\"')
     aura = '(set-code "' + esc + '")(eval-current)'
     try:
-        r = subprocess.run(
-            [AURA], input=aura, capture_output=True, text=True, timeout=timeout
-        )
+        r = subprocess.run([AURA], input=aura, capture_output=True, text=True, timeout=timeout)
         return r.stdout.strip() if r.returncode == 0 else "", r.stderr.strip()
     except Exception:
         return "", ""
@@ -1281,13 +1206,13 @@ def get_execution_trace(code_str, timeout=10):
 _ERROR_API_DOCS = {
     "rule:define": (
         "=== std/rule ===\n"
-        "(rule:define name :pattern \"p\" :replace \"r\" ...)\n"
+        '(rule:define name :pattern "p" :replace "r" ...)\n'
         "Keywords: :pattern (required), :replace (required), :condition, :description\n"
     ),
     "synthesize:pipeline": (
         "=== std/pipeline ===\n"
         '(synthesize:pipeline "name" step1 step2 ...)\n'
-        "Each step: (synthesize:fill \"tmpl\" args...) or (synthesize:define ...)\n"
+        'Each step: (synthesize:fill "tmpl" args...) or (synthesize:define ...)\n'
     ),
     "synthesize:register-template": (
         "=== synthesize templates ===\n"
@@ -1295,9 +1220,7 @@ _ERROR_API_DOCS = {
         '(synthesize:fill "name" arg1 arg2 ...)  ; Fill template with args\n'
     ),
     "send": (
-        "=== send/recv ===\n"
-        "(send message target)  ; Send message to channel\n"
-        "(recv)  ; Receive message (blocking)\n"
+        "=== send/recv ===\n(send message target)  ; Send message to channel\n(recv)  ; Receive message (blocking)\n"
     ),
     "make-hash": (
         "=== std/hash ===\n"
@@ -1318,9 +1241,9 @@ _ERROR_API_DOCS = {
     ),
     "c-func": (
         "=== C FFI ===\n"
-        "(c-func lib-name \"c_fn_name\" arg-types ret-type)\n"
-        "arg-types: list of \"int\", \"float\", \"string\"\n"
-        "Example: (define sqrt-fn (c-func \"m\" \"sqrt\" (list \"double\") \"double\"))\n"
+        '(c-func lib-name "c_fn_name" arg-types ret-type)\n'
+        'arg-types: list of "int", "float", "string"\n'
+        'Example: (define sqrt-fn (c-func "m" "sqrt" (list "double") "double"))\n'
     ),
 }
 
@@ -1342,9 +1265,7 @@ def _auto_fix_procedure(code, expected, run_code, is_edsl):
 
     def _fresh_run(test_code):
         try:
-            r = _sp.run(
-                [AURA], input=test_code, capture_output=True, text=True, timeout=10
-            )
+            r = _sp.run([AURA], input=test_code, capture_output=True, text=True, timeout=10)
             return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
         except Exception:
             return False, "", "subprocess error"
@@ -1359,13 +1280,13 @@ def _auto_fix_procedure(code, expected, run_code, is_edsl):
         """Find last (define (fn a1 a2 ...) ...) or (define fn (lambda ...)).
         Returns (fn_name, arity) or None."""
         # (define (fn args...) body...)
-        m = _re.findall(r'\(define\s+\(([^\s)]+)([^)]*)\)', src)
+        m = _re.findall(r"\(define\s+\(([^\s)]+)([^)]*)\)", src)
         if m:
             name, all_args = m[-1]
-            args = [a for a in all_args.split() if a and not a.startswith(':')]
+            args = [a for a in all_args.split() if a and not a.startswith(":")]
             return name, len(args)
         # (define fn (lambda (args...) ...))
-        m = _re.findall(r'\(define\s+([^\s)]+)\s+\(lambda\s+\(([^)]*)\)', src)
+        m = _re.findall(r"\(define\s+([^\s)]+)\s+\(lambda\s+\(([^)]*)\)", src)
         if m:
             return m[-1][0], len([a for a in m[-1][1].split() if a])
         return None
@@ -1376,37 +1297,37 @@ def _auto_fix_procedure(code, expected, run_code, is_edsl):
         pats = []
         if arity == 0:
             pats = [
-                f'(display ({fn}))',
+                f"(display ({fn}))",
                 f'(display "{fn} done")',
             ]
         elif arity == 1:
             pats = [
                 # For sort-like: (display (fn (list 3 1 4 1 5)))
-                f'(display ({fn} (list 3 1 4 1 5)))',
+                f"(display ({fn} (list 3 1 4 1 5)))",
                 # For simple: (display (fn 42))
-                f'(display ({fn} 42))',
-                f'(display ({fn} 0))',
-                f'(display ({fn} \"test\"))',
+                f"(display ({fn} 42))",
+                f"(display ({fn} 0))",
+                f'(display ({fn} "test"))',
             ]
         elif arity == 2:
             pats = [
                 # For search-like: (display (fn (list 1 3 5 7 9) 5))
-                f'(display ({fn} (list 1 3 5 7 9) 5))',
+                f"(display ({fn} (list 1 3 5 7 9) 5))",
                 # For other 2-arg: (display (fn (list 3 1 4 1 5) 1))
-                f'(display ({fn} (list 3 1 4 1 5) 1))',
-                f'(display ({fn} 42 7))',
-                f'(display ({fn} 0 0))',
+                f"(display ({fn} (list 3 1 4 1 5) 1))",
+                f"(display ({fn} 42 7))",
+                f"(display ({fn} 0 0))",
             ]
         else:  # 3+ args
             pats = [
-                f'(display ({fn} 1 2 3))',
-                f'(display ({fn} 42 7 0))',
-                f'(display ({fn} 0 0 0))',
+                f"(display ({fn} 1 2 3))",
+                f"(display ({fn} 42 7 0))",
+                f"(display ({fn} 0 0 0))",
             ]
         # Always try the "done" pattern and raw display
         pats += [
             f'(display "{fn} completed")',
-            f'(display {fn})',
+            f"(display {fn})",
         ]
         return pats
 
@@ -1414,7 +1335,7 @@ def _auto_fix_procedure(code, expected, run_code, is_edsl):
         if is_edsl:
             return f'(set-code "{body} {pat}")'
         else:
-            return original + '\n' + pat
+            return original + "\n" + pat
 
     if is_edsl:
         content, _ = _extract_content(code)
@@ -1437,9 +1358,7 @@ def _auto_fix_procedure(code, expected, run_code, is_edsl):
     return None
 
 
-def run_single_task(
-    model, base_url, api_key, name, prompt, expected, stdlib, api_ref, serve=None
-):
+def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, api_ref, serve=None):
     """Two-phase retry: coarse=full code, fine/putt=EDSL mutations.
     Routes to different models per phase when LLM_MODEL_2 is set.
     serve: ServeClient instance from main().
@@ -1456,6 +1375,7 @@ def run_single_task(
         {"role": "system", "content": sys_prompt},
         {"role": "user", "content": prompt},
     ]
+
     # ── Model routing: route per attempt based on phase ──
     def _prepare_llm_call(current_phase):
         """Return (model, base_url, api_key) for current phase.
@@ -1464,6 +1384,7 @@ def run_single_task(
         if cfg:
             return cfg.model_id, cfg.base_url, cfg.key
         return model, base_url, api_key
+
     last_full_code = ""
     phase = "coarse"
     # ── Aura 原生 serve 会话 ── 不注入 Scheme 兼容层(着力即差)
@@ -1472,9 +1393,7 @@ def run_single_task(
         if serve:
             return serve.exec(code)
         try:
-            r = subprocess.run(
-                [AURA], input=code, capture_output=True, text=True, timeout=10
-            )
+            r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
             return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
         except subprocess.TimeoutExpired:
             return False, "", "timeout"
@@ -1586,6 +1505,7 @@ def run_single_task(
         structured_msg = None
         if actual_output.startswith('("') and '" "' in actual_output[:120]:
             import re as _re2
+
             sm = _re2.match(r'\("([^"]+)"\s+"([^"]+)"\)', actual_output)
             if sm:
                 structured_kind = sm.group(1)
@@ -1594,8 +1514,8 @@ def run_single_task(
         # Detect set-code parse errors (now propagated as structured error)
         set_code_error = ""
         if structured_kind == "parse" or (
-            is_edsl and ("parse error" in actual_output.lower()
-                        or "expected expression" in actual_output.lower()[:60])):
+            is_edsl and ("parse error" in actual_output.lower() or "expected expression" in actual_output.lower()[:60])
+        ):
             set_code_error = (
                 "\n\n⚠️  SET-CODE PARSE ERROR: The code inside your (set-code ...) "
                 "is malformed Aura code.\n"
@@ -1612,14 +1532,11 @@ def run_single_task(
             undefined = structured_msg or "a needed function"
             # Extract the specific name from the message
             import re as _re3
+
             nm = _re3.search(r":\s*([^\s]+)", undefined)
-            if nm:
-                undefined = nm.group(1)
-            else:
-                undefined = "a needed function"
+            undefined = nm.group(1) if nm else "a needed function"
             type_error_hint = (
-                "\n\n⚠️  MISSING DEFINITION: " + undefined.capitalize() +
-                " is not defined.\n"
+                "\n\n⚠️  MISSING DEFINITION: " + undefined.capitalize() + " is not defined.\n"
                 "Add (define (" + undefined + " ...) ...) before calling it.\n"
                 "Check the task's goal to see what signature " + undefined + " needs.\n"
             )
@@ -1634,24 +1551,24 @@ def run_single_task(
         diagnose_hint = ""
         try:
             diag_code = f'(display (diagnose "{_ada_esc(structured_msg or actual_output)}"))'
-            diag_r = subprocess.run(
-                [AURA], input=diag_code, capture_output=True, text=True, timeout=5
-            )
+            diag_r = subprocess.run([AURA], input=diag_code, capture_output=True, text=True, timeout=5)
             if diag_r.returncode == 0 and diag_r.stdout.strip() and diag_r.stdout.strip() != "#f":
                 diag_out = diag_r.stdout.strip()
-                import re as _re4
                 # Parse: (root-cause target fix-type fix-data explanation)
                 # Parse: (cause target fix-type ... explain)
-                parts = diag_out.strip('()').split(None, 4)  # cause target fix-type fix-data explain
+                parts = diag_out.strip("()").split(None, 4)  # cause target fix-type fix-data explain
                 if len(parts) >= 5:
-                    cause, target, fix_type, fix_data = parts[0], parts[1], parts[2], parts[3]
+                    cause, _target, fix_type, fix_data = (
+                        parts[0],
+                        parts[1],
+                        parts[2],
+                        parts[3],
+                    )
                     explain = parts[4].strip('"')
                     if cause != "closure-no-display":  # already handled by auto-fix
-                        diagnose_hint = (
-                            "\n\n🔍 DIAGNOSIS: " + explain + "\n"
-                        )
+                        diagnose_hint = "\n\n🔍 DIAGNOSIS: " + explain + "\n"
                         if fix_type == "add-require":
-                            diagnose_hint += f"💡 Fix: Add (require \"{fix_data}\" all:) or check your imports\n"
+                            diagnose_hint += f'💡 Fix: Add (require "{fix_data}" all:) or check your imports\n'
         except Exception:
             pass
 
@@ -1659,17 +1576,16 @@ def run_single_task(
             api_hint = "\n\n" + "=" * 35 + "\nRELEVANT API:\n" + api_hint + "\n" + "=" * 35 + "\n"
 
         correction = (
-            ("(compile error) " if not ok else "(output mismatch) ")
-            + distance_note
-            + "\n\n"
+            ("(compile error) " if not ok else "(output mismatch) ") + distance_note + "\n\n"
             f"Aura produced: {structured_msg or actual_output[:300]}\n\n"
-            + ada_fb + "\n\n"
+            + ada_fb
+            + "\n\n"
             + procedure_warn
             + set_code_error
             + type_error_hint
             + diagnose_hint
-            + api_hint +
-            "Current code:\n"
+            + api_hint
+            + "Current code:\n"
             + (last_full_code[:400] if last_full_code else code[:400])
             + "\n\n"
             "Output the corrected Aura code (complete program with (display ...))."
@@ -1683,7 +1599,7 @@ def run_single_task(
 
 def print_task_table(task_results):
     print(f"  {'Task':22s} {'Pass/Total':>10s} {'Rate':>6s}  {'Verdict':>12s}")
-    print(f"  {'─'*22} {'─'*10} {'─'*6}  {'─'*12}")
+    print(f"  {'─' * 22} {'─' * 10} {'─' * 6}  {'─' * 12}")
     stable_pass = stable_fail = volatile = 0
     for name, passes, total in sorted(task_results):
         rate = passes / total * 100 if total > 0 else 0
@@ -1701,61 +1617,72 @@ def print_task_table(task_results):
             volatile += 1
         print(f"  {name:22s} {passes:3d}/{total:<4d}  {rate:5.0f}%  {verdict}")
     print(
-        f"\n  ➤ Stable: {stable_pass}✅ / {stable_fail}❌ + Volatile: {volatile}🔄 = {stable_pass+stable_fail+volatile}"
+        f"\n  ➤ Stable: {stable_pass}✅ / {stable_fail}❌ + Volatile: {volatile}🔄 = {stable_pass + stable_fail + volatile}"
     )
     return stable_pass, stable_fail, volatile
 
 
 # ── Thread safety ──────────────────────────────
 _print_lock = threading.Lock()
+
+
 def safe_print(*args, **kwargs):
     with _print_lock:
         print(*args, **kwargs)
+
 
 def safe_task_runner(args):
     """Run a single task in a thread pool worker.
     Args: (model, base_url, api_key, name, prompt, expected, stdlib, api_ref, lock)"""
     model, base_url, api_key, name, prompt, expected, stdlib, api_ref = args
     task_serve = None
-    try:
+    with contextlib.suppress(Exception):
         task_serve = ServeClient()
-    except Exception:
-        pass
-    task_passes = 0
     safe_print(f"\n  ── {name} ──")
-    for round_i in range(1, ROUNDS + 1):
+    for _round_i in range(1, ROUNDS + 1):
         success, out, err, llm_t, attempts = run_single_task(
-            model, base_url, api_key, name, prompt, expected, stdlib,
-            api_ref, serve=task_serve,
+            model,
+            base_url,
+            api_key,
+            name,
+            prompt,
+            expected,
+            stdlib,
+            api_ref,
+            serve=task_serve,
         )
         # Accumulate results (safe since task_stats is per-task)
         # We'll aggregate after thread pool completes
         return (name, success, out, err, llm_t, attempts)
     return (name, False, "", "", 0, 0)
 
+
 # ── 主流程 ────────────────────────────────────────────────
 def run_single_task_parallel(args):
     """Wrapper for ThreadPoolExecutor: creates its own ServeClient per task."""
     model, base_url, api_key, name, prompt, expected, stdlib, api_ref = args
     task_serve = None
-    try:
+    with contextlib.suppress(Exception):
         task_serve = ServeClient()
-    except Exception:
-        pass
     task_passes = 0
-    for round_i in range(1, ROUNDS + 1):
+    for _round_i in range(1, ROUNDS + 1):
         success, out, err, llm_t, attempts = run_single_task(
-            model, base_url, api_key, name, prompt, expected, stdlib,
-            api_ref, serve=task_serve,
+            model,
+            base_url,
+            api_key,
+            name,
+            prompt,
+            expected,
+            stdlib,
+            api_ref,
+            serve=task_serve,
         )
         if success:
             task_passes += 1
         # Return result after all rounds
     if task_serve:
-        try:
+        with contextlib.suppress(Exception):
             task_serve.close()
-        except Exception:
-            pass
     return name, success, out, err if err else "", llm_t, attempts
 
 
@@ -1773,10 +1700,8 @@ def main():
         if args[i] in ("-r", "--rounds"):
             i += 1
             if i < len(args):
-                try:
+                with contextlib.suppress(ValueError):
                     ROUNDS = int(args[i])
-                except ValueError:
-                    pass
         elif args[i] == "--json":
             output_json = True
         elif args[i] == "--tasks":
@@ -1793,10 +1718,8 @@ def main():
         elif args[i] == "--max-attempts":
             i += 1
             if i < len(args):
-                try:
+                with contextlib.suppress(ValueError):
                     MAX_ATTEMPTS = int(args[i])
-                except ValueError:
-                    pass
         i += 1
 
     if not api_key:
@@ -1805,18 +1728,14 @@ def main():
 
     api_ref = get_api_ref()
 
-    mode_tag = (
-        f"  (intend mode: up to {MAX_ATTEMPTS} attempts)"
-        if not EVOLVE_MODE
-        else "  (evolve mode)"
-    )
+    mode_tag = f"  (intend mode: up to {MAX_ATTEMPTS} attempts)" if not EVOLVE_MODE else "  (evolve mode)"
 
-    print(f"\n{'='*70}")
-    print(f"Aura EDSL Benchmark")
+    print(f"\n{'=' * 70}")
+    print("Aura EDSL Benchmark")
     print(f"Models: {', '.join(models)}")
     print(f"Tasks: {len(TASKS)}")
     print(f"Rounds: {ROUNDS}{mode_tag}")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     all_results = {}
 
@@ -1832,25 +1751,26 @@ def main():
                 "attempts": [],
             }
         )
-        print(f"\n{'─'*70}")
+        print(f"\n{'─' * 70}")
         print(f"  Model: {model}")
-        print(f"{'─'*70}")
+        print(f"{'─' * 70}")
 
         start_time = time.time()
 
         task_filter = os.environ.get("BENCH_TASK_FILTER", "")
-        filter_list = (
-            [t.strip() for t in task_filter.split(",") if t.strip()]
-            if task_filter
-            else []
-        )
+        filter_list = [t.strip() for t in task_filter.split(",") if t.strip()] if task_filter else []
         # task_results initialized at model level
         task_results = []
-        tasks_to_run = [(name, prompt, expected, stdlib) for name, prompt, expected, stdlib in TASKS
-                           if not filter_list or name in filter_list]
+        tasks_to_run = [
+            (name, prompt, expected, stdlib)
+            for name, prompt, expected, stdlib in TASKS
+            if not filter_list or name in filter_list
+        ]
 
-        pool_args = [(model, base_url, api_key, name, prompt, expected, stdlib, api_ref)
-                     for name, prompt, expected, stdlib in tasks_to_run]
+        pool_args = [
+            (model, base_url, api_key, name, prompt, expected, stdlib, api_ref)
+            for name, prompt, expected, stdlib in tasks_to_run
+        ]
 
         # Run tasks in parallel
         max_workers = int(os.environ.get("BENCH_WORKERS", "20"))
@@ -1868,7 +1788,7 @@ def main():
                     if success:
                         safe_print(f"  ✅ {name} ({llm_t:.1f}s, {attempts} att)")
                     else:
-                        err_short = (err[:50] if err else "")
+                        err_short = err[:50] if err else ""
                         safe_print(f"  ❌ {name}: {err_short} ({llm_t:.1f}s, {attempts} att)")
                 except Exception as e:
                     safe_print(f"  ❌ task error: {e}")
@@ -1881,47 +1801,33 @@ def main():
             print(f"\n  ❌ Failure Analysis ({len(errors)} tasks):")
             # Group by error type
             by_type = {}
-            for name, etype, att, t in errors:
+            for name, etype, _att, _t in errors:
                 by_type.setdefault(etype, []).append(name)
             for etype, names in sorted(by_type.items()):
-                print(
-                    f"    {etype:25s}: {len(names)} tasks -- {', '.join(names[:5])}{'...' if len(names) > 5 else ''}"
-                )
+                print(f"    {etype:25s}: {len(names)} tasks -- {', '.join(names[:5])}{'...' if len(names) > 5 else ''}")
 
-        print(f"{'─'*70}")
+        print(f"{'─' * 70}")
         print(f"  {model} -- Per-Task Results ({ROUNDS} rounds)")
-        print(f"{'─'*70}")
-        task_rows = [
-            (n, s["passes"], s["total"])
-            for n, s in task_stats.items()
-            if n not in ("__meta__", "__errors__")
-        ]
+        print(f"{'─' * 70}")
+        task_rows = [(n, s["passes"], s["total"]) for n, s in task_stats.items() if n not in ("__meta__", "__errors__")]
         sp, sf, sv = print_task_table(task_rows)
 
         if True:
-            print(f"\n  📊 Attempt stats:")
-            for n in sorted(
-                s for s in task_stats if s not in ("__meta__", "__errors__")
-            ):
+            print("\n  📊 Attempt stats:")
+            for n in sorted(s for s in task_stats if s not in ("__meta__", "__errors__")):
                 s = task_stats[n]
                 if s["attempts"]:
                     avg = sum(s["attempts"]) / len(s["attempts"])
-                    print(
-                        f"    {n:22s} avg {avg:.1f} attempts, {s['passes']}/{s['total']} passed"
-                    )
+                    print(f"    {n:22s} avg {avg:.1f} attempts, {s['passes']}/{s['total']} passed")
 
         volatile_tasks = [
-            n
-            for n, s in task_stats.items()
-            if n not in ("__meta__", "__errors__") and 0 < s["passes"] < s["total"]
+            n for n, s in task_stats.items() if n not in ("__meta__", "__errors__") and 0 < s["passes"] < s["total"]
         ]
         if volatile_tasks:
-            print(f"\n  ⚠️  Volatile tasks:")
+            print("\n  ⚠️  Volatile tasks:")
             for n in sorted(volatile_tasks):
                 s = task_stats[n]
-                print(
-                    f"    {n}: {s['passes']}/{s['total']} ({s['passes']/s['total']*100:.0f}%)"
-                )
+                print(f"    {n}: {s['passes']}/{s['total']} ({s['passes'] / s['total'] * 100:.0f}%)")
                 for err in s["errors"][:3]:
                     print(f"      · {err}")
 
@@ -1939,29 +1845,21 @@ def main():
                 entry = {
                     "passes": stats["passes"],
                     "total": stats["total"],
-                    "pass_rate": (
-                        round(stats["passes"] / stats["total"] * 100, 1)
-                        if stats["total"]
-                        else 0
-                    ),
+                    "pass_rate": (round(stats["passes"] / stats["total"] * 100, 1) if stats["total"] else 0),
                     "avg_llm_time": (
-                        round(sum(stats["llm_times"]) / len(stats["llm_times"]), 2)
-                        if stats["llm_times"]
-                        else 0
+                        round(sum(stats["llm_times"]) / len(stats["llm_times"]), 2) if stats["llm_times"] else 0
                     ),
                 }
                 if stats["attempts"]:
-                    entry["avg_attempts"] = round(
-                        sum(stats["attempts"]) / len(stats["attempts"]), 1
-                    )
+                    entry["avg_attempts"] = round(sum(stats["attempts"]) / len(stats["attempts"]), 1)
                 mout[task_name] = entry
             output[model] = mout
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(json.dumps(output))
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Done")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
 
 if __name__ == "__main__":

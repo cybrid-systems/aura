@@ -43,17 +43,13 @@ def aura_query_and_fix(code, match, replace):
 
 
 def aura_typecheck(code):
-    r = subprocess.run(
-        [AURA, "--typecheck"], input=code, capture_output=True, text=True, timeout=10
-    )
+    r = subprocess.run([AURA, "--typecheck"], input=code, capture_output=True, text=True, timeout=10)
     return (r.stdout + r.stderr).strip()
 
 
 def aura_ir(code):
     """IR 管线 — 数值/闭包/递归（不支持 string）"""
-    r = subprocess.run(
-        [AURA, "--ir"], input=code, capture_output=True, text=True, timeout=10
-    )
+    r = subprocess.run([AURA, "--ir"], input=code, capture_output=True, text=True, timeout=10)
     return r.stdout.strip()
 
 
@@ -64,9 +60,7 @@ def aura_eval(code):
 
 
 def aura_cache(code, path):
-    r = subprocess.run(
-        [AURA, "--cache", path], input=code, capture_output=True, text=True, timeout=10
-    )
+    r = subprocess.run([AURA, "--cache", path], input=code, capture_output=True, text=True, timeout=10)
     return (r.stdout + r.stderr).strip()
 
 
@@ -91,11 +85,11 @@ def demo_type_error_fix():
 
     # Step 2: DIAGNOSE — 分析错误
     print("\n[DIAGNOSE] 分析错误")
-    print(f"  → + : (-> Int Int Int)，参数 1 是 String，触发 coercion")
-    print(f"  → 系统检测到类型错误并提供位置信息 1:2")
+    print("  → + : (-> Int Int Int)，参数 1 是 String，触发 coercion")
+    print("  → 系统检测到类型错误并提供位置信息 1:2")
 
     # Step 3: ACT — 正确修复（用纯 Int 参数调用 +）
-    print(f"\n[ACT] 正确调用: (+ 42 1)")
+    print("\n[ACT] 正确调用: (+ 42 1)")
 
     # Step 4: VERIFY — 验证修复
     print("\n[VERIFY] aura --typecheck")
@@ -119,7 +113,7 @@ def demo_occurrence_typing():
 
     code = '(let ((x "hello")) (if (string? x) (string-length x) 0))'
 
-    print(f"\n[OBSERVE] 输入代码:")
+    print("\n[OBSERVE] 输入代码:")
     print(f"  {code}")
 
     # Step 1: 类型检查（确认 string? 分支细化生效）
@@ -133,7 +127,7 @@ def demo_occurrence_typing():
     print(f"  → {eval_result}")
 
     ok = eval_result == "5"
-    print(f"\n  {'✅' if ok else '❌'} 期望 5 (\"hello\" 的长度), 得到 {eval_result}")
+    print(f'\n  {"✅" if ok else "❌"} 期望 5 ("hello" 的长度), 得到 {eval_result}')
     return ok
 
 
@@ -145,7 +139,7 @@ def demo_query_transform():
 
     code = "(let ((x 10)) ((lambda (y) (+ x y)) 5))"
 
-    print(f"\n[OBSERVE] 输入代码:")
+    print("\n[OBSERVE] 输入代码:")
     print(f"  {code}")
 
     # Step 1: 查询 Call 节点
@@ -232,12 +226,10 @@ def demo_closure_inspect_and_cache():
     code = "(let ((x 10)) ((lambda (y) (+ x y)) 5))"
 
     # Step 1: 闭包内省
-    print(f"\n[OBSERVE] 输入代码:")
+    print("\n[OBSERVE] 输入代码:")
     print(f"  {code}")
     print("\n[OBSERVE] aura --inspect")
-    r = subprocess.run(
-        [AURA, "--inspect"], input=code, capture_output=True, text=True, timeout=10
-    )
+    r = subprocess.run([AURA, "--inspect"], input=code, capture_output=True, text=True, timeout=10)
     output = r.stdout + r.stderr
     # Show first few lines
     for line in output.split("\n")[:8]:
@@ -246,14 +238,12 @@ def demo_closure_inspect_and_cache():
     # Step 2: 缓存
     tmp_cache = "/tmp/aura_closure_demo.abc"
     print(f"\n[ACT] aura --cache {tmp_cache}")
-    cr = aura_cache(code, tmp_cache)
-    print(f"  → cache written")
+    aura_cache(code, tmp_cache)
+    print("  → cache written")
 
     # Step 3: 读缓存
     print("\n[OBSERVE] aura --cache-open")
-    r = subprocess.run(
-        [AURA, "--cache-open", tmp_cache], capture_output=True, text=True, timeout=10
-    )
+    r = subprocess.run([AURA, "--cache-open", tmp_cache], capture_output=True, text=True, timeout=10)
     cache_lines = r.stdout.strip().split("\n")
     for line in cache_lines[:4]:
         print(f"  {line}")
@@ -275,10 +265,8 @@ def demo_fibonacci():
     print("═" * 60)
 
     # 非尾递归阶乘
-    code1 = (
-        "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))"
-    )
-    print(f"\n[输入] 阶乘递归:")
+    code1 = "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))"
+    print("\n[输入] 阶乘递归:")
     print(f"  {code1}")
 
     print("\n[VERIFY] aura --ir")
@@ -287,7 +275,7 @@ def demo_fibonacci():
 
     # 斐波那契
     code2 = "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))"
-    print(f"\n[输入] 斐波那契:")
+    print("\n[输入] 斐波那契:")
     print(f"  {code2}")
 
     print("\n[VERIFY] aura --ir")
@@ -296,7 +284,7 @@ def demo_fibonacci():
 
     # 简单加法（常量折叠）
     code3 = "(+ 1 2)"
-    print(f"\n[输入] 常量折叠:")
+    print("\n[输入] 常量折叠:")
     print(f"  {code3}")
 
     print("\n[VERIFY] aura --ir (PM: compute-kind→arity→const-fold)")
@@ -328,7 +316,7 @@ if __name__ == "__main__":
 
     if not os.path.exists(AURA):
         print(f"\n❌ 找不到 {AURA}")
-        print(f"   先构建: cmake -B build && cmake --build build --target aura")
+        print("   先构建: cmake -B build && cmake --build build --target aura")
         sys.exit(1)
 
     tests = [

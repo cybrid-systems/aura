@@ -14,7 +14,11 @@ Usage:
   python3 tests/fuzz_type_soundness.py --seed 42     # reproducible
 """
 
-import json, os, random, subprocess, sys, time
+import json
+import os
+import random
+import subprocess
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -78,15 +82,19 @@ MUTATIONS = [
     "mutate:inline-call",
 ]
 
+
 # ── Helper: build mutation commands ──────────────────────────────
 def pick_fn(existing_fns):
     return rng.choice(existing_fns)
 
+
 def pick_op():
     return rng.choice(["+", "-", "*", "car", "cdr", "string-length", "not"])
 
+
 def pick_val():
     return rng.randint(0, 100)
+
 
 def build_mutation(fns, mut_type, serve_script):
     """Build mutation command(s) for a given mutation type.
@@ -100,11 +108,11 @@ def build_mutation(fns, mut_type, serve_script):
     elif mut_type == "mutate:set-body":
         return [f'(mutate:set-body "{fn}" "(display 42)")']
     elif mut_type == "mutate:wrap":
-        return [f'(mutate:wrap 0 "display")']
+        return ['(mutate:wrap 0 "display")']
     elif mut_type == "mutate:splice":
-        return [f'(mutate:splice 1 1)']
+        return ["(mutate:splice 1 1)"]
     elif mut_type == "mutate:tweak-literal":
-        return [f'(mutate:tweak-literal 0 {pick_val()})']
+        return [f"(mutate:tweak-literal 0 {pick_val()})"]
     elif mut_type == "mutate:extract-function":
         # Query for Define nodes, then try extract-function on the first one.
         # The node pointed to by query:find is the Define node ID.
@@ -113,15 +121,16 @@ def build_mutation(fns, mut_type, serve_script):
         # We store query results for the next iteration to use.
         return [
             f'(query:find "{fn}")',
-            f'(mutate:extract-function 2 "extracted_{rng.randint(100,999)}")',
+            f'(mutate:extract-function 2 "extracted_{rng.randint(100, 999)}")',
         ]
     elif mut_type == "mutate:inline-call":
         # Query and try inline-call. Use query first to check if node exists.
         return [
-            f'(query:node-type "Call")',
-            '(mutate:inline-call 3)',
+            '(query:node-type "Call")',
+            "(mutate:inline-call 3)",
         ]
     return [f'(mutate:rebind "{fn}" "(lambda (x) (+ x 1))")']
+
 
 def parse_serve_response(raw):
     """Parse multi-line JSON response from --serve-async."""
@@ -134,6 +143,7 @@ def parse_serve_response(raw):
             except json.JSONDecodeError:
                 continue
     return None
+
 
 def run_test(num_ops):
     print(f"Type Soundness Fuzz (seed={SEED}, ops={num_ops})")
@@ -149,7 +159,8 @@ def run_test(num_ops):
 
     # Parse function names from seed program
     import re as _re
-    existing_fns = _re.findall(r'\(define \(([\w?-]+)', seed_prog)
+
+    existing_fns = _re.findall(r"\(define \(([\w?-]+)", seed_prog)
     if not existing_fns:
         existing_fns = ["add"]
 
@@ -166,7 +177,7 @@ def run_test(num_ops):
         if rng.random() < 0.1:
             new_name = f"fn_{i}"
             existing_fns.append(new_name)
-            serve_script.append(f'(workspace:set-code \'(define ({new_name} x) (+ x 1))\')')
+            serve_script.append(f"(workspace:set-code '(define ({new_name} x) (+ x 1))')")
             serve_script.append("(typecheck-current)")
             serve_script.append("(eval-current)")
 
@@ -177,11 +188,10 @@ def run_test(num_ops):
         input=full_input,
         capture_output=True,
         text=True,
-        timeout=60
+        timeout=60,
     )
 
     out = proc.stdout
-    err = proc.stderr
 
     # Parse responses
     type_errors = 0
@@ -212,13 +222,14 @@ def run_test(num_ops):
     if type_errors > 0 or eval_failures > 0:
         print(f"\n  ❌ FAILED: {type_errors} type errors, {eval_failures} eval failures")
         # Print last few responses for debugging
-        print(f"\n  Last 5 lines of output:")
+        print("\n  Last 5 lines of output:")
         for line in out.split("\n")[-5:]:
             print(f"    {line.strip()}")
         return False
 
-    print(f"\n  ✅ PASSED: 0 type errors, 0 eval failures")
+    print("\n  ✅ PASSED: 0 type errors, 0 eval failures")
     return True
+
 
 if __name__ == "__main__":
     num_ops = 100 if QUICK else 500

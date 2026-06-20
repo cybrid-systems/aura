@@ -59,7 +59,12 @@ def group_primitives(primitives: list[Primitive]) -> dict[str, list[Primitive]]:
             key = p.name.split(":", 1)[0] + ":"
         elif p.name.startswith("c-"):
             key = "c-ffi"
-        elif p.name in {"set-code", "current-source", "eval-current", "eval-current-output"}:
+        elif p.name in {
+            "set-code",
+            "current-source",
+            "eval-current",
+            "eval-current-output",
+        }:
             key = "workspace-exec"
         else:
             key = "core"
@@ -182,7 +187,7 @@ def render_stdlib(rows: list[tuple[str, str, list[str]]]) -> str:
         GENERATED_BANNER,
         "# Standard library index (generated)",
         "",
-        f"**{len(rows)}** modules in `lib/std/`. Load: `(require \"std/name\" all:)`.",
+        f'**{len(rows)}** modules in `lib/std/`. Load: `(require "std/name" all:)`.',
         "",
         "| Module | Exports | Description |",
         "|--------|---------|-------------|",

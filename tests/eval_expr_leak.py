@@ -16,6 +16,7 @@ which is bulk-reset on (gc-temp).
 Usage:
   python3 tests/eval_expr_leak.py [--iterations N]
 """
+
 import argparse
 import os
 import re
@@ -43,16 +44,22 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--iterations", type=int, default=1000)
     p.add_argument("--timeout", type=int, default=60)
-    p.add_argument("--max-main-mb", type=float, default=0.20,
-                   help="Fail if main arena exceeds this after the loop. "
-                        "200 (eval-expr int) currently grows main arena by ~0.30MB "
-                        "on unfixed builds; the post-fix target is sub-budget. "
-                        "Bump iterations or the input expression's size to stress harder.")
+    p.add_argument(
+        "--max-main-mb",
+        type=float,
+        default=0.20,
+        help="Fail if main arena exceeds this after the loop. "
+        "200 (eval-expr int) currently grows main arena by ~0.30MB "
+        "on unfixed builds; the post-fix target is sub-budget. "
+        "Bump iterations or the input expression's size to stress harder.",
+    )
     args = p.parse_args()
 
     if not AURA.exists():
-        print(f"ERROR: {AURA} not found; run 'python3 build.py build' first",
-              file=sys.stderr)
+        print(
+            f"ERROR: {AURA} not found; run 'python3 build.py build' first",
+            file=sys.stderr,
+        )
         return 1
 
     env = os.environ.copy()
@@ -71,13 +78,19 @@ def main():
         f"(define _s1 (let loop ((i 0)) (if (< i {args.iterations})"
         f" (begin (eval-expr i) (loop (+ i 1)))"
         f" (gc-arena-stats))))"
-        "(display _s0)(display \"\\n\")"
-        "(display _s1)(display \"\\n\")"
+        '(display _s0)(display "\\n")'
+        '(display _s1)(display "\\n")'
     )
 
     try:
-        r = subprocess.run([str(AURA)], input=program, capture_output=True,
-                           text=True, timeout=args.timeout, env=env)
+        r = subprocess.run(
+            [str(AURA)],
+            input=program,
+            capture_output=True,
+            text=True,
+            timeout=args.timeout,
+            env=env,
+        )
     except subprocess.TimeoutExpired:
         print("ERROR: aura timed out", file=sys.stderr)
         return 2
@@ -88,7 +101,7 @@ def main():
             print(f"stderr: {r.stderr[:500]}", file=sys.stderr)
         return 4
 
-    lines = [l for l in r.stdout.splitlines() if l.strip()]
+    lines = [line for line in r.stdout.splitlines() if line.strip()]
     if len(lines) < 2:
         print("FAIL: expected 2 arena-stats lines, got:", file=sys.stderr)
         print(r.stdout, file=sys.stderr)
@@ -104,8 +117,10 @@ def main():
     main_delta = main_after - main_before
     print(f"main arena: {main_before:.2f}MB → {main_after:.2f}MB (Δ {main_delta:+.2f}MB)")
     if main_after > args.max_main_mb:
-        print(f"FAIL: main arena at {main_after:.2f}MB exceeds {args.max_main_mb}MB",
-              file=sys.stderr)
+        print(
+            f"FAIL: main arena at {main_after:.2f}MB exceeds {args.max_main_mb}MB",
+            file=sys.stderr,
+        )
         return 6
     print("PASS")
     return 0

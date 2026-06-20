@@ -13,7 +13,6 @@ The seed corpus is in fuzz_seed_corpus/ and contains:
   - repro_*.sexpr        — from past fuzz reproducers (non-crashing variants)
 """
 
-import hashlib
 import os
 import subprocess
 import sys
@@ -24,6 +23,7 @@ CORPUS_DIR = os.path.join(os.path.dirname(__file__), "..", "tests/fuzz_seed_corp
 REPRO_DIR = os.path.join(os.path.dirname(__file__), "reproducers")
 PASS = 0
 FAIL = 0
+
 
 def run_seed(path, validate_only=False):
     global PASS, FAIL
@@ -36,10 +36,7 @@ def run_seed(path, validate_only=False):
     if validate_only:
         # Parse check: run --ir and check for parse error exit code
         try:
-            r = subprocess.run(
-                [AURA, "--ir", code],
-                capture_output=True, text=True, timeout=10
-            )
+            r = subprocess.run([AURA, "--ir", code], capture_output=True, text=True, timeout=10)
             if r.returncode == 0:
                 PASS += 1
             else:
@@ -54,10 +51,7 @@ def run_seed(path, validate_only=False):
     else:
         # Eval: run aura directly, check for crashes (not errors)
         try:
-            r = subprocess.run(
-                [AURA],
-                input=code, capture_output=True, text=True, timeout=10
-            )
+            r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
             if r.returncode >= 128:  # signal = crash
                 print(f"  CRASH {name}: returncode={r.returncode}")
                 FAIL += 1
@@ -70,6 +64,7 @@ def run_seed(path, validate_only=False):
             print(f"  ERROR: {AURA} not found")
             sys.exit(1)
 
+
 def main():
     quick = "--quick" in sys.argv
     validate_only = "--validate-only" in sys.argv
@@ -78,7 +73,11 @@ def main():
     if update:
         print("Regenerating seed corpus...")
         # Re-run the generation from stdlib + edge cases
-        subprocess.run([sys.executable, "-c", """
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
 import hashlib, os, re
 
 # Extract from stdlib
@@ -129,7 +128,9 @@ for i, sexpr in enumerate(sorted(all_sexprs)[:500]):
         f.write(sexpr + '\\n')
     written += 1
 print(f'Generated {written} stdlib seeds')
-        """])
+        """,
+            ]
+        )
         print("Corpus regenerated.")
         return
 
@@ -157,6 +158,7 @@ print(f'Generated {written} stdlib seeds')
 
     print(f"\nResults: {PASS} passed, {FAIL} failed ({elapsed:.1f}s)")
     return 0 if FAIL == 0 else 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

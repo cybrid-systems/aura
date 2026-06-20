@@ -6,7 +6,7 @@ Runs test_serve_async.aura through --serve-async and validates output.
 Usage:
   LLM_API_KEY="***" python3 tests/test_serve_async.py
 """
-import json
+
 import os
 import subprocess
 import sys
@@ -51,13 +51,13 @@ def main():
         print(f"Error: {TEST_FILE} not found")
         sys.exit(1)
 
-    print(f"=== Serve-Async Test Suite ===")
+    print("=== Serve-Async Test Suite ===")
     print(f"  Aura: {AURA}")
     print(f"  Tests: {len(EXPECTED)} scenarios")
 
     has_key = bool(os.environ.get("LLM_API_KEY"))
     if not has_key:
-        print(f"  Warning: LLM_API_KEY not set (skipping LLM tests)")
+        print("  Warning: LLM_API_KEY not set (skipping LLM tests)")
 
     # Run serve-async with test input
     start = time.time()
@@ -106,7 +106,7 @@ def main():
         print_result(name, passed, detail)
 
     # Check for protocol errors
-    errors = [l for l in output_lines if '"status":"error"' in l]
+    errors = [line for line in output_lines if '"status":"error"' in line]
     if errors:
         print(f"\n  Protocol errors ({len(errors)}):")
         for e in errors[:5]:

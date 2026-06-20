@@ -24,12 +24,24 @@ AURA = str(_SCRIPT_DIR.parent / "build" / "aura")
 # code_to_define is evaluated once, then call_template is evaluated N times
 
 CASES = [
-    ("int_add",     "(define (add x) (+ x 1))",      "(add {})",  150, 100),
-    ("int_mul",     "(define (mul x y) (* x y))",   "(mul 99 {})", 150, 100),
-    ("pair_car",    "(define (get-car p) (car p))",  "(get-car (cons {} 0))", 150, 100),
-    ("pair_cdr",    "(define (get-cdr p) (cdr p))",  "(get-cdr (cons 0 {}))", 150, 100),
-    ("fib_20",      "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))", "(fib 20)", 50, 10),
-    ("vec_ref",     "(define (vref v i) (vector-ref v i))", "(vref (vector 10 20 30 40 50 60 70 80 90 100) {})", 150, 100),
+    ("int_add", "(define (add x) (+ x 1))", "(add {})", 150, 100),
+    ("int_mul", "(define (mul x y) (* x y))", "(mul 99 {})", 150, 100),
+    ("pair_car", "(define (get-car p) (car p))", "(get-car (cons {} 0))", 150, 100),
+    ("pair_cdr", "(define (get-cdr p) (cdr p))", "(get-cdr (cons 0 {}))", 150, 100),
+    (
+        "fib_20",
+        "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))",
+        "(fib 20)",
+        50,
+        10,
+    ),
+    (
+        "vec_ref",
+        "(define (vref v i) (vector-ref v i))",
+        "(vref (vector 10 20 30 40 50 60 70 80 90 100) {})",
+        150,
+        100,
+    ),
 ]
 
 
@@ -41,25 +53,28 @@ def bench_case(name, define_code, call_tmpl, warmup, measure) -> dict:
     input_str = "\n".join(inputs) + "\n"
 
     p = subprocess.Popen(
-        [AURA, '--serve'],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        [AURA, "--serve"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     start = time.perf_counter()
     stdout, stderr = p.communicate(input_str, timeout=60)
     elapsed = time.perf_counter() - start
 
-    spec_msgs = [l for l in stderr.split('\n') if 'spec:' in l and 'L1 for' in l]
-    jit_fails = sum(1 for _ in stderr.split('\n') if 'addIRModule' in _)
+    spec_msgs = [line for line in stderr.split("\n") if "spec:" in line and "L1 for" in line]
+    jit_fails = sum(1 for _ in stderr.split("\n") if "addIRModule" in _)
 
     return {
-        'name': name,
-        'total_ms': elapsed * 1000,
-        'total_calls': 1 + warmup + measure,
-        'per_call_ms': (elapsed * 1000) / (1 + warmup + measure) if (1 + warmup + measure) > 0 else 0,
-        'spec_count': len(spec_msgs),
-        'jit_fails': jit_fails,
-        'warmup': warmup,
-        'measure': measure,
+        "name": name,
+        "total_ms": elapsed * 1000,
+        "total_calls": 1 + warmup + measure,
+        "per_call_ms": (elapsed * 1000) / (1 + warmup + measure) if (1 + warmup + measure) > 0 else 0,
+        "spec_count": len(spec_msgs),
+        "jit_fails": jit_fails,
+        "warmup": warmup,
+        "measure": measure,
     }
 
 
@@ -77,15 +92,14 @@ def run_all(quick=False):
         print(f"  [{name:15s}] warmup={warmup} measure={measure} ...", end=" ", flush=True)
         r = bench_case(name, define, tmpl, warmup, measure)
         results.append(r)
-        print(f"  {r['per_call_ms']:.3f}ms/call  spec={r['spec_count']}  "
-              f"{'JITfail' if r['jit_fails'] else ''}")
+        print(f"  {r['per_call_ms']:.3f}ms/call  spec={r['spec_count']}  {'JITfail' if r['jit_fails'] else ''}")
 
     print()
     print("-" * 65)
     print(f"  {'Name':15s}  {'ms/call':>8s}  {'Spec':>5s}  {'JIT':>5s}")
     print("-" * 65)
     for r in results:
-        jit_ok = "✓" if r['jit_fails'] == 0 else f"✗{r['jit_fails']}"
+        jit_ok = "✓" if r["jit_fails"] == 0 else f"✗{r['jit_fails']}"
         print(f"  {r['name']:15s}  {r['per_call_ms']:>7.3f}ms  {r['spec_count']:>4d}  {jit_ok:>5s}")
     print("-" * 65)
     print()

@@ -32,16 +32,32 @@ PROFRAW_DIR = ROOT / ".aura-pgo" / "profraw"
 
 def find_llvm_profdata() -> str:
     """Find llvm-profdata binary."""
-    candidates = ["llvm-profdata", "llvm-profdata-20", "llvm-profdata-19",
-                  "llvm-profdata-18", "llvm-profdata-17"]
+    candidates = [
+        "llvm-profdata",
+        "llvm-profdata-20",
+        "llvm-profdata-19",
+        "llvm-profdata-18",
+        "llvm-profdata-17",
+    ]
     for c in candidates:
         r = subprocess.run(["which", c], capture_output=True, text=True)
         if r.returncode == 0:
             return c
     # Try LLVM toolchain path from cmake
     import subprocess as sp
-    r = sp.run(["cmake", "--find-package", "-DNAME=LLVM", "-DCOMPILER_ID=Clang",
-                "-DLANGUAGE=C", "-DMODE=EXIST"], capture_output=True, text=True)
+
+    r = sp.run(
+        [
+            "cmake",
+            "--find-package",
+            "-DNAME=LLVM",
+            "-DCOMPILER_ID=Clang",
+            "-DLANGUAGE=C",
+            "-DMODE=EXIST",
+        ],
+        capture_output=True,
+        text=True,
+    )
     return "llvm-profdata"
 
 
@@ -88,10 +104,12 @@ def run_training(suite: str, iterations: int = 3, serve_mode: bool = True):
             p = subprocess.run(
                 [AURA, "--ir"],  # --ir to bypass type checker
                 input=code,
-                capture_output=True, text=True, timeout=120,
+                capture_output=True,
+                text=True,
+                timeout=120,
                 cwd=ROOT,
             )
-            out, err = p.stdout, p.stderr
+            _out, err = p.stdout, p.stderr
 
         elapsed = time.time() - iter_start
         if p.returncode != 0:
@@ -131,7 +149,11 @@ def merge_profiles(profraw_files: list, output_dir: Path):
 
     cmd = [profdata_cmd, "merge", "-output", str(output_file)]
     cmd.extend(str(f) for f in profraw_list)
-    print(f"  Merging {len(profraw_list)} profraw files → {output_file} ... ", end="", flush=True)
+    print(
+        f"  Merging {len(profraw_list)} profraw files → {output_file} ... ",
+        end="",
+        flush=True,
+    )
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         print("FAILED")
@@ -144,23 +166,34 @@ def merge_profiles(profraw_files: list, output_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Aura PGO Training")
-    parser.add_argument("--suite", "-s", default="mixed",
-                        choices=["general", "evo-kv", "mixed"],
-                        help="Training suite (default: mixed)")
-    parser.add_argument("--iterations", "-n", type=int, default=3,
-                        help="Training iterations (default: 3)")
-    parser.add_argument("--merge", "-m", action="store_true",
-                        help="Merge profraw after training")
-    parser.add_argument("--serve", action="store_true", default=True,
-                        help="Use --serve mode (default: true)")
-    parser.add_argument("--no-serve", action="store_false", dest="serve",
-                        help="Use direct eval mode")
+    parser.add_argument(
+        "--suite",
+        "-s",
+        default="mixed",
+        choices=["general", "evo-kv", "mixed"],
+        help="Training suite (default: mixed)",
+    )
+    parser.add_argument(
+        "--iterations",
+        "-n",
+        type=int,
+        default=3,
+        help="Training iterations (default: 3)",
+    )
+    parser.add_argument("--merge", "-m", action="store_true", help="Merge profraw after training")
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        default=True,
+        help="Use --serve mode (default: true)",
+    )
+    parser.add_argument("--no-serve", action="store_false", dest="serve", help="Use direct eval mode")
 
     args = parser.parse_args()
 
-    print(f"{'='*55}")
+    print(f"{'=' * 55}")
     print(f"  Aura PGO Training: suite={args.suite} iterations={args.iterations}")
-    print(f"{'='*55}\n")
+    print(f"{'=' * 55}\n")
 
     profraw_files = run_training(args.suite, args.iterations, args.serve)
 

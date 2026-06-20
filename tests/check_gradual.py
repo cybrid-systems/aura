@@ -6,9 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-AURA = os.environ.get(
-    "AURA_BIN", str(Path(__file__).resolve().parent.parent / "build" / "aura")
-)
+AURA = os.environ.get("AURA_BIN", str(Path(__file__).resolve().parent.parent / "build" / "aura"))
 
 SCENARIOS = [
     ("int_annot", "(: x Int 42)", "42", "42"),

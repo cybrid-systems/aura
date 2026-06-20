@@ -12,7 +12,6 @@ Usage:
 import datetime
 import os
 import random
-import re
 import subprocess
 import sys
 import time
@@ -34,6 +33,7 @@ rng = random.Random(SEED if SEED is not None else None)
 
 GENERATORS = []
 
+
 def register(fn):
     GENERATORS.append(fn)
     return fn
@@ -45,7 +45,7 @@ def gen_arith():
         a, b = rng.randint(1, 100), rng.randint(1, 100)
         for op in ["+", "-", "*", "/", "quotient", "remainder"]:
             yield f"arith {a} {op} {b}", f"(display ({op} {a} {b}))"
-        yield f"arith mixed", f"(display (+ (* 2 3) (- 10 4)))"
+        yield "arith mixed", "(display (+ (* 2 3) (- 10 4)))"
 
 
 @register
@@ -61,7 +61,10 @@ def gen_define_call():
     for _ in range(10 if not QUICK else 3):
         fn = f"f{rng.randint(0, 100)}"
         val = rng.randint(1, 100)
-        yield f"define+call", f"(define ({fn} x) (+ x {val})) (display ({fn} {rng.randint(0, 50)}))"
+        yield (
+            "define+call",
+            f"(define ({fn} x) (+ x {val})) (display ({fn} {rng.randint(0, 50)}))",
+        )
 
 
 @register
@@ -81,22 +84,31 @@ def gen_begin_seq():
 @register
 def gen_lambda():
     yield "lambda apply", "(display ((lambda (x) (+ x 1)) 5))"
-    yield "lambda closure", "(define (mk-adder n) (lambda (x) (+ x n))) (define add5 (mk-adder 5)) (display (add5 10))"
+    yield (
+        "lambda closure",
+        "(define (mk-adder n) (lambda (x) (+ x n))) (define add5 (mk-adder 5)) (display (add5 10))",
+    )
 
 
 @register
 def gen_let():
     for _ in range(10 if not QUICK else 3):
         a, b = rng.randint(1, 100), rng.randint(1, 100)
-        yield f"let basic", f"(display (let ((x {a}) (y {b})) (+ x y)))"
+        yield "let basic", f"(display (let ((x {a}) (y {b})) (+ x y)))"
     yield "let nested", "(display (let ((x 1)) (let ((y (+ x 1))) (+ x y))))"
 
 
 @register
 def gen_stdlib():
     """Stdlib functions — must produce same output on all backends."""
-    yield "map basic", "(require std/list all:)(display (map (lambda (x) (+ x 1)) '(1 2 3)))"
-    yield "filter basic", "(require std/list all:)(display (filter (lambda (x) (> x 2)) '(1 2 3 4 5)))"
+    yield (
+        "map basic",
+        "(require std/list all:)(display (map (lambda (x) (+ x 1)) '(1 2 3)))",
+    )
+    yield (
+        "filter basic",
+        "(require std/list all:)(display (filter (lambda (x) (> x 2)) '(1 2 3 4 5)))",
+    )
     yield "length", "(require std/list all:)(display (length '(1 2 3 4 5)))"
     yield "reverse", "(require std/list all:)(display (reverse '(1 2 3)))"
     yield "cons pair", "(display (car (cons 1 2)))"
@@ -116,22 +128,26 @@ def gen_from_tasks():
             continue
         text = fpath.read_text()
         # Extract goal
-        goal = ""
         for line in text.splitlines():
             if line.startswith(";; goal:"):
-                goal = line[len(";; goal:"):].strip()
+                line[len(";; goal:") :].strip()
                 break
         # Extract hints to build a valid program
         hints = []
-        depend = ""
         for line in text.splitlines():
             if line.startswith(";; depend:"):
-                depend = line[len(";; depend:"):].strip()
+                line[len(";; depend:") :].strip()
             elif line.startswith(";; hint:") and not line.startswith(";; hint: ---"):
-                hints.append(line[len(";; hint:"):].strip())
+                hints.append(line[len(";; hint:") :].strip())
         name = fpath.stem
         # Only use tasks where we can build a valid program from hints
-        if name in ("adt-either", "adt-tree", "adt-option", "adt-wildcard", "adt-multi-ctor"):
+        if name in (
+            "adt-either",
+            "adt-tree",
+            "adt-option",
+            "adt-wildcard",
+            "adt-multi-ctor",
+        ):
             continue  # skip ADT tasks
         if name.startswith("edsl-") or name.startswith("type-"):
             continue  # skip EDSL/type tasks that need specific setup
@@ -207,9 +223,14 @@ def compare(diffs, name, results, code):
             continue
         normalized = normalize(out)
         if normalized != ref_out:
-            diffs.append((name, f"{bname} DIFF",
-                          f"tree-walk: {ref_out!r} vs {bname}: {normalized!r}",
-                          code[:200]))
+            diffs.append(
+                (
+                    name,
+                    f"{bname} DIFF",
+                    f"tree-walk: {ref_out!r} vs {bname}: {normalized!r}",
+                    code[:200],
+                )
+            )
             consistent = False
 
     return consistent
@@ -242,17 +263,17 @@ def main():
 
     elapsed = time.time() - start
 
-    print(f"\n{'='*60}")
-    print(f"  Differential Fuzz Summary")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("  Differential Fuzz Summary")
+    print(f"{'=' * 60}")
     print(f"  Cases:    {total}")
     print(f"  Pass:     {passes}")
     print(f"  Diffs:    {len(diffs)}")
     print(f"  Elapsed:  {elapsed:.1f}s")
 
     if diffs:
-        print(f"\n  ❌ DIFFERENCES:")
-        for name, backend, detail, code in diffs[:10]:
+        print("\n  ❌ DIFFERENCES:")
+        for name, backend, detail, _code in diffs[:10]:
             print(f"    {name:30s} {backend:10s} {detail[:80]}")
         if len(diffs) > 10:
             print(f"    ... and {len(diffs) - 10} more")

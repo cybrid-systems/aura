@@ -72,16 +72,12 @@ def test_fuzz():
         )
 
         try:
-            r = subprocess.run(
-                [aura_bin], input=aura_code, capture_output=True, text=True, timeout=60
-            )
+            r = subprocess.run([aura_bin], input=aura_code, capture_output=True, text=True, timeout=60)
 
             if r.returncode < 0:
                 sig = -r.returncode
                 if sig in (6, 8, 11):
-                    sig_name = {6: "SIGABRT", 8: "SIGFPE", 11: "SIGSEGV"}.get(
-                        sig, f"signal-{sig}"
-                    )
+                    sig_name = {6: "SIGABRT", 8: "SIGFPE", 11: "SIGSEGV"}.get(sig, f"signal-{sig}")
                     results["crashes"].append((name, sig_name))
                     repro = (
                         ";; regression: compiler should not crash on this code\n;; bug: "
@@ -90,22 +86,9 @@ def test_fuzz():
                         + name
                         + "'\n;; expect: no-crash\n"
                     )
-                    repro += (
-                        ";; discovered: "
-                        + datetime.datetime.now().isoformat()
-                        + "\n"
-                        + aura_code
-                    )
+                    repro += ";; discovered: " + datetime.datetime.now().isoformat() + "\n" + aura_code
                     (
-                        repro_dir
-                        / (
-                            datetime.date.today().isoformat()
-                            + "_"
-                            + name
-                            + "_"
-                            + sig_name
-                            + ".aura"
-                        )
+                        repro_dir / (datetime.date.today().isoformat() + "_" + name + "_" + sig_name + ".aura")
                     ).write_text(repro)
                     print("    CRASH " + name + ": " + sig_name, flush=True)
                     continue
@@ -119,15 +102,7 @@ def test_fuzz():
                     + "'\n;; expect: no-error\n"
                 )
                 repro += ";; stderr: " + stderr[:200] + "\n" + aura_code
-                (
-                    repro_dir
-                    / (
-                        datetime.date.today().isoformat()
-                        + "_"
-                        + name
-                        + "_internal.aura"
-                    )
-                ).write_text(repro)
+                (repro_dir / (datetime.date.today().isoformat() + "_" + name + "_internal.aura")).write_text(repro)
                 print("    INTERNAL " + name, flush=True)
                 continue
 
@@ -150,17 +125,10 @@ def test_fuzz():
                 + "'\n;; expect: no-timeout\n"
                 + aura_code
             )
-            (
-                repro_dir
-                / (datetime.date.today().isoformat() + "_" + name + "_timeout.aura")
-            ).write_text(repro)
+            (repro_dir / (datetime.date.today().isoformat() + "_" + name + "_timeout.aura")).write_text(repro)
             print("    TIMEOUT " + name, flush=True)
 
-        total = (
-            sum(len(v) if isinstance(v, list) else 0 for v in results.values())
-            + results["pass"]
-            + results["fail"]
-        )
+        total = sum(len(v) if isinstance(v, list) else 0 for v in results.values()) + results["pass"] + results["fail"]
         if total % 5 == 0:
             print(
                 "    "
@@ -192,9 +160,7 @@ def test_fuzz():
         flush=True,
     )
 
-    if results["crashes"] or results["internal_errors"]:
-        return False
-    return True
+    return not (results["crashes"] or results["internal_errors"])
 
 
 if __name__ == "__main__":
