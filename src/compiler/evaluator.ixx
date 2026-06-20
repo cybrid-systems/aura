@@ -412,7 +412,18 @@ export struct Closure {
 // to the same type: `std::expected<types::EvalValue, Diagnostic>`.
 export using EvalResult = aura::diag::Result<types::EvalValue>;
 
+namespace primitives_detail {
+void register_mutate_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+                                std::function<EvalValue(const std::string&, const std::string&)> mev,
+                                std::function<void()> destroy_defuse_index);
+}
+
 export class Evaluator {
+    friend void primitives_detail::register_mutate_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+        std::function<EvalValue(const std::string&, const std::string&)> mev,
+        std::function<void()> destroy_defuse_index);
+
 public:
     Evaluator();
     // Issue #67: destructor walks modules_ and runs each env's
