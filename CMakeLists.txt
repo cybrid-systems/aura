@@ -2073,6 +2073,29 @@ target_compile_definitions(test_issue_252 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_252 PRIVATE ${llvm_libs})
 add_test(NAME issue_252_closure_observability_verification COMMAND ./test_issue_252)
 
+# Issue #253 verification: linear-move elision in TypeSpecializationWrap
+# (Phase 3 slice of #149 roadmap). Scope-limited close.
+# Pass runs TypeSpecializationWrap → counts MoveOp elisions where
+# source has linear_ownership_state == Owned. The counter is exposed
+# via CompilerMetrics / CompilerSnapshot + the
+# (compile:linear-elide-count) Aura primitive.
+aura_add_issue_test(test_issue_253)
+target_include_directories(test_issue_253 PRIVATE src src/compiler)
+target_sources(test_issue_253 PRIVATE
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+    src/compiler/observability_snapshot.h
+    src/core/contract_stub.cpp
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_253 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_253 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_253 PRIVATE ${llvm_libs})
+add_test(NAME issue_253_linear_move_elision_verification COMMAND ./test_issue_253)
+
 # Issue #250 verification: atomic-batch truly atomic.
 # Integration test (uses CompilerService).
 aura_add_issue_test(test_issue_250)

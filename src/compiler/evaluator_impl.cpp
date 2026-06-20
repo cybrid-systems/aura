@@ -9738,6 +9738,23 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         };
         return build_hash(kv);
     });
+
+    // (compile:linear-elide-count) — Issue #253: returns the
+    // lifetime total of MoveOp instructions elided by
+    // TypeSpecializationWrap (when source had
+    // linear_ownership_state == Owned). Companion to
+    // (closure:stats) above. Both read from the same shared
+    // CompilerMetrics struct (compiler_metrics_ pointer set
+    // by service.ixx). Returns 0 if no service is bound
+    // (legacy standalone Evaluator usage).
+    primitives_.add("compile:linear-elide-count", [this](const auto&) -> EvalValue {
+        std::uint64_t cnt = 0;
+        if (compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            cnt = m->linear_elide_count.load(std::memory_order_relaxed);
+        }
+        return make_int(static_cast<std::int64_t>(cnt));
+    });
 }
 
 

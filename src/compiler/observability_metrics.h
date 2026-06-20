@@ -99,6 +99,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> closure_ir_calls{0};
     std::atomic<std::uint64_t> closure_bridge_calls{0};
     std::atomic<std::uint64_t> closure_stale_returns{0};
+    // Issue #253: linear-move elision count (lifetime total).
+    // Bumped by TypeSpecializationWrap after each run (in
+    // service.ixx — the pass has its own per-run accumulator;
+    // service.ixx copies it here so snapshot() and the Aura
+    // primitive read a single source of truth). The actual
+    // elision logic is in pass_manager.ixx.
+    std::atomic<std::uint64_t> linear_elide_count{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
