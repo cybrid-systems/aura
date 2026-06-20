@@ -10,6 +10,8 @@
 
 实现：`evaluator_impl.cpp` 中 `primitives_.add("api-reference", …)`，遍历 `Primitives` 槽位生成。
 
+静态扫描（CI 校验）：[generated/primitives.md](generated/primitives.md) — `./build.py docs`
+
 ## 自修改 EDSL（摘要）
 
 | 集群 | 代表原语 |
@@ -29,7 +31,7 @@
 
 ## 标准库
 
-`lib/std/*.aura` — 模块列表与导出见各文件 `(export …)` 行。
+索引：[generated/stdlib-index.md](generated/stdlib-index.md) · 源文件 `lib/std/*.aura`
 
 常用：`(require "std/list" all:)` `(require "std/json" all:)` `(require "std/orchestrator" all:)`
 

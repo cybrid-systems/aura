@@ -1,6 +1,6 @@
 # 架构概览
 
-代码为真相。本文是模块地图；细节见 `src/` 与 `tests/suite/`。
+代码为真相。本文是模块地图；完整模块表见 [generated/modules.md](generated/modules.md)。
 
 ## 数据流
 

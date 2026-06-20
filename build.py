@@ -14,6 +14,8 @@ Usage:
   ./build.py pgo merge         # 合并 profiles
   ./build.py pgo optimize      # PGO 优化构建
   ./build.py pgo all           # 全流程
+  ./build.py docs              # 从源码生成 docs/generated/*.md
+  ./build.py docs --check      # 校验生成文档未过期（CI）
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
@@ -72,6 +74,31 @@ def info(msg):
 def run(cmd, **kwargs):
     result = subprocess.run(cmd, **kwargs)
     return result.returncode
+
+
+# ═══════════════════════════════════════════════════════════════
+# Docs (code-generated)
+# ═══════════════════════════════════════════════════════════════
+
+GEN_DOCS = ROOT / "scripts" / "gen_docs.py"
+
+
+def cmd_docs():
+    """Generate or verify docs/generated/*.md from source."""
+    check = "--check" in sys.argv[2:]
+    print(f"{B}═══ Docs {'(check)' if check else '(generate)'} ═══{N}")
+    if not GEN_DOCS.exists():
+        fail(f"missing {GEN_DOCS}")
+        return 1
+    args = [sys.executable, str(GEN_DOCS)]
+    if check:
+        args.append("--check")
+    r = run(args, cwd=ROOT)
+    if r == 0:
+        ok("docs OK" if check else "docs generated")
+    else:
+        fail("docs stale — run ./build.py docs" if check else "docs generation failed")
+    return r
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1233,7 +1260,8 @@ def main():
     commands = {
         "build": cmd_build,
         "clean": cmd_clean,
-        "check": lambda: cmd_build() or cmd_test(CI_CORE + CI_SAFETY + CI_FUZZ + CI_ISSUES),
+        "check": lambda: cmd_docs() or cmd_build() or cmd_test(CI_CORE + CI_SAFETY + CI_FUZZ + CI_ISSUES),
+        "docs": cmd_docs,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,

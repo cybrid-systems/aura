@@ -22,6 +22,7 @@ jobs:
         pip install --break-system-packages pexpect
         python3 -c "import pexpect; print('✅ pexpect installed for', pexpect.__file__)"
 
+    # build.py check runs docs --check first, then build + core/safety/fuzz/issue tests
     - name: Build & Core Tests
       run: python3 build.py check
 
