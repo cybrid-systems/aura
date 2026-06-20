@@ -207,6 +207,10 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
+    src/compiler/ir_soa.ixx  # Issue #254: imported by lowering.ixx
+                            # (LoweringState holds an IRModuleV2 field
+                            # for the SoA dual-emit path). Needed in
+                            # test_ir too since it compiles lowering.ixx.
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
