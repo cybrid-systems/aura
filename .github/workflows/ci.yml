@@ -12,7 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.0
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
 
     steps:
     - uses: actions/checkout@v4
@@ -50,7 +50,7 @@ jobs:
   asan-build:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.0
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
 
     steps:
     - uses: actions/checkout@v4
@@ -92,7 +92,7 @@ jobs:
     needs: [asan-build]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.0
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
 
     steps:
     - uses: actions/checkout@v4
@@ -159,7 +159,7 @@ jobs:
     needs: [asan-build]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.0
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
 
     steps:
     - uses: actions/checkout@v4
