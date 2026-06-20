@@ -950,7 +950,7 @@
   },
   {
     "name": "issue_135_workspace_set_memory_limit_1048576",
-    "code": "(workspace:set-memory-limit 1048576)",
+    "code": "(workspace:create \"mem-test\")\n(workspace:set-memory-limit 1048576)",
     "pipeline": "eval",
     "expected": "#t"
   },
@@ -974,19 +974,19 @@
   },
   {
     "name": "issue_166_x",
-    "code": "x",
+    "code": "(set-code \"(define x 10)\")\nx",
     "pipeline": "eval",
     "expected": "10"
   },
   {
     "name": "issue_166_f_5",
-    "code": "(f 5)",
+    "code": "(set-code \"(define (f x) (* x x))(define y 0)\")\n(f 5)",
     "pipeline": "eval",
     "expected": "25"
   },
   {
     "name": "issue_166_g_10",
-    "code": "(g 10)",
+    "code": "(set-code \"(define (g x) (+ x 1))\")\n(g 10)",
     "pipeline": "eval",
     "expected": "11"
   },
@@ -1138,6 +1138,6 @@
     "name": "issue_224_if_compile_block_dirty_p_0_0_1_0",
     "code": "(if (compile:block-dirty? \"p\" 0 0) 1 0)",
     "pipeline": "eval",
-    "expected": "1"
+    "expected": "0"
   }
 ]

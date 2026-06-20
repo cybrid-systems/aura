@@ -20,26 +20,19 @@ using EvalValue = types::EvalValue;
 using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
-struct JsonHeaps {
-    std::pmr::vector<Pair>& pairs;
-    std::pmr::vector<std::string>& string_heap;
-};
-
 using namespace types;
 
 void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               std::pmr::vector<std::string>& string_heap) {
-    JsonHeaps heaps{pairs, string_heap};
-
     // json-encode: convert Aura value to JSON string
     // (json-encode value) → string
     // Supports: Int, Float, String, Bool, Void→null, Pair→array, Hash→obj
     // json-encode: convert Aura value to JSON string
     // (json-encode value) → string
-    add("json-encode", [&heaps](std::span<const EvalValue> a) -> EvalValue {
+    add("json-encode", [&pairs, &string_heap](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty()) {
-            auto sid = heaps.string_heap.size();
-            heaps.string_heap.push_back("null");
+            auto sid = string_heap.size();
+            string_heap.push_back("null");
             return types::make_string(sid);
         }
 
@@ -59,7 +52,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             if (types::is_string(v)) {
                 auto idx = types::as_string_idx(v);
-                std::string str = (idx < heaps.string_heap.size()) ? heaps.string_heap[idx] : "";
+                std::string str = (idx < string_heap.size()) ? string_heap[idx] : "";
                 std::string r = "\"";
                 for (auto c : str) {
                     switch (c) {
@@ -95,13 +88,13 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 auto cur = v;
                 while (types::is_pair(cur)) {
                     auto pidx = types::as_pair_idx(cur);
-                    if (pidx >= heaps.pairs.size())
+                    if (pidx >= pairs.size())
                         break;
                     if (!first)
                         r += ",";
                     first = false;
-                    r += to_json(heaps.pairs[pidx].car);
-                    cur = heaps.pairs[pidx].cdr;
+                    r += to_json(pairs[pidx].car);
+                    cur = pairs[pidx].cdr;
                 }
                 if (!types::is_void(cur)) {
                     r += ",";
@@ -138,17 +131,17 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         };
 
         auto result = to_json(a[0]);
-        auto sid = heaps.string_heap.size();
-        heaps.string_heap.push_back(result);
+        auto sid = string_heap.size();
+        string_heap.push_back(result);
         return types::make_string(sid);
     });
     // json-get-string: extract string value of a JSON field
     // (json-get-string json-str field-name) → string
-    add("json-get-string", [&heaps](std::span<const EvalValue> a) -> EvalValue {
+    add("json-get-string", [&pairs, &string_heap](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
-        auto json = heaps.string_heap[types::as_string_idx(a[0])];
-        auto field = heaps.string_heap[types::as_string_idx(a[1])];
+        auto json = string_heap[types::as_string_idx(a[0])];
+        auto field = string_heap[types::as_string_idx(a[1])];
 
         // Search for "fieldName":" in the JSON string
         std::string search = "\"" + field + "\":\"";
@@ -179,18 +172,18 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 result += json[i];
             }
         }
-        auto sid = heaps.string_heap.size();
-        heaps.string_heap.push_back(result);
+        auto sid = string_heap.size();
+        string_heap.push_back(result);
         return types::make_string(sid);
     });
 
 
     // json-parse: parse JSON string into Aura value
     // (json-parse json-str) → value (Int/Float/String/Bool/Void/List/Hash)
-    add("json-parse", [&heaps](std::span<const EvalValue> a) -> EvalValue {
+    add("json-parse", [&pairs, &string_heap](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
-        auto json_str = heaps.string_heap[types::as_string_idx(a[0])];
+        auto json_str = string_heap[types::as_string_idx(a[0])];
 
         std::size_t pos = 0;
         auto skip_ws = [&]() {
@@ -249,8 +242,8 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 }
                 pos++;
             }
-            auto sid = heaps.string_heap.size();
-            heaps.string_heap.push_back(result);
+            auto sid = string_heap.size();
+            string_heap.push_back(result);
             return types::make_string(sid);
         };
 
@@ -308,8 +301,8 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Build list in correct order
             EvalValue result = make_void();
             for (std::size_t i = elems.size(); i > 0; --i) {
-                auto pid = heaps.pairs.size();
-                heaps.pairs.push_back({elems[i - 1], result});
+                auto pid = pairs.size();
+                pairs.push_back({elems[i - 1], result});
                 result = types::make_pair(pid);
             }
             return result;
@@ -336,8 +329,8 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 std::uint64_t kh = 0x9e3779b97f4a7c15ull;
                 if (types::is_string(key_val)) {
                     auto ksid = types::as_string_idx(key_val);
-                    if (ksid < heaps.string_heap.size()) {
-                        auto& ks = heaps.string_heap[ksid];
+                    if (ksid < string_heap.size()) {
+                        auto& ks = string_heap[ksid];
                         kh = 0xcbf29ce484222325ull;
                         for (char c : ks)
                             kh = (kh ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
@@ -358,8 +351,8 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         if (types::is_string(existing_key) && types::is_string(key_val)) {
                             auto ai = types::as_string_idx(existing_key);
                             auto bi = types::as_string_idx(key_val);
-                            eq = (ai < heaps.string_heap.size() && bi < heaps.string_heap.size()) &&
-                                 heaps.string_heap[ai] == heaps.string_heap[bi];
+                            eq = (ai < string_heap.size() && bi < string_heap.size()) &&
+                                 string_heap[ai] == string_heap[bi];
                         } else {
                             eq = keys[idx] == key_val.val;
                         }
