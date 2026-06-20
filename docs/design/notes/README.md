@@ -14,12 +14,12 @@ All current core documents include a `## 0. Implementation Status` section with 
 
 - Use `git log -- docs/design/notes/<filename>` to understand when and why a document was written.
 - Many notes have been partially or fully superseded by implementations in the core documents.
-- Cross-reference with the main [roadmap](../roadmap.md) and `projects/` for how ideas evolved through real project work (e.g. evo-kv).
+- Cross-reference with the main [roadmap](../roadmap.md) and `tests/suite/` for how ideas evolved through real examples.
 
 Notable files (all historical):
-- `projects_iteration.md` — Original project-driven methodology (current version in `roadmap.md` + `projects/`).
+- `projects_iteration.md` — Original project-driven methodology（current version in `roadmap.md`）。
 - `issue-*-*.md` files — Issue deep-dives. Most have been resolved or evolved; check the relevant `../core/` §0 table.
 
 **强烈建议**：新读者（包括 AI Agent）直接从 `../core/` 开始。本目录仅供需要理解历史决策的人使用。
 
-**For contributors**: Follow the rules in `docs/README.md` "Living Documentation Practices" and the parent `design/history/README.md`. Only add new files here for truly speculative/unresolved explorations. Prefer updating core/ §0 tables + api-reference.md + (if needed) a closing note.
+**For contributors**: Follow `docs/README.md`. Do not add new files here unless archiving speculative work. Prefer tests + code over notes.

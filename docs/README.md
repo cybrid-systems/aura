@@ -1,78 +1,64 @@
 # Aura 文档
 
-> **推荐阅读路径**
-> - **AI Agent / LLM 写手**： [tutorial.md](tutorial.md) → **[api-reference.md](api-reference.md)**（Primitives Surface + 代码位置） → `design/core/` 的 **## 0. Implementation Status** 表格。
-> - **理解自修改核心**： `design/core/query_edsl.md` + `mutate_api.md` + `workspace_layering.md` + `typed_mutation.md`。
-> - **Agent 编排**： `design/core/agent_orchestration.md` + `std/orchestrator.aura` + `projects/evo-kv/`。
-> - **贡献核心**： `docs/developer/evaluator.md` + `projects/GAPS.md`。
+> **真相层级**：代码 + 测试 > 运行时 `(api-reference)` > 本目录手写文档 > `git log` 历史。
 
-**文档分离**：`tutorial.md` + `api-reference.md` 作为 User Guide/Surface；`design/core/` 等作为 Design & Extension。
+## 我想…
 
-## 概况
+| 目标 | 去看 |
+|------|------|
+| 快速上手 | [tutorial.md](tutorial.md) |
+| 有哪些原语 | 运行 `(api-reference)`，或读 [api-reference.md](api-reference.md)（过渡；后续 codegen） |
+| Agent 走 JSON 协议 | [wire-formats.md](wire-formats.md) + `tests/test_serve_async.aura` |
+| 自修改 EDSL 示例 | `tests/suite/mutate-structured.aura`、`tests/suite/edsl_errors.aura` |
+| Agent 编排 | `lib/std/orchestrator.aura` + `tests/suite/orchestrator.aura` |
+| 标准库模块 | `lib/std/*.aura`（文件头注释 + `(export …)`） |
+| 模块 / 管线结构 | `src/compiler/`、`src/serve/`；设计概要见 `design/core/`、`design/compilation/` |
+| 改 evaluator / 加 primitive | [developer/evaluator.md](developer/evaluator.md) |
+| 构建与测试 | `./build.py check`（见仓库根 [README.md](../README.md)） |
+| 方向与里程碑 | [roadmap.md](roadmap.md) + GitHub Issues |
+| 历史设计 / issue 结案 | `design/history/`（归档，非当前真相） |
+
+## 用户指南
 
 | 文档 | 说明 |
 |------|------|
-| [教程](tutorial.md) | 上手 + 当前实装状态 |
-| [API 参考](api-reference.md) | 原语 + 代码/设计交叉引用 |
-| [路线图](roadmap.md) | 项目驱动迭代现状 |
-| [基准](benchmark.md) | EDSL benchmark 数据 |
-| [哲学](philosophy.md) | 设计思想 |
+| [tutorial.md](tutorial.md) | 可运行示例；特性以 `tests/suite/` 为准 |
+| [api-reference.md](api-reference.md) | 原语速查（手写，逐步由代码生成替代） |
+| [wire-formats.md](wire-formats.md) | `--serve` / `--serve-async` JSON 协议 |
 
-**项目驱动**：主要通过 `projects/evo-kv/` 等真实项目暴露 gap 并修复核心。见 [projects/README.md](../projects/README.md) 和 `projects/GAPS.md`。
+## 开发者
 
-## 设计文档 (`design/`)
+| 文档 | 说明 |
+|------|------|
+| [developer/evaluator.md](developer/evaluator.md) | FlatAST 不变式、加 primitive、并发 footgun |
+| [roadmap.md](roadmap.md) | P 系列规划与当前重点 |
+| [benchmark.md](benchmark.md) | EDSL benchmark 数据（源：`tests/benchmark.py`） |
 
-分四层：
+## 设计文档（`design/`）
 
-- **`design/core/`**（7 篇） — 新贡献者 on-ramp，高价值活文档
-- **`design/compilation/`**（2 篇） — IR / JIT
-- **`design/runtime/`**（2 篇） — async serve / FFI
-- **`design/history/`** — 归档（`notes/` + `closings/`）。新人可跳过，详见各子目录 README。
+**注意**：`design/core/` 等文档可能落后于代码。以测试、`(api-reference)` 和 `src/` 为准。
 
-### Living Documentation Practices（活文档维护）
-
-- 所有 `core/`、`compilation/`、`runtime/` 文档必须有 `## 0. Implementation Status` 章节（C++ Core Layer + Aura Layer 两表 + 日期 + AI Agent 注意事项）。
-- 新增/修改 primitive 时必须同步更新：`api-reference.md` + 对应 core/ §0 表 + 必要时 `tutorial.md`。
-- 归档内容只放 speculative 探索；实际工作走 core/ 更新 + closing。
-- 状态横幅与日期必须保持新鲜。
-
-参考实现见各 core/ 文档。详细背景见 Issue #156 相关 closing。
+- **`design/core/`** — 自修改、类型、workspace、编排（7 篇）
+- **`design/compilation/`** — IR 管线、JIT（2 篇）
+- **`design/runtime/`** — async serve、FFI（2 篇）
+- **`design/notes/`** — 归档探索（~80 篇，勿当实装规格）
+- **`design/history/closings/`** — issue 结案摘要（查历史用 `git log`）
 
 ### 核心 (`design/core/`)
 
 | 文档 | 内容 |
 |------|------|
-| [agent_orchestration](design/core/agent_orchestration.md) | Agent 编排、意图、inter-agent 通信 |
-| [mutate_api](design/core/mutate_api.md) | 结构化变异 / 自演化 API |
-| [typesystem](design/core/typesystem.md) | 类型系统 + 形式化 |
 | [query_edsl](design/core/query_edsl.md) | 查询 EDSL |
+| [mutate_api](design/core/mutate_api.md) | 结构化变异 |
 | [typed_mutation](design/core/typed_mutation.md) | 类型化变更 |
-| [workspace_layering](design/core/workspace_layering.md) | Workspace 分层 / COW / lock |
-| [memory_model](design/core/memory_model.md) | 内存模型 + 锁协议（#157 Phase 4） |
-
-### 编译 (`design/compilation/`)
-
-| 文档 | 内容 |
-|------|------|
-| [ir_pipeline](design/compilation/ir_pipeline.md) | IR 管线 |
-| [jit](design/compilation/jit.md) | LLVM ORC JIT |
-
-### 运行时 (`design/runtime/`)
-
-| 文档 | 内容 |
-|------|------|
-| [async_serve](design/runtime/async_serve.md) | Fiber / scheduler / 多 session |
-| [ffi](design/runtime/ffi.md) | C FFI |
-
-### 归档与历史 (`design/history/`) — 按需查阅
-
-- `design/history/notes/`：归档设计探索、issue follow-up（~80+ 篇）。新人跳过。
-- `design/history/closings/`：issue 关闭总结。已统一归档。
-
-新贡献者优先读 `design/core/` 的 Implementation Status。历史文档用 `git log` 追溯。
-
-**注意**：所有核心设计文档必须包含 `## 0. Implementation Status` 章节（C++ / Aura 两表 + AI Agent 注意事项）。
+| [workspace_layering](design/core/workspace_layering.md) | Workspace 分层 / COW |
+| [agent_orchestration](design/core/agent_orchestration.md) | Agent 编排 |
+| [typesystem](design/core/typesystem.md) | 类型系统 |
+| [memory_model](design/core/memory_model.md) | 内存模型与锁 |
 
 ## 构建
 
-构建指南见 [项目 README](../README.md#构建)。
+```bash
+./build.py build    # 或 cmake -B build && cmake --build build --target aura -j
+./build.py check    # CI 默认：构建 + 核心测试
+```

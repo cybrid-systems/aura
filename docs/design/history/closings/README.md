@@ -13,7 +13,7 @@ These are valuable for understanding the rationale and lessons from past work, b
 
 - Search by issue number (e.g. `112-closing.md`)
 - Many closings reference the design docs that were updated at the time. Those design docs have since been moved/refined under `core/`.
-- For active gaps, see `projects/GAPS.md`
+- For active gaps, see GitHub Issues and [roadmap.md](../../roadmap.md)
 
 Example: Issues around EDSL, workspace layering, concurrency, and mutation were heavily documented here and have largely been realized in the core specifications.
 
@@ -22,4 +22,4 @@ Example: Issues around EDSL, workspace layering, concurrency, and mutation were 
 2. Updating `docs/api-reference.md`.
 3. Adding a concise closing note here.
 
-See the full Living Documentation Practices in `docs/README.md` and `design/history/README.md`. Do not duplicate implemented content here.
+See `docs/README.md` and `design/history/README.md`. Do not duplicate implemented content here.

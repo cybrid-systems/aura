@@ -51,9 +51,14 @@ Aura 遵循三个原则：
 - 版本化工作区与事务安全
 - 增量编译执行管线
 
-更多见 [`docs/README.md`](docs/README.md)（core/ 为活文档）。
+文档索引：[`docs/README.md`](docs/README.md)（**代码 + 测试为真相**；运行 `(api-reference)` 查看全部原语）。
 
-开发者文档：[`docs/developer/evaluator.md`](docs/developer/evaluator.md)。
+```bash
+./build.py build    # 构建
+./build.py check    # CI：构建 + 核心测试
+```
+
+贡献运行时：[`docs/developer/evaluator.md`](docs/developer/evaluator.md)。
 
 ## License
 
