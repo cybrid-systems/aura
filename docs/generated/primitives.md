@@ -82,25 +82,25 @@ Runtime canonical list: `(api-reference)`.
 
 ## Workspace: (19)
 
-- `workspace:can-write?` — `src/compiler/evaluator_impl.cpp`
-- `workspace:conflicts-with` — `src/compiler/evaluator_impl.cpp`
-- `workspace:cow-refused-count` — `src/compiler/evaluator_impl.cpp`
-- `workspace:create` — `src/compiler/evaluator_impl.cpp`
-- `workspace:current` — `src/compiler/evaluator_impl.cpp`
-- `workspace:delete` — `src/compiler/evaluator_impl.cpp`
-- `workspace:discard` — `src/compiler/evaluator_impl.cpp`
-- `workspace:list` — `src/compiler/evaluator_impl.cpp`
-- `workspace:lock` — `src/compiler/evaluator_impl.cpp`
-- `workspace:memory-limit` — `src/compiler/evaluator_impl.cpp`
-- `workspace:memory-used` — `src/compiler/evaluator_impl.cpp`
-- `workspace:merge` — `src/compiler/evaluator_impl.cpp`
-- `workspace:merge-3way` — `src/compiler/evaluator_impl.cpp`
-- `workspace:mutation-count` — `src/compiler/evaluator_impl.cpp`
-- `workspace:rollback-latest` — `src/compiler/evaluator_impl.cpp`
-- `workspace:set-memory-limit` — `src/compiler/evaluator_impl.cpp`
-- `workspace:switch` — `src/compiler/evaluator_impl.cpp`
-- `workspace:sync-from` — `src/compiler/evaluator_impl.cpp`
-- `workspace:unlock` — `src/compiler/evaluator_impl.cpp`
+- `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:cow-refused-count` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:create` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:current` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:delete` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:discard` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:list` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:lock` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-used` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge-3way` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:mutation-count` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-latest` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:switch` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
 ## Fiber: (3)
 
