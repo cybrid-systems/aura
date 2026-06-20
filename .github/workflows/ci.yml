@@ -24,8 +24,13 @@ jobs:
         ruff --version
 
     # Single CI gate: docs --check, lint, build, core + safety (regression) +
-    # fuzz + issues. Do not duplicate suites in separate steps below.
+    # fuzz + issues. PRs use fast issue tier (~18 targets + git-changed);
+    # pushes to main run the full ~90+ issue binaries.
     - name: Build & Test (check)
+      env:
+        AURA_ISSUES_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
+        AURA_GIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+        AURA_ISSUES_JOBS: "4"
       run: python3 build.py check
 
   # Shared ASAN build. Both downstream jobs (memory + asan-tests)
