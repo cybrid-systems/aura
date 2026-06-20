@@ -386,12 +386,12 @@ private:
         return ptr;
     }
 
+    std::size_t initial_size_ = 0; // Issue #187: for shrink_to_fit()
     std::vector<std::byte> buffer_;
     std::pmr::monotonic_buffer_resource resource_;
     SmallObjectPool small_pool_;
     ArenaStats stats_;
     std::vector<DtorEntry> dtors_;
-    std::size_t initial_size_ = 0; // Issue #187: for shrink_to_fit()
 };
 
 // ── ArenaGroup — multi-arena manager ─────────────────────────────

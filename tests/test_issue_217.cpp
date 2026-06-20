@@ -802,7 +802,7 @@ bool test_node_view_full() {
     auto rt = aura::reflect::auto_deserialize<NodeViewFullLike>(buf, pos);
     CHECK(rt.id == 42, "id");
     CHECK(rt.tag == 0x03, "tag");
-    CHECK(rt.int_value == 0xDEADBEEFCAFE0001LL, "int_value");
+    CHECK(rt.int_value == static_cast<std::int64_t>(0xDEADBEEFCAFE0001ULL), "int_value");
     CHECK(rt.float_value == 3.14159, "float_value");
     CHECK(rt.sym_id == 0xABCD, "sym_id");
     CHECK(rt.line == 100, "line");

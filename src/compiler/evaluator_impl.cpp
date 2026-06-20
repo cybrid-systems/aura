@@ -16,11 +16,6 @@ module;
 #include "git_ctx.h"
 #include <contracts>
 
-// Issue #195: extern "C" declarations for the per-fiber
-// exception state API. Defined in aura_jit_runtime.cpp.
-extern "C" std::uint64_t aura_exception_depth();
-extern "C" std::uint64_t aura_exception_fiber_count();
-extern "C" void aura_exception_clear_all();
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <poll.h>
@@ -20471,74 +20466,6 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         }
     }
 
-
-    // ── Runtime type helpers for type annotation checking ────────\
-static aura::core::TypeTag runtime_type_tag(const EvalValue\& v) {\
-    if (types::is_int(v))     return aura::core::TypeTag::INT;\
-    if (types::is_float(v))   return aura::core::TypeTag::FLOAT;\
-    if (types::is_bool(v))    return aura::core::TypeTag::BOOL;\
-    if (types::is_string(v))  return aura::core::TypeTag::STRING;\
-    if (types::is_pair(v))    return aura::core::TypeTag::PAIR;\
-    if (types::is_closure(v)) return aura::core::TypeTag::CLOSURE;\
-    if (types::is_vector(v))  return aura::core::TypeTag::VECTOR;\
-    if (types::is_hash(v))    return aura::core::TypeTag::HASH;\
-    return aura::core::TypeTag::DYNAMIC;\
-}\
-\
-static std::string type_tag_name(aura::core::TypeTag tag) {\
-    switch (tag) {\
-        case aura::core::TypeTag::INT:     return "Int";\
-        case aura::core::TypeTag::FLOAT:   return "Float";\
-        case aura::core::TypeTag::BOOL:    return "Bool";\
-        case aura::core::TypeTag::STRING:  return "String";\
-        case aura::core::TypeTag::PAIR:    return "Pair";\
-        case aura::core::TypeTag::CLOSURE: return "Closure";\
-        case aura::core::TypeTag::VECTOR:  return "Vector";\
-        case aura::core::TypeTag::HASH:    return "Hash";\
-        default: return "Dynamic";\
-    }\
-}\
-\
-static bool coerce_value(EvalValue\& val, aura::core::TypeTag from, aura::core::TypeTag to, std::vector<std::string>\& heap) {\
-    if (from == to) return true;\
-    if (from == aura::core::TypeTag::INT \&\& to == aura::core::TypeTag::FLOAT) {\
-        val = types::make_float(static_cast<double>(types::as_int(val))); return true;\
-    }\
-    if (from == aura::core::TypeTag::FLOAT \&\& to == aura::core::TypeTag::INT) {\
-        val = types::make_int(static_cast<std::int64_t>(types::as_float(val))); return true;\
-    }\
-    if (from == aura::core::TypeTag::INT \&\& to == aura::core::TypeTag::STRING) {\
-        auto s = std::to_string(types::as_int(val));\
-        auto id = heap.size(); heap.push_back(std::move(s));\
-        val = types::make_string(id); return true;\
-    }\
-    if (from == aura::core::TypeTag::STRING \&\& to == aura::core::TypeTag::INT) {\
-        auto idx = types::as_string_idx(val);\
-        if (idx < heap.size()) {\
-            try { val = types::make_int(static_cast<std::int64_t>(std::stoll(heap[idx]))); return true; }\
-            catch (...) {}\
-        }\
-    }\
-    if (from == aura::core::TypeTag::INT \&\& to == aura::core::TypeTag::BOOL) {\
-        val = types::make_bool(types::as_int(val) != 0); return true;\
-    }\
-    if (from == aura::core::TypeTag::BOOL \&\& to == aura::core::TypeTag::INT) {\
-        val = types::make_int(types::as_bool(val) ? 1 : 0); return true;\
-    }\
-    if (from == aura::core::TypeTag::FLOAT \&\& to == aura::core::TypeTag::STRING) {\
-        auto s = std::to_string(types::as_float(val));\
-        auto id = heap.size(); heap.push_back(std::move(s));\
-        val = types::make_string(id); return true;\
-    }\
-    if (from == aura::core::TypeTag::STRING \&\& to == aura::core::TypeTag::FLOAT) {\
-        auto idx = types::as_string_idx(val);\
-        if (idx < heap.size()) {\
-            try { val = types::make_float(std::stod(heap[idx])); return true; }\
-            catch (...) {}\
-        }\
-    }\
-    return false;  // non-coercible\
-}
     return make_void();
 }
 // ── Runtime type helpers for type annotation checking ────────

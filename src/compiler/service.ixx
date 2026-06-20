@@ -15,24 +15,6 @@ module;
 #include "shape_profiler.h"
 #include "spec_jit_controller.h"
 
-extern "C" std::int64_t aura_jit_test();
-extern "C" const char* aura_jit_string_content(std::int64_t val);
-extern "C" void aura_set_prim_dispatcher(std::int64_t (*fn)(std::int64_t, std::int64_t*,
-                                                            std::int32_t));
-
-// Issue #157 Phase 1: lock hooks binding. Sets the global LockHooks
-// table in aura_jit_runtime.cpp so the runtime bridges
-// (aura_alloc_pair, aura_pair_car, aura_prim_call, etc.) can
-// participate in Evaluator::workspace_mtx_ + defuse_version_
-// without exposing the mutex as a global.
-extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read)(void*),
-                                    void (*lock_write)(void*), void (*unlock_write)(void*),
-                                    std::uint64_t (*get_version)(void*),
-                                    void (*yield_boundary)(void*), void* user_data);
-
-extern "C" std::size_t aura_jit_pool_size();
-extern "C" const char* aura_jit_pool_string(std::size_t idx);
-
 export module aura.compiler.service;
 import std;
 import aura.core;
@@ -1526,7 +1508,7 @@ public:
         // before IR lowering, so constructor calls in the code are resolvable.
         for (aura::ast::NodeId nid = 0; nid < flat_ptr->size(); ++nid) {
             if (flat_ptr->get(nid).tag == aura::ast::NodeTag::DefineType) {
-                evaluator_.eval_flat(*flat_ptr, *pool_ptr, nid, evaluator_.top_env());
+                (void)evaluator_.eval_flat(*flat_ptr, *pool_ptr, nid, evaluator_.top_env());
             }
         }
 
@@ -3385,7 +3367,7 @@ public:
             // Pass bind_in_env=false: don't pollute the workspace's env
             // by calling eval_flat. The define is bound later by
             // eval-current which uses its own env.
-            cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name, /*bind_in_env=*/false);
+            (void)cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name, /*bind_in_env=*/false);
             auto& entry = ir_cache_v2_[name];
             entry.source = canonical;
             entry.source_hash = hash;

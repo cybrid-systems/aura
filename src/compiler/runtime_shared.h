@@ -82,3 +82,20 @@ void tl_arena_reset(TLarena* arena);
 void* tl_arena_alloc(TLarena* arena, size_t size, size_t align);
 void tl_arena_push(TLarena* arena);
 void tl_arena_pop(TLarena* arena);
+
+// ── JIT / runtime C ABI (defined in aura_jit_runtime.cpp, aura_jit_bridge.cpp) ──
+extern "C" std::int64_t aura_jit_test();
+extern "C" const char* aura_jit_string_content(std::int64_t val);
+extern "C" void aura_set_prim_dispatcher(std::int64_t (*fn)(std::int64_t, std::int64_t*,
+                                                            std::int32_t));
+extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read)(void*),
+                                    void (*lock_write)(void*), void (*unlock_write)(void*),
+                                    std::uint64_t (*get_version)(void*),
+                                    void (*yield_boundary)(void*), void* user_data);
+extern "C" std::size_t aura_jit_pool_size();
+extern "C" const char* aura_jit_pool_string(std::size_t idx);
+
+// Issue #195: per-fiber exception state API (aura_jit_runtime.cpp).
+extern "C" std::uint64_t aura_exception_depth();
+extern "C" std::uint64_t aura_exception_fiber_count();
+extern "C" void aura_exception_clear_all();

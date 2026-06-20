@@ -33,8 +33,9 @@ public:
     }
 
     void run() {
-        auto home = std::getenv("HOME");
-        if (!home) home = ".";
+        const char* home = std::getenv("HOME");
+        if (!home)
+            home = ".";
         history_path_ = std::string(home) + "/.config/aura/history";
         std::filesystem::create_directories(
             std::filesystem::path(history_path_).parent_path());

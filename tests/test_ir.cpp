@@ -763,7 +763,7 @@ int main() {
     // Demo: print stats from a real compilation
     {
         aura::compiler::CompilerService cs;
-        cs.eval("(+ 1 2)");
+        (void)cs.eval("(+ 1 2)");
         auto s = cs.arena().stats();
         std::println("ARENA DEMO: {}", s.format());
     }
@@ -784,7 +784,7 @@ int main() {
             auto s = arena.stats();
             // 4 small objects, all from SmallObjectPool; large check
             struct Big { char d[256]; };
-            arena.create<Big>();
+            (void)arena.create<Big>();
             auto s2 = arena.stats();
             if (s2.allocation_count == 5 && s2.used >= 256) {
                 std::println("ARENA OK: small-object tiers (16/32/64) + overflow");
@@ -804,10 +804,10 @@ int main() {
     {
         aura::compiler::CompilerService cs;
         auto& ma = cs.module_arena("kernel");
-        ma.create<int>(42);
+        (void)ma.create<int>(42);
         auto& mb = cs.module_arena("driver");
-        mb.create<double>(3.14);
-        mb.create<double>(2.71);
+        (void)mb.create<double>(3.14);
+        (void)mb.create<double>(2.71);
 
         auto total = cs.memory_stats();
         std::println("ARENA MULTI: {} modules, total {}",
@@ -2991,7 +2991,7 @@ int main() {
 
         // Actually call (set-code) through the Aura layer to init workspace
         {
-            cs34.eval("(set-code \"(define (f x) (+ x 1))\")");
+            (void)cs34.eval("(set-code \"(define (f x) (+ x 1))\")");
             auto v = cs34.eval_current();
             if (v) {
                 std::println("CS34 OK: set-code + eval succeeded"); ++cs34_passed;

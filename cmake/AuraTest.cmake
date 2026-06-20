@@ -13,6 +13,7 @@ function(aura_test_compile_options TARGET)
         -Wno-unused-variable -Wno-unused-function
         -Wno-unused-but-set-variable -Wno-unused-parameter
         -Wno-misleading-indentation -Wno-parentheses
+        -Wno-sign-compare -Wno-unused-result -Wno-type-limits
     )
 endfunction()
 
@@ -22,7 +23,10 @@ function(aura_test_compile_options_reflect TARGET)
 endfunction()
 
 function(aura_test_compile_options_reflect_minimal TARGET)
-    target_compile_options(${TARGET} PRIVATE -freflection -Wall)
+    target_compile_options(${TARGET} PRIVATE
+        -freflection -Wall
+        -Wno-sign-compare -Wno-unused-local-typedefs -Wno-switch
+    )
 endfunction()
 
 # Extra observability header used by several issue tests.
