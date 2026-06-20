@@ -1,0 +1,358 @@
+// evaluator_primitives_vector.cpp — P0 step 5: vector/hash primitives
+// extracted from evaluator_impl.cpp::init_pair_primitives().
+
+module;
+
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <vector>
+#include "runtime_shared.h"
+
+module aura.compiler.evaluator;
+
+import std;
+import aura.compiler.value;
+
+namespace aura::compiler::primitives_detail {
+
+using EvalValue = types::EvalValue;
+using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
+using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+
+using namespace types;
+
+void register_vector_and_hash_primitives(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
+    std::vector<std::vector<EvalValue>>& vector_heap) {
+    add("vector", [&vector_heap](std::span<const EvalValue> a) {
+        std::vector<EvalValue> elems(a.begin(), a.end());
+        auto idx = vector_heap.size();
+        vector_heap.push_back(std::move(elems));
+        return make_vector(idx);
+    });
+    add("vector-ref", [&vector_heap, &string_heap, &error_values](std::span<const EvalValue> a) {
+        if (a.size() < 2 || !is_vector(a[0])) {
+            auto __s = string_heap.size();
+            string_heap.push_back("vector-ref: not a vector");
+            auto __e = error_values.size();
+            error_values.push_back(make_string(__s));
+            return make_error(__e);
+        }
+        auto idx = as_vector_idx(a[0]);
+        auto pos = static_cast<std::size_t>(as_int(a[1]));
+        if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
+            auto __s = string_heap.size();
+            string_heap.push_back("vector-ref: index out of bounds");
+            auto __e = error_values.size();
+            error_values.push_back(make_string(__s));
+            return make_error(__e);
+        }
+        return vector_heap[idx][pos];
+    });
+    add("vector-set!", [&vector_heap, &string_heap, &error_values](std::span<const EvalValue> a) {
+        if (a.size() < 3 || !is_vector(a[0])) {
+            auto __s = string_heap.size();
+            string_heap.push_back("vector-set!: not a vector");
+            auto __e = error_values.size();
+            error_values.push_back(make_string(__s));
+            return make_error(__e);
+        }
+        auto idx = as_vector_idx(a[0]);
+        auto pos = static_cast<std::size_t>(as_int(a[1]));
+        if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
+            auto __s = string_heap.size();
+            string_heap.push_back("vector-set!: index out of bounds");
+            auto __e = error_values.size();
+            error_values.push_back(make_string(__s));
+            return make_error(__e);
+        }
+        vector_heap[idx][pos] = a[2];
+        return make_void();
+    });
+    add("vector-length", [&vector_heap](std::span<const EvalValue> a) {
+        if (a.empty() || !is_vector(a[0]))
+            return make_int(0);
+        auto idx = as_vector_idx(a[0]);
+        if (idx >= vector_heap.size())
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(vector_heap[idx].size()));
+    });
+    add("vector?", [](std::span<const EvalValue> a) {
+        if (a.empty())
+            return make_bool(false);
+        return make_bool(is_vector(a[0]));
+    });
+    add("make-vector", [&vector_heap](std::span<const EvalValue> a) {
+        auto n = a.empty() ? 0 : static_cast<std::size_t>(as_int(a[0]));
+        EvalValue init = a.size() > 1 ? a[1] : make_void();
+        std::vector<EvalValue> elems(n, init);
+        auto idx = vector_heap.size();
+        vector_heap.push_back(std::move(elems));
+        return make_vector(idx);
+    });
+    add("list->vector", [&pairs, &vector_heap](std::span<const EvalValue> a) {
+        std::vector<EvalValue> elems;
+        if (!a.empty()) {
+            auto v = a[0];
+            while (is_pair(v)) {
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs.size())
+                    break;
+                elems.push_back(pairs[idx].car);
+                v = pairs[idx].cdr;
+            }
+        }
+        auto idx = vector_heap.size();
+        vector_heap.push_back(std::move(elems));
+        return make_vector(idx);
+    });
+    add("vector->list", [&pairs, &vector_heap](std::span<const EvalValue> a) {
+        if (a.empty() || !is_vector(a[0]))
+            return make_void();
+        auto idx = as_vector_idx(a[0]);
+        if (idx >= vector_heap.size())
+            return make_void();
+        EvalValue result = make_void();
+        for (auto it = vector_heap[idx].rbegin(); it != vector_heap[idx].rend(); ++it) {
+            auto pid = pairs.size();
+            pairs.push_back({*it, result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
+
+    add("hash", [&string_heap](std::span<const EvalValue> a) {
+        auto sh = &string_heap;
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto cap = ht->capacity;
+        auto khash = [sh](const EvalValue& k) -> std::uint64_t {
+            if (is_int(k))
+                return static_cast<std::uint64_t>(as_int(k)) * 0x9e3779b97f4a7c15ull;
+            if (is_string(k)) {
+                auto i = as_string_idx(k);
+                if (i < sh->size()) {
+                    auto& s = (*sh)[i];
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : s)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    return h;
+                }
+            }
+            return 0x9e3779b97f4a7c15ull;
+        };
+        for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+            auto h = khash(a[i]);
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+            for (std::size_t at = 0; at < cap; ++at) {
+                auto idx = ((h >> 1) + at) & (cap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = a[i].val;
+                    vals[idx] = a[i + 1].val;
+                    ht->size++;
+                    break;
+                }
+            }
+        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+    add("hash-ref", [&string_heap](std::span<const EvalValue> a) {
+        if (a.size() < 2 || !is_hash(a[0]))
+            return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+            return make_void();
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto sh = &string_heap;
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
+                continue;
+            auto k = EvalValue{keys[i]};
+            bool eq = false;
+            if (is_int(k) && is_int(a[1]))
+                eq = as_int(k) == as_int(a[1]);
+            else if (is_string(k) && is_string(a[1])) {
+                auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
+                eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
+            } else
+                eq = keys[i] == a[1].val;
+            if (eq)
+                return EvalValue{vals[i]};
+        }
+        return make_void();
+    });
+    add("hash-has-key?", [&string_heap](std::span<const EvalValue> a) {
+        if (a.size() < 2 || !is_hash(a[0]))
+            return make_bool(false);
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+            return make_bool(false);
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto sh = &string_heap;
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
+                continue;
+            auto k = EvalValue{keys[i]};
+            bool eq = false;
+            if (is_int(k) && is_int(a[1]))
+                eq = as_int(k) == as_int(a[1]);
+            else if (is_string(k) && is_string(a[1])) {
+                auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
+                eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
+            } else
+                eq = keys[i] == a[1].val;
+            if (eq)
+                return make_bool(true);
+        }
+        return make_bool(false);
+    });
+    add("hash-set!", [&string_heap](std::span<const EvalValue> a) {
+        if (a.size() < 3 || !is_hash(a[0]))
+            return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+            return make_void();
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto sh = &string_heap;
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
+                continue;
+            auto k = EvalValue{keys[i]};
+            bool eq = false;
+            if (is_int(k) && is_int(a[1]))
+                eq = as_int(k) == as_int(a[1]);
+            else if (is_string(k) && is_string(a[1])) {
+                auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
+                eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
+            } else
+                eq = keys[i] == a[1].val;
+            if (eq) {
+                vals[i] = a[2].val;
+                return make_void();
+            }
+        }
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF) {
+                std::uint64_t h = 0x9e3779b97f4a7c15ull;
+                if (is_int(a[1]))
+                    h = static_cast<std::uint64_t>(as_int(a[1])) * h;
+                else if (is_string(a[1])) {
+                    auto idx = as_string_idx(a[1]);
+                    if (idx < sh->size()) {
+                        h = 0xcbf29ce484222325ull;
+                        for (char c : (*sh)[idx])
+                            h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    }
+                }
+                meta[i] = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                keys[i] = a[1].val;
+                vals[i] = a[2].val;
+                ht->size++;
+                return make_void();
+            }
+        }
+        return make_void();
+    });
+    add("hash-length", [](std::span<const EvalValue> a) {
+        if (a.empty() || !is_hash(a[0]))
+            return make_int(0);
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(g_hash_tables[hidx]->size));
+    });
+    add("hash-keys", [&pairs](std::span<const EvalValue> a) {
+        if (a.empty() || !is_hash(a[0]))
+            return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+            return make_void();
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        EvalValue result = make_void();
+        for (std::size_t i = ht->capacity; i > 0; --i) {
+            if (meta[i - 1] != 0xFF) {
+                auto pid = pairs.size();
+                pairs.push_back({EvalValue{keys[i - 1]}, result});
+                result = make_pair(pid);
+            }
+        }
+        return result;
+    });
+    add("hash-values", [&pairs](std::span<const EvalValue> a) {
+        if (a.empty() || !is_hash(a[0]))
+            return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+            return make_void();
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto vals = ht->values();
+        EvalValue result = make_void();
+        for (std::size_t i = ht->capacity; i > 0; --i) {
+            if (meta[i - 1] != 0xFF) {
+                auto pid = pairs.size();
+                pairs.push_back({EvalValue{vals[i - 1]}, result});
+                result = make_pair(pid);
+            }
+        }
+        return result;
+    });
+    add("hash?", [](std::span<const EvalValue> a) {
+        if (a.empty())
+            return make_bool(false);
+        return make_bool(is_hash(a[0]));
+    });
+    add("hash-remove!", [&string_heap](std::span<const EvalValue> a) {
+        if (a.size() < 2 || !is_hash(a[0]))
+            return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+            return make_void();
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto sh = &string_heap;
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
+                continue;
+            auto k = EvalValue{keys[i]};
+            bool eq = false;
+            if (is_int(k) && is_int(a[1]))
+                eq = as_int(k) == as_int(a[1]);
+            else if (is_string(k) && is_string(a[1])) {
+                auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
+                eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
+            } else
+                eq = keys[i] == a[1].val;
+            if (eq) {
+                meta[i] = 0xFF;
+                ht->size--;
+                return make_bool(true);
+            }
+        }
+        return make_bool(false);
+    });
+}
+
+}  // namespace aura::compiler::primitives_detail
