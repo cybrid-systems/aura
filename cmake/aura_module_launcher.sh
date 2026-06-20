@@ -51,9 +51,16 @@ while [ $i -lt $# ]; do
     i=$((i+1))
 done
 
+# Optional ccache layer (CI sets CCACHE_DIR; local dev may skip).
+if command -v ccache >/dev/null 2>&1; then
+    CXX=(ccache /usr/bin/c++)
+else
+    CXX=(/usr/bin/c++)
+fi
+
 # GCC emits a noisy scan-phase warning when CMake's CXX module scanner
 # invokes the compiler without linking. Filter it from stderr only.
-/usr/bin/c++ "$@" 2> >(grep -v 'linker input file unused because linking not done' >&2)
+"${CXX[@]}" "$@" 2> >(grep -v 'linker input file unused because linking not done' >&2)
 RC=${PIPESTATUS[0]}
 
 [ -n "$per_target_dir" ] || exit $RC
