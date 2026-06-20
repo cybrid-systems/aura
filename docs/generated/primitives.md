@@ -42,26 +42,26 @@ Runtime canonical list: `(api-reference)`.
 
 ## Mutate: (20)
 
-- `mutate:atomic-batch` — `src/compiler/evaluator_impl.cpp`
-- `mutate:check-stable-ref` — `src/compiler/evaluator_impl.cpp`
-- `mutate:extract-function` — `src/compiler/evaluator_impl.cpp`
-- `mutate:inline-call` — `src/compiler/evaluator_impl.cpp`
-- `mutate:insert-child` — `src/compiler/evaluator_impl.cpp`
-- `mutate:move-node` — `src/compiler/evaluator_impl.cpp`
-- `mutate:query-and-replace` — `src/compiler/evaluator_impl.cpp`
-- `mutate:rebind` — `src/compiler/evaluator_impl.cpp`
-- `mutate:record-patch` — `src/compiler/evaluator_impl.cpp`
-- `mutate:refactor/extract` — `src/compiler/evaluator_impl.cpp`
-- `mutate:remove-node` — `src/compiler/evaluator_impl.cpp`
-- `mutate:rename-symbol` — `src/compiler/evaluator_impl.cpp`
-- `mutate:replace-pattern` — `src/compiler/evaluator_impl.cpp`
-- `mutate:replace-subtree` — `src/compiler/evaluator_impl.cpp`
-- `mutate:replace-type` — `src/compiler/evaluator_impl.cpp`
-- `mutate:replace-value` — `src/compiler/evaluator_impl.cpp`
-- `mutate:set-body` — `src/compiler/evaluator_impl.cpp`
-- `mutate:splice` — `src/compiler/evaluator_impl.cpp`
-- `mutate:tweak-literal` — `src/compiler/evaluator_impl.cpp`
-- `mutate:wrap` — `src/compiler/evaluator_impl.cpp`
+- `mutate:atomic-batch` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:check-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:inline-call` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:insert-child` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:move-node` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:query-and-replace` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:rebind` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:record-patch` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:refactor/extract` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:remove-node` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:rename-symbol` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-pattern` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-subtree` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-type` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-value` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:set-body` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:splice` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:tweak-literal` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:wrap` — `src/compiler/evaluator_primitives_mutate.cpp`
 
 ## Ast: (14)
 
