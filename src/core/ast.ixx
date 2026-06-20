@@ -747,6 +747,7 @@ private:
         , match_info_(std::move(other.match_info_))
         , region_by_sym_(std::move(other.region_by_sym_))
         , region_by_lambda_id_(std::move(other.region_by_lambda_id_))
+        , root(other.root)
         , bump_generation_suppressed_(other.bump_generation_suppressed_)
         , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
     FlatAST& operator=(FlatAST&& other) noexcept {
@@ -783,6 +784,7 @@ private:
             match_info_ = std::move(other.match_info_);
             region_by_sym_ = std::move(other.region_by_sym_);
             region_by_lambda_id_ = std::move(other.region_by_lambda_id_);
+            root = other.root;
             bump_generation_suppressed_ = other.bump_generation_suppressed_;
             atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
         }
@@ -826,6 +828,7 @@ private:
         , match_info_(other.match_info_)
         , region_by_sym_(other.region_by_sym_)
         , region_by_lambda_id_(other.region_by_lambda_id_)
+        , root(other.root)
         , bump_generation_suppressed_(other.bump_generation_suppressed_)
         , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
     FlatAST& operator=(const FlatAST& other) {
@@ -862,6 +865,7 @@ private:
             match_info_ = other.match_info_;
             region_by_sym_ = other.region_by_sym_;
             region_by_lambda_id_ = other.region_by_lambda_id_;
+            root = other.root;
             bump_generation_suppressed_ = other.bump_generation_suppressed_;
             atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
         }
