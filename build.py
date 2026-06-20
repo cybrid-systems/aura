@@ -5,7 +5,9 @@ Aura — 统一构建/测试入口
 Usage:
   ./build.py build            # CMake 构建
   ./build.py test [suite]     # 运行测试
-  ./build.py check            # 构建 + 全部测试
+  ./build.py check            # gate + ci（与 CI 相同）
+  ./build.py gate             # docs + lint + fixtures（CI 静态检查）
+  ./build.py ci               # build + CI 测试矩阵
   ./build.py clean            # 清理构建产物
   ./build.py list             # 列出测试套件
   ./build.py demo             # 运行 Agent 管线演示
@@ -40,7 +42,9 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
 from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn
@@ -63,9 +67,10 @@ BENCH = ROOT / "tests" / "benchmark.py"
 GEN_DOCS = ROOT / "scripts" / "gen_docs.py"
 
 
-def cmd_docs():
+def cmd_docs(*, check: bool | None = None):
     """Generate or verify docs/generated/*.md from source."""
-    check = "--check" in sys.argv[2:]
+    if check is None:
+        check = "--check" in sys.argv[2:]
     print(f"{B}═══ Docs {'(check)' if check else '(generate)'} ═══{N}")
     if not GEN_DOCS.exists():
         fail(f"missing {GEN_DOCS}")
@@ -132,35 +137,73 @@ def cmd_fixtures():
 # ═══════════════════════════════════════════════════════════════
 
 
+def _build_jobs() -> int:
+    raw = os.environ.get("AURA_BUILD_JOBS", "").strip()
+    if raw:
+        try:
+            n = int(raw)
+            if n > 0:
+                return n
+        except ValueError:
+            pass
+    return os.cpu_count() or 4
+
+
+def _cmake_configure_args() -> list[str]:
+    args = ["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-dev"]
+    build_type = os.environ.get("AURA_BUILD_TYPE", "").strip()
+    if build_type:
+        args.append(f"-DCMAKE_BUILD_TYPE={build_type}")
+    return args
+
+
 def cmd_build():
     """CMake 构建 (Ninja)"""
     print(f"{B}═══ Build ═══{N}")
     BUILD.mkdir(parents=True, exist_ok=True)
-    nproc = os.cpu_count() or 4
+    nproc = _build_jobs()
 
-    r = run(["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-dev"], cwd=ROOT)
+    r = run(_cmake_configure_args(), cwd=ROOT)
     if r != 0:
         return r
 
-    for target in ["aura", "test_ir", "test_concurrent"]:
-        r = run(
-            ["cmake", "--build", str(BUILD), "--target", target, "-j", str(nproc)],
-            cwd=ROOT,
-        )
-        if r != 0:
-            fail(f"build {target} failed")
-            return r
+    # One ninja invocation for the main binaries (avoids 3× cmake driver overhead).
+    r = run(
+        [
+            "cmake",
+            "--build",
+            str(BUILD),
+            "--target",
+            "aura",
+            "test_ir",
+            "test_concurrent",
+            "-j",
+            str(nproc),
+        ],
+        cwd=ROOT,
+    )
+    if r != 0:
+        fail("build main targets failed")
+        return r
 
     # Build test_issue_* targets. Full tier uses the aggregate;
     # fast tier builds a representative subset plus any issue
     # tests touched in the current branch (see issue_tier.py).
     tier = issues_tier()
     if tier == "full":
-        issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", "all_test_issue_targets"]
+        issue_cmd = [
+            "ninja",
+            "-C",
+            str(BUILD),
+            "-k",
+            "0",
+            f"-j{nproc}",
+            "all_test_issue_targets",
+        ]
         info("issue tests: tier=full (all targets)")
     else:
         targets = resolve_issue_targets("fast")
-        issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", *targets]
+        issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", f"-j{nproc}", *targets]
         changed = [t for t in targets if t not in set(load_fast_targets())]
         extra = f", +{len(changed)} git-changed" if changed else ""
         info(f"issue tests: tier=fast ({len(targets)} targets{extra})")
@@ -837,6 +880,20 @@ CI_FUZZ = ["fuzz-equiv", "fuzz-corpus"]
 # AURA_ISSUES_TIER=full on main (all ~90+ binaries).
 CI_ISSUES = ["issues"]
 CI_ISSUES_FAST = ["issues-fast"]
+# Suites safe to run in parallel (separate binaries / no shared /tmp paths).
+CI_PARALLEL_SAFE = frozenset(
+    {
+        "unit",
+        "concurrent",
+        "issues",
+        "issues-fast",
+        "repl",
+        "gradual",
+        "runtime-c",
+        "fuzz-equiv",
+        "fuzz-corpus",
+    }
+)
 
 SUITES = {
     "unit": test_unit,
@@ -862,40 +919,122 @@ SUITES = {
 }
 
 
-def cmd_test(suite_names: list[str]):
-    """Run test suites."""
+_test_print_lock = Lock()
+
+
+def _test_jobs() -> int:
+    raw = os.environ.get("AURA_TEST_JOBS", "1").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 1
+
+
+def _expand_suite_names(suite_names: list[str]) -> list[tuple[str, object]]:
     if not suite_names or "all" in suite_names:
         suite_names = list(SUITES.keys())
 
     if "issues-fast" in suite_names:
         os.environ["AURA_ISSUES_TIER"] = "fast"
 
-    results = {}
+    items: list[tuple[str, object]] = []
     for name in suite_names:
         if name in SUITES:
-            results[name] = SUITES[name]()
+            items.append((name, SUITES[name]))
         elif name == "core":
             for s in CI_CORE:
-                results[f"core/{s}"] = SUITES[s]()
+                items.append((f"core/{s}", SUITES[s]))
         elif name == "safety":
             for s in CI_SAFETY:
-                results[f"safety/{s}"] = SUITES[s]()
+                items.append((f"safety/{s}", SUITES[s]))
         elif name == "fuzz":
             for s in CI_FUZZ:
-                results[f"fuzz/{s}"] = SUITES[s]()
+                items.append((f"fuzz/{s}", SUITES[s]))
         else:
             warn(f"unknown suite '{name}' (use: {', '.join(SUITES.keys())})")
+    return items
 
+
+def _run_suite(label: str, fn) -> tuple[str, int, float]:
+    t0 = time.time()
+    with _test_print_lock:
+        print(f"\n{B}▶ {label}{N}")
+    try:
+        rc = fn()
+    except Exception as exc:  # noqa: BLE001 — surface harness bugs in CI
+        with _test_print_lock:
+            print(f"{R}✗ {label}: {exc}{N}")
+        rc = 1
+    elapsed = time.time() - t0
+    with _test_print_lock:
+        mark = f"{G}✓{N}" if rc == 0 else f"{R}✗{N}"
+        print(f"  {mark} {label} ({elapsed:.1f}s)")
+    return label, rc, elapsed
+
+
+def _summarize_test_results(results: dict[str, int]) -> int:
     print(f"\n{'═' * 50}")
     all_ok = all(v == 0 for v in results.values())
     total = len(results)
-    good = sum(1 for v in results.values() if v == 0)
-    bad = total - good
+    bad = total - sum(1 for v in results.values() if v == 0)
     if bad == 0:
         print(f"{G}All {total} test suites passed{N}")
     else:
         print(f"{R}{bad}/{total} test suites failed{N}")
+        for label, rc in sorted(results.items()):
+            if rc != 0:
+                print(f"  {R}✗{N} {label}")
     return 1 if not all_ok else 0
+
+
+def _suite_base_name(label: str) -> str:
+    return label.split("/")[-1]
+
+
+def cmd_test(suite_names: list[str]):
+    """Run test suites."""
+    items = _expand_suite_names(suite_names)
+    if not items:
+        warn("no test suites to run")
+        return 1
+
+    jobs = _test_jobs()
+    results: dict[str, int] = {}
+
+    if jobs <= 1:
+        for label, fn in items:
+            name, rc, _elapsed = _run_suite(label, fn)
+            results[name] = rc
+        return _summarize_test_results(results)
+
+    parallel = [(lbl, fn) for lbl, fn in items if _suite_base_name(lbl) in CI_PARALLEL_SAFE]
+    serial = [(lbl, fn) for lbl, fn in items if _suite_base_name(lbl) not in CI_PARALLEL_SAFE]
+
+    if parallel:
+        workers = min(jobs, len(parallel))
+        print(f"{B}Running {len(parallel)} parallel-safe suites (jobs={workers}); {len(serial)} aura suites serial{N}")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_run_suite, label, fn): label for label, fn in parallel}
+            for fut in as_completed(futures):
+                label, rc, _elapsed = fut.result()
+                results[label] = rc
+
+    for label, fn in serial:
+        name, rc, _elapsed = _run_suite(label, fn)
+        results[name] = rc
+
+    return _summarize_test_results(results)
+
+
+def cmd_gate():
+    """Fast static checks for CI (docs + lint + fixtures)."""
+    return cmd_docs(check=True) or cmd_lint() or cmd_fixtures()
+
+
+def cmd_ci():
+    """CI build + test (parallel suites when AURA_TEST_JOBS>1)."""
+    suites = CI_CORE + CI_SAFETY + CI_FUZZ + CI_ISSUES
+    return cmd_build() or cmd_test(suites)
 
 
 def cmd_list():
@@ -1139,13 +1278,9 @@ def main():
     commands = {
         "build": cmd_build,
         "clean": cmd_clean,
-        "check": lambda: (
-            cmd_docs()
-            or cmd_lint()
-            or cmd_fixtures()
-            or cmd_build()
-            or cmd_test(CI_CORE + CI_SAFETY + CI_FUZZ + CI_ISSUES)
-        ),
+        "check": lambda: cmd_gate() or cmd_ci(),
+        "gate": cmd_gate,
+        "ci": cmd_ci,
         "docs": cmd_docs,
         "fixtures": cmd_fixtures,
         "lint": cmd_lint,

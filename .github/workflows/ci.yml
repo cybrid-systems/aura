@@ -1,4 +1,10 @@
 # Aura CI
+#
+# Wall-time layout (approx):
+#   gate (~1m) ──► build-test (~10–12m)
+#   asan-build (~8m, parallel with gate+build-test) ──► asan-verify (~5m)
+#
+# PRs skip the ASAN track; main runs the full matrix.
 
 name: CI
 
@@ -8,46 +14,85 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  AURA_BUILD_TYPE: RelWithDebInfo
+  AURA_BUILD_JOBS: "0"  # 0 → use all host CPUs in build.py
+  AURA_TEST_JOBS: "4"
+  AURA_ISSUES_JOBS: "4"
+  CCACHE_MAXSIZE: 2G
+  CCACHE_COMPRESS: 1
+
 jobs:
-  build:
+  gate:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
-
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Python CI deps
-      run: |
-        pip install --break-system-packages -r requirements-dev.txt
-        python3 -c "import pexpect; print('✅ pexpect', pexpect.__version__)"
-        ruff --version
+    - uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ hashFiles('requirements-dev.txt') }}
+        restore-keys: pip-
 
-    # Single CI gate: docs --check, lint, build, core + safety (regression) +
-    # fuzz + issues. PRs use fast issue tier (~18 targets + git-changed);
-    # pushes to main run the full ~90+ issue binaries.
-    - name: Build & Test (check)
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Static checks (docs + lint + fixtures)
+      run: python3 build.py gate
+
+  build-test:
+    needs: [gate]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/ccache
+          ~/.cache/pip
+        key: ccache-${{ runner.os }}-${{ hashFiles('**/*.cpp', '**/*.ixx', '**/*.hh', 'CMakeLists.txt', 'cmake/**') }}
+        restore-keys: |
+          ccache-${{ runner.os }}-
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: ccache stats (before)
+      run: ccache -s || true
+
+    - name: Build & Test
       env:
         AURA_ISSUES_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
         AURA_GIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
-        AURA_ISSUES_JOBS: "4"
-      run: python3 build.py check
+      run: python3 build.py ci
 
-  # Shared ASAN build. Both downstream jobs (memory + asan-tests)
-  # need the same ASAN-instrumented binaries (aura + test_ir) — without
-  # this shared step, each would re-run the cmake + ninja pass
-  # (~3-5 min on a CI runner, dominated by aura's C++ module graph).
-  #
-  # Binaries are uploaded as artifacts so the test jobs run them in
-  # the standard path (./build_asan/aura, ./build_asan/test_ir) and
-  # don't need to know they're coming from a download.
+    - name: ccache stats (after)
+      if: always()
+      run: ccache -s || true
+
+  # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
   asan-build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
-
     steps:
     - uses: actions/checkout@v4
+
+    - uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-asan-${{ runner.os }}-${{ hashFiles('**/*.cpp', '**/*.ixx', '**/*.hh', 'CMakeLists.txt', 'cmake/**') }}
+        restore-keys: |
+          ccache-asan-${{ runner.os }}-
+          ccache-${{ runner.os }}-
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -59,13 +104,11 @@ jobs:
         cmake -DCMAKE_BUILD_TYPE=Debug \
               -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" \
               -G Ninja ..
-        echo "✓ ASAN configure OK"
 
     - name: Build with ASAN
       run: |
         cd build_asan
-        cmake --build . --target aura test_ir
-        echo "✓ ASAN build OK"
+        cmake --build . --target aura test_ir -j "$(nproc)"
 
     - name: Upload ASAN binaries
       uses: actions/upload-artifact@v4
@@ -77,17 +120,12 @@ jobs:
         if-no-files-found: error
         retention-days: 1
 
-  # Issue #67 follow-up: ASAN leak tracking. Runs the multi-session
-  # leak test which loads 50 modules and asserts memory growth stays
-  # under 1MB. ASAN additionally reports any leak at process exit
-  # (even if the functional test passes) — surfaced in the log via
-  # ::notice:: for visibility but doesn't fail the build.
-  memory:
+  asan-verify:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [asan-build]
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
-
     steps:
     - uses: actions/checkout@v4
 
@@ -97,30 +135,18 @@ jobs:
         name: asan-binaries
         path: build_asan
 
-    # upload-artifact@v4 / download-artifact@v4 round-trip through a
-    # zip stream that does NOT preserve the unix +x bit. The binaries
-    # come back as 0644 and the next step dies with EACCES / exit 126.
     - name: Restore executable bit
       run: chmod +x build_asan/aura build_asan/test_ir
 
     - name: Multi-session leak test
       run: |
-        # exitcode=42: ASAN exits with 42 when a leak is reported so the
-        # job fails hard. Capture to a log file directly (no `tee` pipe)
-        # because GitHub Actions' step script runs under `sh`, not bash —
-        # earlier `2>&1 | tee` + `${PIPESTATUS[0]}` produced "Bad
-        # substitution" errors when the runner's sh is dash. Writing
-        # straight to a file and reading $? afterward is fully
-        # POSIX-sh compatible.
         set +e
         ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:print_stacktrace=1:exitcode=42 \
           timeout 120 ./build_asan/aura < tests/multi_session_leak_test.aura \
           > /tmp/asan-multi-session.log 2>&1
         rc=$?
         set -e
-        # Surface the log in the Actions UI regardless of outcome.
         cat /tmp/asan-multi-session.log
-        # The functional test must pass (assertion on growth threshold).
         if ! grep -q "✅ PASS" /tmp/asan-multi-session.log; then
           echo "::error::multi-session leak test FAILED (functional)"
           exit 1
@@ -128,49 +154,12 @@ jobs:
         if [ "$rc" -ne 0 ]; then
           summary=$(grep "SUMMARY: AddressSanitizer" /tmp/asan-multi-session.log | tail -1)
           echo "::error::ASAN leak detected: $summary"
-          echo "::error::First 10 direct leaks:"
           grep "Direct leak of" /tmp/asan-multi-session.log | head -10
           exit 1
         fi
         echo "✓ No ASAN leaks detected"
 
-  # ASAN-full: run the bash test suite + unit tests under
-  # AddressSanitizer. Catches heap-use-after-free / heap-buffer-overflow
-  # / stack-buffer-overflow that the regular build misses.
-  #
-  # Why this job exists: commit 334c7d2 fixed a UAF in TypeRegistry's
-  # std::vector<Entry> storage, and c8ee203 replaced the storage with
-  # a stable-address TypeEntryArena. The bash suite's emit:range /
-  # emit:factorial tests were the original trigger. Running the same
-  # tests under ASAN guarantees that any future UAF in the type
-  # registry (or anywhere else) gets caught before merging, not just
-  # when a CI machine happens to have the right memory layout.
-  #
-  # LeakSanitizer is disabled: there are pre-existing leaks (tracked
-  # separately) and we only want UAFs here. halt_on_error=1 fails
-  # fast on the first error.
-  asan-tests:
-    needs: [asan-build]
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Download ASAN binaries
-      uses: actions/download-artifact@v4
-      with:
-        name: asan-binaries
-        path: build_asan
-
-    - name: Restore executable bit
-      run: chmod +x build_asan/aura build_asan/test_ir
-
     - name: Run unit tests (test_ir) under ASAN
-      # test_ir lives in build_asan/, not build/ (build.py test unit
-      # looks for build/test_ir). Run the ASAN binary directly with
-      # the same env we use for the build job.
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
       run: |
@@ -178,9 +167,6 @@ jobs:
         echo "✓ unit tests clean under ASAN"
 
     - name: Run emit-binary suite (bash) under ASAN
-      # build.py test bash hardcodes AURA=./build/aura internally, so
-      # the wrapper env var doesn't propagate. Invoke run-tests.sh
-      # directly with AURA pointing at the ASAN binary instead.
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
       run: |
