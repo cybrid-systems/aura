@@ -45,6 +45,7 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 ## §2 添加 primitive
 
 注册点：`init_pair_primitives()` 或 `Evaluator()` 构造器（需 `[this]` 时）。
+无状态原语可放入 `evaluator_primitives_*.cpp`（P0：见 `evaluator_primitives_core.cpp`），经 `PrimRegistrar` 回调注册。
 
 ```cpp
 primitives_.add("my:primitive", [](std::span<const EvalValue> a) -> EvalValue {

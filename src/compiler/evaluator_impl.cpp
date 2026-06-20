@@ -114,6 +114,11 @@ static std::string closest_match(std::string_view name, std::span<const std::str
 
 using namespace aura::diag;
 
+namespace primitives_detail {
+void register_type_and_char_primitives(
+    std::function<void(std::string, PrimFn)> add);
+}
+
 // Forward decl: macro body cloner (defined at end of file)
 // Issue #190: `cloned_marker` controls the SyntaxMarker applied to
 // every node the cloner creates in the target flat. Default is
@@ -1363,100 +1368,9 @@ EvalValue Evaluator::make_merr(const std::string& k, const std::string& m) {
 }
 
 void Evaluator::init_pair_primitives() {
-    // ── Type predicates ──────────────────────────────────────────
-    primitives_.add("integer?", [](const auto& a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_int(a[0]));
-    });
-    primitives_.add("float?", [](const auto& a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_float(a[0]));
-    });
-    primitives_.add("boolean?", [](const auto& a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_bool(a[0]));
-    });
-    primitives_.add("number?", [](const auto& a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_int(a[0]) || is_float(a[0]));
-    });
-    primitives_.add("symbol?", [](const auto& a) {
-        if (a.empty())
-            return make_bool(false);
-        // Symbols are interned during parsing and not represented as
-        // first-class EvalValue values; always return false.
-        return make_bool(false);
-    });
-    primitives_.add("procedure?", [](const auto& a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_closure(a[0]) || is_primitive(a[0]));
-    });
-    primitives_.add("void?", [](const auto& a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_void(a[0]));
-    });
-    primitives_.add("void", [](const auto&) { return make_void(); });
-    // ── Character operations (chars are integers in Aura) ──────────
-    primitives_.add("char=?", [](const auto& a) {
-        if (a.size() < 2)
-            return make_bool(false);
-        return make_bool(is_int(a[0]) && is_int(a[1]) && as_int(a[0]) == as_int(a[1]));
-    });
-    primitives_.add("char<?", [](const auto& a) {
-        if (a.size() < 2)
-            return make_bool(false);
-        return make_bool(is_int(a[0]) && is_int(a[1]) && as_int(a[0]) < as_int(a[1]));
-    });
-    primitives_.add("char->integer", [](const auto& a) {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        return a[0];
-    });
-    primitives_.add("integer->char", [](const auto& a) {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        return a[0];
-    });
-    // ── Character predicates ──────────────────────────────────────
-    primitives_.add("char-alphabetic?", [](const auto& a) {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        auto c = as_int(a[0]);
-        return make_bool((c >= 65 && c <= 90) || (c >= 97 && c <= 122));
-    });
-    primitives_.add("char-numeric?", [](const auto& a) {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        return make_bool(as_int(a[0]) >= 48 && as_int(a[0]) <= 57);
-    });
-    primitives_.add("char-whitespace?", [](const auto& a) {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        auto c = as_int(a[0]);
-        return make_bool(c == 32 || (c >= 9 && c <= 13));
-    });
-    primitives_.add("char-upcase", [](const auto& a) {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        auto c = as_int(a[0]);
-        if (c >= 97 && c <= 122)
-            return make_int(c - 32);
-        return make_int(c);
-    });
-    primitives_.add("char-downcase", [](const auto& a) {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        auto c = as_int(a[0]);
-        if (c >= 65 && c <= 90)
-            return make_int(c + 32);
-        return make_int(c);
-    });
+    primitives_detail::register_type_and_char_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); });
+
     // ── String operations ─────────────────────────────────────────
     primitives_.add("string-copy", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
