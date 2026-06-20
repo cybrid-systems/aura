@@ -7,9 +7,8 @@ import subprocess
 import sys
 import tempfile
 
+from _aura_harness import AURA_BIN as AURA
 from regression_cases import load_regression_cases
-
-AURA = "./build/aura"
 
 
 def run(code, timeout=10):
