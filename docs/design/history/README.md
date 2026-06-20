@@ -16,10 +16,10 @@ This directory contains historical design documents, explorations, and issue clo
 
 - New contributors and AI Agents should **skip** this directory initially and start with `core/` documents' Implementation Status sections.
 - Many ideas here have been implemented, evolved, or superseded. Cross-reference with the corresponding `core/` document's §0 table.
-- For project-driven iteration history, see also `projects/GAPS.md`, `projects/README.md`, and the main [roadmap.md](../roadmap.md).
+- For iteration methodology history, see [roadmap.md](../roadmap.md) and `notes/projects_iteration.md`（`projects/` 目录已移除，见 commit `2882e37`）。
 
 Key historical documents of note (with current pointers):
-- `notes/projects_iteration.md` — Foundational project-driven iteration (see current `roadmap.md` and `projects/` for evolution).
+- `notes/projects_iteration.md` — Foundational project-driven iteration（当前见 `roadmap.md` + `tests/suite/`）。
 - `notes/issue-*-*.md` and `closings/*-closing.md` — Deep dives and post-mortems. Cross-reference the corresponding `core/` §0 table for what was actually implemented.
 
 If you are looking for the evolution of a particular feature (e.g. EDSL, workspace, concurrency), start in the relevant `core/` doc and use git blame/log on the historical files only for deep context.
@@ -32,6 +32,6 @@ If you are looking for the evolution of a particular feature (e.g. EDSL, workspa
   2. Update `docs/api-reference.md` (Primitives Surface).
   3. If it's issue-resolution work, add/update a closing in `closings/`.
 - Always add "Superseded by / Current status: see design/core/xxx.md §0" pointers when touching old notes.
-- Follow the full rules in `docs/README.md` → "Living Documentation Practices".
+- Follow the rules in `docs/README.md`（代码 + 测试为真相）。
 
 This keeps the archive useful without polluting discoverability of the living design.
