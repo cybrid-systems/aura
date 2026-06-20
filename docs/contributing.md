@@ -13,7 +13,7 @@
 ./build.py test integ     # .aura 端到端
 ```
 
-加 primitive 后至少补 `tests/suite/` 或 `tests/regression/` 用例。完整原语列表：运行 `(api-reference)`。
+加 primitive 后至少补 `tests/suite/` 或 `tests/regression/` 用例，并运行 `./build.py docs` 更新 `docs/generated/primitives.md`。
 
 ## Evaluator 是什么
 
@@ -131,7 +131,7 @@ if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 
 ## 维护规则（3 条）
 
-1. **加/改 primitive** → 测试用例 + `(api-reference)` 自动列出，不手写百科。
+1. **加/改 primitive** → 测试用例 + `./build.py docs`（`check` 会校验未过期）。
 2. **改 serve 协议** → [wire-formats.md](wire-formats.md) + `tests/test_serve_async.aura`。
 3. **改不变式** → 更新本文 §1–§4 或 [architecture.md](architecture.md)。
 
