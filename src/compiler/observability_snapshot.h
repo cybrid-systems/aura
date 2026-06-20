@@ -65,6 +65,13 @@ struct CompilerSnapshot {
     // CompilerMetrics::ir_soa_functions_emitted.
     std::uint64_t ir_soa_instructions_emitted = 0;
     std::uint64_t ir_soa_functions_emitted = 0;
+    // Issue #255: reference stability observability. Mirrors
+    // CompilerMetrics::{bump_generation_count, is_valid_check_count,
+    // stable_ref_invalidations, atomic_batch_commits}.
+    std::uint64_t bump_generation_count = 0;
+    std::uint64_t is_valid_check_count = 0;
+    std::uint64_t stable_ref_invalidations = 0;
+    std::uint64_t atomic_batch_commits = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).

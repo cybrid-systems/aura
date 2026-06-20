@@ -9811,6 +9811,78 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         };
         return build_hash(kv);
     });
+
+    // (compile:invalidations-stats) — Issue #255: observability
+    // for the FlatAST reference stability mechanism. Hash with
+    // 4 counters:
+    //   - bump-generation-count: total generation bumps
+    //   - is-valid-check-count: total is_valid() calls
+    //   - stable-ref-invalidations: StableNodeRef that went
+    //     stale (ref.gen != current gen when is_valid(ref) was
+    //     called)
+    //   - atomic-batch-commits: atomic batches committed
+    //     (each does 1 bump vs N individual bumps)
+    // Returns a hash with the counts (all 0 if no workspace
+    // is set, or if no service is bound). Companion to
+    // (compile:linear-elide-count) and (compile:ir-soa-stats)
+    // — the underlying counters live on the workspace's
+    // FlatAST (not CompilerMetrics), so we read them via the
+    // workspace_flat() accessor on the Evaluator (which the
+    // service.ixx snapshot() also uses).
+    primitives_.add("compile:invalidations-stats", [this](const auto&) -> EvalValue {
+        // Re-use the build_hash pattern from compile:ir-soa-stats
+        // above (same FNV-1a hash + open-addressing insert).
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t bumps = 0, checks = 0, inits = 0, commits = 0;
+        // The counters live on the workspace FlatAST (set up in
+        // ast.ixx). Get the FlatAST via the Evaluator's
+        // workspace_flat() accessor (added in #175 so
+        // service.ixx can read workspace state).
+        if (auto* ws_flat = workspace_flat()) {
+            bumps   = ws_flat->bump_generation_count();
+            checks  = ws_flat->is_valid_check_count();
+            inits   = ws_flat->stable_ref_invalidations();
+            commits = ws_flat->atomic_batch_commits_v();
+        }
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"bump-generation-count", make_int(static_cast<std::int64_t>(bumps))},
+            {"is-valid-check-count", make_int(static_cast<std::int64_t>(checks))},
+            {"stable-ref-invalidations", make_int(static_cast<std::int64_t>(inits))},
+            {"atomic-batch-commits", make_int(static_cast<std::int64_t>(commits))},
+        };
+        return build_hash(kv);
+    });
 }
 
 
