@@ -73,10 +73,10 @@ export using CSolveResult = SolveResult;
 // in follow-up issues.
 export template <typename C>
 concept TypeConstraint = requires(C c, ConstraintSystem& cs) {
-    { c.kind() }      -> std::same_as<ConstraintKind>;
-    { c.unify(cs) }   -> std::same_as<bool>;
-    { c.lhs() }       -> std::same_as<aura::core::TypeId>;
-    { c.rhs() }       -> std::same_as<aura::core::TypeId>;
+    { c.kind() } -> std::same_as<ConstraintKind>;
+    { c.unify(cs) } -> std::same_as<bool>;
+    { c.lhs() } -> std::same_as<aura::core::TypeId>;
+    { c.rhs() } -> std::same_as<aura::core::TypeId>;
 };
 
 // ── InferenceContext ──────────────────────────────────────────
@@ -118,12 +118,12 @@ export struct InferenceContext {
 // function `infer_with_rules<R>(ctx, view)` dispatches via
 // `matches()`.
 export template <typename R>
-concept InferenceRule = requires(R r, const InferenceContext& ctx,
-                                  const aura::ast::NodeView& view) {
-    typename R::result_type;
-    { r.matches(view) } -> std::same_as<bool>;
-    { r.synthesize(ctx, view) } -> std::same_as<typename R::result_type>;
-};
+concept InferenceRule =
+    requires(R r, const InferenceContext& ctx, const aura::ast::NodeView& view) {
+        typename R::result_type;
+        { r.matches(view) } -> std::same_as<bool>;
+        { r.synthesize(ctx, view) } -> std::same_as<typename R::result_type>;
+    };
 
 // ── infer_with_rules<R> — concept-driven inference (opt-in)
 //
@@ -155,7 +155,8 @@ export struct EqualConstraint {
 
     constexpr EqualConstraint() = default;
     constexpr EqualConstraint(aura::core::TypeId l, aura::core::TypeId r)
-        : lhs_(l), rhs_(r) {}
+        : lhs_(l)
+        , rhs_(r) {}
 
     constexpr ConstraintKind kind() const { return CK_EQUAL; }
     constexpr aura::core::TypeId lhs() const { return lhs_; }
@@ -174,7 +175,8 @@ export struct ConsistentConstraint {
 
     constexpr ConsistentConstraint() = default;
     constexpr ConsistentConstraint(aura::core::TypeId l, aura::core::TypeId r)
-        : lhs_(l), rhs_(r) {}
+        : lhs_(l)
+        , rhs_(r) {}
 
     constexpr ConstraintKind kind() const { return CK_CONSISTENT; }
     constexpr aura::core::TypeId lhs() const { return lhs_; }
@@ -196,8 +198,7 @@ export struct LiteralRule {
     constexpr bool matches(const aura::ast::NodeView& view) const {
         return view.tag == aura::ast::NodeTag::LiteralInt;
     }
-    aura::core::TypeId synthesize(const InferenceContext& ctx,
-                                  const aura::ast::NodeView&) const {
+    aura::core::TypeId synthesize(const InferenceContext& ctx, const aura::ast::NodeView&) const {
         return ctx.registry.int_type();
     }
 };
@@ -220,9 +221,8 @@ export struct BoolRule {
         return view.tag == aura::ast::NodeTag::LiteralInt &&
                view.marker == aura::ast::SyntaxMarker::BoolLiteral;
     }
-    aura::core::TypeId synthesize(const InferenceContext& ctx,
-                                  const aura::ast::NodeView&) const {
-        return ctx.registry.int_type();  // no separate bool_type yet
+    aura::core::TypeId synthesize(const InferenceContext& ctx, const aura::ast::NodeView&) const {
+        return ctx.registry.int_type(); // no separate bool_type yet
     }
 };
 
@@ -245,8 +245,7 @@ export struct VarRule {
     constexpr bool matches(const aura::ast::NodeView& view) const {
         return view.tag == aura::ast::NodeTag::Variable;
     }
-    aura::core::TypeId synthesize(const InferenceContext& ctx,
-                                  const aura::ast::NodeView&) const {
+    aura::core::TypeId synthesize(const InferenceContext& ctx, const aura::ast::NodeView&) const {
         // Allocate a fresh type var and add a CONSISTENT
         // constraint against the dynamic type so the solver
         // can resolve it. (The full env lookup is deferred
@@ -293,11 +292,8 @@ static_assert(TypeConstraint<EqualConstraint>,
               "EqualConstraint must satisfy TypeConstraint concept");
 static_assert(TypeConstraint<ConsistentConstraint>,
               "ConsistentConstraint must satisfy TypeConstraint concept");
-static_assert(InferenceRule<LiteralRule>,
-              "LiteralRule must satisfy InferenceRule concept");
-static_assert(InferenceRule<BoolRule>,
-              "BoolRule must satisfy InferenceRule concept");
-static_assert(InferenceRule<VarRule>,
-              "VarRule must satisfy InferenceRule concept");
+static_assert(InferenceRule<LiteralRule>, "LiteralRule must satisfy InferenceRule concept");
+static_assert(InferenceRule<BoolRule>, "BoolRule must satisfy InferenceRule concept");
+static_assert(InferenceRule<VarRule>, "VarRule must satisfy InferenceRule concept");
 
 } // namespace aura::compiler

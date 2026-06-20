@@ -43,7 +43,8 @@ public:
     using Fn = std::function<void()>;
 
     when_all_sender(fiber_scheduler& sched, std::vector<Fn> fns)
-        : sched_(&sched), fns_(std::move(fns)) {}
+        : sched_(&sched)
+        , fns_(std::move(fns)) {}
 
     operation_state connect(fiber_receiver rcvr) &&;
 
@@ -70,7 +71,8 @@ public:
     using Fn = std::function<void()>;
 
     let_value_sender(fiber_scheduler& sched, std::vector<Fn> fns)
-        : sched_(&sched), fns_(std::move(fns)) {}
+        : sched_(&sched)
+        , fns_(std::move(fns)) {}
 
     operation_state connect(fiber_receiver rcvr) &&;
 
@@ -96,9 +98,10 @@ class with_timeout_sender {
 public:
     using Fn = std::function<void()>;
 
-    with_timeout_sender(fiber_scheduler& sched, Fn fn,
-                        std::chrono::milliseconds timeout)
-        : sched_(&sched), fn_(std::move(fn)), timeout_(timeout) {}
+    with_timeout_sender(fiber_scheduler& sched, Fn fn, std::chrono::milliseconds timeout)
+        : sched_(&sched)
+        , fn_(std::move(fn))
+        , timeout_(timeout) {}
 
     operation_state connect(fiber_receiver rcvr) &&;
 
@@ -124,7 +127,9 @@ public:
     using Fn = std::function<void()>;
 
     retry_sender(fiber_scheduler& sched, Fn fn, int max_attempts)
-        : sched_(&sched), fn_(std::move(fn)), max_attempts_(max_attempts) {}
+        : sched_(&sched)
+        , fn_(std::move(fn))
+        , max_attempts_(max_attempts) {}
 
     operation_state connect(fiber_receiver rcvr) &&;
 
@@ -136,25 +141,20 @@ private:
 
 // ── Free-function wrappers ───────────────────────────
 
-inline when_all_sender when_all(fiber_scheduler& sched,
-                                std::vector<std::function<void()>> fns) {
+inline when_all_sender when_all(fiber_scheduler& sched, std::vector<std::function<void()>> fns) {
     return when_all_sender(sched, std::move(fns));
 }
 
-inline let_value_sender let_value(fiber_scheduler& sched,
-                                  std::vector<std::function<void()>> fns) {
+inline let_value_sender let_value(fiber_scheduler& sched, std::vector<std::function<void()>> fns) {
     return let_value_sender(sched, std::move(fns));
 }
 
-inline with_timeout_sender with_timeout(fiber_scheduler& sched,
-                                        std::function<void()> fn,
+inline with_timeout_sender with_timeout(fiber_scheduler& sched, std::function<void()> fn,
                                         std::chrono::milliseconds timeout) {
     return with_timeout_sender(sched, std::move(fn), timeout);
 }
 
-inline retry_sender retry(fiber_scheduler& sched,
-                          std::function<void()> fn,
-                          int max_attempts) {
+inline retry_sender retry(fiber_scheduler& sched, std::function<void()> fn, int max_attempts) {
     return retry_sender(sched, std::move(fn), max_attempts);
 }
 

@@ -2,7 +2,7 @@
 // Routes compilation requests to the LLVM-based emit backend in aura_jit.cpp.
 
 #include "aura_jit.h"
-#include "aot_mangle.h"  // mangle_aot_name (Issue #136)
+#include "aot_mangle.h" // mangle_aot_name (Issue #136)
 
 #include <cstdio>
 #include <string>
@@ -11,7 +11,7 @@
 #include <vector>
 #include <unordered_set>
 #include <cstdint>  // Issue #243: std::uint64_t for g_aot_defuse_version
-#include <unistd.h>  // Issue #237 v4: readlink for /proc/self/exe lookup
+#include <unistd.h> // Issue #237 v4: readlink for /proc/self/exe lookup
 
 // Helper: convert aura::ir::IRFunction to aura::jit::FlatFunction
 // This bridges between the compiler's IR types and the JIT's FlatFunction.
@@ -97,11 +97,11 @@ extern "C" int64_t aura_jit_test() {
 // in the full AOT pipeline).
 
 static bool generate_registration_c(const aura::jit::FlatFunction* functions,
-                                     const uint32_t* func_ids,
-                                     unsigned int num_functions,
-                                     const std::string& reg_c_path) {
+                                    const uint32_t* func_ids, unsigned int num_functions,
+                                    const std::string& reg_c_path) {
     FILE* f = std::fopen(reg_c_path.c_str(), "w");
-    if (!f) return false;
+    if (!f)
+        return false;
 
     fprintf(f, "// Auto-generated closure registration for AOT binary\n");
     fprintf(f, "#include <stdint.h>\n");
@@ -139,8 +139,9 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     std::unordered_set<std::string> seen;
     for (unsigned i = 0; i < num_functions; ++i) {
         if (!seen.insert(mangled_names[i]).second) {
-            fprintf(stderr, "AOT warning: mangled name collision for '%s' (both %s) "
-                            "[emit_version=%llu]\n",
+            fprintf(stderr,
+                    "AOT warning: mangled name collision for '%s' (both %s) "
+                    "[emit_version=%llu]\n",
                     functions[i].name, mangled_names[i].c_str(),
                     static_cast<unsigned long long>(emit_version));
         }
@@ -167,8 +168,8 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "__attribute__((constructor)) void aura_aot_register_fns(void) {\n");
 
     for (unsigned int i = 0; i < num_functions; ++i) {
-        fprintf(f, "    aura_register_fn(%u, (int64_t)%s);\n",
-                func_ids[i], mangled_names[i].c_str());
+        fprintf(f, "    aura_register_fn(%u, (int64_t)%s);\n", func_ids[i],
+                mangled_names[i].c_str());
     }
 
     fprintf(f, "}\n");
@@ -222,7 +223,10 @@ static std::string find_runtime_c() {
     // (1) AURA_RUNTIME_DIR env override
     if (auto* env = ::getenv("AURA_RUNTIME_DIR")) {
         std::string p = std::string(env) + "/runtime.c";
-        if (FILE* f = std::fopen(p.c_str(), "r")) { std::fclose(f); return p; }
+        if (FILE* f = std::fopen(p.c_str(), "r")) {
+            std::fclose(f);
+            return p;
+        }
     }
 
     // (2) Walk up from the aura binary's directory looking
@@ -251,23 +255,26 @@ static std::string find_runtime_c() {
             }
             // Go up one level.
             slash = cur.find_last_of('/');
-            if (slash == std::string::npos || slash == 0) break;
+            if (slash == std::string::npos || slash == 0)
+                break;
             cur = cur.substr(0, slash);
         }
     }
 
     // (3) Legacy CWD-relative fallbacks (dev-machine layout).
     for (const char* rel : {"lib/runtime.c", "../lib/runtime.c"}) {
-        if (FILE* f = std::fopen(rel, "r")) { std::fclose(f); return rel; }
+        if (FILE* f = std::fopen(rel, "r")) {
+            std::fclose(f);
+            return rel;
+        }
     }
 
-    return "";  // not found
+    return ""; // not found
 }
 
 static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* functions,
-                                          unsigned int num_functions,
-                                          const std::string& out_path,
-                                          const std::string& runtime_c_path) {
+                                         unsigned int num_functions, const std::string& out_path,
+                                         const std::string& runtime_c_path) {
     if (num_functions == 0)
         return false;
 
@@ -278,10 +285,10 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     // entered with the expected function count and version.
     // The version is captured from g_aot_defuse_version so
     // the banner also documents the AOT emit epoch.
-    fprintf(stderr, "AOT: starting native emit: %u function(s), "
-                    "out=%s, defuse_version=%llu\n",
-            num_functions, out_path.c_str(),
-            static_cast<unsigned long long>(g_aot_defuse_version));
+    fprintf(stderr,
+            "AOT: starting native emit: %u function(s), "
+            "out=%s, defuse_version=%llu\n",
+            num_functions, out_path.c_str(), static_cast<unsigned long long>(g_aot_defuse_version));
 
     // Step 1: Compile each FlatFunction to .o via LLVM IR + llc
     for (unsigned int i = 0; i < num_functions; ++i) {
@@ -292,11 +299,10 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
         // error was emitted at this point with no surrounding
         // context, which made it hard to correlate with the
         // input.
-        fprintf(stderr, "AOT: [%u/%u] emitting '%s' (region=%d) -> %s\n",
-                i + 1, num_functions, functions[i].name,
-                static_cast<int>(functions[i].region), obj_path.c_str());
+        fprintf(stderr, "AOT: [%u/%u] emitting '%s' (region=%d) -> %s\n", i + 1, num_functions,
+                functions[i].name, static_cast<int>(functions[i].region), obj_path.c_str());
         bool ok = aura::jit::emit_native_object(functions[i], obj_path,
-                                                   g_string_pool.empty() ? nullptr : &g_string_pool);
+                                                g_string_pool.empty() ? nullptr : &g_string_pool);
         if (!ok) {
             // Issue #243 Phase 3: include the function name,
             // index, total count, and the current defuse_version_
@@ -304,9 +310,10 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
             // (a) which function failed, (b) how many other
             // functions were in the batch, and (c) which
             // emit epoch this batch belonged to.
-            fprintf(stderr, "AOT: failed to compile function '%s' "
-                            "[index=%u/%u, defuse_version=%llu]. "
-                            "See LLVM/emit_native_object output above.\n",
+            fprintf(stderr,
+                    "AOT: failed to compile function '%s' "
+                    "[index=%u/%u, defuse_version=%llu]. "
+                    "See LLVM/emit_native_object output above.\n",
                     functions[i].name, i, num_functions,
                     static_cast<unsigned long long>(g_aot_defuse_version));
             for (auto& p : obj_files)
@@ -330,15 +337,18 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
         // reaches stderr. The previous silent-failure mode meant the
         // aura binary returned rc=1 from `--emit-binary` on CI x86_64
         // with NO diagnostic information to debug the failure.
-        std::string cmd = cc + " -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>&1";
+        std::string cmd =
+            cc + " -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>&1";
         int rc = ::system(cmd.c_str());
         if (rc != 0) {
             cmd = "clang -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>&1";
             rc = ::system(cmd.c_str());
         }
         if (rc != 0) {
-            fprintf(stderr, "AOT: cannot compile runtime '%s' (cc=%s). Check above for the gcc/clang error.\n",
-                    runtime_c_path.c_str(), cc.c_str());
+            fprintf(
+                stderr,
+                "AOT: cannot compile runtime '%s' (cc=%s). Check above for the gcc/clang error.\n",
+                runtime_c_path.c_str(), cc.c_str());
             for (auto& p : obj_files)
                 std::remove(p.c_str());
             return false;
@@ -353,7 +363,7 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     std::vector<uint32_t> func_ids(num_functions);
     for (unsigned int i = 0; i < num_functions; ++i)
         func_ids[i] = i;
-    
+
     std::string reg_c_path = out_path + "._reg.c";
     std::string reg_o_path = out_path + "._reg.o";
     if (generate_registration_c(functions, func_ids.data(), num_functions, reg_c_path)) {
@@ -383,7 +393,8 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
         if (f) {
             std::fputs(g_prim_reg_c_code.c_str(), f);
             std::fclose(f);
-            std::string cmd = cc + " -c " + pic_flag + " " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
+            std::string cmd =
+                cc + " -c " + pic_flag + " " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
             int rc = ::system(cmd.c_str());
             if (rc != 0) {
                 cmd = "clang -c " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
@@ -418,8 +429,7 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
 
     if (rc == 0) {
         fprintf(stderr, "AOT: emitted native binary: %s (defuse_version=%llu, %u function(s))\n",
-                out_path.c_str(),
-                static_cast<unsigned long long>(g_aot_defuse_version),
+                out_path.c_str(), static_cast<unsigned long long>(g_aot_defuse_version),
                 num_functions);
         return true;
     }
@@ -428,9 +438,10 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     // with the actual link error (which now reaches stderr thanks to
     // the 2>&1 + removed 2>/dev/null above). Print a clear banner so
     // the CI test runner can see what really failed.
-    fprintf(stderr, "AOT: link failed (rc=%d) — see gcc/clang output above. "
-                    "Common causes on x86_64: PIE/PIC mismatch, missing runtime symbols.\n",
-                    rc);
+    fprintf(stderr,
+            "AOT: link failed (rc=%d) — see gcc/clang output above. "
+            "Common causes on x86_64: PIE/PIC mismatch, missing runtime symbols.\n",
+            rc);
     return false;
 }
 
@@ -478,7 +489,7 @@ extern "C" void aura_set_string_pool(const char** strings, unsigned int count) {
 // Returns true on successful native binary emission.
 //
 extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
-                                       const void* functions, unsigned int num_functions) {
+                                      const void* functions, unsigned int num_functions) {
     if (!out_path || !source)
         return false;
 
@@ -514,19 +525,20 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
         // (aura binary and test binary had different CWDs in CI).
         std::string runtime_c = find_runtime_c();
         if (runtime_c.empty()) {
-            fprintf(stderr, "AOT: cannot find lib/runtime.c. Tried:\n"
-                            "  - $AURA_RUNTIME_DIR/runtime.c\n"
-                            "  - <aura-binary-dir>/lib/runtime.c and 7 ancestor dirs\n"
-                            "  - lib/runtime.c (CWD)\n"
-                            "  - ../lib/runtime.c (CWD)\n"
-                            "Set AURA_RUNTIME_DIR or run aura from a directory where lib/ exists.\n");
+            fprintf(stderr,
+                    "AOT: cannot find lib/runtime.c. Tried:\n"
+                    "  - $AURA_RUNTIME_DIR/runtime.c\n"
+                    "  - <aura-binary-dir>/lib/runtime.c and 7 ancestor dirs\n"
+                    "  - lib/runtime.c (CWD)\n"
+                    "  - ../lib/runtime.c (CWD)\n"
+                    "Set AURA_RUNTIME_DIR or run aura from a directory where lib/ exists.\n");
             return false;
         }
         fprintf(stderr, "AOT: using runtime.c at %s\n", runtime_c.c_str());
 
-        bool ok = aot_flat_functions_to_binary(aot_fns.data(), static_cast<unsigned int>(aot_fns.size()),
-                                                std::string(out_path),
-                                                runtime_c);
+        bool ok =
+            aot_flat_functions_to_binary(aot_fns.data(), static_cast<unsigned int>(aot_fns.size()),
+                                         std::string(out_path), runtime_c);
         if (ok) {
             // Issue #151 Phase 2: report the tier-dispatch
             // result. aot_fns.size() is what was AOT-emitted
@@ -535,9 +547,9 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
             // were filtered out and will go through the JIT
             // path).
             std::fprintf(stderr,
-                "AOT tier dispatch: %zu function(s) AOT-emitted, "
-                "%zu function(s) skipped (Evolution -> JIT)\n",
-                aot_fns.size(), num_functions - aot_fns.size());
+                         "AOT tier dispatch: %zu function(s) AOT-emitted, "
+                         "%zu function(s) skipped (Evolution -> JIT)\n",
+                         aot_fns.size(), num_functions - aot_fns.size());
             return true;
         }
 
@@ -547,9 +559,9 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
         if (const char* e = std::getenv("AURA_OBS_LOG");
             e && (e[0] == '1' || e[0] == 't' || e[0] == 'T')) {
             std::fprintf(stderr,
-                "{\"event\":\"aot_fallback\",\"fields\":{"
-                "\"reason\":\"llvm_pipeline_failed\",\"num_functions\":%u}}\n",
-                num_functions);
+                         "{\"event\":\"aot_fallback\",\"fields\":{"
+                         "\"reason\":\"llvm_pipeline_failed\",\"num_functions\":%u}}\n",
+                         num_functions);
         }
     }
 
@@ -568,17 +580,22 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
         ::pclose(pipe);
     }
     // Trim whitespace
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r' || result.back() == ' ' || result.back() == '\t'))
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r' ||
+                               result.back() == ' ' || result.back() == '\t'))
         result.pop_back();
     if (result.empty())
         result = "()";
     // Escape for C string literal
     std::string escaped;
     for (char c : result) {
-        if (c == '\\') escaped += "\\\\";
-        else if (c == '"') escaped += "\\\"";
-        else if (c == '\n') escaped += "\\n";
-        else escaped += c;
+        if (c == '\\')
+            escaped += "\\\\";
+        else if (c == '"')
+            escaped += "\\\"";
+        else if (c == '\n')
+            escaped += "\\n";
+        else
+            escaped += c;
     }
 
     // Write C source

@@ -83,7 +83,7 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     std::vector<SymId> param_data;
     std::vector<std::uint32_t> lines(n, 0);
     std::vector<std::uint32_t> cols(n, 0);
-    std::vector<std::uint32_t> type_ids(n, 0);  // Issue #73 Phase 2
+    std::vector<std::uint32_t> type_ids(n, 0); // Issue #73 Phase 2
 
     for (NodeId id = 0; id < n; ++id) {
         auto v = flat.get(id);
@@ -92,7 +92,7 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
         sym_ids[id] = stbl.remapped[id]; // remapped index
         lines[id] = v.line;
         cols[id] = v.col;
-        type_ids[id] = flat.type_id(id);  // Issue #73: persist TypeId so it
+        type_ids[id] = flat.type_id(id); // Issue #73: persist TypeId so it
                                          // survives cache load
 
         // Issue #220: per-node child count (the reader reconstructs
@@ -300,8 +300,8 @@ void setup_pointers(MappedCache& cache) {
     // missing the column (size < 4*n), type_ids_ stays nullptr and
     // flat.type_id() returns 0 — graceful forward-compat.
     std::uint64_t consumed = pos;
-    if (consumed + n * 4 <= static_cast<std::uint64_t>(cache.file_size_ -
-            cache.header_->node_offset)) {
+    if (consumed + n * 4 <=
+        static_cast<std::uint64_t>(cache.file_size_ - cache.header_->node_offset)) {
         cache.type_ids_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
     } else {
         // Skip past the expected slot without consuming — leaves pos
@@ -374,8 +374,7 @@ NodeView MappedCache::get(NodeId id) const {
         // can read it directly. Old cache files (no type_ids_ column)
         // get 0 here, which matches flat.type_id()'s DYNAMIC default.
         .type_id = type_ids_ ? type_ids_[id] : 0u,
-        .children = std::span(child_data_ + cum_begins_[id],
-                               child_count_per_node_[id]),
+        .children = std::span(child_data_ + cum_begins_[id], child_count_per_node_[id]),
         .params = std::span(param_data_ + param_begins_[id], param_counts_[id]),
         .marker = markers_ ? static_cast<SyntaxMarker>(markers_[id]) : SyntaxMarker::User,
     };

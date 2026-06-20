@@ -35,7 +35,7 @@ export ComputeKindResult compute_kind(const aura::ir::IRFunction& func);
 //
 // Returns a vector of the same length as `instructions`,
 // one ComputeKind per instruction. Pure: no mutation.
-export std::vector<ComputeKind> compute_kind_instructions(
-    std::span<const aura::ir::IRInstruction> instructions);
+export std::vector<ComputeKind>
+compute_kind_instructions(std::span<const aura::ir::IRInstruction> instructions);
 
 } // namespace aura::compiler

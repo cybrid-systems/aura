@@ -28,8 +28,7 @@ public:
     // ── Record a shape observation ─────────────────────────────
     // Called after each eval of function `fn` with the observed shape ID.
     // Returns true if the shape is now considered stable.
-    bool record_shape(FnKey fn, ShapeID shape_id)
-        pre (shape_id != SHAPE_UNKNOWN);
+    bool record_shape(FnKey fn, ShapeID shape_id) pre(shape_id != SHAPE_UNKNOWN);
 
     // ── Check stability ────────────────────────────────────────
     bool is_stable(FnKey fn) const;
@@ -43,8 +42,7 @@ public:
     // ── Invalidate after mutate:* ──────────────────────────────
     // Called when mutate:* modifies function `fn`.
     // Resets stability state and increments version.
-    void invalidate(FnKey fn)
-        pre (fn != 0);
+    void invalidate(FnKey fn) pre(fn != 0);
 
     // ── Metrics ────────────────────────────────────────────────
     ShapeFnMetrics metrics(FnKey fn) const;
@@ -70,7 +68,7 @@ private:
     };
 
     struct FnProfile {
-        std::vector<ShapeRecord> history;  // sliding window
+        std::vector<ShapeRecord> history; // sliding window
         std::uint64_t total_calls = 0;
         std::uint64_t version = 0;
         std::uint64_t deopt_count = 0;
@@ -88,6 +86,6 @@ private:
     std::uint64_t global_time_ = 0;
 };
 
-}  // namespace aura::compiler::shape
+} // namespace aura::compiler::shape
 
-#endif  // AURA_COMPILER_SHAPE_PROFILER_H
+#endif // AURA_COMPILER_SHAPE_PROFILER_H

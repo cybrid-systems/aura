@@ -36,12 +36,18 @@ namespace aura::compiler::shape {
 //
 // Tag/bit constants come from value_tags.h (issue #58); we just
 // alias them under the local names this file used before.
-static constexpr std::int64_t kFloatBias  = aura::compiler::types::FLOAT_BIAS_VAL;
+static constexpr std::int64_t kFloatBias = aura::compiler::types::FLOAT_BIAS_VAL;
 static constexpr std::int64_t kStringBias = aura::compiler::types::STRING_BIAS_VAL_2;
 
-static inline bool is_fixnum_val(std::int64_t v) noexcept { return (v & 1) == 0; }
-static inline bool is_ref_val(std::int64_t v) noexcept    { return (v & 3) == 1; }
-static inline bool is_special_val(std::int64_t v) noexcept { return (v & 3) == 3; }
+static inline bool is_fixnum_val(std::int64_t v) noexcept {
+    return (v & 1) == 0;
+}
+static inline bool is_ref_val(std::int64_t v) noexcept {
+    return (v & 3) == 1;
+}
+static inline bool is_special_val(std::int64_t v) noexcept {
+    return (v & 3) == 3;
+}
 static inline std::uint64_t ref_type_val(std::int64_t v) noexcept {
     return (static_cast<std::uint64_t>(v) >> 2) & 0xF;
 }
@@ -60,11 +66,16 @@ ShapeID inline_shape_of(std::int64_t val) {
     if (is_ref_val(val)) {
         auto rt = ref_type_val(val);
         switch (rt) {
-            case aura::compiler::types::RefPair:     return 10;  // SHAPE_PAIR
-            case aura::compiler::types::RefVector:   return 11;  // SHAPE_VECTOR
-            case aura::compiler::types::RefHash:     return 12;  // SHAPE_HASH
-            case aura::compiler::types::RefClosure:  return 13;  // SHAPE_CLOSURE
-            default:                                   return 14;  // SHAPE_REF
+            case aura::compiler::types::RefPair:
+                return 10; // SHAPE_PAIR
+            case aura::compiler::types::RefVector:
+                return 11; // SHAPE_VECTOR
+            case aura::compiler::types::RefHash:
+                return 12; // SHAPE_HASH
+            case aura::compiler::types::RefClosure:
+                return 13; // SHAPE_CLOSURE
+            default:
+                return 14; // SHAPE_REF
         }
     }
     return SHAPE_ANY;
@@ -88,7 +99,7 @@ static ShapeID hash_int32(ShapeID h, std::int32_t v) {
 }
 
 ShapeID compute_shape_id(const Shape& shape) {
-    ShapeID h = 0xcbf29ce484222325ULL;  // FNV offset
+    ShapeID h = 0xcbf29ce484222325ULL; // FNV offset
     h = hash_uint8(h, static_cast<std::uint8_t>(shape.tag));
     h = hash_int32(h, shape.type_id);
 
@@ -103,24 +114,30 @@ ShapeID compute_shape_id(const Shape& shape) {
             break;
 
         case ShapeTag::Pair:
-            if (shape.car_shape) h = hash_combine(h, shape.car_shape->id);
-            if (shape.cdr_shape) h = hash_combine(h, shape.cdr_shape->id);
+            if (shape.car_shape)
+                h = hash_combine(h, shape.car_shape->id);
+            if (shape.cdr_shape)
+                h = hash_combine(h, shape.cdr_shape->id);
             break;
 
         case ShapeTag::Vector:
-            if (shape.elem_shape) h = hash_combine(h, shape.elem_shape->id);
+            if (shape.elem_shape)
+                h = hash_combine(h, shape.elem_shape->id);
             h = hash_combine(h, static_cast<ShapeID>(shape.min_len));
             h = hash_combine(h, static_cast<ShapeID>(shape.max_len));
             break;
 
         case ShapeTag::Hash:
-            if (shape.key_shape) h = hash_combine(h, shape.key_shape->id);
-            if (shape.value_shape) h = hash_combine(h, shape.value_shape->id);
+            if (shape.key_shape)
+                h = hash_combine(h, shape.key_shape->id);
+            if (shape.value_shape)
+                h = hash_combine(h, shape.value_shape->id);
             break;
 
         case ShapeTag::Closure:
             h = hash_combine(h, static_cast<ShapeID>(shape.arity));
-            if (shape.ret_shape) h = hash_combine(h, shape.ret_shape->id);
+            if (shape.ret_shape)
+                h = hash_combine(h, shape.ret_shape->id);
             break;
 
         case ShapeTag::Struct:
@@ -148,37 +165,62 @@ ShapeID compute_shape_id(const Shape& shape) {
 
 const char* shape_tag_name(ShapeTag tag) noexcept {
     switch (tag) {
-        case ShapeTag::Any:     return "any";
-        case ShapeTag::Int:     return "int";
-        case ShapeTag::Float:   return "float";
-        case ShapeTag::Bool:    return "bool";
-        case ShapeTag::String:  return "string";
-        case ShapeTag::Void:    return "void";
-        case ShapeTag::Pair:    return "pair";
-        case ShapeTag::Vector:  return "vector";
-        case ShapeTag::Hash:    return "hash";
-        case ShapeTag::Closure: return "closure";
-        case ShapeTag::Struct:  return "struct";
-        case ShapeTag::Union:   return "union";
-        case ShapeTag::Ref:     return "ref";
+        case ShapeTag::Any:
+            return "any";
+        case ShapeTag::Int:
+            return "int";
+        case ShapeTag::Float:
+            return "float";
+        case ShapeTag::Bool:
+            return "bool";
+        case ShapeTag::String:
+            return "string";
+        case ShapeTag::Void:
+            return "void";
+        case ShapeTag::Pair:
+            return "pair";
+        case ShapeTag::Vector:
+            return "vector";
+        case ShapeTag::Hash:
+            return "hash";
+        case ShapeTag::Closure:
+            return "closure";
+        case ShapeTag::Struct:
+            return "struct";
+        case ShapeTag::Union:
+            return "union";
+        case ShapeTag::Ref:
+            return "ref";
     }
     return "?";
 }
 
 std::string format_shape_id(ShapeID id) {
     switch (id) {
-        case SHAPE_UNKNOWN: return "?";
-        case SHAPE_ANY:     return "any";
-        case SHAPE_INT:     return "Int";
-        case SHAPE_FLOAT:   return "Float";
-        case SHAPE_BOOL:    return "Bool";
-        case SHAPE_STRING:  return "String";
-        case SHAPE_VOID:    return "()";
-        case 10:            return "Pair";
-        case 11:            return "Vector";
-        case 12:            return "Hash";
-        case 13:            return "Closure";
-        case 14:            return "Ref";
+        case SHAPE_UNKNOWN:
+            return "?";
+        case SHAPE_ANY:
+            return "any";
+        case SHAPE_INT:
+            return "Int";
+        case SHAPE_FLOAT:
+            return "Float";
+        case SHAPE_BOOL:
+            return "Bool";
+        case SHAPE_STRING:
+            return "String";
+        case SHAPE_VOID:
+            return "()";
+        case 10:
+            return "Pair";
+        case 11:
+            return "Vector";
+        case 12:
+            return "Hash";
+        case 13:
+            return "Closure";
+        case 14:
+            return "Ref";
         default:
             return "shape#" + std::to_string(id);
     }
@@ -329,4 +371,4 @@ std::vector<FnKey> ShapeProfiler::tracked_fns() const {
     return keys;
 }
 
-}  // namespace aura::compiler::shape
+} // namespace aura::compiler::shape

@@ -22,12 +22,11 @@ export struct ArenaStats {
     std::size_t total_compaction_saved = 0; // lifetime bytes reclaimed
 
     std::string format() const {
-        return std::format(
-            "arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
-            "{} compactions (last saved {}B, total {}B)",
-            used / 1048576.0, capacity / 1048576.0, peak_used / 1048576.0,
-            allocation_count, wasted, compaction_count, last_compaction_saved,
-            total_compaction_saved);
+        return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
+                           "{} compactions (last saved {}B, total {}B)",
+                           used / 1048576.0, capacity / 1048576.0, peak_used / 1048576.0,
+                           allocation_count, wasted, compaction_count, last_compaction_saved,
+                           total_compaction_saved);
     }
 
     // Fragmentation ratio: (capacity - used) / capacity.
@@ -35,8 +34,7 @@ export struct ArenaStats {
     // Issue #187: this is the key signal for auto-compact triggers.
     [[nodiscard]] double fragmentation_ratio() const noexcept {
         return capacity == 0 ? 0.0
-                              : static_cast<double>(capacity - used) /
-                                    static_cast<double>(capacity);
+                             : static_cast<double>(capacity - used) / static_cast<double>(capacity);
     }
 
     void merge(const ArenaStats& other) {
@@ -166,9 +164,8 @@ public:
     // a type-erased destructor thunk so reset() and ~ASTArena can
     // destroy the object properly even though placement-new was used
     // on raw bytes.
-    template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args)
-        post (r: r != nullptr)
-    {
+    template <typename T, typename... Args>
+    [[nodiscard]] T* create(Args&&... args) post(r : r != nullptr) {
         void* raw = allocate_raw(sizeof(T), alignof(T));
         ++stats_.allocation_count;
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
@@ -181,7 +178,8 @@ public:
     // destroy. If `ptr` wasn't tracked (caller's responsibility) the
     // dtor still runs as a best-effort fallback.
     template <typename T> void destroy(T* ptr) {
-        if (!ptr) return;
+        if (!ptr)
+            return;
         for (auto it = dtors_.begin(); it != dtors_.end(); ++it) {
             if (it->ptr == ptr) {
                 ptr->~T();
@@ -198,10 +196,7 @@ public:
     // reverse construction order, then the underlying pmr buffer is
     // released (which frees in-buffer allocations) and the small-
     // object pool bump pointers are reset.
-    void reset()
-        post (used() == 0)
-        post (stats_.allocation_count == 0)
-    {
+    void reset() post(used() == 0) post(stats_.allocation_count == 0) {
         run_destructors();
         small_pool_.reset();
         resource_.release();
@@ -282,7 +277,8 @@ public:
         } else if (u < before) {
             // Round up to power of 2 with 25% headroom, min 1KB.
             std::size_t target = 1024;
-            while (target < u + u / 4) target *= 2;
+            while (target < u + u / 4)
+                target *= 2;
             if (target < before) {
                 buffer_.resize(target);
                 // Rebuild resource on new buffer. Live allocations
@@ -357,10 +353,8 @@ private:
                           std::pmr::new_delete_resource());
     }
 
-    void* allocate_raw(std::size_t size, std::size_t alignment)
-        pre (size > 0)
-        pre (alignment > 0 && (alignment & (alignment - 1)) == 0)
-    {
+    void* allocate_raw(std::size_t size, std::size_t alignment) pre(size > 0)
+        pre(alignment > 0 && (alignment & (alignment - 1)) == 0) {
         // ── GC integration (Issue #113 Phase 4) ──────────
         // Check the safepoint before allocating. This lets a
         // compute-heavy fiber that doesn't yield for long
@@ -442,7 +436,8 @@ public:
     // bytes reclaimed, or 0 if the module isn't found.
     [[nodiscard]] std::size_t compact_module(const std::string& name) {
         auto it = arenas_.find(name);
-        if (it == arenas_.end()) return 0;
+        if (it == arenas_.end())
+            return 0;
         return it->second->compact();
     }
 
@@ -486,22 +481,23 @@ public:
         std::string out = "{\"arenas\":[";
         bool first = true;
         for (auto& [name, arena] : arenas_) {
-            if (!first) out += ",";
+            if (!first)
+                out += ",";
             first = false;
             auto s = arena->stats();
             std::string esc_name;
             for (char c : name) {
-                if (c == '"' || c == '\\') esc_name += '\\';
+                if (c == '"' || c == '\\')
+                    esc_name += '\\';
                 esc_name += c;
             }
-            out += std::format(
-                "{{\"name\":\"{}\",\"used\":{},\"capacity\":{},"
-                "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
-                "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
-                "\"fragmentation_ratio\":{:.3f}}}",
-                esc_name, s.used, s.capacity, s.peak_used, s.allocation_count,
-                s.compaction_count, s.last_compaction_saved,
-                s.total_compaction_saved, s.fragmentation_ratio());
+            out += std::format("{{\"name\":\"{}\",\"used\":{},\"capacity\":{},"
+                               "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
+                               "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
+                               "\"fragmentation_ratio\":{:.3f}}}",
+                               esc_name, s.used, s.capacity, s.peak_used, s.allocation_count,
+                               s.compaction_count, s.last_compaction_saved,
+                               s.total_compaction_saved, s.fragmentation_ratio());
         }
         out += "],\"compact_threshold\":" + std::to_string(compact_threshold_) + "}";
         return out;

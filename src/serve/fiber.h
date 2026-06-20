@@ -19,19 +19,19 @@ namespace aura::serve {
 // Fibers in Waiting or BlockingIO have an eventfd pending
 // and should not be moved between workers.
 enum class YieldReason : uint8_t {
-    BlockingIO,         // waiting for external IO (eventfd)
-    MutationBoundary,   // yield after completing a mutation/ast:* op
-    Explicit,           // explicit yield() call
-    SchedulerSteal,     // fiber was stolen by another worker
-    OperationBoundary,  // yield at sender/receiver boundary (exec adapter)
+    BlockingIO,        // waiting for external IO (eventfd)
+    MutationBoundary,  // yield after completing a mutation/ast:* op
+    Explicit,          // explicit yield() call
+    SchedulerSteal,    // fiber was stolen by another worker
+    OperationBoundary, // yield at sender/receiver boundary (exec adapter)
 };
 
 // ── Fiber state ────────────────────────────────────────
 enum class FiberState : uint8_t {
-    Ready,    // can be scheduled
-    Running,  // currently executing on a worker
-    Waiting,  // waiting for eventfd
-    Done,     // completed
+    Ready,   // can be scheduled
+    Running, // currently executing on a worker
+    Waiting, // waiting for eventfd
+    Done,    // completed
 };
 
 // ── Fiber — stackful coroutine with ucontext ───────────
@@ -80,8 +80,7 @@ public:
     // inconsistent state.
     bool is_stealable() const {
         auto r = last_yield_reason_.load(std::memory_order_acquire);
-        return r == YieldReason::Explicit ||
-               r == YieldReason::MutationBoundary ||
+        return r == YieldReason::Explicit || r == YieldReason::MutationBoundary ||
                r == YieldReason::OperationBoundary;
     }
 
@@ -113,7 +112,7 @@ private:
     uint64_t id_;
     std::atomic<FiberState> state_{FiberState::Ready};
     std::atomic<YieldReason> last_yield_reason_{YieldReason::Explicit};
-    int affinity_ = -1;  // -1 = any worker, [0,N) = pinned to specific worker
+    int affinity_ = -1; // -1 = any worker, [0,N) = pinned to specific worker
     ucontext_t ctx_;
     void* stack_ = nullptr;
     size_t stack_size_ = 0;
@@ -144,10 +143,10 @@ extern void (*g_fiber_storage_deleter_)(void*);
 
 // ── GCPhase — GC safepoint state machine (P2) ────────
 enum class GCPhase : uint8_t {
-    None,        // 正常执行
-    Requested,   // GC 已请求，等待 fiber 到达安全点
-    Sweeping,    // 同步 sweep 进行中
-    Complete,    // GC 完成
+    None,      // 正常执行
+    Requested, // GC 已请求，等待 fiber 到达安全点
+    Sweeping,  // 同步 sweep 进行中
+    Complete,  // GC 完成
 };
 
 // ── WorkerGCState — per-worker GC state (P2) ──────────
@@ -192,8 +191,8 @@ struct WorkerGCState {
 // Fiber::yield() swaps back to this context.
 // Fiber::resume() swaps from this context to the fiber.
 struct WorkerContext {
-    ucontext_t uctx;  // worker's dispatch loop context
-    WorkerGCState* gc_state = nullptr;  // set by worker thread (P2)
+    ucontext_t uctx;                   // worker's dispatch loop context
+    WorkerGCState* gc_state = nullptr; // set by worker thread (P2)
 };
 extern thread_local WorkerContext* g_worker_ctx;
 

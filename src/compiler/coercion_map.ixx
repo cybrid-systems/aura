@@ -77,15 +77,12 @@ export struct CoercionEntry {
 // across module boundaries.
 export class CoercionMap {
 public:
-    void add(aura::ast::NodeId parent, std::uint32_t child_index,
-             aura::ast::NodeId original_child,
-             std::uint32_t type_tag, std::uint32_t type_id,
-             std::uint32_t src_line, std::uint32_t src_col) {
-        entries_.push_back(CoercionEntry{static_cast<std::uint32_t>(parent),
-                                         child_index,
-                                         static_cast<std::uint32_t>(original_child),
-                                         type_tag, type_id,
-                                         src_line, src_col});
+    void add(aura::ast::NodeId parent, std::uint32_t child_index, aura::ast::NodeId original_child,
+             std::uint32_t type_tag, std::uint32_t type_id, std::uint32_t src_line,
+             std::uint32_t src_col) {
+        entries_.push_back(CoercionEntry{static_cast<std::uint32_t>(parent), child_index,
+                                         static_cast<std::uint32_t>(original_child), type_tag,
+                                         type_id, src_line, src_col});
     }
 
     const std::vector<CoercionEntry>& entries() const { return entries_; }
@@ -97,8 +94,7 @@ public:
     // Merge another map's entries into this one. Order is
     // preserved (other entries appended after this map's).
     void merge(const CoercionMap& other) {
-        entries_.insert(entries_.end(),
-                        other.entries_.begin(), other.entries_.end());
+        entries_.insert(entries_.end(), other.entries_.begin(), other.entries_.end());
     }
 
 private:
@@ -119,8 +115,7 @@ private:
 //
 // Returns the number of entries actually applied (rest are
 // skipped, typically zero on a clean re-apply).
-export std::size_t apply_coercion_map(aura::ast::FlatAST& flat,
-                                      const CoercionMap& map) {
+export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMap& map) {
     std::size_t applied = 0;
     for (const auto& e : map.entries()) {
         // Locate the parent and confirm it still points at the
@@ -135,8 +130,7 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat,
             // lowering to see it. Insert it as a free node
             // (parented to itself's children — already
             // handled by add_coercion).
-            auto coercion_id = flat.add_coercion(
-                e.original_child, e.type_tag, e.type_id);
+            auto coercion_id = flat.add_coercion(e.original_child, e.type_tag, e.type_id);
             flat.set_loc(coercion_id, e.src_line, e.src_col);
             ++applied;
             continue;
@@ -153,8 +147,7 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat,
         }
 
         // Build the CoercionNode wrapping the original child.
-        auto coercion_id = flat.add_coercion(
-            e.original_child, e.type_tag, e.type_id);
+        auto coercion_id = flat.add_coercion(e.original_child, e.type_tag, e.type_id);
         flat.set_loc(coercion_id, e.src_line, e.src_col);
         // Rewrite the parent's child_index to point at the
         // new CoercionNode.

@@ -332,10 +332,12 @@ std::vector<NodeId> QueryEngine::execute(const QueryExpr& q) {
 std::uint64_t QueryEngine::execute_global(const QueryExpr& q) const {
     switch (q.kind) {
         case QueryExpr::Kind::DeoptCount:
-            if (metrics_provider) return metrics_provider->deopt_count();
+            if (metrics_provider)
+                return metrics_provider->deopt_count();
             return 0;
         case QueryExpr::Kind::ArenaUsage:
-            if (metrics_provider) return metrics_provider->arena_bytes_used();
+            if (metrics_provider)
+                return metrics_provider->arena_bytes_used();
             return 0;
         case QueryExpr::Kind::SpecializationCount:
             if (metrics_provider)

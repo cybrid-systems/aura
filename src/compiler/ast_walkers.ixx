@@ -35,8 +35,7 @@ export namespace aura::compiler {
 // (service.ixx:1880). Extracted as a free function so it
 // can be tested in isolation and used from other contexts.
 std::vector<std::pair<std::string, aura::ast::NodeId>>
-find_top_level_defines(const aura::ast::FlatAST& flat,
-                       const aura::ast::StringPool& pool,
+find_top_level_defines(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                        aura::ast::NodeId root) {
     std::vector<std::pair<std::string, aura::ast::NodeId>> defs;
 
@@ -79,10 +78,9 @@ find_top_level_defines(const aura::ast::FlatAST& flat,
 //
 // This was the `track_names` lambda inside eval()
 // (service.ixx:773). Extracted as a free function.
-std::vector<std::string> collect_user_bindings(
-    const aura::ast::FlatAST& flat,
-    const aura::ast::StringPool& pool,
-    aura::ast::NodeId root) {
+std::vector<std::string> collect_user_bindings(const aura::ast::FlatAST& flat,
+                                               const aura::ast::StringPool& pool,
+                                               aura::ast::NodeId root) {
     std::vector<std::string> names;
 
     if (root == aura::ast::NULL_NODE || root >= flat.size())

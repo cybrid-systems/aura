@@ -32,8 +32,8 @@ using PrimFn = std::function<types::EvalValue(std::span<const types::EvalValue>)
 struct FFIFunc {
     void* fn_ptr = nullptr;
     std::string name;
-    int ret_type = 0;               // 0=void, 1=Int, 2=Float, 3=String, 4=Opaque
-    std::vector<int> arg_types;     // per-arg type tags
+    int ret_type = 0;           // 0=void, 1=Int, 2=Float, 3=String, 4=Opaque
+    std::vector<int> arg_types; // per-arg type tags
 };
 
 // Issue #131: state is now per-FFIRuntime instance (not
@@ -56,30 +56,39 @@ public:
     // Defined inline in the .ixx so test_issue_131 can use
     // it without linking ffi_primitives_impl.cpp (which
     // transitively depends on libaura-reflect symbols).
-    static bool parse_ffi_sig(const std::string& sig, int& ret_type,
-                              std::vector<int>& arg_types,
+    static bool parse_ffi_sig(const std::string& sig, int& ret_type, std::vector<int>& arg_types,
                               std::string* err_type = nullptr) {
         auto arrow = sig.find("->");
         if (arrow == std::string::npos) {
-            if (err_type) *err_type = "missing '->' in signature";
+            if (err_type)
+                *err_type = "missing '->' in signature";
             return false;
         }
         if (sig.empty() || sig[0] != '(') {
-            if (err_type) *err_type = "signature must start with '('";
+            if (err_type)
+                *err_type = "signature must start with '('";
             return false;
         }
         auto arg_part = sig.substr(1, arrow - 1);
         auto ret_part = sig.substr(arrow + 2);
         auto type_to_int = [](const std::string& tn, std::string* err = nullptr) -> int {
             auto t = tn;
-            while (!t.empty() && t.front() == ' ') t = t.substr(1);
-            while (!t.empty() && t.back() == ' ') t.pop_back();
-            if (t == "Int") return 1;
-            if (t == "Float") return 2;
-            if (t == "String") return 3;
-            if (t == "Opaque") return 4;
-            if (t == "Void") return 0;
-            if (err) *err = t.empty() ? "empty type" : "unknown type: " + t;
+            while (!t.empty() && t.front() == ' ')
+                t = t.substr(1);
+            while (!t.empty() && t.back() == ' ')
+                t.pop_back();
+            if (t == "Int")
+                return 1;
+            if (t == "Float")
+                return 2;
+            if (t == "String")
+                return 3;
+            if (t == "Opaque")
+                return 4;
+            if (t == "Void")
+                return 0;
+            if (err)
+                *err = t.empty() ? "empty type" : "unknown type: " + t;
             return -1;
         };
         std::string cur;
@@ -87,7 +96,8 @@ public:
             if (c == ' ' || c == '(' || c == ')') {
                 if (!cur.empty()) {
                     int at = type_to_int(cur, err_type);
-                    if (at < 0) return false;
+                    if (at < 0)
+                        return false;
                     arg_types.push_back(at);
                     cur.clear();
                 }
@@ -97,11 +107,13 @@ public:
         }
         if (!cur.empty()) {
             int at = type_to_int(cur, err_type);
-            if (at < 0) return false;
+            if (at < 0)
+                return false;
             arg_types.push_back(at);
         }
         ret_type = type_to_int(ret_part, err_type);
-        if (ret_type < 0) return false;
+        if (ret_type < 0)
+            return false;
         return true;
     }
 
@@ -112,11 +124,9 @@ public:
     // Evaluator owns them; this module just borrows).
     // The coverage_counters pointer is the Evaluator's
     // coverage array; nullable for tests.
-    void register_primitives(
-        RegisterFn add_primitive,
-        std::pmr::vector<std::string>* string_heap,
-        std::vector<void*>* opaque_heap,
-        std::array<std::uint64_t, 16>* coverage_counters = nullptr);
+    void register_primitives(RegisterFn add_primitive, std::pmr::vector<std::string>* string_heap,
+                             std::vector<void*>* opaque_heap,
+                             std::array<std::uint64_t, 16>* coverage_counters = nullptr);
 
     // Accessors for the FFI state (for tests / debug).
     std::size_t lib_count() const { return libs_.size(); }

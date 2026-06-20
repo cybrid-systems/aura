@@ -91,7 +91,7 @@ export enum class IROpcode : std::uint8_t {
     // expected shape id is in operands[2]; operands[3] is the
     // generic-trampoline block id (branch target on mismatch).
     // The guard writes a bool to operands[0]: 1 = matches, 0 = deopt.
-    GuardShape,   // deopt guard: result, arg_slot, expected_shape, generic_block
+    GuardShape, // deopt guard: result, arg_slot, expected_shape, generic_block
 };
 
 // ── Issue #217 Cycle 3: IR types are reflection-ready ────────
@@ -238,9 +238,9 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     {"try-begin", 1, false}, // TryBegin: handler_block (no result)
     {"try-end", 1, true},    // TryEnd: result_slot (pop frame, value)
     // 39-41  Hash operations (inline, avoids PrimCall dispatch)
-    {"hash-ref", 3, true},     // HashRef: result, hash, key
-    {"hash-set", 3, true},     // HashSet: void, hash, keyval
-    {"hash-remove", 3, true},  // HashRemove: void, hash, key
+    {"hash-ref", 3, true},    // HashRef: result, hash, key
+    {"hash-set", 3, true},    // HashSet: void, hash, keyval
+    {"hash-remove", 3, true}, // HashRemove: void, hash, key
     // 42-47  M4 Linear ownership
     {"linear-wrap", 2, true},   // LinearWrap: result, inner
     {"move-op", 2, true},       // MoveOp: result, inner
@@ -248,10 +248,10 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     {"mut-borrow-op", 2, true}, // MutBorrowOp: result, inner
     {"drop-op", 1, false},      // DropOp: inner (no result)
     {"ref-count-op", 3, true},  // RefCountOp: result, inner, inc/dec
-    {"arena-push", 2, true},     // ArenaPush: result, size
-    {"arena-pop", 1, false},     // ArenaPop: saved_offset (no result)
+    {"arena-push", 2, true},    // ArenaPush: result, size
+    {"arena-pop", 1, false},    // ArenaPop: saved_offset (no result)
     // Issue #61 Iter 2: GuardShape. result + arg + expected + generic_block.
-    {"guard-shape", 4, true},    // GuardShape: result, arg, expected, generic
+    {"guard-shape", 4, true}, // GuardShape: result, arg, expected, generic
 };
 
 static_assert(std::size(kOpcodeInfo) == 53, "kOpcodeInfo must have exactly one entry per IROpcode");
@@ -264,7 +264,11 @@ export inline const OpcodeInfo* lookup_opcode(IROpcode op) {
 
 // Primitive IDs for PrimCall opcode
 export enum class PrimId : std::uint8_t {
-    Hash, HashLength, HashHasKey, HashKeys, HashValues,
+    Hash,
+    HashLength,
+    HashHasKey,
+    HashKeys,
+    HashValues,
     StringAppend,
     StringLength,
     StringRef,
@@ -317,21 +321,15 @@ export enum class PrimId : std::uint8_t {
 // Names for each PrimId, indexed by enum value.
 // Must match PrimId enum order exactly.
 export constexpr std::string_view kPrimNames[] = {
-    "hash",
-    "hash-length", "hash-has-key?", "hash-keys", "hash-values",
+    "hash",          "hash-length",    "hash-has-key?",  "hash-keys",     "hash-values",
     "string-append", "string-length",  "string-ref",     "substring",     "string=?",
     "string<?",      "number->string", "string->number", "display",       "write",
     "newline",       "error",          "assert",         "read",          "read-file",
     "write-file",    "file-exists?",   "gensym",         "apply",         "vector",
     "vector-ref",    "vector-set!",    "vector-length",  "vector?",       "make-vector",
     "import",        "char=?",         "char<?",         "char->integer", "integer->char",
-    "quotient",
-    "remainder",
-    "length",
-    "list-ref",
-    "reverse",
-    "raise",         "error?",
-    "pair?",         "null?",
+    "quotient",      "remainder",      "length",         "list-ref",      "reverse",
+    "raise",         "error?",         "pair?",          "null?",
 };
 
 static_assert(std::size(kPrimNames) == 44, "kPrimNames must have exactly one entry per PrimId");
@@ -367,9 +365,9 @@ export enum class Region : std::uint8_t {
 // follow-up. This enum + tier_for_region is the
 // classification scheme that the dispatch will consult.
 export enum class CompilationTier : std::uint8_t {
-    AOT = 0,           // ahead-of-time: persistent cache, O3
-    JIT = 1,           // just-in-time: ORC, full shape guards
-    Interpreter = 2,   // IR interpreter: dynamic fallback
+    AOT = 0,         // ahead-of-time: persistent cache, O3
+    JIT = 1,         // just-in-time: ORC, full shape guards
+    Interpreter = 2, // IR interpreter: dynamic fallback
 };
 
 // Issue #151: map Region -> CompilationTier. The mapping
@@ -385,10 +383,13 @@ export enum class CompilationTier : std::uint8_t {
 // this when deciding the codegen path for a function.
 export constexpr CompilationTier tier_for_region(Region r) {
     switch (r) {
-        case Region::Performance: return CompilationTier::AOT;
-        case Region::Evolution:   return CompilationTier::JIT;
+        case Region::Performance:
+            return CompilationTier::AOT;
+        case Region::Evolution:
+            return CompilationTier::JIT;
         case Region::Default:
-        default:                   return CompilationTier::JIT;
+        default:
+            return CompilationTier::JIT;
     }
 }
 
@@ -476,8 +477,8 @@ export struct IRFunction {
 // independent of the lowering arena, avoiding use-after-free
 // when a long-lived closure outlives the arena that produced it.
 export struct ClosureBridgeData {
-    std::shared_ptr<const ast::FlatAST> flat;     // shared view of arena-owned FlatAST
-    std::shared_ptr<const ast::StringPool> pool;  // same
+    std::shared_ptr<const ast::FlatAST> flat;    // shared view of arena-owned FlatAST
+    std::shared_ptr<const ast::StringPool> pool; // same
     ast::NodeId body_id = ast::NULL_NODE;
     std::string body_source; // serialized source for bridge fallback re-parse
     // Issue #223: epoch captured at bridge construction. If the
@@ -514,14 +515,11 @@ export struct IRModule {
     // is a non-owning view (constructed with a no-op deleter at
     // the call site) that keeps the FlatAST alive as long as the
     // bridge exists.
-    void set_closure_bridge(std::uint32_t func_id,
-                            std::shared_ptr<const ast::FlatAST> flat,
-                            std::shared_ptr<const ast::StringPool> pool,
-                            ast::NodeId body_id,
+    void set_closure_bridge(std::uint32_t func_id, std::shared_ptr<const ast::FlatAST> flat,
+                            std::shared_ptr<const ast::StringPool> pool, ast::NodeId body_id,
                             std::uint64_t epoch = 0) {
         if (func_id < functions.size()) {
-            closure_bridge[func_id] = {std::move(flat), std::move(pool),
-                                       body_id, "", epoch};
+            closure_bridge[func_id] = {std::move(flat), std::move(pool), body_id, "", epoch};
         }
     }
 
@@ -529,14 +527,11 @@ export struct IRModule {
     // Issue #224 Cycle 2: takes shared_ptr by value. The shared_ptr
     // is a non-owning view (constructed with a no-op deleter at
     // the call site).
-    void set_closure_bridge_ptr(std::uint32_t func_id,
-                                std::shared_ptr<const ast::FlatAST> flat,
-                                std::shared_ptr<const ast::StringPool> pool,
-                                ast::NodeId body_id,
+    void set_closure_bridge_ptr(std::uint32_t func_id, std::shared_ptr<const ast::FlatAST> flat,
+                                std::shared_ptr<const ast::StringPool> pool, ast::NodeId body_id,
                                 std::uint64_t epoch = 0) {
         if (func_id < closure_bridge.size()) {
-            closure_bridge[func_id] = {std::move(flat), std::move(pool),
-                                       body_id, "", epoch};
+            closure_bridge[func_id] = {std::move(flat), std::move(pool), body_id, "", epoch};
         }
     }
 
@@ -553,7 +548,8 @@ export struct IRModule {
 
     std::uint32_t add_string(std::string s) {
         auto it = string_map_.find(s);
-        if (it != string_map_.end()) return it->second;
+        if (it != string_map_.end())
+            return it->second;
         auto id = static_cast<std::uint32_t>(string_pool.size());
         string_pool.push_back(s);
         string_map_[std::move(s)] = id;
@@ -637,10 +633,13 @@ export struct IRModule {
                         continue; // skip CastOps we already marked
                     // Don't skip op==0 — a valid slot can be 0
                     for (auto& op : instr.operands) {
-                        if (op < slot_remap.size() && slot_remap[op] != std::numeric_limits<std::uint32_t>::max() && slot_remap[op] != op) {
+                        if (op < slot_remap.size() &&
+                            slot_remap[op] != std::numeric_limits<std::uint32_t>::max() &&
+                            slot_remap[op] != op) {
                             // Follow the remap chain
                             auto src = slot_remap[op];
-                            while (src < slot_remap.size() && slot_remap[src] != 0 && slot_remap[src] != src)
+                            while (src < slot_remap.size() && slot_remap[src] != 0 &&
+                                   slot_remap[src] != src)
                                 src = slot_remap[src];
                             op = src;
                         }

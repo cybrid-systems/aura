@@ -229,8 +229,8 @@ static std::uint32_t lower_flat_expr(
                         auto tail_slot = state.alloc_local();
                         state.emit(IROpcode::ConstI64, tail_slot, 0, 0);
                         for (std::size_t i = arg_count; i >= 1; --i) {
-                            auto val = lower_flat_expr(
-                                state, flat, pool, v.child(i), cache, cache_hits);
+                            auto val =
+                                lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
                             auto cell = state.alloc_local();
                             state.emit(IROpcode::MakePair, cell, val, tail_slot);
                             if (i == 1) {
@@ -267,7 +267,8 @@ static std::uint32_t lower_flat_expr(
                     // Evaluate all body expressions, keep last result
                     auto last_slot = result_slot;
                     for (auto ci = body_start; ci < v.children.size(); ++ci) {
-                        last_slot = lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
+                        last_slot =
+                            lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
                     }
                     if (body_start >= v.children.size()) {
                         state.emit(IROpcode::ConstVoid, result_slot);
@@ -287,7 +288,8 @@ static std::uint32_t lower_flat_expr(
                     } else {
                         auto last_slot = result_slot;
                         for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
-                            last_slot = lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
+                            last_slot =
+                                lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
                         }
                         state.emit(IROpcode::Local, result_slot, last_slot);
                     }
@@ -303,7 +305,8 @@ static std::uint32_t lower_flat_expr(
                     } else {
                         auto last_slot = result_slot;
                         for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
-                            last_slot = lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
+                            last_slot =
+                                lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
                         }
                         state.emit(IROpcode::Local, result_slot, last_slot);
                     }
@@ -471,8 +474,7 @@ static std::uint32_t lower_flat_expr(
                 }
 
                 // Pre-executed require/import/use: skip (already handled by pre_exec_requires)
-                if (std::string(callee_name) == "require" ||
-                    std::string(callee_name) == "import") {
+                if (std::string(callee_name) == "require" || std::string(callee_name) == "import") {
                     // import/require are handled by pre_exec_requires.
                     // The import call in the AST is still present; skip
                     // it here to avoid going through PrimCall dispatch.
@@ -483,11 +485,11 @@ static std::uint32_t lower_flat_expr(
 
                 // Check if callee is a known non-arithmetic primitive (string ops, etc.)
                 static const std::unordered_map<std::string, PrimId> prim_call_map = {
-            {"hash", PrimId::Hash},
-            {"hash-length", PrimId::HashLength},
-            {"hash-has-key?", PrimId::HashHasKey},
-            {"hash-keys", PrimId::HashKeys},
-            {"hash-values", PrimId::HashValues},
+                    {"hash", PrimId::Hash},
+                    {"hash-length", PrimId::HashLength},
+                    {"hash-has-key?", PrimId::HashHasKey},
+                    {"hash-keys", PrimId::HashKeys},
+                    {"hash-values", PrimId::HashValues},
                     {"string-append", PrimId::StringAppend},
                     {"string-length", PrimId::StringLength},
                     {"string-ref", PrimId::StringRef},
@@ -537,10 +539,13 @@ static std::uint32_t lower_flat_expr(
                 auto hop = hash_op_map.find(std::string(callee_name));
                 if (hop != hash_op_map.end()) {
                     auto result_slot = state.alloc_local();
-                    auto hash_slot = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
-                    auto key_slot = lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
+                    auto hash_slot =
+                        lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                    auto key_slot =
+                        lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
                     if (v.children.size() >= 4) {
-                        auto val_slot = lower_flat_expr(state, flat, pool, v.child(3), cache, cache_hits);
+                        auto val_slot =
+                            lower_flat_expr(state, flat, pool, v.child(3), cache, cache_hits);
                         auto pair_slot = state.alloc_local();
                         state.emit(IROpcode::MakePair, pair_slot, key_slot, val_slot);
                         state.emit(hop->second, result_slot, hash_slot, pair_slot);
@@ -578,20 +583,23 @@ static std::uint32_t lower_flat_expr(
 
                     for (std::size_t ci = 1; ci <= num_clauses; ++ci) {
                         auto clause = v.child(ci);
-                        if (clause >= flat.size()) continue;
+                        if (clause >= flat.size())
+                            continue;
                         auto clause_node = flat.get(clause);
-                        if (clause_node.children.empty()) continue;
+                        if (clause_node.children.empty())
+                            continue;
 
                         // Clause: child[0] = predicate, child[1] = body (single expression)
                         auto pred_node = clause_node.child(0);
-                        auto body_node = (clause_node.children.size() > 1)
-                            ? clause_node.child(1) : clause_node.child(0);
+                        auto body_node = (clause_node.children.size() > 1) ? clause_node.child(1)
+                                                                           : clause_node.child(0);
 
                         bool is_last = (ci == num_clauses);
 
                         // Lower predicate (or check if it's else/#t)
                         // For the last clause with #t predicate (else), skip the branch
-                        auto pred_slot = lower_flat_expr(state, flat, pool, pred_node, cache, cache_hits);
+                        auto pred_slot =
+                            lower_flat_expr(state, flat, pool, pred_node, cache, cache_hits);
 
                         if (!is_last) {
                             // Branch on predicate: if true → body, else → next clause
@@ -601,18 +609,22 @@ static std::uint32_t lower_flat_expr(
 
                             // Body block
                             state.cur_block = body_blk;
-                            auto body_val = lower_flat_expr(state, flat, pool, body_node, cache, cache_hits);
+                            auto body_val =
+                                lower_flat_expr(state, flat, pool, body_node, cache, cache_hits);
                             state.emit(IROpcode::Local, result_slot, body_val);
-                            if (!done_blk) done_blk = state.alloc_block();
+                            if (!done_blk)
+                                done_blk = state.alloc_block();
                             state.emit(IROpcode::Jump, done_blk);
 
                             // Next clause
                             state.cur_block = next_blk;
                         } else {
                             // Last clause: fallthrough body
-                            auto body_val = lower_flat_expr(state, flat, pool, body_node, cache, cache_hits);
+                            auto body_val =
+                                lower_flat_expr(state, flat, pool, body_node, cache, cache_hits);
                             state.emit(IROpcode::Local, result_slot, body_val);
-                            if (!done_blk) done_blk = state.alloc_block();
+                            if (!done_blk)
+                                done_blk = state.alloc_block();
                             state.emit(IROpcode::Jump, done_blk);
                         }
                     }
@@ -632,7 +644,8 @@ static std::uint32_t lower_flat_expr(
                 //
                 // not: inlined as IROpcode::Not (expanded to LLVM ICmp + Xor)
                 if (std::string(callee_name) == "not" && v.children.size() == 2) {
-                    auto arg_slot = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                    auto arg_slot =
+                        lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
                     auto result_slot = state.alloc_local();
                     state.emit(IROpcode::Not, result_slot, arg_slot);
                     return result_slot;
@@ -657,7 +670,8 @@ static std::uint32_t lower_flat_expr(
                     auto done_blk = decltype(state.alloc_block()){};
 
                     for (std::size_t i = 1; i < arg_count; ++i) {
-                        auto val = lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
+                        auto val =
+                            lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
                         auto nope_blk = state.alloc_block();
                         auto ok_blk = state.alloc_block();
                         state.emit(IROpcode::Branch, val, ok_blk, nope_blk);
@@ -675,8 +689,8 @@ static std::uint32_t lower_flat_expr(
 
                     // Last expression: result = expression value, jump done
                     {
-                        auto last_slot = lower_flat_expr(
-                            state, flat, pool, v.child(arg_count), cache, cache_hits);
+                        auto last_slot = lower_flat_expr(state, flat, pool, v.child(arg_count),
+                                                         cache, cache_hits);
                         state.emit(IROpcode::Local, result_slot, last_slot);
                         if (!done_blk)
                             done_blk = state.alloc_block();
@@ -709,7 +723,8 @@ static std::uint32_t lower_flat_expr(
                     auto done_blk = decltype(state.alloc_block()){};
 
                     for (std::size_t i = 1; i < arg_count; ++i) {
-                        auto val = lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
+                        auto val =
+                            lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
                         auto done_val_blk = state.alloc_block();
                         auto next_blk = state.alloc_block();
                         state.emit(IROpcode::Branch, val, done_val_blk, next_blk);
@@ -727,8 +742,8 @@ static std::uint32_t lower_flat_expr(
 
                     // Last expression: result = expression value, jump done
                     {
-                        auto last_slot = lower_flat_expr(
-                            state, flat, pool, v.child(arg_count), cache, cache_hits);
+                        auto last_slot = lower_flat_expr(state, flat, pool, v.child(arg_count),
+                                                         cache, cache_hits);
                         state.emit(IROpcode::Local, result_slot, last_slot);
                         if (!done_blk)
                             done_blk = state.alloc_block();
@@ -775,7 +790,8 @@ static std::uint32_t lower_flat_expr(
                         if (arg_type != expected_type.index) {
                             auto cast_slot = state.alloc_local();
                             auto cast_tag = type_tag_for_coercion(expected_type, state.type_reg);
-                            state.emit_with_type(IROpcode::CastOp, expected_type.index, cast_slot, val_slot, cast_tag, 0);
+                            state.emit_with_type(IROpcode::CastOp, expected_type.index, cast_slot,
+                                                 val_slot, cast_tag, 0);
                             state.emit(IROpcode::Local,
                                        arg_base + static_cast<std::uint32_t>(i - 1), cast_slot);
                             state.alloc_local();
@@ -1240,7 +1256,8 @@ static std::uint32_t lower_flat_expr(
                 auto ann_tid = aura::core::TypeId{ann_type_id, 1};
                 std::uint32_t type_tag = type_tag_for_coercion(ann_tid, state.type_reg);
                 std::uint32_t blame_loc = 0;
-                state.emit_with_type(IROpcode::CastOp, ann_type_id, slot, inner_slot, type_tag, blame_loc);
+                state.emit_with_type(IROpcode::CastOp, ann_type_id, slot, inner_slot, type_tag,
+                                     blame_loc);
                 return slot;
             }
             return inner_slot;
@@ -1254,7 +1271,8 @@ static std::uint32_t lower_flat_expr(
             // CastOp type_id = coercion target type (stored on the Coercion node)
             // blame info is carried via blame_loc operand and source_id, not type_id
             auto target_type_id = flat.type_id(v.id);
-            state.emit_with_type(IROpcode::CastOp, target_type_id, slot, inner, type_tag, blame_loc);
+            state.emit_with_type(IROpcode::CastOp, target_type_id, slot, inner, type_tag,
+                                 blame_loc);
             return slot;
         }
         case NodeTag::Linear:
@@ -1266,11 +1284,9 @@ static std::uint32_t lower_flat_expr(
             // try_lower_linear_type. The callback
             // recurses into the inner expression via the
             // main lower_flat_expr.
-            if (auto slot = try_lower_linear_type(
-                    state, flat, pool, v,
-                    [&](aura::ast::NodeId id) {
-                        return lower_flat_expr(state, flat, pool, id, cache, cache_hits);
-                    })) {
+            if (auto slot = try_lower_linear_type(state, flat, pool, v, [&](aura::ast::NodeId id) {
+                    return lower_flat_expr(state, flat, pool, id, cache, cache_hits);
+                })) {
                 return *slot;
             }
             // Shouldn't happen for these tags, but fall
@@ -1296,16 +1312,21 @@ static std::uint32_t lower_flat_expr(
 // lower_to_ir_impl to flag Define / Lambda bodies that
 // contain these nodes as Evolution.
 static void collect_mutation_calls(const FlatAST& flat,
-                                    std::unordered_set<aura::ast::NodeId>& out) {
+                                   std::unordered_set<aura::ast::NodeId>& out) {
     for (aura::ast::NodeId i = 0; i < flat.size(); ++i) {
-        if (i >= flat.size()) break;
+        if (i >= flat.size())
+            break;
         auto v = flat.get(i);
-        if (v.tag != aura::ast::NodeTag::Call) continue;
-        if (v.children.empty()) continue;
+        if (v.tag != aura::ast::NodeTag::Call)
+            continue;
+        if (v.children.empty())
+            continue;
         auto fn_id = v.child(0);
-        if (fn_id == aura::ast::NULL_NODE) continue;
+        if (fn_id == aura::ast::NULL_NODE)
+            continue;
         auto fn = flat.get(fn_id);
-        if (fn.tag != aura::ast::NodeTag::Variable) continue;
+        if (fn.tag != aura::ast::NodeTag::Variable)
+            continue;
         // We only flag the call site; the caller's name
         // (mutate:*, etc.) is checked at the call site in
         // lower_to_ir_impl's inference loop via the pool.
@@ -1317,11 +1338,14 @@ static void collect_mutation_calls(const FlatAST& flat,
 // in `target_set`. Recursive via FlatAST::get(id).children.
 static bool subtree_uses_node(const FlatAST& flat, aura::ast::NodeId root,
                               const std::unordered_set<aura::ast::NodeId>& target_set) {
-    if (root == aura::ast::NULL_NODE || root >= flat.size()) return false;
-    if (target_set.count(root)) return true;
+    if (root == aura::ast::NULL_NODE || root >= flat.size())
+        return false;
+    if (target_set.count(root))
+        return true;
     auto v = flat.get(root);
     for (auto c : v.children) {
-        if (subtree_uses_node(flat, c, target_set)) return true;
+        if (subtree_uses_node(flat, c, target_set))
+            return true;
     }
     return false;
 }
@@ -1355,19 +1379,25 @@ static IRModule lower_to_ir_impl(
         std::unordered_set<aura::ast::NodeId> mutating_nodes;
         collect_mutation_calls(flat, mutating_nodes);
         for (aura::ast::NodeId i = 0; i < flat.size(); ++i) {
-            if (i >= flat.size()) break;
+            if (i >= flat.size())
+                break;
             auto v = flat.get(i);
             if (v.tag == aura::ast::NodeTag::Define) {
                 auto sym = v.sym_id;
-                if (sym == aura::ast::INVALID_SYM) continue;
-                if (flat.get_function_region_for_sym(sym).has_value()) continue;
+                if (sym == aura::ast::INVALID_SYM)
+                    continue;
+                if (flat.get_function_region_for_sym(sym).has_value())
+                    continue;
                 if (subtree_uses_node(flat, v.child(0), mutating_nodes)) {
-                    flat.set_function_region(sym, static_cast<std::uint8_t>(aura::ir::Region::Evolution));
+                    flat.set_function_region(
+                        sym, static_cast<std::uint8_t>(aura::ir::Region::Evolution));
                 }
             } else if (v.tag == aura::ast::NodeTag::Lambda) {
-                if (flat.get_function_region_for_lambda(i).has_value()) continue;
+                if (flat.get_function_region_for_lambda(i).has_value())
+                    continue;
                 if (subtree_uses_node(flat, i, mutating_nodes)) {
-                    flat.set_function_region_lambda(i, static_cast<std::uint8_t>(aura::ir::Region::Evolution));
+                    flat.set_function_region_lambda(
+                        i, static_cast<std::uint8_t>(aura::ir::Region::Evolution));
                 }
             }
         }
@@ -1422,7 +1452,7 @@ IRModule lower_to_ir_with_cache(
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
     const std::string* self_name, const aura::core::TypeRegistry* type_reg) {
     return lower_to_ir_with_cache_result(flat, pool, arena, cache, cache_hits, primitives,
-                                          cache_bridge, cache_strings, self_name, type_reg)
+                                         cache_bridge, cache_strings, self_name, type_reg)
         .value();
 }
 
@@ -1437,9 +1467,9 @@ IRModule lower_to_ir_with_cache(
 // (e.g., for unknown primitives, type-registry lookups, or
 // invalid IR shapes), this is the channel through which
 // those errors flow to the caller.
-aura::diag::LowerResult<IRModule> lower_to_ir_result(FlatAST& flat, StringPool& pool, ASTArena& arena,
-                                          const Primitives* primitives,
-                                          const aura::core::TypeRegistry* type_reg) {
+aura::diag::LowerResult<IRModule> lower_to_ir_result(FlatAST& flat, StringPool& pool,
+                                                     ASTArena& arena, const Primitives* primitives,
+                                                     const aura::core::TypeRegistry* type_reg) {
     return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives, type_reg);
 }
 
@@ -1475,11 +1505,11 @@ aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(
 //     NOT run here; the caller should run them after
 //     replacement, matching what cache_define does for the
 //     full-bundle path.
-IRFunction lower_function_at(
-    FlatAST& flat, StringPool& pool, ASTArena& arena, NodeId lambda_node_id,
-    const Primitives* primitives,
-    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
-    std::vector<std::string>* cache_hits) {
+IRFunction
+lower_function_at(FlatAST& flat, StringPool& pool, ASTArena& arena, NodeId lambda_node_id,
+                  const Primitives* primitives,
+                  const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+                  std::vector<std::string>* cache_hits) {
     if (lambda_node_id == NULL_NODE || lambda_node_id >= flat.size()) {
         return IRFunction{};
     }
@@ -1515,7 +1545,7 @@ IRFunction lower_function_at(
     // subsequent per-function calls or the next full re-lower).
     for (auto& fn : ir_mod.functions) {
         if (fn.id != ir_mod.entry_function_id) {
-            fn.id = 0;  // caller assigns
+            fn.id = 0; // caller assigns
             return std::move(fn);
         }
     }

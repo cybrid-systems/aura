@@ -4,7 +4,7 @@
 #ifndef AURA_SERVE_GC_COORDINATOR_H
 #define AURA_SERVE_GC_COORDINATOR_H
 
-#include "fiber.h"  // GCPhase, WorkerGCState
+#include "fiber.h" // GCPhase, WorkerGCState
 #include <atomic>
 #include <functional>
 #include <mutex>
@@ -47,9 +47,8 @@ struct GCRootSet {
     std::vector<int64_t> workspace_roots;
 
     bool empty() const {
-        return string_roots.empty() && pair_roots.empty()
-            && closure_roots.empty() && fiber_result_roots.empty()
-            && workspace_roots.empty();
+        return string_roots.empty() && pair_roots.empty() && closure_roots.empty() &&
+               fiber_result_roots.empty() && workspace_roots.empty();
     }
     void clear() {
         string_roots.clear();
@@ -78,8 +77,8 @@ using GCRootFlushFn = std::function<void(GCRootSet& out)>;
 // Decoupling the walk from the GC keeps the GC's surface
 // area narrow — it doesn't need to know EnvFrame's layout.
 struct EnvFrameRoots {
-    std::vector<int64_t> pair_roots;     // pair indices reachable through env chains
-    std::vector<int64_t> closure_roots;  // closure indices reachable through env chains
+    std::vector<int64_t> pair_roots;    // pair indices reachable through env chains
+    std::vector<int64_t> closure_roots; // closure indices reachable through env chains
     // Future: string_roots, workspace_roots, etc. — add as
     // the issue's body sections get implemented.
 };
@@ -115,7 +114,8 @@ using GCSweepFn = std::function<GCSweepResult(const GCSweepBuffers&)>;
 // Thread-safe: concurrent set_bit is safe (atomic byte writes).
 class MarkBitVector {
 public:
-    explicit MarkBitVector(size_t size = 0) : bits_(size, false) {}
+    explicit MarkBitVector(size_t size = 0)
+        : bits_(size, false) {}
 
     void resize(size_t n) { bits_.resize(n, false); }
     void clear_all() { std::fill(bits_.begin(), bits_.end(), false); }
@@ -128,22 +128,20 @@ public:
     }
 
     // Check if an index is live.
-    bool test(size_t idx) const {
-        return idx < bits_.size() && bits_[idx];
-    }
+    bool test(size_t idx) const { return idx < bits_.size() && bits_[idx]; }
 
     // Return count of unmarked (dead) entries
     size_t count_dead() const {
         size_t dead = 0;
         for (size_t i = 0; i < bits_.size(); ++i)
-            if (!bits_[i]) ++dead;
+            if (!bits_[i])
+                ++dead;
         return dead;
     }
 
 private:
     std::vector<bool> bits_;
 };
-
 
 
 class GCCollector {
@@ -173,14 +171,10 @@ public:
     // lists. The GC calls it between mark_from_roots and
     // sweep (so the mark vectors are already sized). This
     // is the 3-5x mark-phase speedup from #172.
-    void register_env_walk_fn(GCEnvWalkFn fn) {
-        env_walk_fn_ = std::move(fn);
-    }
+    void register_env_walk_fn(GCEnvWalkFn fn) { env_walk_fn_ = std::move(fn); }
 
     // ── Mark + Sweep (Phase 3) ──────────────────────
-    void mark_from_roots(const GCRootSet& roots,
-                         size_t string_heap_size,
-                         size_t pairs_size,
+    void mark_from_roots(const GCRootSet& roots, size_t string_heap_size, size_t pairs_size,
                          size_t closures_size);
 
     // Issue #172 / #204: env_frame_roots walk. The caller
@@ -200,9 +194,8 @@ public:
     // The mark vectors must be sized (via mark_from_roots or
     // a direct resize) before calling this; otherwise set()
     // is a silent no-op.
-    void mark_env_frame_roots(
-        const std::vector<int64_t>& pair_roots,
-        const std::vector<int64_t>& closure_roots);
+    void mark_env_frame_roots(const std::vector<int64_t>& pair_roots,
+                              const std::vector<int64_t>& closure_roots);
 
     GCSweepResult sweep();
 
@@ -215,9 +208,7 @@ public:
     void set_alloc_threshold(int64_t threshold) { alloc_threshold_ = threshold; }
     int64_t alloc_threshold() const { return alloc_threshold_; }
     void reset_alloc_counter() { alloc_counter_.store(0, std::memory_order_release); }
-    void record_alloc() {
-        alloc_counter_.fetch_add(1, std::memory_order_relaxed);
-    }
+    void record_alloc() { alloc_counter_.fetch_add(1, std::memory_order_relaxed); }
 
     // ── Metrics ─────────────────────────────────────
     struct Metrics {
@@ -227,9 +218,9 @@ public:
         std::atomic<int64_t> safepoint_wait_us{0};
         std::atomic<int64_t> root_count{0};
         std::atomic<int64_t> root_collect_us{0};
-        std::atomic<int64_t> mark_us{0};          // Phase 3: time to mark
-        std::atomic<int64_t> sweep_us{0};         // Phase 3: time to sweep
-        std::atomic<int64_t> strings_freed{0};    // entries removed
+        std::atomic<int64_t> mark_us{0};       // Phase 3: time to mark
+        std::atomic<int64_t> sweep_us{0};      // Phase 3: time to sweep
+        std::atomic<int64_t> strings_freed{0}; // entries removed
         std::atomic<int64_t> pairs_freed{0};
         std::atomic<int64_t> closures_freed{0};
     };

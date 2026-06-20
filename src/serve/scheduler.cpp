@@ -19,8 +19,10 @@ Scheduler::Scheduler(int num_workers) {
     // Default: hardware concurrency, capped at reasonable range
     if (num_workers <= 0) {
         num_workers = static_cast<int>(std::thread::hardware_concurrency());
-        if (num_workers < 2) num_workers = 2;
-        if (num_workers > 16) num_workers = 16;
+        if (num_workers < 2)
+            num_workers = 2;
+        if (num_workers > 16)
+            num_workers = 16;
     }
     num_workers_ = num_workers;
 
@@ -40,13 +42,13 @@ Scheduler::Scheduler(int num_workers) {
     stdin_fd_ = STDIN_FILENO;
     struct epoll_event ee;
     ee.events = EPOLLIN | EPOLLET;
-    ee.data.ptr = nullptr;  // nullptr = stdin event
+    ee.data.ptr = nullptr; // nullptr = stdin event
     if (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, stdin_fd_, &ee) == -1) {
         std::fprintf(stderr,
-            "scheduler: stdin not epollable (errno=%d: %s); "
-            "REPL/serve-async stdin handling disabled for this scheduler\n",
-            errno, std::strerror(errno));
-        stdin_fd_ = -1;  // mark as not registered
+                     "scheduler: stdin not epollable (errno=%d: %s); "
+                     "REPL/serve-async stdin handling disabled for this scheduler\n",
+                     errno, std::strerror(errno));
+        stdin_fd_ = -1; // mark as not registered
     }
 
     // Also register the scheduler's own wakeup eventfd for fast shutdown
@@ -74,7 +76,8 @@ Scheduler::~Scheduler() {
         w->join();
     }
     workers_.clear();
-    if (epoll_fd_ >= 0) ::close(epoll_fd_);
+    if (epoll_fd_ >= 0)
+        ::close(epoll_fd_);
 }
 
 // ── spawn — create a new fiber ────────────────────────
@@ -108,11 +111,10 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
     if (ptr->affinity() >= 0) {
         // Pinned fiber: respect affinity, clamp to valid range
         wid = std::min(ptr->affinity(), static_cast<int>(workers_.size()) - 1);
-        if (wid < 0) wid = 0;
+        if (wid < 0)
+            wid = 0;
     } else {
-        wid = use_load_aware_distribution_
-            ? next_worker_id_load_aware()
-            : next_worker_id();
+        wid = use_load_aware_distribution_ ? next_worker_id_load_aware() : next_worker_id();
     }
     workers_[wid]->enqueue(ptr);
     // Issue #119: register the fiber in the worker's
@@ -127,8 +129,7 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
     return ptr;
 }
 
-Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id,
-                                        size_t stack_size) {
+Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t stack_size) {
     auto fb = std::make_unique<Fiber>(std::move(func), stack_size);
     auto* ptr = fb.get();
     if (worker_id >= 0 && worker_id < static_cast<int>(workers_.size())) {
@@ -196,7 +197,8 @@ void Scheduler::unregister_fiber(int eventfd) {
 // Removes the fiber's eventfd from epoll and cleans up wait map.
 
 void Scheduler::on_fiber_done(Fiber* fiber) {
-    if (!fiber) return;
+    if (!fiber)
+        return;
     int evfd = fiber->eventfd();
     if (evfd >= 0) {
         ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, evfd, nullptr);
@@ -231,7 +233,8 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
         }
     }
     for (Fiber* joiner : joiners) {
-        if (!joiner) continue;
+        if (!joiner)
+            continue;
         int joiner_evfd = joiner->eventfd();
         if (joiner_evfd >= 0) {
             uint64_t one = 1;
@@ -252,14 +255,17 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
 // be found. The target may be in any state except Done —
 // callers should check `fiber_by_id(id)->is_done()` first.
 bool Scheduler::add_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
-    if (!joiner) return false;
+    if (!joiner)
+        return false;
     Fiber* target = fiber_by_id(target_fiber_id);
-    if (!target) return false;
+    if (!target)
+        return false;
     std::lock_guard<std::mutex> lock(joiner_map_mutex_);
     auto& list = joiner_map_[target_fiber_id];
     // Idempotent: if the joiner is already in the list, skip.
     for (auto* f : list) {
-        if (f == joiner) return true;
+        if (f == joiner)
+            return true;
     }
     list.push_back(joiner);
     return true;
@@ -267,13 +273,16 @@ bool Scheduler::add_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
 
 // Issue #119: remove a joiner. Idempotent.
 void Scheduler::remove_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
-    if (!joiner) return;
+    if (!joiner)
+        return;
     std::lock_guard<std::mutex> lock(joiner_map_mutex_);
     auto it = joiner_map_.find(target_fiber_id);
-    if (it == joiner_map_.end()) return;
+    if (it == joiner_map_.end())
+        return;
     auto& list = it->second;
     list.erase(std::remove(list.begin(), list.end(), joiner), list.end());
-    if (list.empty()) joiner_map_.erase(it);
+    if (list.empty())
+        joiner_map_.erase(it);
 }
 
 // Issue #119: lookup a fiber by ID. Returns nullptr if no
@@ -285,7 +294,8 @@ Fiber* Scheduler::fiber_by_id(std::uint64_t fiber_id) const {
     // traffic becomes a hotspot, switch to a per-worker hashmap.
     for (auto& w : workers_) {
         Fiber* f = w->fiber_by_id(fiber_id);
-        if (f) return f;
+        if (f)
+            return f;
     }
     return nullptr;
 }
@@ -304,7 +314,8 @@ bool Scheduler::has_waiting_fibers() const {
 // ── worker — access worker by index ──────────────────
 
 WorkerThread* Scheduler::worker(int idx) {
-    if (idx < 0 || idx >= num_workers_) return nullptr;
+    if (idx < 0 || idx >= num_workers_)
+        return nullptr;
     return workers_[idx].get();
 }
 
@@ -327,9 +338,11 @@ int Scheduler::next_worker_id_load_aware() {
 
     for (int i = 0; i < num_workers_; ++i) {
         auto* w = workers_[i].get();
-        if (!w) continue;
+        if (!w)
+            continue;
         size_t qs = w->queue_size();
-        if (qs > 0) any_nonempty = true;
+        if (qs > 0)
+            any_nonempty = true;
         if (qs <= best_size) {
             best_size = qs;
             best_id = i;
@@ -379,9 +392,9 @@ void Scheduler::run() {
             break;
 
         if (n < 0) {
-            if (errno == EINTR) continue;
-            std::fprintf(stderr, "scheduler: epoll_wait failed: %s\n",
-                         std::strerror(errno));
+            if (errno == EINTR)
+                continue;
+            std::fprintf(stderr, "scheduler: epoll_wait failed: %s\n", std::strerror(errno));
             break;
         }
 
@@ -397,7 +410,8 @@ void Scheduler::run() {
                     if (stdin_fiber_->affinity() >= 0) {
                         wid = std::min(stdin_fiber_->affinity(),
                                        static_cast<int>(workers_.size()) - 1);
-                        if (wid < 0) wid = 0;
+                        if (wid < 0)
+                            wid = 0;
                     } else {
                         wid = next_worker_id();
                     }
@@ -413,7 +427,8 @@ void Scheduler::run() {
                             if (fiber->affinity() >= 0) {
                                 wid = std::min(fiber->affinity(),
                                                static_cast<int>(workers_.size()) - 1);
-                                if (wid < 0) wid = 0;
+                                if (wid < 0)
+                                    wid = 0;
                             } else {
                                 wid = next_worker_id();
                             }
@@ -424,7 +439,8 @@ void Scheduler::run() {
             } else {
                 // Fiber eventfd event
                 auto* fiber = static_cast<Fiber*>(events[i].data.ptr);
-                if (!fiber || fiber->is_done()) continue;
+                if (!fiber || fiber->is_done())
+                    continue;
 
                 // Drain the eventfd (read the 8-byte counter)
                 uint64_t val;
@@ -438,9 +454,9 @@ void Scheduler::run() {
                 // Enqueue to a worker for resumption (respect affinity)
                 int wid;
                 if (fiber->affinity() >= 0) {
-                    wid = std::min(fiber->affinity(),
-                                   static_cast<int>(workers_.size()) - 1);
-                    if (wid < 0) wid = 0;
+                    wid = std::min(fiber->affinity(), static_cast<int>(workers_.size()) - 1);
+                    if (wid < 0)
+                        wid = 0;
                 } else {
                     wid = next_worker_id();
                 }
@@ -496,7 +512,8 @@ int Scheduler::request_gc_safepoint() {
     // Broadcast GCPhase::Requested to all workers
     int acknowledged = 0;
     for (auto& w : workers_) {
-        if (!w) continue;
+        if (!w)
+            continue;
         auto& gc = w->gc_state();
         gc.phase.store(GCPhase::Requested, std::memory_order_release);
         gc.fibers_at_safepoint.store(0, std::memory_order_release);
@@ -522,15 +539,16 @@ bool Scheduler::wait_for_safepoint(int timeout_ms) {
     // and the fiber hasn't yielded back yet.
     auto all_quiescent = [this]() {
         for (auto& w : workers_) {
-            if (!w) continue;
+            if (!w)
+                continue;
             auto& gc = w->gc_state();
             // Skip workers with no active fibers (empty queue, nothing
             // pending, no running fiber). These workers are
             // participating in the safepoint trivially (they have
             // nothing to wait for).
-            if (w->queue_size() == 0 && w->pending_count() == 0
-                && gc.fibers_at_safepoint.load(std::memory_order_acquire) == 0
-                && gc.running_fiber_count.load(std::memory_order_acquire) == 0) {
+            if (w->queue_size() == 0 && w->pending_count() == 0 &&
+                gc.fibers_at_safepoint.load(std::memory_order_acquire) == 0 &&
+                gc.running_fiber_count.load(std::memory_order_acquire) == 0) {
                 continue;
             }
             // Worker has active state. Wait for the running fiber
@@ -547,8 +565,8 @@ bool Scheduler::wait_for_safepoint(int timeout_ms) {
             // only require running_fiber_count == 0 if no fiber
             // has yet arrived — the "running but not arrived"
             // case is the one that the Issue #115 fix targets.
-            if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1
-                && gc.running_fiber_count.load(std::memory_order_acquire) > 0) {
+            if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1 &&
+                gc.running_fiber_count.load(std::memory_order_acquire) > 0) {
                 return false;
             }
             if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1) {
@@ -561,8 +579,9 @@ bool Scheduler::wait_for_safepoint(int timeout_ms) {
     // Spin for a short time first (fast path)
     constexpr int SPIN_US = 100;
     int elapsed_us = 0;
-    while (elapsed_us < SPIN_US * 10) {  // max ~1ms spin
-        if (all_quiescent()) return true;
+    while (elapsed_us < SPIN_US * 10) { // max ~1ms spin
+        if (all_quiescent())
+            return true;
         // Tiny pause to avoid hammering
 #if defined(__x86_64__)
         __builtin_ia32_pause();
@@ -576,16 +595,18 @@ bool Scheduler::wait_for_safepoint(int timeout_ms) {
 
     // After spin fails, fall back to epoll timeout wait
     for (int attempt = 0; attempt < std::max(1, timeout_ms); ++attempt) {
-        if (all_quiescent()) return true;
+        if (all_quiescent())
+            return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    return false;  // timeout
+    return false; // timeout
 }
 
 void Scheduler::resume_from_gc() {
     for (auto& w : workers_) {
-        if (!w) continue;
+        if (!w)
+            continue;
         auto& gc = w->gc_state();
         gc.phase.store(GCPhase::None, std::memory_order_release);
     }

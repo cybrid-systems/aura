@@ -113,7 +113,7 @@ export struct EvalStrategy {
 // Future fields (escape_maps, EvalStrategy, etc.) belong in this
 // struct so all IR-runtime state has a single lifetime owner.
 export struct IRContext {
-    Primitives& primitives;                          // non-const: ConstString mutates string_heap
+    Primitives& primitives; // non-const: ConstString mutates string_heap
     const aura::core::TypeRegistry* type_registry = nullptr;
     CompilerMetrics* metrics = nullptr;
 
@@ -123,7 +123,9 @@ export struct IRContext {
     // cs.eval(), with lifetime matching the IRInterpreter's.
     IRContext(Primitives& p, const aura::core::TypeRegistry* t = nullptr,
               CompilerMetrics* m = nullptr)
-        : primitives(p), type_registry(t), metrics(m) {}
+        : primitives(p)
+        , type_registry(t)
+        , metrics(m) {}
 };
 
 export class IRInterpreter {
@@ -145,15 +147,14 @@ public:
     // lifetime (typically: the context is stack-allocated inside
     // cs.eval, with lifetime matching the IRInterpreter's).
     explicit IRInterpreter(const aura::ir::IRModule& mod, IRContext& ctx)
-        : module_(mod), context_(ctx) {}
+        : module_(mod)
+        , context_(ctx) {}
 
     // Issue #62 Iter 1: attach a metrics struct. Optional so the
     // existing test code that constructs IRInterpreter with two args
     // keeps working. When set, hot paths increment counters for
     // --evo-explain and AuraQuery.
-    void set_metrics(CompilerMetrics* m) {
-        context_.metrics = m;
-    }
+    void set_metrics(CompilerMetrics* m) { context_.metrics = m; }
 
     // Execute the top-level function and return result
     EvalResult execute();
@@ -196,8 +197,7 @@ private:
     using RunResult = std::variant<EvalResult, PendingCall>;
 
     // Execute a specific function with given args (backward compat wrapper)
-    EvalResult execute_function(const aura::ir::IRFunction& func,
-                                std::span<const EvalValue> args);
+    EvalResult execute_function(const aura::ir::IRFunction& func, std::span<const EvalValue> args);
 
     // Step through instructions. Returns RunResult:
     //   - EvalResult on Return/error

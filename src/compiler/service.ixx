@@ -2,7 +2,7 @@ module;
 #include <cstdint>
 #include "aura_jit.h"
 #include "runtime_shared.h"
-#include "value_tags.h"  // Issue #181 Cycle 2: v2 string encoding helpers
+#include "value_tags.h" // Issue #181 Cycle 2: v2 string encoding helpers
 #include "observability_metrics.h"
 #include "observability_snapshot.h"
 #include <atomic>
@@ -25,12 +25,10 @@ extern "C" void aura_set_prim_dispatcher(std::int64_t (*fn)(std::int64_t, std::i
 // (aura_alloc_pair, aura_pair_car, aura_prim_call, etc.) can
 // participate in Evaluator::workspace_mtx_ + defuse_version_
 // without exposing the mutex as a global.
-extern "C" void aura_set_lock_hooks(
-    void (*lock_read)(void*), void (*unlock_read)(void*),
-    void (*lock_write)(void*), void (*unlock_write)(void*),
-    std::uint64_t (*get_version)(void*),
-    void (*yield_boundary)(void*),
-    void* user_data);
+extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read)(void*),
+                                    void (*lock_write)(void*), void (*unlock_write)(void*),
+                                    std::uint64_t (*get_version)(void*),
+                                    void (*yield_boundary)(void*), void* user_data);
 
 extern "C" std::size_t aura_jit_pool_size();
 extern "C" const char* aura_jit_pool_string(std::size_t idx);
@@ -60,35 +58,32 @@ import aura.diag;
 
 // PrimId name table (mirrors ir.ixx kPrimNames — must stay in sync)
 static constexpr const char* kPrimNameTable[] = {
-    "hash",
-    "hash-length", "hash-has-key?", "hash-keys", "hash-values",
+    "hash",          "hash-length",    "hash-has-key?",  "hash-keys",     "hash-values",
     "string-append", "string-length",  "string-ref",     "substring",     "string=?",
     "string<?",      "number->string", "string->number", "display",       "write",
     "newline",       "error",          "assert",         "read",          "read-file",
     "write-file",    "file-exists?",   "gensym",         "apply",         "vector",
     "vector-ref",    "vector-set!",    "vector-length",  "vector?",       "make-vector",
     "import",        "char=?",         "char<?",         "char->integer", "integer->char",
-    "quotient",      "remainder",
-    "length",        "list-ref",       "reverse",
-    "raise",         "error?",
-    "pair?",         "null?",
+    "quotient",      "remainder",      "length",         "list-ref",      "reverse",
+    "raise",         "error?",         "pair?",          "null?",
 };
 
 static std::atomic<const aura::compiler::Primitives*> g_jit_prim_ctx{nullptr};
 
 // Key equality callback for JIT hash scan loop (Phase 4b)
 // Compares two string-encoded values, handling both JIT and evaluator string encoding.
-extern "C" std::int64_t aura_hash_callback_key_eq(std::int64_t stored_key, std::int64_t search_key) {
+extern "C" std::int64_t aura_hash_callback_key_eq(std::int64_t stored_key,
+                                                  std::int64_t search_key) {
     using aura::compiler::types::is_string_raw_v2;
-    using aura::compiler::types::string_idx_raw_v2;
     using aura::compiler::types::STRING_BIAS_VAL_2;
+    using aura::compiler::types::string_idx_raw_v2;
     auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
     // Fast path: raw value equality
-    if (stored_key == search_key) return 1;
+    if (stored_key == search_key)
+        return 1;
     // String comparison (Issue #181 Cycle 2: v2 encoding)
-    auto is_str_val = [](std::int64_t v) {
-        return is_string_raw_v2(v) && v <= STRING_BIAS_VAL_2;
-    };
+    auto is_str_val = [](std::int64_t v) { return is_string_raw_v2(v) && v <= STRING_BIAS_VAL_2; };
     if (is_str_val(stored_key) && is_str_val(search_key) && prims) {
         auto& sh = const_cast<aura::compiler::Primitives*>(prims)->string_heap();
         std::uint64_t eval_idx = string_idx_raw_v2(stored_key);
@@ -100,7 +95,9 @@ extern "C" std::int64_t aura_hash_callback_key_eq(std::int64_t stored_key, std::
             const char* jit_s = aura_jit_pool_string(static_cast<std::size_t>(s_idx));
             if (jit_s)
                 return (sh[static_cast<std::size_t>(eval_idx)] == jit_s) ? 1 : 0;
-            return (sh[static_cast<std::size_t>(eval_idx)] == sh[static_cast<std::size_t>(s_idx)]) ? 1 : 0;
+            return (sh[static_cast<std::size_t>(eval_idx)] == sh[static_cast<std::size_t>(s_idx)])
+                       ? 1
+                       : 0;
         }
     }
     return 0;
@@ -177,7 +174,7 @@ extern "C" std::int64_t aura_hash_string_convert_fn(std::int64_t);
 // copying the content from the JIT pool to the evaluator string heap.
 // Non-string values pass through unchanged.
 static std::int64_t convert_str_for_eval(std::int64_t val,
-                                          const aura::compiler::Primitives* prims) {
+                                         const aura::compiler::Primitives* prims) {
     if (!is_str_val(val))
         return val; // not a string, pass through
     // JIT string encoding (v2): STRING_BIAS_VAL_2 - (idx << 2)
@@ -195,9 +192,6 @@ static std::int64_t convert_str_for_eval(std::int64_t val,
 }
 
 
-
-
-
 namespace aura::compiler {
 
 
@@ -207,8 +201,7 @@ static aura::diag::Diagnostic parse_error_diag(const aura::parser::FlatParseResu
     if (!pr.errors.empty()) {
         return {aura::diag::ErrorKind::ParseError, pr.errors[0].message, pr.errors[0].location};
     }
-    return {aura::diag::ErrorKind::ParseError,
-            pr.error.empty() ? "parse error" : pr.error};
+    return {aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error};
 }
 
 // ── EscapeAnalysisWrap — IR pass that computes per-function escape info ───
@@ -311,14 +304,15 @@ export enum class InvariantCheckMode : std::uint8_t {
 // until Goals 1-2 land; the enum value is reserved.
 export enum class IncrementalStrictness : std::uint8_t {
     Conservative = 0,
-    Balanced     = 1,
-    Aggressive   = 2,
+    Balanced = 1,
+    Aggressive = 2,
 };
 
 export class CompilerService {
 public:
     CompilerService()
-        : user_bindings_{"#t", "#f", "nil"}, session_id_("default") {
+        : user_bindings_{"#t", "#f", "nil"}
+        , session_id_("default") {
         evaluator_.set_arena(&arena_);
         evaluator_.set_temp_arena(&temp_arena_);
         evaluator_.set_type_registry(&type_registry_);
@@ -337,8 +331,7 @@ public:
         // needing to import CompilerService (which would be circular).
         evaluator_.set_mark_define_dirty_fn(
             [this](const std::string& name) { this->mark_define_dirty(name); });
-        evaluator_.set_mark_all_defines_dirty_fn(
-            [this]() { this->mark_all_defines_dirty(); });
+        evaluator_.set_mark_all_defines_dirty_fn([this]() { this->mark_all_defines_dirty(); });
         // Phase 2: pre-populate v2 IR cache from workspace defines.
         // Called from (set-code ...) primitive after a successful parse.
         // Plan A + Follow-up 3: hook now calls BOTH the lightweight
@@ -350,16 +343,17 @@ public:
             this->populate_ir_cache_v2_from_workspace();
         });
         // Phase 3 debugging: expose is_define_dirty + get_dependents.
-        evaluator_.set_is_define_dirty_fn(
-            [this](const std::string& name) -> bool {
-                const auto* entry = this->get_define_v2(name);
-                if (!entry) return false;
-                return entry->dirty;
-            });
+        evaluator_.set_is_define_dirty_fn([this](const std::string& name) -> bool {
+            const auto* entry = this->get_define_v2(name);
+            if (!entry)
+                return false;
+            return entry->dirty;
+        });
         evaluator_.set_get_dependents_fn(
             [this](const std::string& name) -> std::vector<std::string> {
                 auto it = dep_graph_.find(name);
-                if (it == dep_graph_.end()) return {};
+                if (it == dep_graph_.end())
+                    return {};
                 return it->second.called_by;
             });
         // Phase 4: hook for (eval-current :jit). Re-runs the workspace
@@ -369,64 +363,59 @@ public:
         evaluator_.set_try_jit_fn(
             [this](const std::string& source) -> std::optional<types::EvalValue> {
                 auto result = this->eval_ir(source);
-                if (!result) return std::nullopt;
+                if (!result)
+                    return std::nullopt;
                 return *result;
             });
         // Phase 4: get workspace source via unparse_node (the proper
         // way to serialize a workspace FlatAST back to a string).
-        evaluator_.set_get_workspace_source_fn(
-            [this]() -> std::string {
-                auto* ws_flat = evaluator_.workspace_flat();
-                auto* ws_pool = evaluator_.workspace_pool();
-                if (!ws_flat || !ws_pool) return "";
-                return unparse_node(*ws_flat, *ws_pool, ws_flat->root, 0);
-            });
+        evaluator_.set_get_workspace_source_fn([this]() -> std::string {
+            auto* ws_flat = evaluator_.workspace_flat();
+            auto* ws_pool = evaluator_.workspace_pool();
+            if (!ws_flat || !ws_pool)
+                return "";
+            return unparse_node(*ws_flat, *ws_pool, ws_flat->root, 0);
+        });
         // Issue #194: hook to query the runtime→intrinsic migration
         // counter from the AuraJIT. Used by the (jit:intrinsic-count)
         // Aura-level primitive. Returns 0 if no JIT is attached
         // (e.g. --no-llvm build, unit-test Evaluator).
-        evaluator_.set_get_intrinsic_count_fn(
-            [this]() -> std::uint64_t {
-                // The Metrics struct on AuraJIT includes
-                // intrinsic_count (the per-lowering migration counter
-                // shipped in 9901a91). Access via Metrics() — returns
-                // a fresh struct snapshot, so reads are atomic.
-                // The intrinsic_count field is std::atomic<uint64_t>.
-                return jit_.metrics().intrinsic_count.load(
-                    std::memory_order_relaxed);
-            });
+        evaluator_.set_get_intrinsic_count_fn([this]() -> std::uint64_t {
+            // The Metrics struct on AuraJIT includes
+            // intrinsic_count (the per-lowering migration counter
+            // shipped in 9901a91). Access via Metrics() — returns
+            // a fresh struct snapshot, so reads are atomic.
+            // The intrinsic_count field is std::atomic<uint64_t>.
+            return jit_.metrics().intrinsic_count.load(std::memory_order_relaxed);
+        });
         // Issue #193: hook to query the per-function
         // unhandled-opcode count. Used by the (jit:deopt-fn?)
         // primitive (Issue #193 follow-up).
-        evaluator_.set_get_jit_unhandled_count_fn(
-            [this](const char* name) -> std::uint64_t {
-                return jit_.unhandled_opcode_count_for_function(name);
-            });
+        evaluator_.set_get_jit_unhandled_count_fn([this](const char* name) -> std::uint64_t {
+            return jit_.unhandled_opcode_count_for_function(name);
+        });
         // Issue #196: hook to query the incremental-compilation
         // observability struct. Used by the (compile:cache-size),
         // (compile:dirty-count), (compile:epoch), (compile:dep-edges)
         // primitives.
-        evaluator_.set_get_incremental_stats_fn(
-            [this]() -> std::uint64_t {
-                // Return 4 values packed as (cache << 48) | (dirty << 32) | (epoch << 16) | edges
-                std::uint64_t cache_size = static_cast<std::uint64_t>(
-                    ir_cache_v2_.size());
-                std::uint64_t dirty_count = 0;
-                for (auto& [_, e] : ir_cache_v2_) {
-                    if (e.dirty) ++dirty_count;
-                }
-                std::uint64_t epoch = mutation_epoch_.load(
-                    std::memory_order_relaxed);
-                std::uint64_t edges = 0;
-                for (auto& [_, dep_entry] : dep_graph_) {
-                    edges += static_cast<std::uint64_t>(dep_entry.calls.size());
-                    edges += static_cast<std::uint64_t>(dep_entry.called_by.size());
-                }
-                // Pack into a single uint64 — simpler than a struct
-                // crossing the module boundary.
-                return (cache_size << 48) | (dirty_count << 32) |
-                       (epoch << 16) | (edges & 0xFFFF);
-            });
+        evaluator_.set_get_incremental_stats_fn([this]() -> std::uint64_t {
+            // Return 4 values packed as (cache << 48) | (dirty << 32) | (epoch << 16) | edges
+            std::uint64_t cache_size = static_cast<std::uint64_t>(ir_cache_v2_.size());
+            std::uint64_t dirty_count = 0;
+            for (auto& [_, e] : ir_cache_v2_) {
+                if (e.dirty)
+                    ++dirty_count;
+            }
+            std::uint64_t epoch = mutation_epoch_.load(std::memory_order_relaxed);
+            std::uint64_t edges = 0;
+            for (auto& [_, dep_entry] : dep_graph_) {
+                edges += static_cast<std::uint64_t>(dep_entry.calls.size());
+                edges += static_cast<std::uint64_t>(dep_entry.called_by.size());
+            }
+            // Pack into a single uint64 — simpler than a struct
+            // crossing the module boundary.
+            return (cache_size << 48) | (dirty_count << 32) | (epoch << 16) | (edges & 0xFFFF);
+        });
         // Issue #196: per-block dirty hooks. Mirror the
         // get_incremental_stats hook pattern: stateless
         // lambdas that read the current state of
@@ -434,39 +423,36 @@ public:
         // hook layer — the underlying reads are O(1) or
         // O(num_functions_in_entry) which is also small
         // (typically <10 functions per define).
-        evaluator_.set_get_dirty_block_count_fn(
-            [this](const char* name) -> std::uint64_t {
-                std::string n = name ? std::string(name) : std::string();
-                auto it = ir_cache_v2_.find(n);
-                if (it == ir_cache_v2_.end()) return 0;
-                return static_cast<std::uint64_t>(
-                    it->second.dirty_block_count());
-            });
+        evaluator_.set_get_dirty_block_count_fn([this](const char* name) -> std::uint64_t {
+            std::string n = name ? std::string(name) : std::string();
+            auto it = ir_cache_v2_.find(n);
+            if (it == ir_cache_v2_.end())
+                return 0;
+            return static_cast<std::uint64_t>(it->second.dirty_block_count());
+        });
         evaluator_.set_get_func_dirty_block_count_fn(
             [this](const char* name, std::size_t func_idx) -> std::uint64_t {
                 std::string n = name ? std::string(name) : std::string();
                 auto it = ir_cache_v2_.find(n);
-                if (it == ir_cache_v2_.end()) return 0;
-                return static_cast<std::uint64_t>(
-                    it->second.func_dirty_block_count(func_idx));
+                if (it == ir_cache_v2_.end())
+                    return 0;
+                return static_cast<std::uint64_t>(it->second.func_dirty_block_count(func_idx));
             });
         evaluator_.set_is_block_dirty_fn(
-            [this](const char* name, std::size_t func_idx,
-                   std::uint32_t block_idx) -> bool {
+            [this](const char* name, std::size_t func_idx, std::uint32_t block_idx) -> bool {
                 std::string n = name ? std::string(name) : std::string();
                 auto it = ir_cache_v2_.find(n);
-                if (it == ir_cache_v2_.end()) return false;
+                if (it == ir_cache_v2_.end())
+                    return false;
                 return it->second.is_block_dirty(func_idx, block_idx);
             });
         evaluator_.set_mark_block_dirty_fn(
-            [this](const char* name, std::size_t func_idx,
-                   std::uint32_t block_idx) -> bool {
+            [this](const char* name, std::size_t func_idx, std::uint32_t block_idx) -> bool {
                 std::string n = name ? std::string(name) : std::string();
                 return mark_block_dirty_v2(n, func_idx, block_idx);
             });
         evaluator_.set_clear_block_dirty_fn(
-            [this](const char* name, std::size_t func_idx,
-                   std::uint32_t block_idx) -> bool {
+            [this](const char* name, std::size_t func_idx, std::uint32_t block_idx) -> bool {
                 std::string n = name ? std::string(name) : std::string();
                 return clear_block_dirty_v2(n, func_idx, block_idx);
             });
@@ -483,95 +469,88 @@ public:
         // it was already set, false otherwise). This lets
         // the read-only (compile:narrowing-dirty?) primitive
         // peek the state via a no-op set/restore pair.
-        evaluator_.set_set_occurrence_dirty_fn(
-            [this](std::uint32_t node_id, bool set) -> bool {
-                auto* ws = evaluator_.workspace_flat();
-                if (!ws || node_id >= ws->size()) return false;
-                bool prior = ws->is_dirty_for(
+        evaluator_.set_set_occurrence_dirty_fn([this](std::uint32_t node_id, bool set) -> bool {
+            auto* ws = evaluator_.workspace_flat();
+            if (!ws || node_id >= ws->size())
+                return false;
+            bool prior = ws->is_dirty_for(
+                node_id,
+                static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
+            if (set) {
+                ws->mark_dirty(node_id, static_cast<std::uint8_t>(
+                                            aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
+            } else {
+                ws->clear_dirty_for(
                     node_id,
-                    static_cast<std::uint8_t>(
-                        aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
-                if (set) {
-                    ws->mark_dirty(node_id,
-                        static_cast<std::uint8_t>(
-                            aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
-                } else {
-                    ws->clear_dirty_for(node_id,
-                        static_cast<std::uint8_t>(
-                            aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
-                }
-                return prior;
-            });
+                    static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
+            }
+            return prior;
+        });
         // Issue #197: hook for (compile:inline-pass-stats).
         // The hook reads the static lifetime counters
         // maintained by InlinePass (process-wide totals).
         // If the InlinePass hasn't been run yet, both
         // counters are 0.
-        evaluator_.set_get_inline_stats_fn(
-            []() -> std::uint64_t {
-                std::uint64_t inlined =
-                    static_cast<std::uint64_t>(
-                        aura::compiler::InlinePass::total_inlined());
-                std::uint64_t branch_aware =
-                    static_cast<std::uint64_t>(
-                        aura::compiler::InlinePass::total_inlined_branch_aware());
-                return (branch_aware << 32) | (inlined & 0xFFFFFFFF);
-            });
+        evaluator_.set_get_inline_stats_fn([]() -> std::uint64_t {
+            std::uint64_t inlined =
+                static_cast<std::uint64_t>(aura::compiler::InlinePass::total_inlined());
+            std::uint64_t branch_aware = static_cast<std::uint64_t>(
+                aura::compiler::InlinePass::total_inlined_branch_aware());
+            return (branch_aware << 32) | (inlined & 0xFFFFFFFF);
+        });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
-        aura::messaging::g_messaging_bridge.send =
-            [](const std::string& target, const std::string& msg) -> bool {
-                auto* svc = CompilerService::lookup(target);
-                if (!svc) return false;
-                auto* self = static_cast<CompilerService*>(
-                    aura::messaging::g_current_compiler_service);
-                auto sender = self ? self->session_id() : std::string("(unknown)");
-                svc->push_message(sender, msg);
-                return true;
-            };
+        aura::messaging::g_messaging_bridge.send = [](const std::string& target,
+                                                      const std::string& msg) -> bool {
+            auto* svc = CompilerService::lookup(target);
+            if (!svc)
+                return false;
+            auto* self = static_cast<CompilerService*>(aura::messaging::g_current_compiler_service);
+            auto sender = self ? self->session_id() : std::string("(unknown)");
+            svc->push_message(sender, msg);
+            return true;
+        };
         aura::messaging::g_messaging_bridge.recv =
             [](int timeout_ms) -> std::optional<std::string> {
-                // This relies on the compiler_service_ being set correctly,
-                // which doesn't work across sessions. Instead, use the
-                // current CompilerService from context.
-                // For now, return empty — recv is session-specific.
-                return std::nullopt;
-            };
-        aura::messaging::g_messaging_bridge.my_id =
-            []() -> std::string {
-                return "(unknown)";
-            };
+            // This relies on the compiler_service_ being set correctly,
+            // which doesn't work across sessions. Instead, use the
+            // current CompilerService from context.
+            // For now, return empty — recv is session-specific.
+            return std::nullopt;
+        };
+        aura::messaging::g_messaging_bridge.my_id = []() -> std::string { return "(unknown)"; };
         // Set per-service access functions
         // Arena reset callback for benchmark task cleanup
         aura::messaging::g_reset_arena = [](void* svc) {
-            if (!svc) return;
+            if (!svc)
+                return;
             static_cast<CompilerService*>(svc)->reset();
         };
 
-        aura::messaging::g_mailbox_read =
-            [](void* svc, int timeout_ms) -> std::optional<std::string> {
-                if (!svc) return std::nullopt;
-                return static_cast<CompilerService*>(svc)->pop_message(timeout_ms);
-            };
-        aura::messaging::g_mailbox_last_sender =
-            [](void* svc) -> std::string {
-                if (!svc) return "";
-                return static_cast<CompilerService*>(svc)->last_sender();
-            };
-        aura::messaging::g_mailbox_count =
-            [](void* svc) -> std::size_t {
-                if (!svc) return 0;
-                return static_cast<CompilerService*>(svc)->mailbox_size();
-            };
-        aura::messaging::g_session_id =
-            [](void* svc) -> std::string {
-                if (!svc) return "";
-                return static_cast<CompilerService*>(svc)->session_id();
-            };
-        aura::messaging::g_session_exists =
-            [](const std::string& id) -> bool {
-                return CompilerService::lookup(id) != nullptr;
-            };
+        aura::messaging::g_mailbox_read = [](void* svc,
+                                             int timeout_ms) -> std::optional<std::string> {
+            if (!svc)
+                return std::nullopt;
+            return static_cast<CompilerService*>(svc)->pop_message(timeout_ms);
+        };
+        aura::messaging::g_mailbox_last_sender = [](void* svc) -> std::string {
+            if (!svc)
+                return "";
+            return static_cast<CompilerService*>(svc)->last_sender();
+        };
+        aura::messaging::g_mailbox_count = [](void* svc) -> std::size_t {
+            if (!svc)
+                return 0;
+            return static_cast<CompilerService*>(svc)->mailbox_size();
+        };
+        aura::messaging::g_session_id = [](void* svc) -> std::string {
+            if (!svc)
+                return "";
+            return static_cast<CompilerService*>(svc)->session_id();
+        };
+        aura::messaging::g_session_exists = [](const std::string& id) -> bool {
+            return CompilerService::lookup(id) != nullptr;
+        };
         // Cache module defines in IR after each import (incl. recursive fns)
         evaluator_.set_module_loaded_callback(
             [this](const std::string& content, const std::string& path) {
@@ -580,10 +559,9 @@ public:
 
         // Issue #97 Action 1: hot-swap callback. Allows (hot-swap:fn "name" "new-src")
         // primitive to replace a function's body while keeping its id.
-        evaluator_.set_hot_swap_fn(
-            [this](const std::string& name, const std::string& new_source) {
-                return hot_swap_function_impl(name, new_source);
-            });
+        evaluator_.set_hot_swap_fn([this](const std::string& name, const std::string& new_source) {
+            return hot_swap_function_impl(name, new_source);
+        });
     }
 
     // ── Hot-swap implementation (Issue #97 Action 1) ───────────
@@ -620,8 +598,7 @@ public:
         // no memory with the workspace pool, so it can be moved into the
         // module's existing functions[] without aliasing issues.
         aura::ir::IRModule new_mod = aura::compiler::lower_to_ir(
-            *new_flat, *new_pool, temp_arena_,
-            &evaluator_.primitives(), &type_registry_);
+            *new_flat, *new_pool, temp_arena_, &evaluator_.primitives(), &type_registry_);
         if (new_mod.functions.empty())
             return false;
 
@@ -648,7 +625,10 @@ public:
     }
 
     // ── Inter-agent messaging (P0) ──────────────────────────
-    void set_session_id(const std::string& id) { session_id_ = id; evaluator_.set_session_id(id); }
+    void set_session_id(const std::string& id) {
+        session_id_ = id;
+        evaluator_.set_session_id(id);
+    }
     std::string session_id() const { return session_id_; }
     void set_wake_eventfd(int fd) { wake_eventfd_ = fd; }
 
@@ -667,7 +647,8 @@ public:
             mailbox_.erase(mailbox_.begin());
             return msg;
         }
-        if (timeout_ms == 0) return std::nullopt;
+        if (timeout_ms == 0)
+            return std::nullopt;
         // Use poll() on wake_eventfd_ for timeout-capable wait
         if (wake_eventfd_ >= 0 && timeout_ms != 0) {
             struct pollfd pfd;
@@ -679,7 +660,7 @@ public:
                 uint64_t val = 0;
                 ::read(wake_eventfd_, &val, sizeof(val));
             } else if (pret == 0) {
-                return std::nullopt;  // timeout
+                return std::nullopt; // timeout
             }
             // (pret < 0) = error, fall through to yield
         }
@@ -821,7 +802,7 @@ public:
             // Capability special forms
             "with-capability",
             "check-capability",
-            "capability-stack",  // DEPRECATED — uses primitive path instead
+            "capability-stack", // DEPRECATED — uses primitive path instead
             // Module system (env side-effects)
             // "import", "use", "require" — now in lowering_known
         };
@@ -851,8 +832,15 @@ public:
         // These should NOT trigger tree-walker fallback even though they're
         // not primitives or cached defines.
         static const std::unordered_set<std::string> lowering_known = {
-            "try", "catch", "raise", "require", "import", "use",
-            "with-arena", "performance-region", "evolution-region",
+            "try",
+            "catch",
+            "raise",
+            "require",
+            "import",
+            "use",
+            "with-arena",
+            "performance-region",
+            "evolution-region",
         };
 
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -895,9 +883,9 @@ public:
                 // proper unbound-variable error. Trigger fallback for correct errors.
                 auto vn = std::string(var_name);
                 if (!vn.empty() &&
-                    evaluator_.primitives().slot_for_name(vn) >= evaluator_.primitives().slot_count() &&
-                    ir_cache_.count(vn) == 0 &&
-                    !lowering_known.count(vn)) {
+                    evaluator_.primitives().slot_for_name(vn) >=
+                        evaluator_.primitives().slot_count() &&
+                    ir_cache_.count(vn) == 0 && !lowering_known.count(vn)) {
                     return true;
                 }
             }
@@ -974,12 +962,12 @@ public:
                 trimmed.erase(trimmed.begin());
             while (!trimmed.empty() && std::isspace((unsigned char)trimmed.back()))
                 trimmed.pop_back();
-            bool is_bare = !trimmed.empty() &&
-                            (std::isalpha((unsigned char)trimmed[0]) ||
-                             trimmed[0] == '_' || trimmed[0] == '-');
+            bool is_bare = !trimmed.empty() && (std::isalpha((unsigned char)trimmed[0]) ||
+                                                trimmed[0] == '_' || trimmed[0] == '-');
             for (char c : trimmed) {
                 if (!std::isalnum((unsigned char)c) && c != '_' && c != '-') {
-                    is_bare = false; break;
+                    is_bare = false;
+                    break;
                 }
             }
             auto* ws_flat = evaluator_.workspace_flat();
@@ -987,14 +975,17 @@ public:
             if (is_bare) {
                 for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
                     auto v = ws_flat->get(id);
-                    if (v.tag != aura::ast::NodeTag::Define) continue;
-                    if (v.sym_id == aura::ast::INVALID_SYM) continue;
-                    if (v.children.empty()) continue;
+                    if (v.tag != aura::ast::NodeTag::Define)
+                        continue;
+                    if (v.sym_id == aura::ast::INVALID_SYM)
+                        continue;
+                    if (v.children.empty())
+                        continue;
                     auto name = std::string(ws_pool->resolve(v.sym_id));
-                    if (name != trimmed) continue;
+                    if (name != trimmed)
+                        continue;
                     auto body_id = v.child(0);
-                    return evaluator_.eval_flat(*ws_flat, *ws_pool, body_id,
-                                                evaluator_.top_env());
+                    return evaluator_.eval_flat(*ws_flat, *ws_pool, body_id, evaluator_.top_env());
                 }
                 // Not in workspace — fall through to the normal
                 // pipeline (which will return an "undefined variable"
@@ -1008,17 +999,20 @@ public:
                 if (close != std::string::npos && close + 1 == trimmed.size()) {
                     // Scan inside the outer parens for the head symbol.
                     std::size_t i = 1;
-                    while (i < trimmed.size() && std::isspace((unsigned char)trimmed[i])) ++i;
+                    while (i < trimmed.size() && std::isspace((unsigned char)trimmed[i]))
+                        ++i;
                     std::size_t head_start = i;
-                    while (i < trimmed.size() && !std::isspace((unsigned char)trimmed[i])
-                           && trimmed[i] != ')') ++i;
+                    while (i < trimmed.size() && !std::isspace((unsigned char)trimmed[i]) &&
+                           trimmed[i] != ')')
+                        ++i;
                     std::string head_name = trimmed.substr(head_start, i - head_start);
-                    bool head_is_bare = !head_name.empty() &&
-                                        (std::isalpha((unsigned char)head_name[0]) ||
-                                         head_name[0] == '_' || head_name[0] == '-');
+                    bool head_is_bare =
+                        !head_name.empty() && (std::isalpha((unsigned char)head_name[0]) ||
+                                               head_name[0] == '_' || head_name[0] == '-');
                     for (char c : head_name) {
                         if (!std::isalnum((unsigned char)c) && c != '_' && c != '-') {
-                            head_is_bare = false; break;
+                            head_is_bare = false;
+                            break;
                         }
                     }
                     if (head_is_bare) {
@@ -1028,20 +1022,24 @@ public:
                         bool dotted = false;
                         for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
                             auto v = ws_flat->get(id);
-                            if (v.tag != aura::ast::NodeTag::Define) continue;
-                            if (v.sym_id == aura::ast::INVALID_SYM) continue;
-                            if (v.children.empty()) continue;
+                            if (v.tag != aura::ast::NodeTag::Define)
+                                continue;
+                            if (v.sym_id == aura::ast::INVALID_SYM)
+                                continue;
+                            if (v.children.empty())
+                                continue;
                             auto wname = std::string(ws_pool->resolve(v.sym_id));
-                            if (wname != head_name) continue;
+                            if (wname != head_name)
+                                continue;
                             auto body_id = v.child(0);
-                            if (body_id >= ws_flat->size()) continue;
+                            if (body_id >= ws_flat->size())
+                                continue;
                             auto body_v = ws_flat->get(body_id);
-                            if (body_v.tag != aura::ast::NodeTag::Lambda) continue;
-                            def_body = body_v.children.empty()
-                                           ? aura::ast::NULL_NODE
-                                           : body_v.child(0);
-                            fn_params.assign(body_v.params.begin(),
-                                             body_v.params.end());
+                            if (body_v.tag != aura::ast::NodeTag::Lambda)
+                                continue;
+                            def_body =
+                                body_v.children.empty() ? aura::ast::NULL_NODE : body_v.child(0);
+                            fn_params.assign(body_v.params.begin(), body_v.params.end());
                             // Dotted flag is bit 0 of int_value (see ast.ixx
                             // add_lambda encoding).
                             dotted = (body_v.int_value & 1) != 0;
@@ -1058,17 +1056,32 @@ public:
                             for (std::size_t k = arg_start; k < close; ++k) {
                                 char ch = trimmed[k];
                                 if (in_str) {
-                                    if (ch == '\\' && k + 1 < close) { ++k; continue; }
-                                    if (ch == '"') in_str = false;
+                                    if (ch == '\\' && k + 1 < close) {
+                                        ++k;
+                                        continue;
+                                    }
+                                    if (ch == '"')
+                                        in_str = false;
                                     continue;
                                 }
-                                if (ch == '"') { in_str = true; continue; }
-                                if (ch == '(') { ++depth; continue; }
-                                if (ch == ')') { --depth; continue; }
-                                if (depth > 0) continue;
+                                if (ch == '"') {
+                                    in_str = true;
+                                    continue;
+                                }
+                                if (ch == '(') {
+                                    ++depth;
+                                    continue;
+                                }
+                                if (ch == ')') {
+                                    --depth;
+                                    continue;
+                                }
+                                if (depth > 0)
+                                    continue;
                                 if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
                                     if (tok_start < k) {
-                                        arg_strs.push_back(trimmed.substr(tok_start, k - tok_start));
+                                        arg_strs.push_back(
+                                            trimmed.substr(tok_start, k - tok_start));
                                         tok_start = k + 1;
                                     } else {
                                         tok_start = k + 1;
@@ -1094,7 +1107,8 @@ public:
                                 if (val.val == 0 && as != "0") {
                                     // Fallback: try full eval for non-numeric args
                                     auto ar = eval(as);
-                                    if (!ar) return ar;
+                                    if (!ar)
+                                        return ar;
                                     val = *ar;
                                 }
                                 arg_vals.push_back(val);
@@ -1102,10 +1116,10 @@ public:
                             // Build a child env with param bindings.
                             Env call_env(&evaluator_.top_env());
                             call_env.set_primitives(&evaluator_.primitives());
-                            if (ws_pool) call_env.set_pool(ws_pool);
-                            std::size_t named = dotted && !fn_params.empty()
-                                                   ? fn_params.size() - 1
-                                                   : fn_params.size();
+                            if (ws_pool)
+                                call_env.set_pool(ws_pool);
+                            std::size_t named = dotted && !fn_params.empty() ? fn_params.size() - 1
+                                                                             : fn_params.size();
                             for (std::size_t pi = 0; pi < named && pi < arg_vals.size(); ++pi) {
                                 call_env.bind_symid(fn_params[pi], std::move(arg_vals[pi]));
                             }
@@ -1114,12 +1128,14 @@ public:
                                 types::EvalValue rest = types::make_void();
                                 for (std::size_t ri = arg_vals.size(); ri > named; --ri) {
                                     std::size_t pid = evaluator_.pairs().size();
-                                    evaluator_.pairs().push_back({std::move(arg_vals[ri - 1]), rest});
+                                    evaluator_.pairs().push_back(
+                                        {std::move(arg_vals[ri - 1]), rest});
                                     rest = types::make_pair(pid);
                                 }
                                 call_env.bind_symid(fn_params.back(), rest);
                             }
-                            auto dbg_ret = evaluator_.eval_flat(*ws_flat, *ws_pool, def_body, call_env);
+                            auto dbg_ret =
+                                evaluator_.eval_flat(*ws_flat, *ws_pool, def_body, call_env);
                             return dbg_ret;
                         }
                         // head is a Variable but no workspace define —
@@ -1183,7 +1199,8 @@ public:
         // handles defines via try_extract_define + cache_define.
         // The Variable checks in needs_tree_walker_fallback would otherwise
         // always trigger fallback (variables in function body aren't in cache yet).
-        auto expanded_v = expanded_root < flat_ptr->size() ? flat_ptr->get(expanded_root) : aura::ast::NodeView{};
+        auto expanded_v =
+            expanded_root < flat_ptr->size() ? flat_ptr->get(expanded_root) : aura::ast::NodeView{};
         bool is_fn_define = false;
         if (expanded_v.tag == aura::ast::NodeTag::Define && !expanded_v.children.empty()) {
             auto body_id = expanded_v.child(0);
@@ -1201,8 +1218,8 @@ public:
             // through to the IR pipeline (which silently returns 0 for
             // unknown vars). Issue #132: extracted to
             // aura::compiler.collect_user_bindings.
-            for (auto& name : aura::compiler::collect_user_bindings(
-                     *flat_ptr, *pool_ptr, expanded_root)) {
+            for (auto& name :
+                 aura::compiler::collect_user_bindings(*flat_ptr, *pool_ptr, expanded_root)) {
                 user_bindings_.insert(std::move(name));
             }
             return result;
@@ -1288,8 +1305,8 @@ public:
         // primitive (compile:linear-elide-count) read a single
         // source of truth.
         if (ts.linear_elide_count() > 0) {
-            metrics_.linear_elide_count.fetch_add(
-                ts.linear_elide_count(), std::memory_order_relaxed);
+            metrics_.linear_elide_count.fetch_add(ts.linear_elide_count(),
+                                                  std::memory_order_relaxed);
         }
 
         if (ar.has_error()) {
@@ -1321,14 +1338,10 @@ public:
             for (aura::ast::NodeId nid = 0; nid < flat_ptr->size(); ++nid) {
                 auto nv = flat_ptr->get(nid);
                 auto tag = nv.tag;
-                if (tag == aura::ast::NodeTag::Lambda ||
-                    tag == aura::ast::NodeTag::LiteralString ||
-                    tag == aura::ast::NodeTag::LiteralFloat ||
-                    tag == aura::ast::NodeTag::Let ||
-                    tag == aura::ast::NodeTag::LetRec ||
-                    tag == aura::ast::NodeTag::Quote ||
-                    tag == aura::ast::NodeTag::Coercion ||
-                    tag == aura::ast::NodeTag::MacroDef) {
+                if (tag == aura::ast::NodeTag::Lambda || tag == aura::ast::NodeTag::LiteralString ||
+                    tag == aura::ast::NodeTag::LiteralFloat || tag == aura::ast::NodeTag::Let ||
+                    tag == aura::ast::NodeTag::LetRec || tag == aura::ast::NodeTag::Quote ||
+                    tag == aura::ast::NodeTag::Coercion || tag == aura::ast::NodeTag::MacroDef) {
                     skip_jit = true;
                     break;
                 }
@@ -1377,9 +1390,9 @@ public:
 
             // Set IR closure bridge: enables tree-walker primitives (map/filter/foldl)
             // to call IR-produced closures.
-            evaluator_.set_closure_bridge([this,
-                                           &ir_interp, &ir_mod](aura::compiler::ClosureId cid,
-                                                       std::span<const types::EvalValue> args)
+            evaluator_.set_closure_bridge([this, &ir_interp,
+                                           &ir_mod](aura::compiler::ClosureId cid,
+                                                    std::span<const types::EvalValue> args)
                                               -> std::optional<types::EvalValue> {
                 auto snap = ir_interp.inspect_closure(cid);
                 if (!snap)
@@ -1403,10 +1416,9 @@ public:
                 if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
                     auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
                     if (bd.flat && bd.pool) {
-                        auto r = evaluator_.eval_flat(
-                            *const_cast<ast::FlatAST*>(bd.flat.get()),
-                            *const_cast<ast::StringPool*>(bd.pool.get()),
-                            bd.body_id, ne);
+                        auto r = evaluator_.eval_flat(*const_cast<ast::FlatAST*>(bd.flat.get()),
+                                                      *const_cast<ast::StringPool*>(bd.pool.get()),
+                                                      bd.body_id, ne);
                         if (r) {
                             return *r;
                         }
@@ -1531,8 +1543,8 @@ public:
         {
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
-            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root,
-                                          type_registry_, diags);
+            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
+                                          diags);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -1541,9 +1553,8 @@ public:
                 }
             }
             if (strict_mode_ && has_type_error) {
-                return std::unexpected(
-                    aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
-                                           "type error (strict mode, eval_ir)"});
+                return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
+                                                              "type error (strict mode, eval_ir)"});
             }
         }
 
@@ -1561,7 +1572,7 @@ public:
         // === Normal IR path (with cache awareness) ===
         auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
-auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             *flat_ptr, *pool_ptr, arena_, cache_ptr_local, nullptr, &evaluator_.primitives(),
             nullptr, cache_strings_ptr);
 
@@ -1587,8 +1598,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
         // Issue #253: accumulate linear-move elision count.
         if (ts.linear_elide_count() > 0) {
-            metrics_.linear_elide_count.fetch_add(
-                ts.linear_elide_count(), std::memory_order_relaxed);
+            metrics_.linear_elide_count.fetch_add(ts.linear_elide_count(),
+                                                  std::memory_order_relaxed);
         }
 
         if (cf.folded_count() > 0) {
@@ -1614,9 +1625,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
         // Set IR closure bridge — enables tree-walker primitives (map/filter/foldl)
         // to call IR-produced closures.
-        evaluator_.set_closure_bridge([this,
-                                       &ir_interp](aura::compiler::ClosureId cid,
-                                                   std::span<const types::EvalValue> args)
+        evaluator_.set_closure_bridge([this, &ir_interp](aura::compiler::ClosureId cid,
+                                                         std::span<const types::EvalValue> args)
                                           -> std::optional<types::EvalValue> {
             auto snap = ir_interp.inspect_closure(cid);
             if (!snap)
@@ -1634,11 +1644,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
                 auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
                 if (bd.flat && bd.pool) {
-                    auto r = evaluator_.eval_flat(
-                        *const_cast<ast::FlatAST*>(bd.flat.get()),
-                        *const_cast<ast::StringPool*>(bd.pool.get()),
-                        bd.body_id, ne);
-                    if (r) return *r;
+                    auto r = evaluator_.eval_flat(*const_cast<ast::FlatAST*>(bd.flat.get()),
+                                                  *const_cast<ast::StringPool*>(bd.pool.get()),
+                                                  bd.body_id, ne);
+                    if (r)
+                        return *r;
                 }
                 if (!bd.body_source.empty()) {
                     auto fallback_alloc = arena_.allocator();
@@ -1648,7 +1658,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                     if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
                         f_flat->root = f_pr.root;
                         auto r = evaluator_.eval_flat(*f_flat, *f_pool, f_pr.root, ne);
-                        if (r) return *r;
+                        if (r)
+                            return *r;
                     }
                 }
             }
@@ -1707,8 +1718,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         {
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
-            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root,
-                                          type_registry_, diags);
+            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
+                                          diags);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -1717,9 +1728,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 }
             }
             if (strict_mode_ && has_type_error) {
-                return std::unexpected(
-                    aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
-                                           "type error (strict mode, exec_jit)"});
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::TypeError, "type error (strict mode, exec_jit)"});
             }
         }
 
@@ -1738,8 +1748,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf);
             // Issue #253: accumulate linear-move elision count.
             if (ts.linear_elide_count() > 0) {
-                metrics_.linear_elide_count.fetch_add(
-                    ts.linear_elide_count(), std::memory_order_relaxed);
+                metrics_.linear_elide_count.fetch_add(ts.linear_elide_count(),
+                                                      std::memory_order_relaxed);
             }
         }
 
@@ -1750,7 +1760,6 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         if (ir_mod.functions.empty()) {
             return EvalResult(types::make_void());
         }
-
 
 
         // Register primitives with JIT runtime (first call only)
@@ -1828,7 +1837,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                         // Run escape analysis inline
                         escape_map_storage.resize(flat_fn.local_count, 0);
                         aura::jit::run_escape_analysis(flat_instrs, flat_fn.local_count,
-                                                        escape_map_storage);
+                                                       escape_map_storage);
                         flat_fn.escape_map = escape_map_storage.data();
                     }
                 }
@@ -1836,28 +1845,37 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
             // Populate shape_map from profiler data.
             // Fills shape_map_storage and sets flat_fn.shape_map.
-            bool set_shape_map(const shape::ShapeProfiler& profiler,
-                                const std::string& session,
-                                const std::string& fn_name) {
+            bool set_shape_map(const shape::ShapeProfiler& profiler, const std::string& session,
+                               const std::string& fn_name) {
                 auto fn_key = shape::make_fn_key(session, fn_name);
                 if (!profiler.is_stable(fn_key))
                     return false;
 
                 auto dom = profiler.dominant_shape(fn_key);
                 // Map ShapeID to shape_map byte code
-                std::uint8_t code = 0;  // Dynamic
-                if (dom == shape::SHAPE_INT)      code = 1;
-                else if (dom == shape::SHAPE_FLOAT) code = 2;
-                else if (dom == shape::SHAPE_BOOL)  code = 3;
-                else if (dom == shape::SHAPE_STRING) code = 4;
-                else if (dom == shape::SHAPE_VOID)   code = 5;
-                else if (dom == shape::SHAPE_PAIR)   code = 10;
-                else if (dom == shape::SHAPE_VECTOR) code = 11;
-                else if (dom == shape::SHAPE_HASH)   code = 12;
-                else if (dom == shape::SHAPE_CLOSURE) code = 13;
-                else if (dom == shape::SHAPE_REF)    code = 14;
+                std::uint8_t code = 0; // Dynamic
+                if (dom == shape::SHAPE_INT)
+                    code = 1;
+                else if (dom == shape::SHAPE_FLOAT)
+                    code = 2;
+                else if (dom == shape::SHAPE_BOOL)
+                    code = 3;
+                else if (dom == shape::SHAPE_STRING)
+                    code = 4;
+                else if (dom == shape::SHAPE_VOID)
+                    code = 5;
+                else if (dom == shape::SHAPE_PAIR)
+                    code = 10;
+                else if (dom == shape::SHAPE_VECTOR)
+                    code = 11;
+                else if (dom == shape::SHAPE_HASH)
+                    code = 12;
+                else if (dom == shape::SHAPE_CLOSURE)
+                    code = 13;
+                else if (dom == shape::SHAPE_REF)
+                    code = 14;
                 else
-                    return false;  // Not a simple leaf shape
+                    return false; // Not a simple leaf shape
 
                 shape_map_storage.resize(flat_fn.local_count, 0);
                 // Only annotate argument slots (slots 0..arg_count-1 are args)
@@ -1866,8 +1884,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
                 flat_fn.shape_map = shape_map_storage.data();
 
-                std::fprintf(stderr, "spec: L1 for '%s' — arg shape=%d\n",
-                            fn_name.c_str(), (int)code);
+                std::fprintf(stderr, "spec: L1 for '%s' — arg shape=%d\n", fn_name.c_str(),
+                             (int)code);
                 return true;
             }
         };
@@ -1927,12 +1945,10 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                     // Re-probe under unique lock for the hot-recompile path.
                     std::unique_lock cache_write(jit_cache_mtx_);
                     auto cache_it = jit_cache_.find(ir_fn.name);
-                    if (cache_it != jit_cache_.end() &&
-                        !cache_it->second.has_shape_map &&
-                        shape_profiler_.is_stable(
-                            shape::make_fn_key(session_id_, ir_fn.name))) {
+                    if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
+                        shape_profiler_.is_stable(shape::make_fn_key(session_id_, ir_fn.name))) {
                         std::fprintf(stderr, "spec: hot-recompile '%s' (shape now stable)\n",
-                                    ir_fn.name.c_str());
+                                     ir_fn.name.c_str());
                         jit_cache_.erase(cache_it);
                     } else {
                         // Either not present, or no hot-recompile needed.
@@ -1969,15 +1985,13 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 fn_ptr = jit_.compile(builder.flat_fn);
                 if (!fn_ptr) {
                     // Issue #62 Iter 1: count compile misses
-                    metrics_.jit_compile_misses.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics_.jit_compile_misses.fetch_add(1, std::memory_order_relaxed);
                     return std::unexpected(aura::diag::Diagnostic{
                         aura::diag::ErrorKind::InternalError,
                         std::string("JIT compilation failed for function '") + ir_fn.name + "'"});
                 }
                 // Success counter
-                metrics_.jit_compilations.fetch_add(
-                    1, std::memory_order_relaxed);
+                metrics_.jit_compilations.fetch_add(1, std::memory_order_relaxed);
 
                 // Cache compiled function (skip __top__ — IR varies per eval)
                 if (ir_fn.name != "__top__") {
@@ -1987,8 +2001,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                     // Issue #166: stamp the entry with the current
                     // epoch. On the next access, if the epoch has
                     // changed, the entry is treated as stale.
-                    it->second.last_seen_epoch_ =
-                        mutation_epoch_.load(std::memory_order_relaxed);
+                    it->second.last_seen_epoch_ = mutation_epoch_.load(std::memory_order_relaxed);
                     it->second.local_count = ir_fn.local_count;
                     it->second.arg_count = ir_fn.arg_count;
                     it->second.env_count = env_count;
@@ -2100,12 +2113,12 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                                     default:
                                         break;
                                 }
-                                goto done;  // unknown producer, fallback to value decode
+                                goto done; // unknown producer, fallback to value decode
                             }
                         }
                     }
                 }
-                break;  // no more matches
+                break; // no more matches
             found_chain:;
             }
         }
@@ -2138,9 +2151,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                             }
                         }
                     }
-                    if (types::is_void(ev_result)) break;
+                    if (types::is_void(ev_result))
+                        break;
                 }
-                if (types::is_void(ev_result)) break;
+                if (types::is_void(ev_result))
+                    break;
             }
         }
         // Record JIT result shape for profiling (triggers hot-recompilation)
@@ -2219,12 +2234,12 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // nowhere to surface the cache hit/miss ratio.
         // Wire the metrics pointer so ConstraintSystem::solve_delta
         // can also accumulate time (see type_checker_impl.cpp).
-        metrics_.typecheck_cache_hits_total.fetch_add(
-            tc.stats().cache_hits, std::memory_order_relaxed);
-        metrics_.typecheck_cache_misses_total.fetch_add(
-            tc.stats().cache_misses, std::memory_order_relaxed);
-        metrics_.typecheck_stale_cache_total.fetch_add(
-            tc.stats().stale_cache, std::memory_order_relaxed);
+        metrics_.typecheck_cache_hits_total.fetch_add(tc.stats().cache_hits,
+                                                      std::memory_order_relaxed);
+        metrics_.typecheck_cache_misses_total.fetch_add(tc.stats().cache_misses,
+                                                        std::memory_order_relaxed);
+        metrics_.typecheck_stale_cache_total.fetch_add(tc.stats().stale_cache,
+                                                       std::memory_order_relaxed);
 
         // Issue #116: the typecheck command doesn't proceed to
         // IR lowering (it just reports types + diagnostics), so
@@ -2267,28 +2282,27 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // (cache_hits / cache_misses / stale_cache), accessible
     // via the underlying TypeChecker (not exposed at the
     // CompilerService level yet — Phase 5b).
-    std::size_t incremental_infer(
-        const aura::ast::MutationRecord& rec) {
-        if (!current_ast_ || !current_pool_) return 0;
+    std::size_t incremental_infer(const aura::ast::MutationRecord& rec) {
+        if (!current_ast_ || !current_pool_)
+            return 0;
         aura::compiler::TypeChecker tc(type_registry_);
         aura::diag::DiagnosticCollector diag;
-        tc.set_strict(true);  // match the typecheck() default
+        tc.set_strict(true); // match the typecheck() default
         // Issue #168: gate by global mutation epoch (same as
         // the typecheck() path).
         tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
         // Issue #258: plumb metrics for solve_delta timing.
         tc.set_metrics(&metrics_);
-        auto n = tc.infer_flat_partial(
-            *current_ast_, *current_pool_, rec, diag);
+        auto n = tc.infer_flat_partial(*current_ast_, *current_pool_, rec, diag);
         // Issue #258: accumulate incremental typecheck stats
         // into CompilerMetrics (lifetime totals) — the
         // multi-mutation perf signal.
-        metrics_.typecheck_cache_hits_total.fetch_add(
-            tc.stats().cache_hits, std::memory_order_relaxed);
-        metrics_.typecheck_cache_misses_total.fetch_add(
-            tc.stats().cache_misses, std::memory_order_relaxed);
-        metrics_.typecheck_stale_cache_total.fetch_add(
-            tc.stats().stale_cache, std::memory_order_relaxed);
+        metrics_.typecheck_cache_hits_total.fetch_add(tc.stats().cache_hits,
+                                                      std::memory_order_relaxed);
+        metrics_.typecheck_cache_misses_total.fetch_add(tc.stats().cache_misses,
+                                                        std::memory_order_relaxed);
+        metrics_.typecheck_stale_cache_total.fetch_add(tc.stats().stale_cache,
+                                                       std::memory_order_relaxed);
         return n;
     }
 
@@ -2581,7 +2595,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 }
             }
             aura::compiler::cache::write_cache(cache_path, flat, pool, flat.root, 0, &disk_mod,
-                                                sig_embed.empty() ? nullptr : &sig_embed);
+                                               sig_embed.empty() ? nullptr : &sig_embed);
         }
 
         return EvalResult(types::make_void());
@@ -2598,13 +2612,13 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // changes), and source_hash is FNV-1a of that string. Cache hits when
     // source_hash matches AND dirty is false.
     struct IRCacheEntry {
-        std::string source;                                            // canonical (unparsed) form
-        std::size_t source_hash = 0;                                   // FNV-1a of source
-        std::vector<aura::ir::IRFunction> irs;                         // lowered IR functions
-        std::vector<aura::ir::ClosureBridgeData> bridges;              // parallel to irs
-        std::vector<std::string> strings;                              // parallel string pool
-        bool dirty = true;                                             // needs re-lower
-        std::size_t mutation_count = 0;                                // snapshot at lower time
+        std::string source;                               // canonical (unparsed) form
+        std::size_t source_hash = 0;                      // FNV-1a of source
+        std::vector<aura::ir::IRFunction> irs;            // lowered IR functions
+        std::vector<aura::ir::ClosureBridgeData> bridges; // parallel to irs
+        std::vector<std::string> strings;                 // parallel string pool
+        bool dirty = true;                                // needs re-lower
+        std::size_t mutation_count = 0;                   // snapshot at lower time
         // Issue #166: epoch snapshot at lower time. On every
         // mutation, mutation_epoch_ is incremented atomically.
         // On next access, if the entry's epoch doesn't match
@@ -2645,7 +2659,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // signal a full re-lower is needed.
         void mark_all_blocks_dirty() {
             for (auto& func_blocks : block_dirty_per_func_) {
-                for (auto& b : func_blocks) b = 1;
+                for (auto& b : func_blocks)
+                    b = 1;
             }
         }
 
@@ -2668,18 +2683,22 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // smarter-re-lower after re-lowering the block).
         // No-op if indices out of range.
         void clear_block_dirty(std::size_t func_idx, std::uint32_t block_idx) {
-            if (func_idx >= block_dirty_per_func_.size()) return;
+            if (func_idx >= block_dirty_per_func_.size())
+                return;
             auto& fb = block_dirty_per_func_[func_idx];
-            if (block_idx >= fb.size()) return;
+            if (block_idx >= fb.size())
+                return;
             fb[block_idx] = 0;
         }
 
         // Query: is this (function, block) dirty? Returns
         // false (clean) for out-of-range indices.
         bool is_block_dirty(std::size_t func_idx, std::uint32_t block_idx) const {
-            if (func_idx >= block_dirty_per_func_.size()) return false;
+            if (func_idx >= block_dirty_per_func_.size())
+                return false;
             const auto& fb = block_dirty_per_func_[func_idx];
-            if (block_idx >= fb.size()) return false;
+            if (block_idx >= fb.size())
+                return false;
             return fb[block_idx] != 0;
         }
 
@@ -2688,7 +2707,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         std::size_t dirty_block_count() const {
             std::size_t n = 0;
             for (const auto& fb : block_dirty_per_func_) {
-                for (auto b : fb) if (b) ++n;
+                for (auto b : fb)
+                    if (b)
+                        ++n;
             }
             return n;
         }
@@ -2696,9 +2717,12 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // Query: dirty block count for a single function.
         // Returns 0 for out-of-range func_idx.
         std::size_t func_dirty_block_count(std::size_t func_idx) const {
-            if (func_idx >= block_dirty_per_func_.size()) return 0;
+            if (func_idx >= block_dirty_per_func_.size())
+                return 0;
             std::size_t n = 0;
-            for (auto b : block_dirty_per_func_[func_idx]) if (b) ++n;
+            for (auto b : block_dirty_per_func_[func_idx])
+                if (b)
+                    ++n;
             return n;
         }
 
@@ -2710,8 +2734,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             block_dirty_per_func_.clear();
             block_dirty_per_func_.reserve(irs.size());
             for (const auto& fn : irs) {
-                block_dirty_per_func_.emplace_back(
-                    fn.blocks.size(), std::uint8_t{1});
+                block_dirty_per_func_.emplace_back(fn.blocks.size(), std::uint8_t{1});
             }
         }
 
@@ -2720,14 +2743,17 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // entry is clean.
         void clear_all_block_dirty() {
             for (auto& fb : block_dirty_per_func_) {
-                for (auto& b : fb) b = 0;
+                for (auto& b : fb)
+                    b = 0;
             }
         }
 
         // Issue #196: public read-only view of the per-block
         // dirty bitmask for the observability layer.
         [[nodiscard]] const std::vector<std::vector<std::uint8_t>>&
-        block_dirty_view() const noexcept { return block_dirty_per_func_; }
+        block_dirty_view() const noexcept {
+            return block_dirty_per_func_;
+        }
     };
     std::unordered_map<std::string, IRCacheEntry> ir_cache_v2_;
 
@@ -2743,16 +2769,16 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // store_define_v2 to update the entry.
     int lookup_define_v2(const std::string& name, std::size_t source_hash) {
         auto it = ir_cache_v2_.find(name);
-        if (it == ir_cache_v2_.end()) return 2;
+        if (it == ir_cache_v2_.end())
+            return 2;
         // Issue #126: delegate the re-lower decision to the pure
         // helper should_relower(). The function takes the relevant
         // fields as values (no this->) so the same logic can be
         // unit-tested in isolation.
-        if (should_relower(source_hash, it->second.source_hash,
-                           it->second.dirty, it->second.mutation_count,
-                           it->second.mutation_count))
+        if (should_relower(source_hash, it->second.source_hash, it->second.dirty,
+                           it->second.mutation_count, it->second.mutation_count))
             return 1;
-        return 0;  // hit
+        return 0; // hit
     }
 
     // Store (or replace) a define's IR cache entry. Called after re-lower.
@@ -2761,9 +2787,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // freshly-stored irs[] (all blocks clean) so the entry is ready
     // for incremental re-lower on subsequent mutations.
     void store_define_v2(const std::string& name, std::string source,
-                          std::vector<aura::ir::IRFunction> irs,
-                          std::vector<aura::ir::ClosureBridgeData> bridges,
-                          std::vector<std::string> strings) {
+                         std::vector<aura::ir::IRFunction> irs,
+                         std::vector<aura::ir::ClosureBridgeData> bridges,
+                         std::vector<std::string> strings) {
         auto hash = fnv1a_64(source);
         auto& entry = ir_cache_v2_[name];
         entry.source = std::move(source);
@@ -2845,12 +2871,15 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             auto cur = bfs.front();
             bfs.pop();
             auto dit = dep_graph_.find(cur);
-            if (dit == dep_graph_.end()) continue;
+            if (dit == dep_graph_.end())
+                continue;
             for (auto& dependent : dit->second.called_by) {
-                if (!visited.insert(dependent).second) continue;
+                if (!visited.insert(dependent).second)
+                    continue;
                 bfs.push(dependent);
                 auto cit = ir_cache_v2_.find(dependent);
-                if (cit == ir_cache_v2_.end()) continue;
+                if (cit == ir_cache_v2_.end())
+                    continue;
                 auto& centry = cit->second;
                 // Try the targeted approach: mark only the
                 // body function's blocks dirty. Convention:
@@ -2859,21 +2888,18 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 // (irs[0]) — it's a thin wrapper that just
                 // returns the closure, doesn't reference
                 // mutated functions directly.
-                if (centry.irs.size() >= 2 &&
-                    1 < centry.block_dirty_per_func_.size()) {
+                if (centry.irs.size() >= 2 && 1 < centry.block_dirty_per_func_.size()) {
                     centry.dirty = true;
                     for (auto& b : centry.block_dirty_per_func_[1]) {
                         b = 1;
                     }
-                    metrics_.cascade_body_only_count.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
                 } else {
                     // Fallback: convention doesn't hold —
                     // conservatively mark all blocks dirty.
                     centry.dirty = true;
                     centry.mark_all_blocks_dirty();
-                    metrics_.cascade_full_count.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
                 }
                 // Issue #225 cycle 3: also invalidate the
                 // bridge data for the dependent. Closures
@@ -2905,14 +2931,13 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // out of range (with conservative behavior: if the entry
     // exists but indices are out of range, the whole entry
     // is marked dirty).
-    bool mark_block_dirty_v2(const std::string& name,
-                              std::size_t func_idx,
-                              std::uint32_t block_idx) {
+    bool mark_block_dirty_v2(const std::string& name, std::size_t func_idx,
+                             std::uint32_t block_idx) {
         auto it = ir_cache_v2_.find(name);
-        if (it == ir_cache_v2_.end()) return false;
+        if (it == ir_cache_v2_.end())
+            return false;
         auto& entry = it->second;
-        if (func_idx >= entry.irs.size() ||
-            block_idx >= entry.irs[func_idx].blocks.size()) {
+        if (func_idx >= entry.irs.size() || block_idx >= entry.irs[func_idx].blocks.size()) {
             // Out of range — conservatively mark the whole
             // entry dirty so the next lookup_define_v2 will
             // re-lower.
@@ -2931,11 +2956,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // smarter-re-lower after re-lowering a block.
     // Returns true on success, false if the entry doesn't
     // exist.
-    bool clear_block_dirty_v2(const std::string& name,
-                               std::size_t func_idx,
-                               std::uint32_t block_idx) {
+    bool clear_block_dirty_v2(const std::string& name, std::size_t func_idx,
+                              std::uint32_t block_idx) {
         auto it = ir_cache_v2_.find(name);
-        if (it == ir_cache_v2_.end()) return false;
+        if (it == ir_cache_v2_.end())
+            return false;
         auto& entry = it->second;
         entry.clear_block_dirty(func_idx, block_idx);
         return true;
@@ -2945,27 +2970,28 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // 0 if the entry doesn't exist.
     std::size_t dirty_block_count_v2(const std::string& name) const {
         auto it = ir_cache_v2_.find(name);
-        if (it == ir_cache_v2_.end()) return 0;
+        if (it == ir_cache_v2_.end())
+            return 0;
         return it->second.dirty_block_count();
     }
 
     // Query: dirty block count for a specific function in
     // an entry. Returns 0 if the entry or func_idx is
     // out of range.
-    std::size_t func_dirty_block_count_v2(const std::string& name,
-                                           std::size_t func_idx) const {
+    std::size_t func_dirty_block_count_v2(const std::string& name, std::size_t func_idx) const {
         auto it = ir_cache_v2_.find(name);
-        if (it == ir_cache_v2_.end()) return 0;
+        if (it == ir_cache_v2_.end())
+            return 0;
         return it->second.func_dirty_block_count(func_idx);
     }
 
     // Query: is a specific block dirty? Returns false if
     // the entry, func_idx, or block_idx is out of range.
-    bool is_block_dirty_v2(const std::string& name,
-                            std::size_t func_idx,
-                            std::uint32_t block_idx) const {
+    bool is_block_dirty_v2(const std::string& name, std::size_t func_idx,
+                           std::uint32_t block_idx) const {
         auto it = ir_cache_v2_.find(name);
-        if (it == ir_cache_v2_.end()) return false;
+        if (it == ir_cache_v2_.end())
+            return false;
         return it->second.is_block_dirty(func_idx, block_idx);
     }
 
@@ -3006,11 +3032,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // passed in (rather than looked up internally) so
     // the caller can pass either the per-call flat or
     // the workspace_flat, depending on the call site.
-    bool relower_define_blocks(const std::string& name,
-                                std::string_view source,
-                                aura::ast::FlatAST& flat,
-                                aura::ast::StringPool& pool,
-                                aura::ast::NodeId expanded_root) {
+    bool relower_define_blocks(const std::string& name, std::string_view source,
+                               aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                               aura::ast::NodeId expanded_root) {
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end()) {
             // No entry → caller needs to do a full first-time lower.
@@ -3022,8 +3046,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             // Bump the skip counter; do NOT call lowering.
             // This is the cycle-2 win: avoid the full
             // lowering pass when the bitmask is clean.
-            metrics_.relower_skipped_entirely_count.fetch_add(
-                1, std::memory_order_relaxed);
+            metrics_.relower_skipped_entirely_count.fetch_add(1, std::memory_order_relaxed);
             return true;
         }
         // Issue #224 cycle 3: detect single-function-dirty
@@ -3065,7 +3088,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                     dirty_func_idx = fi;
                 }
             }
-            if (dirty_func_count == 1 && dirty_func_idx == 1 && expanded_root != aura::ast::NULL_NODE) {
+            if (dirty_func_count == 1 && dirty_func_idx == 1 &&
+                expanded_root != aura::ast::NULL_NODE) {
                 // Only the body function is dirty, and we
                 // have a source node id. Try per-function
                 // re-lower.
@@ -3082,24 +3106,21 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // (cycle 4+) will route only the dirty blocks
         // through lowering; today we still re-lower the
         // whole function bundle.
-        metrics_.relower_full_called_count.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.relower_full_called_count.fetch_add(1, std::memory_order_relaxed);
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
-        auto cache_bridge_ptr =
-            ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
-        auto cache_strings_ptr =
-            ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
+        auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
+        auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         std::vector<std::string> cache_hits;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-            flat, pool, arena_, cache_ptr, &cache_hits,
-            &evaluator_.primitives(), cache_bridge_ptr,
+            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, &name);
         // Run per-function passes on the new bundle.
         {
             aura::compiler::ComputeKindWrap ck_pass;
             aura::compiler::ConstantFoldingWrap cf_pass;
             for (auto& func : ir_mod.functions) {
-                if (func.id == ir_mod.entry_function_id) continue;
+                if (func.id == ir_mod.entry_function_id)
+                    continue;
                 ck_pass.compute_function(func);
                 cf_pass.fold_function(func);
             }
@@ -3119,10 +3140,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // Store in v2 cache first (rebuilds the bitmask +
         // clears all dirty bits via store_define_v2's
         // bookkeeping, and takes ownership of the bundle).
-        store_define_v2(name, std::string(source),
-                         std::move(bundle),
-                         std::move(bridge_bundle),
-                         ir_mod.string_pool);
+        store_define_v2(name, std::string(source), std::move(bundle), std::move(bridge_bundle),
+                        ir_mod.string_pool);
         // Mirror to v1 caches (legacy path). Read from v2
         // so we don't keep two separate copies of the IR
         // — v1 is a thin view onto the same data.
@@ -3185,15 +3204,17 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // A future cycle will add a func_id remap pass for the
     // per-function replacement path.
     bool relower_define_function(const std::string& name, std::size_t func_idx,
-                                  aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                  aura::ast::NodeId lambda_node_id) {
+                                 aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                 aura::ast::NodeId lambda_node_id) {
         auto it = ir_cache_v2_.find(name);
-        if (it == ir_cache_v2_.end()) return false;
+        if (it == ir_cache_v2_.end())
+            return false;
         auto& entry = it->second;
-        if (func_idx >= entry.irs.size()) return false;
+        if (func_idx >= entry.irs.size())
+            return false;
         // Re-lower just this one function.
-        auto new_func = aura::compiler::lower_function_at(
-            flat, pool, arena_, lambda_node_id, &evaluator_.primitives());
+        auto new_func = aura::compiler::lower_function_at(flat, pool, arena_, lambda_node_id,
+                                                          &evaluator_.primitives());
         if (new_func.blocks.empty()) {
             // Lowering returned empty — fall back to full re-lower.
             return false;
@@ -3206,8 +3227,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             cf_pass.fold_function(new_func);
         }
         // Bump the per-function re-lower counter.
-        metrics_.relower_per_function_called_count.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.relower_per_function_called_count.fetch_add(1, std::memory_order_relaxed);
         // Replace the function in the v2 cache. Preserve the
         // original func_id so MakeClosure operands in callers
         // (which reference the old func_id) keep working.
@@ -3256,14 +3276,19 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     void populate_dep_graph_from_workspace() {
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
-        if (!ws_flat || !ws_pool) return;
+        if (!ws_flat || !ws_pool)
+            return;
         for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
             auto v = ws_flat->get(id);
-            if (v.tag != aura::ast::NodeTag::Define) continue;
-            if (v.sym_id == aura::ast::INVALID_SYM) continue;
+            if (v.tag != aura::ast::NodeTag::Define)
+                continue;
+            if (v.sym_id == aura::ast::INVALID_SYM)
+                continue;
             auto name = std::string(ws_pool->resolve(v.sym_id));
-            if (name.empty() || name[0] == '_') continue;
-            if (v.children.empty()) continue;
+            if (name.empty() || name[0] == '_')
+                continue;
+            if (v.children.empty())
+                continue;
             // Build canonical source + hash for the v2 entry (lightweight —
             // just unparse, no cache_define, no eval_flat side effects).
             auto child_id = v.child(0);
@@ -3279,7 +3304,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             while (!stack.empty()) {
                 auto nid = stack.back();
                 stack.pop_back();
-                if (nid >= ws_flat->size()) continue;
+                if (nid >= ws_flat->size())
+                    continue;
                 auto nv = ws_flat->get(nid);
                 if (nv.tag == aura::ast::NodeTag::Variable && nv.sym_id != aura::ast::INVALID_SYM) {
                     auto vname = std::string(ws_pool->resolve(nv.sym_id));
@@ -3288,9 +3314,13 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                         bool sibling = false;
                         for (aura::ast::NodeId sid = 0; sid < ws_flat->size(); ++sid) {
                             auto sv = ws_flat->get(sid);
-                            if (sv.tag == aura::ast::NodeTag::Define && sv.sym_id != aura::ast::INVALID_SYM) {
+                            if (sv.tag == aura::ast::NodeTag::Define &&
+                                sv.sym_id != aura::ast::INVALID_SYM) {
                                 auto sname = std::string(ws_pool->resolve(sv.sym_id));
-                                if (sname == vname) { sibling = true; break; }
+                                if (sname == vname) {
+                                    sibling = true;
+                                    break;
+                                }
                             }
                         }
                         if (sibling) {
@@ -3298,7 +3328,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                         }
                     }
                 }
-                for (auto c : nv.children) stack.push_back(c);
+                for (auto c : nv.children)
+                    stack.push_back(c);
             }
             // Create/update the v2 entry (lightweight — no cache_define).
             // Only create if not already present OR if the hash changed.
@@ -3311,7 +3342,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 entry.irs.clear();
                 entry.bridges.clear();
                 entry.strings.clear();
-                entry.dirty = false;  // freshly parsed, not dirty
+                entry.dirty = false; // freshly parsed, not dirty
             }
         }
     }
@@ -3323,28 +3354,33 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     void populate_ir_cache_v2_from_workspace() {
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
-        if (!ws_flat || !ws_pool) return;
+        if (!ws_flat || !ws_pool)
+            return;
         for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
             auto v = ws_flat->get(id);
-            if (v.tag != aura::ast::NodeTag::Define) continue;
-            if (v.sym_id == aura::ast::INVALID_SYM) continue;
+            if (v.tag != aura::ast::NodeTag::Define)
+                continue;
+            if (v.sym_id == aura::ast::INVALID_SYM)
+                continue;
             auto name = std::string(ws_pool->resolve(v.sym_id));
-            if (name.empty() || name[0] == '_') continue;
-            if (v.children.empty()) continue;
+            if (name.empty() || name[0] == '_')
+                continue;
+            if (v.children.empty())
+                continue;
             auto child_id = v.child(0);
             std::string body_src = unparse_node(*ws_flat, *ws_pool, child_id, 0);
             std::string canonical = "(define " + name + " " + body_src + ")";
             auto hash = fnv1a_64(canonical);
             auto it = ir_cache_v2_.find(name);
-            if (it != ir_cache_v2_.end() && !it->second.dirty &&
-                it->second.source_hash == hash) {
+            if (it != ir_cache_v2_.end() && !it->second.dirty && it->second.source_hash == hash) {
                 continue;
             }
             auto alloc = arena_.allocator();
             auto* tmp_pool = arena_.create<aura::ast::StringPool>(alloc);
             auto* tmp_flat = arena_.create<aura::ast::FlatAST>(alloc);
             auto pr = aura::parser::parse_to_flat(canonical, *tmp_flat, *tmp_pool);
-            if (!pr.success || pr.root == aura::ast::NULL_NODE) continue;
+            if (!pr.success || pr.root == aura::ast::NULL_NODE)
+                continue;
             tmp_flat->root = pr.root;
             // Pass bind_in_env=false: don't pollute the workspace's env
             // by calling eval_flat. The define is bound later by
@@ -3357,16 +3393,15 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         }
     }
 
-        // Clear the whole EDSL IR cache. Called by --reset-arena / gc.
-    void clear_define_cache_v2() {
-        ir_cache_v2_.clear();
-    }
+    // Clear the whole EDSL IR cache. Called by --reset-arena / gc.
+    void clear_define_cache_v2() { ir_cache_v2_.clear(); }
 
     // Get cached IR for a define (returns nullptr if not cached).
     // Used by (eval-current) to assemble the IRModule.
     const IRCacheEntry* get_define_v2(const std::string& name) const {
         auto it = ir_cache_v2_.find(name);
-        if (it == ir_cache_v2_.end()) return nullptr;
+        if (it == ir_cache_v2_.end())
+            return nullptr;
         return &it->second;
     }
 
@@ -3374,7 +3409,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     std::vector<std::string> list_cached_defines_v2() const {
         std::vector<std::string> out;
         out.reserve(ir_cache_v2_.size());
-        for (auto& [name, _] : ir_cache_v2_) out.push_back(name);
+        for (auto& [name, _] : ir_cache_v2_)
+            out.push_back(name);
         return out;
     }
 
@@ -3529,8 +3565,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
         // Issue #253: accumulate linear-move elision count.
         if (ts.linear_elide_count() > 0) {
-            metrics_.linear_elide_count.fetch_add(
-                ts.linear_elide_count(), std::memory_order_relaxed);
+            metrics_.linear_elide_count.fetch_add(ts.linear_elide_count(),
+                                                  std::memory_order_relaxed);
         }
 
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_);
@@ -3731,8 +3767,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // Returns tree-walker result (or void for success).
     EvalResult cache_define(std::string_view source, aura::ast::FlatAST& flat,
                             aura::ast::StringPool& pool, aura::ast::NodeId expanded_root,
-                            const std::string& name_str,
-                            bool bind_in_env = true) {
+                            const std::string& name_str, bool bind_in_env = true) {
         bool is_redefine = ir_cache_.count(name_str) > 0;
 
         // === Level 2: Type check via TypeCheckWrap pass ===
@@ -3948,8 +3983,10 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // Issue #253: linear-move elision count (lifetime total).
         s.linear_elide_count = metrics_.linear_elide_count.load(std::memory_order_relaxed);
         // Issue #254: IR SoA dual-emit counters (lifetime total).
-        s.ir_soa_instructions_emitted = metrics_.ir_soa_instructions_emitted.load(std::memory_order_relaxed);
-        s.ir_soa_functions_emitted = metrics_.ir_soa_functions_emitted.load(std::memory_order_relaxed);
+        s.ir_soa_instructions_emitted =
+            metrics_.ir_soa_instructions_emitted.load(std::memory_order_relaxed);
+        s.ir_soa_functions_emitted =
+            metrics_.ir_soa_functions_emitted.load(std::memory_order_relaxed);
         // Issue #255: reference stability observability. Read
         // the live counters from the workspace FlatAST (they
         // live on FlatAST, not on CompilerMetrics — the bump
@@ -3974,17 +4011,17 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // CompilerMetrics, compute the derived
         // multi_mutation_recompute_ratio (basis points:
         // cache_misses / (hits + misses + stale) * 10000).
-        s.typecheck_cache_hits_total = metrics_.typecheck_cache_hits_total.load(std::memory_order_relaxed);
-        s.typecheck_cache_misses_total = metrics_.typecheck_cache_misses_total.load(std::memory_order_relaxed);
-        s.typecheck_stale_cache_total = metrics_.typecheck_stale_cache_total.load(std::memory_order_relaxed);
+        s.typecheck_cache_hits_total =
+            metrics_.typecheck_cache_hits_total.load(std::memory_order_relaxed);
+        s.typecheck_cache_misses_total =
+            metrics_.typecheck_cache_misses_total.load(std::memory_order_relaxed);
+        s.typecheck_stale_cache_total =
+            metrics_.typecheck_stale_cache_total.load(std::memory_order_relaxed);
         s.delta_solve_time_us = metrics_.delta_solve_time_us.load(std::memory_order_relaxed);
-        const std::uint64_t total =
-            s.typecheck_cache_hits_total +
-            s.typecheck_cache_misses_total +
-            s.typecheck_stale_cache_total;
+        const std::uint64_t total = s.typecheck_cache_hits_total + s.typecheck_cache_misses_total +
+                                    s.typecheck_stale_cache_total;
         if (total > 0) {
-            s.multi_mutation_recompute_ratio_bp =
-                (s.typecheck_cache_misses_total * 10000u) / total;
+            s.multi_mutation_recompute_ratio_bp = (s.typecheck_cache_misses_total * 10000u) / total;
         } else {
             s.multi_mutation_recompute_ratio_bp = 0;
         }
@@ -3992,7 +4029,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // Read lifetime totals from CompilerMetrics, compute
         // the derived coverage (basis points: 0-10000).
         s.ir_instructions_total = metrics_.ir_instructions_total.load(std::memory_order_relaxed);
-        s.ir_instructions_with_type_total = metrics_.ir_instructions_with_type_total.load(std::memory_order_relaxed);
+        s.ir_instructions_with_type_total =
+            metrics_.ir_instructions_with_type_total.load(std::memory_order_relaxed);
         if (s.ir_instructions_total > 0) {
             s.type_propagation_coverage_bp =
                 (s.ir_instructions_with_type_total * 10000u) / s.ir_instructions_total;
@@ -4024,9 +4062,12 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 s.marker_total_count = markers.size();
                 for (auto m : markers) {
                     auto val = static_cast<int>(m);
-                    if (val == 0) ++s.marker_user_count;
-                    else if (val == 1) ++s.marker_macro_introduced_count;
-                    else if (val == 2) ++s.marker_bool_literal_count;
+                    if (val == 0)
+                        ++s.marker_user_count;
+                    else if (val == 1)
+                        ++s.marker_macro_introduced_count;
+                    else if (val == 2)
+                        ++s.marker_bool_literal_count;
                 }
             }
         }
@@ -4070,11 +4111,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             // For envs without pool_ (e.g., top_), the
             // names fall back to '@symid:N' (a reasonable
             // display for an env-inspector primitive).
-            auto named = const_cast<aura::compiler::Env&>(*e)
-                             .bindings_with_names();
+            auto named = const_cast<aura::compiler::Env&>(*e).bindings_with_names();
             for (auto& [name, val] : named) {
-                out += "  " + name + " → " +
-                       aura::compiler::types::format_value(val) + "\n";
+                out += "  " + name + " → " + aura::compiler::types::format_value(val) + "\n";
                 ++count;
             }
             e = e->parent();
@@ -4191,12 +4230,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // Goals 1-4 of #169 will read this flag to decide between
     // safe over-invalidation (Conservative) and precise
     // minimal invalidation (Aggressive).
-    void set_incremental_strictness(IncrementalStrictness s) {
-        incremental_strictness_ = s;
-    }
-    IncrementalStrictness incremental_strictness() const {
-        return incremental_strictness_;
-    }
+    void set_incremental_strictness(IncrementalStrictness s) { incremental_strictness_ = s; }
+    IncrementalStrictness incremental_strictness() const { return incremental_strictness_; }
 
     // Mutation log entry (for JSON serialization).
     struct MutationLogEntry {
@@ -4226,7 +4261,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         bool committed = false;
 
         MutationTransaction(aura::ast::FlatAST& a)
-            : ast(&a), snapshot_id(a.next_mutation_id()) {}
+            : ast(&a)
+            , snapshot_id(a.next_mutation_id()) {}
 
         void commit() { committed = true; }
 
@@ -4241,7 +4277,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         MutationTransaction& operator=(const MutationTransaction&) = delete;
         // Allow move
         MutationTransaction(MutationTransaction&& other) noexcept
-            : ast(other.ast), snapshot_id(other.snapshot_id), committed(other.committed) {
+            : ast(other.ast)
+            , snapshot_id(other.snapshot_id)
+            , committed(other.committed) {
             other.ast = nullptr;
         }
     };
@@ -4299,8 +4337,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // marking the guard as failure makes the intent
         // explicit and prepares for the future rollback path).
         bool boundary_success = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(
-            evaluator_, &boundary_success);
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(evaluator_, &boundary_success);
 
         auto result =
             evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
@@ -4339,7 +4376,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             is_success = mid > 0;
         } else if (aura::compiler::types::is_bool(val)) {
             is_success = aura::compiler::types::as_bool(val);
-            mid = 0;  // no explicit mutation ID for bool returns
+            mid = 0; // no explicit mutation ID for bool returns
         }
 
         if (is_success) {
@@ -4413,17 +4450,20 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             if (mid > 0) {
                 const auto& mut_log = ws_flat->all_mutations();
                 for (auto it = mut_log.rbegin(); it != mut_log.rend(); ++it) {
-                    if (it->mutation_id != mid) continue;
+                    if (it->mutation_id != mid)
+                        continue;
                     aura::ast::NodeId target = it->target_node;
-                    if (target == aura::ast::NULL_NODE) target = it->parent_id;
+                    if (target == aura::ast::NULL_NODE)
+                        target = it->parent_id;
                     if (target != aura::ast::NULL_NODE && target < ws_flat->size()) {
                         auto v = ws_flat->get(target);
                         if (v.tag == aura::ast::NodeTag::Define &&
                             v.sym_id != aura::ast::INVALID_SYM) {
                             auto affected = ws_flat->defines_referencing_sym(v.sym_id);
-                            std::println(std::cerr,
-                                "MutationImpactAnalysis: mutation {} affects {} function(s)",
-                                mid, affected.size());
+                            std::println(
+                                std::cerr,
+                                "MutationImpactAnalysis: mutation {} affects {} function(s)", mid,
+                                affected.size());
                         }
                     }
                     break;
@@ -4449,14 +4489,16 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 // already Ok/Warnings; checking them again would
                 // just repeat the work and could double-count
                 // diagnostics.
-                if (rec.invariant_status != aura::ast::InvariantStatus::NotChecked) continue;
+                if (rec.invariant_status != aura::ast::InvariantStatus::NotChecked)
+                    continue;
                 std::vector<aura::compiler::OwnershipNote> notes;
-                auto st = post_mutation_invariant_check(*ws_flat, *current_pool_,
-                                                        type_registry_, rec, notes);
+                auto st = post_mutation_invariant_check(*ws_flat, *current_pool_, type_registry_,
+                                                        rec, notes);
                 rec.invariant_status = st;
                 if (st == aura::ast::InvariantStatus::Warnings) {
                     worst = aura::ast::InvariantStatus::Warnings;
-                    for (auto& n : notes) all_notes.push_back(std::move(n));
+                    for (auto& n : notes)
+                        all_notes.push_back(std::move(n));
                 }
             }
             res.invariant_status = worst;
@@ -4479,20 +4521,21 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             // logged for observability.
             if (mid > 0) {
                 for (auto& rec : log) {
-                    if (rec.mutation_id != mid) continue;
-                    auto re_expanded = evaluator_.post_mutation_macro_reexpand(
-                        *ws_flat, *current_pool_, rec);
+                    if (rec.mutation_id != mid)
+                        continue;
+                    auto re_expanded =
+                        evaluator_.post_mutation_macro_reexpand(*ws_flat, *current_pool_, rec);
                     if (re_expanded > 0) {
                         std::println(std::cerr,
-                            "MacroReexpand: mutation {} re-expanded {} call site(s)",
-                            mid, re_expanded);
+                                     "MacroReexpand: mutation {} re-expanded {} call site(s)", mid,
+                                     re_expanded);
                     }
-                    break;  // one record per typed_mutate
+                    break; // one record per typed_mutate
                 }
             }
 
-            if (invariant_check_mode_ == InvariantCheckMode::Strict
-                && worst == aura::ast::InvariantStatus::Warnings) {
+            if (invariant_check_mode_ == InvariantCheckMode::Strict &&
+                worst == aura::ast::InvariantStatus::Warnings) {
                 res.success = false;
                 if (!res.invariant_diagnostics.empty()) {
                     res.error = res.invariant_diagnostics.front().message;
@@ -4536,11 +4579,19 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             // so the JSON response is human-readable.
             const char* ist = "NotChecked";
             switch (rec.invariant_status) {
-                case aura::ast::InvariantStatus::Ok:         ist = "Ok"; break;
-                case aura::ast::InvariantStatus::Warnings:   ist = "Warnings"; break;
-                case aura::ast::InvariantStatus::Violations: ist = "Violations"; break;
+                case aura::ast::InvariantStatus::Ok:
+                    ist = "Ok";
+                    break;
+                case aura::ast::InvariantStatus::Warnings:
+                    ist = "Warnings";
+                    break;
+                case aura::ast::InvariantStatus::Violations:
+                    ist = "Violations";
+                    break;
                 case aura::ast::InvariantStatus::NotChecked:
-                default:                                     ist = "NotChecked"; break;
+                default:
+                    ist = "NotChecked";
+                    break;
             }
             result.push_back(
                 {rec.mutation_id, rec.timestamp_ms, rec.target_node, rec.operator_name,
@@ -4578,14 +4629,16 @@ private:
     // For non-primitive inputs (variables, function calls, etc.),
     // returns EvalValue(0) as a sentinel so the caller can fall back
     // to a full eval() pass.
-    [[nodiscard]] aura::compiler::types::EvalValue
-    eval_arg_fast(std::string_view s) const {
+    [[nodiscard]] aura::compiler::types::EvalValue eval_arg_fast(std::string_view s) const {
         using namespace aura::compiler::types;
         // Trim
         std::size_t a = 0, b = s.size();
-        while (a < b && std::isspace((unsigned char)s[a])) ++a;
-        while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
-        if (a >= b) return make_void();
+        while (a < b && std::isspace((unsigned char)s[a]))
+            ++a;
+        while (b > a && std::isspace((unsigned char)s[b - 1]))
+            --b;
+        if (a >= b)
+            return make_void();
         std::string_view t = s.substr(a, b - a);
 
         // Integer?
@@ -4597,7 +4650,8 @@ private:
                 std::string ts(t);
                 std::size_t consumed = 0;
                 long long v = std::stoll(ts, &consumed);
-                if (consumed == ts.size()) return make_int(v);
+                if (consumed == ts.size())
+                    return make_int(v);
             } catch (...) {
                 // Fall through to slow path
             }
@@ -4608,14 +4662,19 @@ private:
                 std::string ts(t);
                 std::size_t consumed = 0;
                 double v = std::stod(ts, &consumed);
-                if (consumed == ts.size()) return make_float(v);
-            } catch (...) {}
+                if (consumed == ts.size())
+                    return make_float(v);
+            } catch (...) {
+            }
         }
         // Booleans
-        if (t == "#t") return make_bool(true);
-        if (t == "#f") return make_bool(false);
+        if (t == "#t")
+            return make_bool(true);
+        if (t == "#f")
+            return make_bool(false);
         // Void
-        if (t == "()" || t == "#!void") return make_void();
+        if (t == "()" || t == "#!void")
+            return make_void();
         // Sentinel for non-primitive input — caller falls back to full eval.
         return EvalValue(0);
     }
@@ -4640,8 +4699,8 @@ private:
     // Returns the value if the expression is a pure constant (no side effects,
     // no runtime dependencies), or nullopt if it needs runtime evaluation.
     std::optional<types::EvalValue> try_const_eval(const aura::ast::FlatAST& flat,
-                                                    const aura::ast::StringPool& pool,
-                                                    aura::ast::NodeId node_id) {
+                                                   const aura::ast::StringPool& pool,
+                                                   aura::ast::NodeId node_id) {
         if (node_id >= flat.size())
             return std::nullopt;
         auto v = flat.get(node_id);
@@ -4822,12 +4881,14 @@ private:
     void collect_match_info(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                             aura::ast::NodeId root) {
         auto is_ignore_name = [&](aura::ast::SymId sid) -> bool {
-            if (sid == aura::ast::INVALID_SYM) return true;
+            if (sid == aura::ast::INVALID_SYM)
+                return true;
             auto n = pool.resolve(sid);
             return n == "_" || (n.size() > 1 && n[0] == '_');
         };
         auto extract_ctor = [&](aura::ast::NodeId nid, auto& minfo) -> void {
-            if (nid >= flat.size()) return;
+            if (nid >= flat.size())
+                return;
             auto nv = flat.get(nid);
             if (nv.tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
                 auto callee_v = flat.get(nv.child(0));
@@ -4838,7 +4899,8 @@ private:
             }
         };
         auto walk = [&](this const auto& self, aura::ast::NodeId id) -> void {
-            if (id >= flat.size()) return;
+            if (id >= flat.size())
+                return;
             auto v = flat.get(id);
             if (v.tag == aura::ast::NodeTag::IfExpr && v.children.size() >= 3 &&
                 v.child(0) < flat.size()) {
@@ -4849,8 +4911,7 @@ private:
                 if (then_id < flat.size()) {
                     auto then_v = flat.get(then_id);
                     // If then body is a let and we can resolve the arg to a ctor
-                    if (then_v.tag == aura::ast::NodeTag::Let &&
-                        !then_v.children.empty()) {
+                    if (then_v.tag == aura::ast::NodeTag::Let && !then_v.children.empty()) {
                         // Check if this let has match_info already
                         if (!flat.has_match_info(id)) {
                             aura::ast::MatchClauseInfo minfo;
@@ -4860,14 +4921,15 @@ private:
                     }
                 }
             }
-            for (auto c : v.children) self(c);
+            for (auto c : v.children)
+                self(c);
         };
-        if (root < flat.size()) walk(root);
+        if (root < flat.size())
+            walk(root);
     }
 
     void register_adt_from_define_types(const aura::ast::FlatAST& flat,
-                                        const aura::ast::StringPool& pool,
-                                        aura::ast::NodeId root) {
+                                        const aura::ast::StringPool& pool, aura::ast::NodeId root) {
         auto walk = [&](this const auto& self, aura::ast::NodeId id) -> void {
             if (id >= flat.size())
                 return;
@@ -4902,12 +4964,10 @@ private:
                     // Register the ADT type if not already registered, then add constructors
                     auto tid = type_registry_.lookup_type(type_name);
                     if (!tid.valid()) {
-                        tid = type_registry_.register_type(aura::core::TypeTag::VARIANT,
-                                                            type_name);
+                        tid = type_registry_.register_type(aura::core::TypeTag::VARIANT, type_name);
                     }
                     if (tid.valid())
                         type_registry_.register_adt_constructors(tid, ctors);
-
                 }
             }
             for (auto c : v.children)
@@ -5182,9 +5242,7 @@ public:
     // through mark_define_dirty / invalidate_function /
     // hot_swap_function_impl / reset(). Tests can call
     // this directly to verify the helper's behavior.
-    void public_invalidate_bridges_for(const std::string& name) {
-        invalidate_bridge_for(name);
-    }
+    void public_invalidate_bridges_for(const std::string& name) { invalidate_bridge_for(name); }
 
     // Track names defined via value define (tree-walker path) so subsequent
     // expressions referencing them fall back to tree-walker instead of IR.
@@ -5215,7 +5273,7 @@ public:
         std::uint32_t local_count = 0;
         std::uint32_t arg_count = 0;
         std::uint32_t env_count = 0;
-        bool has_shape_map = false;  // true if compiled with shape_map
+        bool has_shape_map = false; // true if compiled with shape_map
     };
     std::unordered_map<std::string, JitCachedFn> jit_cache_;
     // Issue #59 Iter 2: shared_mutex for jit_cache_. Read-heavy access
@@ -5259,9 +5317,7 @@ public:
     // the bridge_epoch_ field on existing ClosureBridgeData should
     // be considered stale (e.g. major mutation that doesn't reset
     // the arena). For Cycle 1 we just forward to mutation_epoch_.
-    void bump_bridge_epoch() noexcept {
-        mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
-    }
+    void bump_bridge_epoch() noexcept { mutation_epoch_.fetch_add(1, std::memory_order_relaxed); }
 
     // Issue #225 cycle 3: invalidate the bridge data for a
     // function. Bumps the bridge_epoch_ field on all bridge
@@ -5277,13 +5333,13 @@ public:
     // shared_ptr is the safety net.
     void invalidate_bridge_for(const std::string& name) {
         auto bit = ir_cache_bridge_.find(name);
-        if (bit == ir_cache_bridge_.end()) return;
+        if (bit == ir_cache_bridge_.end())
+            return;
         const auto current_epoch = bridge_epoch();
         for (auto& bridge : bit->second) {
             bridge.bridge_epoch = current_epoch;
         }
-        metrics_.bridge_invalidations_count.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.bridge_invalidations_count.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Issue #59 Iter 3: Mutation Lock. A mutate:* operation (which
@@ -5302,9 +5358,9 @@ public:
     // Returns EvalResult on success, nullopt on failure (falls back to IR interpreter)
     // escape_maps: optional pre-computed escape maps from EscapeAnalysisWrap pass.
     //              If null, escape analysis is run inline.
-    std::optional<types::EvalValue> try_jit_execute(
-        const aura::ir::IRModule& ir_mod,
-        const std::vector<std::vector<std::uint8_t>>* escape_maps = nullptr) {
+    std::optional<types::EvalValue>
+    try_jit_execute(const aura::ir::IRModule& ir_mod,
+                    const std::vector<std::vector<std::uint8_t>>* escape_maps = nullptr) {
         // Issue #59 Iter 3: shared-lock the Mutation Lock so a
         // concurrent mutate:* waits for this compile to drain before
         // invalidating. Compiles can run concurrently with each other.
@@ -5327,8 +5383,7 @@ public:
                 auto cache_it = jit_cache_.find(ir_fn.name);
                 if (cache_it != jit_cache_.end()) {
                     auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
-                    if (!cache_it->second.has_shape_map &&
-                        shape_profiler_.is_stable(fn_key)) {
+                    if (!cache_it->second.has_shape_map && shape_profiler_.is_stable(fn_key)) {
                         // hot-recompile path: needs unique lock
                     } else {
                         fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
@@ -5339,12 +5394,10 @@ public:
             if (need_compile && fn_ptr == nullptr) {
                 std::unique_lock cache_write(jit_cache_mtx_);
                 auto cache_it = jit_cache_.find(ir_fn.name);
-                if (cache_it != jit_cache_.end() &&
-                    !cache_it->second.has_shape_map &&
-                    shape_profiler_.is_stable(
-                        shape::make_fn_key(session_id_, ir_fn.name))) {
+                if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
+                    shape_profiler_.is_stable(shape::make_fn_key(session_id_, ir_fn.name))) {
                     std::fprintf(stderr, "spec: hot-recompile '%s' (try_jit)\n",
-                                ir_fn.name.c_str());
+                                 ir_fn.name.c_str());
                     jit_cache_.erase(cache_it);
                 } else if (cache_it != jit_cache_.end()) {
                     fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
@@ -5361,19 +5414,24 @@ public:
                 if (shape_profiler_.is_stable(fn_key)) {
                     auto dom = shape_profiler_.dominant_shape(fn_key);
                     uint8_t code = 0;
-                    if (dom == shape::SHAPE_INT)      code = 1;
-                    else if (dom == shape::SHAPE_FLOAT) code = 2;
-                    else if (dom == shape::SHAPE_BOOL)  code = 3;
-                    else if (dom == shape::SHAPE_STRING) code = 4;
-                    else if (dom == shape::SHAPE_VOID)   code = 5;
-                    else if (dom == shape::SHAPE_PAIR)   code = 10;
+                    if (dom == shape::SHAPE_INT)
+                        code = 1;
+                    else if (dom == shape::SHAPE_FLOAT)
+                        code = 2;
+                    else if (dom == shape::SHAPE_BOOL)
+                        code = 3;
+                    else if (dom == shape::SHAPE_STRING)
+                        code = 4;
+                    else if (dom == shape::SHAPE_VOID)
+                        code = 5;
+                    else if (dom == shape::SHAPE_PAIR)
+                        code = 10;
                     if (code) {
                         shape_storage.resize(ir_fn.local_count, 0);
                         for (uint32_t i = 0; i < ir_fn.arg_count && i < ir_fn.local_count; ++i)
                             shape_storage[i] = code;
                         final_shape_map = shape_storage.data();
-                        std::fprintf(stderr, "spec: try_jit L1 for '%s'\n",
-                                    ir_fn.name.c_str());
+                        std::fprintf(stderr, "spec: try_jit L1 for '%s'\n", ir_fn.name.c_str());
                     }
                 }
 
@@ -5406,7 +5464,8 @@ public:
                     } else {
                         // Fallback: run escape analysis inline
                         escape_storage.resize(ir_fn.local_count, 0);
-                        aura::jit::run_escape_analysis(flat_instrs, ir_fn.local_count, escape_storage);
+                        aura::jit::run_escape_analysis(flat_instrs, ir_fn.local_count,
+                                                       escape_storage);
                     }
                 }
                 // (Issue #60 Iter 2: shape_storage and final_shape_map
@@ -5435,12 +5494,10 @@ public:
                 if (!fn_ptr) {
                     fn_ptr = jit_.compile(flat_fn);
                     if (!fn_ptr) {
-                        metrics_.jit_compile_misses.fetch_add(
-                            1, std::memory_order_relaxed);
+                        metrics_.jit_compile_misses.fetch_add(1, std::memory_order_relaxed);
                         return std::nullopt;
                     }
-                    metrics_.jit_compilations.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics_.jit_compilations.fetch_add(1, std::memory_order_relaxed);
                     if (ir_fn.name != "__top__") {
                         std::unique_lock cache_write(jit_cache_mtx_);
                         auto [it, _ins] = jit_cache_.try_emplace(ir_fn.name);
@@ -5527,12 +5584,12 @@ public:
                                             static_cast<uint64_t>(raw_result >> 2));
                                     goto result_done;
                                 case aura::ir::IROpcode::NewCell:
-                                    result_type = types::make_cell(
-                                        static_cast<uint64_t>(raw_result));
+                                    result_type =
+                                        types::make_cell(static_cast<uint64_t>(raw_result));
                                     goto result_done;
                                 case aura::ir::IROpcode::MakeClosure:
-                                    result_type = types::make_closure(
-                                        static_cast<uint64_t>(raw_result));
+                                    result_type =
+                                        types::make_closure(static_cast<uint64_t>(raw_result));
                                     goto result_done;
                                 case aura::ir::IROpcode::ConstF64:
                                     result_type = types::EvalValue(raw_result);
@@ -5657,10 +5714,11 @@ public:
             [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->unlock_workspace_shared(); },
             [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->lock_workspace_unique(); },
             [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->unlock_workspace_unique(); },
-            [](void* e) -> std::uint64_t { return static_cast<aura::compiler::Evaluator*>(e)->get_defuse_version(); },
+            [](void* e) -> std::uint64_t {
+                return static_cast<aura::compiler::Evaluator*>(e)->get_defuse_version();
+            },
             [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->yield_mutation_boundary(); },
-            static_cast<void*>(&evaluator_)
-        );
+            static_cast<void*>(&evaluator_));
 
 // Register the dispatcher with JIT runtime
 #ifdef AURA_HAVE_LLVM
@@ -5680,7 +5738,7 @@ public:
 
     // ── Messaging (P14) ───────────────────────────────────────
     int wake_eventfd_ = -1;
-    std::vector<std::pair<std::string, std::string>> mailbox_;  // (sender, msg)
+    std::vector<std::pair<std::string, std::string>> mailbox_; // (sender, msg)
     std::string last_sender_;
     std::string session_id_;
     std::unique_ptr<std::function<bool(const std::string&, const std::string&)>> msg_send_fn_;
@@ -5706,7 +5764,6 @@ public:
         static std::mutex mtx;
         return mtx;
     }
-
 };
 
 
@@ -5716,16 +5773,19 @@ extern "C" std::int64_t aura_hash_string_convert_fn(std::int64_t jit_key) {
     // JIT key: STRING_BIAS_VAL_2 - (jit_pool_idx << 2)
     // Evaluator key: STRING_BIAS_VAL_2 - (eval_heap_idx << 2)
     using aura::compiler::types::is_string_raw_v2;
-    using aura::compiler::types::string_idx_raw_v2;
     using aura::compiler::types::make_string_raw_v2;
+    using aura::compiler::types::string_idx_raw_v2;
     auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
-    if (!prims) return 0;
-    if (!is_string_raw_v2(jit_key)) return 0;
+    if (!prims)
+        return 0;
+    if (!is_string_raw_v2(jit_key))
+        return 0;
     auto& sh = const_cast<aura::compiler::Primitives*>(prims)->string_heap();
     auto idx = static_cast<std::size_t>(string_idx_raw_v2(jit_key));
     // Get JIT string content via aura_jit_pool_string
     const char* content = aura_jit_pool_string(idx);
-    if (!content) return 0;
+    if (!content)
+        return 0;
     // Push into evaluator string heap
     auto new_idx = sh.size();
     sh.push_back(content ? content : "");
@@ -5736,12 +5796,15 @@ extern "C" std::int64_t aura_hash_string_cmp_fn(std::int64_t stored_key, std::in
     using aura::compiler::types::is_string_raw_v2;
     using aura::compiler::types::string_idx_raw_v2;
     auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
-    if (!prims) return 0;
-    if (!is_string_raw_v2(stored_key) || !is_string_raw_v2(search_key)) return 0;
+    if (!prims)
+        return 0;
+    if (!is_string_raw_v2(stored_key) || !is_string_raw_v2(search_key))
+        return 0;
     auto& sh = const_cast<aura::compiler::Primitives*>(prims)->string_heap();
     auto ai = static_cast<std::size_t>(string_idx_raw_v2(stored_key));
     auto bi = static_cast<std::size_t>(string_idx_raw_v2(search_key));
-    if (ai >= sh.size() || bi >= sh.size()) return 0;
+    if (ai >= sh.size() || bi >= sh.size())
+        return 0;
     return (sh[ai] == sh[bi]) ? 1 : 0;
 }
 

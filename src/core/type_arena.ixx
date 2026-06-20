@@ -43,7 +43,7 @@ public:
     // up to a cap of 256 KB so very large registries don't allocate
     // huge chunks they may never fill.
     static constexpr std::size_t kInitialChunkBytes = 1024;   // 1 KB
-    static constexpr std::size_t kMaxChunkBytes     = 256 * 1024;  // 256 KB
+    static constexpr std::size_t kMaxChunkBytes = 256 * 1024; // 256 KB
 
     // Default initial chunk size; can be overridden by the caller if
     // they have a known workload (e.g. tests that pre-fill the arena).
@@ -64,10 +64,7 @@ public:
     // Allocate storage and construct a T by copying `init`.
     // The returned pointer is stable across subsequent allocations
     // and is invalidated only by reset() (or arena destruction).
-    template <typename T>
-    [[nodiscard]] T* allocate(const T& init)
-        post (r: r != nullptr)
-    {
+    template <typename T> [[nodiscard]] T* allocate(const T& init) post(r : r != nullptr) {
         // Round slot size up to T's alignment so the next bump_slot
         // call also lands on a properly aligned address.
         constexpr std::size_t slot = align_up(sizeof(T), alignof(T));
@@ -78,29 +75,23 @@ public:
     // In-place construction (avoids an extra copy when the caller
     // already has all the field values).
     template <typename T, typename... Args>
-    [[nodiscard]] T* construct(Args&&... args)
-        post (r: r != nullptr)
-    {
+    [[nodiscard]] T* construct(Args&&... args) post(r : r != nullptr) {
         constexpr std::size_t slot = align_up(sizeof(T), alignof(T));
         void* raw = bump_slot(slot);
-        return std::construct_at(static_cast<T*>(raw),
-                                 std::forward<Args>(args)...);
+        return std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
     }
 
     // Explicitly destroy a single object (rarely needed — reset()
     // bulk-frees). Caller is responsible for not using the pointer
     // afterwards.
-    template <typename T>
-    void destroy(T* ptr) noexcept {
-        if (ptr) std::destroy_at(ptr);
+    template <typename T> void destroy(T* ptr) noexcept {
+        if (ptr)
+            std::destroy_at(ptr);
     }
 
     // Release all allocated storage in one shot.
     // After reset, no previously-returned pointer is valid.
-    void reset()
-        post (bytes_used() == 0)
-        post (chunk_count() == 0)
-    {
+    void reset() post(bytes_used() == 0) post(chunk_count() == 0) {
         chunks_.clear();
         bytes_used_ = 0;
         next_chunk_bytes_ = kInitialChunkBytes;
@@ -115,7 +106,8 @@ public:
     // Total capacity across all chunks (sum of chunk bytes).
     [[nodiscard]] std::size_t capacity() const noexcept {
         std::size_t total = 0;
-        for (const auto& c : chunks_) total += c.bytes;
+        for (const auto& c : chunks_)
+            total += c.bytes;
         return total;
     }
 
@@ -126,7 +118,7 @@ public:
     }
 
 private:
-    static constexpr std::size_t kMinChunkBytes = 64;  // absolute floor
+    static constexpr std::size_t kMinChunkBytes = 64; // absolute floor
 
     // Round `n` up to the next multiple of `a`. `a` must be a power
     // of two (we use this only with alignof(T) values, which always
@@ -142,8 +134,10 @@ private:
             // Grow the next chunk size (capped). Use at least `n`
             // bytes so the slot always fits even on a tiny first chunk.
             std::size_t next = next_chunk_bytes_ * 2;
-            if (next > kMaxChunkBytes) next = kMaxChunkBytes;
-            if (next < n) next = align_up(n, 16);
+            if (next > kMaxChunkBytes)
+                next = kMaxChunkBytes;
+            if (next < n)
+                next = align_up(n, 16);
             chunks_.push_back({});
             chunks_.back().bytes = next;
             chunks_.back().data = std::make_unique<std::byte[]>(next);
@@ -163,7 +157,7 @@ private:
     };
 
     std::vector<Chunk> chunks_;
-    std::size_t next_chunk_bytes_;  // size hint for the next chunk
+    std::size_t next_chunk_bytes_; // size hint for the next chunk
     std::size_t bytes_used_ = 0;
 };
 

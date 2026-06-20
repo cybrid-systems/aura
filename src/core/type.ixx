@@ -127,8 +127,8 @@ export struct EffectType {
 
 // Capability type: {FileRead, FileWrite} — set of required effects
 export struct CapabilityType {
-    std::vector<std::string> effects;  // 包含的 effect 名称列表
-    bool is_unrestricted = false;      // true = 允许所有 effect
+    std::vector<std::string> effects; // 包含的 effect 名称列表
+    bool is_unrestricted = false;     // true = 允许所有 effect
 };
 
 // ── TypeRegistry ──────────────────────────────────────────────
@@ -140,10 +140,9 @@ public:
     // ── 注册 ──
     TypeId register_type(TypeTag tag, std::string name);
     void register_adt_constructors(aura::core::TypeId type_id,
-                                    std::vector<std::string> constructors);
+                                   std::vector<std::string> constructors);
     const std::vector<std::string>* get_adt_constructors(aura::core::TypeId type_id) const;
-    TypeId register_func(std::vector<TypeId> args, TypeId ret)
-        post (r: r.valid());
+    TypeId register_func(std::vector<TypeId> args, TypeId ret) post(r : r.valid());
     TypeId register_func_named(std::vector<TypeId> args, TypeId ret, std::string name);
     TypeId register_forall(TypeId var, TypeId body);
     TypeId register_linear(TypeId inner);
@@ -155,8 +154,7 @@ public:
     TypeId make_var(std::string name = "");
 
     // ── 查询 ──
-    TypeTag tag_of(TypeId id) const
-        pre (id.valid());
+    TypeTag tag_of(TypeId id) const pre(id.valid());
     std::string_view name_of(TypeId id) const;
     const FuncType* func_of(TypeId id) const;
     const ForallType* forall_of(TypeId id) const;
@@ -171,9 +169,7 @@ public:
     // subtyping needs to allocate a fresh type variable (alpha-rename)
     // during the check. The mutation is local to the type-variables
     // pool and doesn't affect the existing types the caller holds.
-    bool is_subtype(TypeId sub, TypeId sup) const
-        pre (sub.valid())
-        pre (sup.valid());
+    bool is_subtype(TypeId sub, TypeId sup) const pre(sub.valid()) pre(sup.valid());
 
     // ── 预定义常量 ──
     TypeId dynamic_type() const { return TypeId{0, 1}; }
@@ -218,7 +214,7 @@ public:
     // subtyping rules. The private impl is a depth-limited helper that
     // is_subtype delegates to (avoids recursing the public method for
     // every level, keeping the depth counter consistent).
-  private:
+private:
     bool is_subtype_impl(TypeId sub, TypeId sup, int depth);
 
     // Issue #67 follow-up: walk entries_ and explicitly destroy each
@@ -238,8 +234,7 @@ public:
     bool type_equals(TypeId a, TypeId b) const;
     std::uint64_t type_hash(TypeId a) const;
 
-  public:
-
+public:
     // Substitute type variables in a type using the given substitution map
     // Returns a new TypeId (may register new types), does not modify original
     TypeId substitute(TypeId ty, const std::unordered_map<std::uint32_t, TypeId>& subst);
@@ -261,8 +256,8 @@ private:
         std::optional<VariantType> variant;
         std::optional<RecordType> record;
     };
-    std::vector<Entry*> entries_;   // index → stable pointer into arena_
-    TypeEntryArena arena_;           // bump-allocates Entry objects
+    std::vector<Entry*> entries_; // index → stable pointer into arena_
+    TypeEntryArena arena_;        // bump-allocates Entry objects
     std::unordered_map<std::string, TypeId> name_to_id_;
     uint32_t next_generation_ = 1;
 };

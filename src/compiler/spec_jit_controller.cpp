@@ -21,11 +21,15 @@ namespace aura::compiler::shape {
 // ── FLOAT_BIAS / STRING_BIAS from value_tags.h (issue #58, #181) ──
 // Issue #181 Cycle 2: STRING_BIAS_VAL_2 is the v2 upper bound of
 // the string range (was STRING_BIAS_VAL before Cycle 2).
-static constexpr std::int64_t kFloatBias  = aura::compiler::types::FLOAT_BIAS_VAL;
+static constexpr std::int64_t kFloatBias = aura::compiler::types::FLOAT_BIAS_VAL;
 static constexpr std::int64_t kStringBias = aura::compiler::types::STRING_BIAS_VAL_2;
 
-static inline bool is_fixnum_val(std::int64_t v) noexcept { return (v & 1) == 0; }
-static inline bool is_ref_val(std::int64_t v) noexcept    { return (v & 3) == 1; }
+static inline bool is_fixnum_val(std::int64_t v) noexcept {
+    return (v & 1) == 0;
+}
+static inline bool is_ref_val(std::int64_t v) noexcept {
+    return (v & 3) == 1;
+}
 static inline std::uint64_t ref_type_val(std::int64_t v) noexcept {
     return (static_cast<std::uint64_t>(v) >> 2) & 0xF;
 }
@@ -33,28 +37,28 @@ static inline std::uint64_t ref_type_val(std::int64_t v) noexcept {
 bool check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
                        const std::uint8_t* shape_map, std::uint32_t map_size) {
     if (!shape_map)
-        return true;  // No specialization → always match
+        return true; // No specialization → always match
 
     std::uint32_t check_count = std::min(arg_count, map_size);
     for (std::uint32_t i = 0; i < check_count; ++i) {
         std::uint8_t expected = shape_map[i];
-        if (expected == 0)  // Dynamic — always matches
+        if (expected == 0) // Dynamic — always matches
             continue;
 
         std::int64_t val = args[i];
         bool match = false;
 
         switch (expected) {
-            case 1:  // Int
+            case 1: // Int
                 match = is_fixnum_val(val) && val > kFloatBias;
                 break;
-            case 2:  // Float
+            case 2: // Float
                 match = (val <= kFloatBias && val > kStringBias);
                 break;
-            case 3:  // Bool
+            case 3: // Bool
                 match = (val == 3 || val == 7);
                 break;
-            case 5:  // Void
+            case 5: // Void
                 match = (val == 11);
                 break;
             case 10: // Pair (ref type RefPair=0)
@@ -73,7 +77,7 @@ bool check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
                 match = is_ref_val(val);
                 break;
             default:
-                match = true;  // Unknown shapes → pass through
+                match = true; // Unknown shapes → pass through
                 break;
         }
 
@@ -85,17 +89,14 @@ bool check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
 
 // ── SpecJITController ─────────────────────────────────────────
 
-SpecJITController::SpecJITController(aura::jit::AuraJIT& jit) : jit_(jit) {}
+SpecJITController::SpecJITController(aura::jit::AuraJIT& jit)
+    : jit_(jit) {}
 
-aura::jit::ScalarFn SpecJITController::compile_specialized(
-    const std::string& fn_name,
-    const std::uint8_t* shape_map,
-    std::uint32_t shape_map_size,
-    aura::jit::ScalarFn generic_fn,
-    std::uint32_t arg_count,
-    std::uint32_t local_count)
-{
-    (void)generic_fn;  // Unused in Phase 2 — the guard is at the call site
+aura::jit::ScalarFn
+SpecJITController::compile_specialized(const std::string& fn_name, const std::uint8_t* shape_map,
+                                       std::uint32_t shape_map_size, aura::jit::ScalarFn generic_fn,
+                                       std::uint32_t arg_count, std::uint32_t local_count) {
+    (void)generic_fn; // Unused in Phase 2 — the guard is at the call site
 
     // Issue #170 Phase 2 / item #1: deopt gate. If the
     // underlying AuraJIT has seen ANY unhandled opcode,
@@ -106,10 +107,9 @@ aura::jit::ScalarFn SpecJITController::compile_specialized(
     // unhandled opcodes.
     if (should_deopt_specialization()) {
         std::fprintf(stderr,
-            "spec: deopting specialization for '%s' "
-            "(AuraJIT unhandled_opcode_count=%llu > 0)\n",
-            fn_name.c_str(),
-            (unsigned long long)unhandled_opcode_count());
+                     "spec: deopting specialization for '%s' "
+                     "(AuraJIT unhandled_opcode_count=%llu > 0)\n",
+                     fn_name.c_str(), (unsigned long long)unhandled_opcode_count());
         return nullptr;
     }
 
@@ -155,9 +155,8 @@ bool SpecJITController::has_specialization(const std::string& fn_name, ShapeID s
     return false;
 }
 
-aura::jit::ScalarFn SpecJITController::get_specialized(
-    const std::string& fn_name, ShapeID shape) const
-{
+aura::jit::ScalarFn SpecJITController::get_specialized(const std::string& fn_name,
+                                                       ShapeID shape) const {
     auto it = specializations_.find(fn_name);
     if (it == specializations_.end())
         return nullptr;
@@ -206,7 +205,7 @@ std::uint64_t SpecJITController::unhandled_opcode_count() const {
 // unhandled opcode once or twice isn't immediately deopted
 // for the rest of the session.
 bool SpecJITController::should_deopt_specialization_for(const std::string& fn_name,
-                                                         std::uint64_t threshold) const {
+                                                        std::uint64_t threshold) const {
     return unhandled_opcode_count_for(fn_name) > threshold;
 }
 
@@ -214,4 +213,4 @@ std::uint64_t SpecJITController::unhandled_opcode_count_for(const std::string& f
     return jit_.unhandled_opcode_count_for_function(fn_name.c_str());
 }
 
-}  // namespace aura::compiler::shape
+} // namespace aura::compiler::shape

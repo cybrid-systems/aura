@@ -32,13 +32,9 @@ public:
 
     // Compile a specialized version of a function for a given shape.
     // Returns the compiled function pointer, or null on failure.
-    aura::jit::ScalarFn compile_specialized(
-        const std::string& fn_name,
-        const uint8_t* shape_map,
-        uint32_t shape_map_size,
-        aura::jit::ScalarFn generic_fn,
-        uint32_t arg_count,
-        uint32_t local_count);
+    aura::jit::ScalarFn compile_specialized(const std::string& fn_name, const uint8_t* shape_map,
+                                            uint32_t shape_map_size, aura::jit::ScalarFn generic_fn,
+                                            uint32_t arg_count, uint32_t local_count);
 
     // Check if a specialized version exists for a function+shape combo.
     bool has_specialization(const std::string& fn_name, ShapeID shape) const;
@@ -94,8 +90,8 @@ public:
     std::uint64_t unhandled_opcode_count_for(const std::string& fn_name) const;
 
     // Shape map codes (must match shape.h ShapeID conventions)
-    static constexpr uint8_t kDynamic   = 0;
-    static constexpr uint8_t kShapeInt  = 1;
+    static constexpr uint8_t kDynamic = 0;
+    static constexpr uint8_t kShapeInt = 1;
     static constexpr uint8_t kShapeFloat = 2;
     static constexpr uint8_t kShapeBool = 3;
     static constexpr uint8_t kShapeString = 4;
@@ -121,9 +117,9 @@ private:
 // ── Runtime shape guard helper ────────────────────────────────
 // Checks if runtime values match expected shapes.
 // Returns true if all arg shapes match the shape_map.
-bool check_shape_guard(const int64_t* args, uint32_t arg_count,
-                       const uint8_t* shape_map, uint32_t map_size);
+bool check_shape_guard(const int64_t* args, uint32_t arg_count, const uint8_t* shape_map,
+                       uint32_t map_size);
 
-}  // namespace aura::compiler::shape
+} // namespace aura::compiler::shape
 
-#endif  // AURA_COMPILER_SPEC_JIT_CONTROLLER_H
+#endif // AURA_COMPILER_SPEC_JIT_CONTROLLER_H

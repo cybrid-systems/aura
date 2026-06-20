@@ -86,9 +86,7 @@ export ConstantFoldingResult constant_fold_function(aura::ir::IRFunction& func);
 // and just needs the per-instruction decisions.
 //
 // Returns the number of instructions folded in this block.
-export std::size_t constant_fold_block(
-    aura::ir::BasicBlock& block,
-    ConstantKnownMap& known)
+export std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& known)
     // Issue #213 follow-up: C++26 contract. The function
     // is total: it handles any block, any state of `known`
     // (including empty). The only precondition is that
@@ -98,6 +96,6 @@ export std::size_t constant_fold_block(
     // the invariant explicitly so the contract_enforce
     // semantic catches future regressions if the
     // function is ever refactored to take a pointer.
-    pre (true);
+    pre(true);
 
 } // namespace aura::compiler

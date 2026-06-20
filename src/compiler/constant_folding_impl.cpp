@@ -40,7 +40,7 @@ namespace {
     constexpr bool is_truthy_val(ConstantValue v) noexcept {
         return v != 3 && v != 0;
     }
-}
+} // namespace
 
 // ── replace — mutate an instruction to a ConstI64 and update known ───
 //
@@ -92,10 +92,7 @@ static void replace_bool(aura::ir::IRInstruction& instr, std::uint32_t slot, boo
 // known-map in hand (incremental compilation, single-block
 // re-fold), they call this directly. The per-function variant
 // just allocates a fresh map per block and calls this.
-std::size_t constant_fold_block(
-    aura::ir::BasicBlock& block,
-    ConstantKnownMap& known)
-{
+std::size_t constant_fold_block(aura::ir::BasicBlock& block, ConstantKnownMap& known) {
     std::size_t folded = 0;
     for (auto& instr : block.instructions) {
         auto& ops = instr.operands;
@@ -200,8 +197,7 @@ std::size_t constant_fold_block(
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
                 if (it_a != known.end() && it_b != known.end()) {
                     replace_bool(instr, ops[0],
-                                 is_truthy_val(it_a->second) && is_truthy_val(it_b->second),
-                                 known);
+                                 is_truthy_val(it_a->second) && is_truthy_val(it_b->second), known);
                     ++folded;
                 }
                 break;
@@ -210,8 +206,7 @@ std::size_t constant_fold_block(
                 auto it_a = known.find(ops[1]), it_b = known.find(ops[2]);
                 if (it_a != known.end() && it_b != known.end()) {
                     replace_bool(instr, ops[0],
-                                 is_truthy_val(it_a->second) || is_truthy_val(it_b->second),
-                                 known);
+                                 is_truthy_val(it_a->second) || is_truthy_val(it_b->second), known);
                     ++folded;
                 }
                 break;

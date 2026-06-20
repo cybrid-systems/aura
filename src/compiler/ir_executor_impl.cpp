@@ -32,24 +32,31 @@ static const bool kDeoptTrace = []() {
 // encoding in aura_jit.h (SHAPE_INT=1, SHAPE_PAIR=10) and the
 // service's set_shape_map encoder. Returns 0 for unknown/Dynamic.
 static std::uint32_t runtime_shape_of(const EvalValue& v) {
-    if (is_int(v))   return 1;  // SHAPE_INT
-    if (is_bool(v))  return 3;  // SHAPE_BOOL (encoded as Int encoding in
-                                // value but logically Bool shape)
-    if (is_float(v)) return 2;  // SHAPE_FLOAT
-    if (is_string(v)) return 4; // SHAPE_STRING
-    if (is_pair(v))  return 10; // SHAPE_PAIR
+    if (is_int(v))
+        return 1; // SHAPE_INT
+    if (is_bool(v))
+        return 3; // SHAPE_BOOL (encoded as Int encoding in
+                  // value but logically Bool shape)
+    if (is_float(v))
+        return 2; // SHAPE_FLOAT
+    if (is_string(v))
+        return 4; // SHAPE_STRING
+    if (is_pair(v))
+        return 10; // SHAPE_PAIR
     // Issue #160 sub-item #5: distinguish Closure and Vector
     // shapes for GuardShape precision. A specialized function
     // that takes a closure should not be confused with one
     // that takes a pair.
-    if (is_closure(v)) return 13;  // SHAPE_CLOSURE
-    return 0;                  // SHAPE_DYNAMIC (default)
+    if (is_closure(v))
+        return 13; // SHAPE_CLOSURE
+    return 0;      // SHAPE_DYNAMIC (default)
 }
 
 // Content-aware equality helper for strings (used by Eq instruction)
 static bool eq_str_content(const EvalValue& a, const EvalValue& b,
-                            std::vector<std::string>& string_heap) {
-    if (a == b) return true;
+                           std::vector<std::string>& string_heap) {
+    if (a == b)
+        return true;
     if (is_string(a) && is_string(b)) {
         auto ai = as_string_idx(a), bi = as_string_idx(b);
         if (ai < string_heap.size() && bi < string_heap.size())
@@ -87,8 +94,7 @@ EvalResult IRInterpreter::execute() {
             // instructions resolve to primitives or other ops
             // before they reach this point).
             if (context_.metrics) {
-                context_.metrics->closure_calls_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                context_.metrics->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
             }
             auto& pc = std::get<PendingCall>(result);
             auto new_count = pc.func->local_count + std::max(std::size_t(64), pc.args.size());
@@ -174,8 +180,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 try {
                     return static_cast<std::int64_t>(std::stoll(string_heap_[idx]));
                 } catch (...) {
-                    std::println(std::cerr,
-                                 "error: type mismatch — expected Int, got String '{}'",
+                    std::println(std::cerr, "error: type mismatch — expected Int, got String '{}'",
                                  string_heap_[idx]);
                     return 0;
                 }
@@ -207,15 +212,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             // only when type_id was populated by lowering.
             // The ratio gives the propagation coverage %.
             if (context_.metrics) {
-                context_.metrics->ir_instructions_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                context_.metrics->ir_instructions_total.fetch_add(1, std::memory_order_relaxed);
                 if (instr.type_id != 0) {
                     context_.metrics->ir_instructions_with_type_total.fetch_add(
                         1, std::memory_order_relaxed);
                 }
             }
 
-             // ── Operand validation via lookup_opcode ────────
+            // ── Operand validation via lookup_opcode ────────
             // Issue #217 Cycle 4: replaced direct kOpcodeInfo[idx]
             // access with the bounds-checked lookup_opcode helper
             // (declared in ir.ixx). The helper handles the bounds
@@ -339,8 +343,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
                     auto to_val = [](const EvalValue& v) -> double {
-                        if (is_float(v)) return as_float(v);
-                        if (is_int(v)) return static_cast<double>(as_int(v));
+                        if (is_float(v))
+                            return as_float(v);
+                        if (is_int(v))
+                            return static_cast<double>(as_int(v));
                         return 0.0;
                     };
                     // Float comparison
@@ -350,8 +356,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     }
                     // String comparison by content
                     if (is_string(a) && is_string(b)) {
-                        locals[ops[0]] = make_bool(
-                            eq_str_content(a, b, string_heap_));
+                        locals[ops[0]] = make_bool(eq_str_content(a, b, string_heap_));
                         break;
                     }
                     // Pair/list: fall back to raw equality (no pairs_ access here)
@@ -367,8 +372,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
                     auto to_val = [](const EvalValue& v) -> double {
-                        if (is_float(v)) return as_float(v);
-                        if (is_int(v)) return static_cast<double>(as_int(v));
+                        if (is_float(v))
+                            return as_float(v);
+                        if (is_int(v))
+                            return static_cast<double>(as_int(v));
                         return 0.0; // non-numeric (pair, string, etc.) → 0
                     };
                     locals[ops[0]] = make_bool(to_val(a) < to_val(b));
@@ -378,8 +385,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
                     auto to_val = [](const EvalValue& v) -> double {
-                        if (is_float(v)) return as_float(v);
-                        if (is_int(v)) return static_cast<double>(as_int(v));
+                        if (is_float(v))
+                            return as_float(v);
+                        if (is_int(v))
+                            return static_cast<double>(as_int(v));
                         return 0.0;
                     };
                     locals[ops[0]] = make_bool(to_val(a) > to_val(b));
@@ -389,8 +398,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
                     auto to_val = [](const EvalValue& v) -> double {
-                        if (is_float(v)) return as_float(v);
-                        if (is_int(v)) return static_cast<double>(as_int(v));
+                        if (is_float(v))
+                            return as_float(v);
+                        if (is_int(v))
+                            return static_cast<double>(as_int(v));
                         return 0.0;
                     };
                     locals[ops[0]] = make_bool(to_val(a) <= to_val(b));
@@ -400,8 +411,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
                     auto to_val = [](const EvalValue& v) -> double {
-                        if (is_float(v)) return as_float(v);
-                        if (is_int(v)) return static_cast<double>(as_int(v));
+                        if (is_float(v))
+                            return as_float(v);
+                        if (is_int(v))
+                            return static_cast<double>(as_int(v));
                         return 0.0;
                     };
                     locals[ops[0]] = make_bool(to_val(a) >= to_val(b));
@@ -560,30 +573,26 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         // Thread-safe via the atomic on the metrics
                         // struct.
                         if (metrics_) {
-                            metrics_->deopt_count.fetch_add(
-                                1, std::memory_order_relaxed);
+                            metrics_->deopt_count.fetch_add(1, std::memory_order_relaxed);
                         }
                         // Issue #62 Iter 2: structured JSON log.
                         // Gated by AURA_OBS_LOG=1 (independent of the
                         // human-readable kDeoptTrace form).
                         const char* fn_name = "?";
-                        if (module_.functions.size() > 0 &&
-                            func.id < module_.functions.size())
+                        if (module_.functions.size() > 0 && func.id < module_.functions.size())
                             fn_name = module_.functions[func.id].name.c_str();
-                        log_event_deopt(fn_name, expected,
-                                         static_cast<std::uint32_t>(actual),
-                                         ops[3]);
+                        log_event_deopt(fn_name, expected, static_cast<std::uint32_t>(actual),
+                                        ops[3]);
                         if (kDeoptTrace) {
                             // Human-readable form (legacy)
                             std::fprintf(stderr,
-                                "[deopt] %s: shape mismatch (expected=%u actual=%u) "
-                                "→ deopt to generic block %u\n",
-                                fn_name, expected, actual, ops[3]);
+                                         "[deopt] %s: shape mismatch (expected=%u actual=%u) "
+                                         "→ deopt to generic block %u\n",
+                                         fn_name, expected, actual, ops[3]);
                         }
                     }
-                    locals[ops[0]] = (actual == expected)
-                        ? types::make_bool(true)
-                        : types::make_bool(false);
+                    locals[ops[0]] =
+                        (actual == expected) ? types::make_bool(true) : types::make_bool(false);
                     break;
                 }
 
@@ -661,16 +670,15 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // the runtime (caller will see it as an EvalResult
                     // error).
                     if (ex_stack_.empty()) {
-                        return std::unexpected(Diagnostic{
-                            ErrorKind::UncaughtException, "uncaught exception"});
+                        return std::unexpected(
+                            Diagnostic{ErrorKind::UncaughtException, "uncaught exception"});
                     }
                     auto& top = ex_stack_.back();
                     // Store the cause in the handler's payload slot,
                     // then jump to the handler block.
                     auto cause_slot = (ops.size() > 1) ? ops[1] : 0;
-                    locals[top.payload_slot] = (cause_slot < locals.size())
-                                                    ? locals[cause_slot]
-                                                    : make_void();
+                    locals[top.payload_slot] =
+                        (cause_slot < locals.size()) ? locals[cause_slot] : make_void();
                     // The "result" slot will be filled in by the
                     // handler's own IsError/Local ops. We just set
                     // current (the local var in run_function's loop)
@@ -685,8 +693,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // ops[2] = payload_slot (temp slot for the cause)
                     ExHandler h;
                     h.handler_block = (ops.size() > 0) ? ops[0] : 0;
-                    h.result_slot    = (ops.size() > 1) ? ops[1] : 0;
-                    h.payload_slot   = (ops.size() > 2) ? ops[2] : 0;
+                    h.result_slot = (ops.size() > 1) ? ops[1] : 0;
+                    h.payload_slot = (ops.size() > 2) ? ops[2] : 0;
                     ex_stack_.push_back(h);
                     break;
                 }
@@ -780,10 +788,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Bump the IR-specific counter on the shared
                     // CompilerMetrics (so snapshot() can sum them).
                     if (context_.metrics) {
-                        context_.metrics->closure_ir_calls.fetch_add(
-                            1, std::memory_order_relaxed);
-                        context_.metrics->closure_calls_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        context_.metrics->closure_ir_calls.fetch_add(1, std::memory_order_relaxed);
+                        context_.metrics->closure_calls_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
                     }
                     auto& callee_val = locals[ops[0]];
                     auto arg_base = ops[1];
@@ -889,10 +896,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Issue #252: IR path closure dispatch counter
                     // (same as IROpcode::Call above)
                     if (context_.metrics) {
-                        context_.metrics->closure_ir_calls.fetch_add(
-                            1, std::memory_order_relaxed);
-                        context_.metrics->closure_calls_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        context_.metrics->closure_ir_calls.fetch_add(1, std::memory_order_relaxed);
+                        context_.metrics->closure_calls_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
                     }
                     auto& closure_val = locals[ops[0]];
                     auto arg_count = ops[1];
@@ -1009,8 +1015,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         auto it = linear_heap_.find(lin_id);
                         if (it != linear_heap_.end()) {
                             if (it->second.ref_count <= 0) {
-                                std::println(std::cerr,
-                                    "error: double move — value already moved");
+                                std::println(std::cerr, "error: double move — value already moved");
                                 locals[ops[0]] = it->second.value;
                             } else {
                                 auto result = it->second.value;
@@ -1021,7 +1026,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         } else {
                             // Already moved/consumed — error
                             std::println(std::cerr,
-                                "error: use after move — value already consumed");
+                                         "error: use after move — value already consumed");
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {
@@ -1041,8 +1046,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         auto it = linear_heap_.find(lin_id);
                         if (it != linear_heap_.end()) {
                             if (it->second.ref_count <= 0) {
-                                std::println(std::cerr,
-                                    "error: double move — value already moved");
+                                std::println(std::cerr, "error: double move — value already moved");
                                 locals[ops[0]] = it->second.value;
                             } else {
                                 it->second.ref_count++;
@@ -1050,7 +1054,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             }
                         } else {
                             std::println(std::cerr,
-                                "error: use after move — borrow of consumed value");
+                                         "error: use after move — borrow of consumed value");
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {
@@ -1066,13 +1070,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         auto it = linear_heap_.find(lin_id);
                         if (it != linear_heap_.end()) {
                             if (it->second.ref_count <= 0) {
-                                std::println(std::cerr,
-                                    "error: mut-borrow of moved value");
+                                std::println(std::cerr, "error: mut-borrow of moved value");
                             }
                             locals[ops[0]] = it->second.value;
                         } else {
-                            std::println(std::cerr,
-                                "error: mut-borrow of consumed value");
+                            std::println(std::cerr, "error: mut-borrow of consumed value");
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {
@@ -1090,14 +1092,13 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (it != linear_heap_.end()) {
                             if (it->second.ref_count <= 0) {
                                 std::println(std::cerr,
-                                    "error: double drop — value already dropped");
+                                             "error: double drop — value already dropped");
                             } else {
                                 if (--it->second.ref_count == 0)
                                     linear_heap_.erase(it);
                             }
                         } else {
-                            std::println(std::cerr,
-                                "error: double drop — value not in heap");
+                            std::println(std::cerr, "error: double drop — value not in heap");
                         }
                     }
                     break;
@@ -1139,10 +1140,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             if (strict_mode_ && instr.type_id != 0) {
                 // Issue #217 Cycle 4: use lookup_opcode
                 // helper for the bounds check + access.
-                if (auto* info = lookup_opcode(instr.opcode);
-                    info && info->has_result_slot) {
-                    auto rv = check_runtime_type(instr.type_id, locals[ops[0]],
-                                                 std::string(info->name));
+                if (auto* info = lookup_opcode(instr.opcode); info && info->has_result_slot) {
+                    auto rv =
+                        check_runtime_type(instr.type_id, locals[ops[0]], std::string(info->name));
                     if (rv)
                         return std::unexpected(*rv);
                 }

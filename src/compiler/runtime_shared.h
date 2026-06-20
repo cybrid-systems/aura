@@ -19,7 +19,7 @@ struct PairSlot {
 struct TLarena {
     uint8_t* base = nullptr;
     size_t offset = 0;
-    size_t capacity = 64 * 1024 * 1024;  // 64MB default
+    size_t capacity = 64 * 1024 * 1024; // 64MB default
 };
 
 // Per-thread global arena instance
@@ -61,11 +61,11 @@ struct FlatHashTable {
     }
 
     uint8_t* metadata() { return reinterpret_cast<uint8_t*>(this) + HEADER_SIZE; }
-    int64_t* keys()  { return reinterpret_cast<int64_t*>(metadata() + capacity); }
-    int64_t* values(){ return reinterpret_cast<int64_t*>(keys() + capacity); }
+    int64_t* keys() { return reinterpret_cast<int64_t*>(metadata() + capacity); }
+    int64_t* values() { return reinterpret_cast<int64_t*>(keys() + capacity); }
 
     const uint8_t* metadata() const { return const_cast<FlatHashTable*>(this)->metadata(); }
-    const int64_t* keys()  const { return const_cast<FlatHashTable*>(this)->keys(); }
+    const int64_t* keys() const { return const_cast<FlatHashTable*>(this)->keys(); }
     const int64_t* values() const { return const_cast<FlatHashTable*>(this)->values(); }
 
     static FlatHashTable* create(uint64_t cap);

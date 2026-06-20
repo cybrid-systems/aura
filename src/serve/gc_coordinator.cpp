@@ -28,8 +28,7 @@ bool GCCollector::request() {
         return false;
 
     bool expected = false;
-    if (!gc_in_progress_.compare_exchange_strong(expected, true,
-                                                   std::memory_order_acq_rel))
+    if (!gc_in_progress_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
         return false;
 
     return true;
@@ -59,7 +58,8 @@ void GCCollector::collect_roots(GCRootSet& out) {
     out.clear();
     std::lock_guard<std::mutex> lock(root_sources_mutex_);
     for (auto& [wid, fn] : root_sources_) {
-        if (fn) fn(out);
+        if (fn)
+            fn(out);
     }
 }
 
@@ -85,22 +85,22 @@ bool GCCollector::collect() {
         return false;
     }
 
-    auto safepoint_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        safepoint_end - safepoint_start).count();
+    auto safepoint_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(safepoint_end - safepoint_start)
+            .count();
 
     // ── Phase 2: Collect roots from all registered sources ──
     auto roots_start = std::chrono::steady_clock::now();
     GCRootSet roots;
     collect_roots(roots);
     auto roots_end = std::chrono::steady_clock::now();
-    auto roots_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        roots_end - roots_start).count();
+    auto roots_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(roots_end - roots_start).count();
 
     metrics_.root_count.store(
-        static_cast<int64_t>(roots.string_roots.size() + roots.pair_roots.size()
-                             + roots.closure_roots.size()
-                             + roots.fiber_result_roots.size()
-                             + roots.workspace_roots.size()),
+        static_cast<int64_t>(roots.string_roots.size() + roots.pair_roots.size() +
+                             roots.closure_roots.size() + roots.fiber_result_roots.size() +
+                             roots.workspace_roots.size()),
         std::memory_order_relaxed);
     metrics_.root_collect_us.fetch_add(roots_us, std::memory_order_relaxed);
 
@@ -110,8 +110,8 @@ bool GCCollector::collect() {
     // In full integration, evaluator provides actual heap sizes.
     mark_from_roots(roots, 0, 0, 0);
     auto mark_end = std::chrono::steady_clock::now();
-    auto mark_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        mark_end - mark_start).count();
+    auto mark_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(mark_end - mark_start).count();
     metrics_.mark_us.fetch_add(mark_us, std::memory_order_relaxed);
 
     // Issue #205: env-walk. The evaluator walks env_frames_
@@ -128,30 +128,28 @@ bool GCCollector::collect() {
     if (env_walk_fn_) {
         EnvFrameRoots env_roots;
         env_walk_fn_(env_roots);
-        mark_env_frame_roots(env_roots.pair_roots,
-                             env_roots.closure_roots);
+        mark_env_frame_roots(env_roots.pair_roots, env_roots.closure_roots);
     }
 
     // ── Phase 4: Sweep (skeleton) ─────────────────────
     auto sweep_start = std::chrono::steady_clock::now();
     auto sweep_result = sweep();
     auto sweep_end = std::chrono::steady_clock::now();
-    auto sweep_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        sweep_end - sweep_start).count();
+    auto sweep_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(sweep_end - sweep_start).count();
     metrics_.sweep_us.fetch_add(sweep_us, std::memory_order_relaxed);
-    metrics_.strings_freed.fetch_add(
-        static_cast<int64_t>(sweep_result.strings_freed), std::memory_order_relaxed);
-    metrics_.pairs_freed.fetch_add(
-        static_cast<int64_t>(sweep_result.pairs_freed), std::memory_order_relaxed);
-    metrics_.closures_freed.fetch_add(
-        static_cast<int64_t>(sweep_result.closures_freed), std::memory_order_relaxed);
+    metrics_.strings_freed.fetch_add(static_cast<int64_t>(sweep_result.strings_freed),
+                                     std::memory_order_relaxed);
+    metrics_.pairs_freed.fetch_add(static_cast<int64_t>(sweep_result.pairs_freed),
+                                   std::memory_order_relaxed);
+    metrics_.closures_freed.fetch_add(static_cast<int64_t>(sweep_result.closures_freed),
+                                      std::memory_order_relaxed);
 
     // ── Phase 1e: Resume workers ──────────────────────
     scheduler_->resume_from_gc();
 
     auto end = std::chrono::steady_clock::now();
-    auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        end - start).count();
+    auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
     // Update metrics
     auto gc_idx = metrics_.gc_count.fetch_add(1, std::memory_order_relaxed);
@@ -169,10 +167,8 @@ bool GCCollector::collect() {
 
 // ── mark_from_roots — set mark bits from root set (Phase 3) ─
 
-void GCCollector::mark_from_roots(const GCRootSet& roots,
-                                    size_t string_heap_size,
-                                    size_t pairs_size,
-                                    size_t closures_size) {
+void GCCollector::mark_from_roots(const GCRootSet& roots, size_t string_heap_size,
+                                  size_t pairs_size, size_t closures_size) {
     // Size the mark vectors
     // If the caller passed 0 for sizes, we use the max root index + 1
     size_t s_size = string_heap_size > 0 ? string_heap_size : 0;
@@ -229,9 +225,8 @@ void GCCollector::mark_from_roots(const GCRootSet& roots,
 // workspaces. The decoupling (caller does the walk) keeps
 // the GC's surface area narrow — it doesn't need to know
 // EnvFrame's layout.
-void GCCollector::mark_env_frame_roots(
-    const std::vector<int64_t>& pair_roots,
-    const std::vector<int64_t>& closure_roots) {
+void GCCollector::mark_env_frame_roots(const std::vector<int64_t>& pair_roots,
+                                       const std::vector<int64_t>& closure_roots) {
     // The mark vectors are sized lazily by mark_from_roots.
     // If the caller invokes mark_env_frame_roots BEFORE
     // mark_from_roots (unlikely but possible), the set()
@@ -241,10 +236,12 @@ void GCCollector::mark_env_frame_roots(
     // based on heap sizes) and then mark_env_frame_roots
     // (to add the env-walk roots). Either order is safe.
     for (auto idx : pair_roots) {
-        if (idx >= 0) pair_marks_.set(static_cast<size_t>(idx));
+        if (idx >= 0)
+            pair_marks_.set(static_cast<size_t>(idx));
     }
     for (auto idx : closure_roots) {
-        if (idx >= 0) closure_marks_.set(static_cast<size_t>(idx));
+        if (idx >= 0)
+            closure_marks_.set(static_cast<size_t>(idx));
     }
 }
 

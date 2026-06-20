@@ -73,7 +73,7 @@ namespace {
     std::string make_node_error(std::uint32_t id, const std::string& msg) {
         return "[node " + std::to_string(id) + "] " + msg;
     }
-}
+} // namespace
 
 // ── Node Validation ────────────────────────────────────────────
 // Checks invariants defined by kNodeMeta for each node.
@@ -89,8 +89,10 @@ std::string FlatAST::validate_node(NodeId id, bool fail_on_error) const {
     auto tag = tag_[id];
     auto raw_idx = static_cast<std::size_t>(tag) - 1;
     if (raw_idx >= kNodeMeta.size()) {
-        auto msg = make_node_error(id, "invalid tag value " + std::to_string(static_cast<int>(tag)));
-        if (fail_on_error) throw std::logic_error(msg);
+        auto msg =
+            make_node_error(id, "invalid tag value " + std::to_string(static_cast<int>(tag)));
+        if (fail_on_error)
+            throw std::logic_error(msg);
         return msg;
     }
 
@@ -99,15 +101,18 @@ std::string FlatAST::validate_node(NodeId id, bool fail_on_error) const {
     // Gap sentinel check
     if (m.name == "<gap>") {
         auto msg = make_node_error(id, "node has gap tag (unused tag value)");
-        if (fail_on_error) throw std::logic_error(msg);
+        if (fail_on_error)
+            throw std::logic_error(msg);
         return msg;
     }
 
     // Tag/name consistency
     if (m.tag != tag) {
-        auto msg = make_node_error(id, "tag mismatch: meta says " + std::string(m.name) +
-                                      " but node has tag " + std::to_string(static_cast<int>(tag)));
-        if (fail_on_error) throw std::logic_error(msg);
+        auto msg =
+            make_node_error(id, "tag mismatch: meta says " + std::string(m.name) +
+                                    " but node has tag " + std::to_string(static_cast<int>(tag)));
+        if (fail_on_error)
+            throw std::logic_error(msg);
         return msg;
     }
 
@@ -120,29 +125,33 @@ std::string FlatAST::validate_node(NodeId id, bool fail_on_error) const {
     // Minimum children check
     if (child_count < fixed) {
         auto msg = make_node_error(id, std::string(m.name) + " requires " + std::to_string(fixed) +
-                                      " fixed children, got " + std::to_string(child_count));
-        if (fail_on_error) throw std::logic_error(msg);
+                                           " fixed children, got " + std::to_string(child_count));
+        if (fail_on_error)
+            throw std::logic_error(msg);
         return msg;
     }
 
     // Variable children check: if has_var_children, child_count must be >= fixed
     // If not has_var_children, child_count must exactly equal fixed (or match a known pattern)
     if (!m.has_var_children && child_count != fixed) {
-        // Special case: some nodes with fixed_children=0 have flexible children (Begin/DefineModule)
-        // We only enforce exact match for nodes with fixed_children > 0
+        // Special case: some nodes with fixed_children=0 have flexible children
+        // (Begin/DefineModule) We only enforce exact match for nodes with fixed_children > 0
         if (fixed > 0) {
             auto msg = make_node_error(id, std::string(m.name) + " expects exactly " +
-                                          std::to_string(fixed) + " children, got " +
-                                          std::to_string(child_count));
-            if (fail_on_error) throw std::logic_error(msg);
+                                               std::to_string(fixed) + " children, got " +
+                                               std::to_string(child_count));
+            if (fail_on_error)
+                throw std::logic_error(msg);
             return msg;
         }
     }
 
     // String field check
     if (m.has_string && sym_id_[id] == INVALID_SYM) {
-        auto msg = make_node_error(id, std::string(m.name) + " requires a symbol (sym_id), got INVALID_SYM");
-        if (fail_on_error) throw std::logic_error(msg);
+        auto msg = make_node_error(id, std::string(m.name) +
+                                           " requires a symbol (sym_id), got INVALID_SYM");
+        if (fail_on_error)
+            throw std::logic_error(msg);
         return msg;
     }
 

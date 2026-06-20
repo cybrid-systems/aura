@@ -8,14 +8,15 @@
 #include <cerrno>
 #include <cstring>
 #include <system_error>
-#include <cstdlib>  // random() for steal victim selection
+#include <cstdlib> // random() for steal victim selection
 
 namespace aura::serve {
 
 // ── Constructor ───────────────────────────────────────
 
 WorkerThread::WorkerThread(int id, Scheduler* scheduler)
-    : id_(id), scheduler_(scheduler) {
+    : id_(id)
+    , scheduler_(scheduler) {
 
     // Create wake eventfd
     wake_evfd_ = ::eventfd(0, EFD_NONBLOCK);
@@ -38,9 +39,7 @@ WorkerThread::~WorkerThread() {
 
 void WorkerThread::start() {
     running_.store(true, std::memory_order_release);
-    thread_ = std::jthread([this](std::stop_token) {
-        run();
-    });
+    thread_ = std::jthread([this](std::stop_token) { run(); });
 }
 
 // ── stop — request graceful stop ──────────────────────
@@ -74,7 +73,8 @@ void WorkerThread::join() {
 //      seq_cst fence in steal)
 
 void WorkerThread::enqueue(Fiber* fiber) {
-    if (!fiber || fiber->is_done()) return;
+    if (!fiber || fiber->is_done())
+        return;
 
     local_queue_.push(fiber);
     pending_.fetch_add(1, std::memory_order_release);
@@ -103,13 +103,15 @@ void WorkerThread::notify_fiber_done(Fiber* fiber) {
 // The registry is the source of truth for fiber_by_id.
 
 void WorkerThread::register_fiber(Fiber* fiber) {
-    if (!fiber) return;
+    if (!fiber)
+        return;
     std::lock_guard<std::mutex> lock(fiber_registry_mutex_);
     fiber_registry_[fiber->id()] = fiber;
 }
 
 void WorkerThread::unregister_fiber(Fiber* fiber) {
-    if (!fiber) return;
+    if (!fiber)
+        return;
     std::lock_guard<std::mutex> lock(fiber_registry_mutex_);
     fiber_registry_.erase(fiber->id());
 }
@@ -117,14 +119,16 @@ void WorkerThread::unregister_fiber(Fiber* fiber) {
 Fiber* WorkerThread::fiber_by_id(std::uint64_t fiber_id) const {
     std::lock_guard<std::mutex> lock(fiber_registry_mutex_);
     auto it = fiber_registry_.find(fiber_id);
-    if (it == fiber_registry_.end()) return nullptr;
+    if (it == fiber_registry_.end())
+        return nullptr;
     return it->second;
 }
 
 // ── try_steal_from — attempt to steal a fiber ─────────
 
 bool WorkerThread::try_steal_from(WorkerThread* victim) {
-    if (!victim || victim == this) return false;
+    if (!victim || victim == this)
+        return false;
 
     // Try to steal a fiber from the victim's deque.
     // The deque only contains fibers that yielded (Explicit/MutationBoundary),
@@ -132,7 +136,8 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
     // that may have been mutated after being enqueued.
     for (int attempt = 0; attempt < 3; ++attempt) {
         Fiber* stolen = victim->try_steal();
-        if (!stolen) break;
+        if (!stolen)
+            break;
 
         // Skip fibers pinned to another worker (affinity)
         if (stolen->affinity() >= 0 && stolen->affinity() != id()) {
@@ -166,7 +171,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
 void WorkerThread::run() {
     // Set up thread-local worker context for fiber yield/resume
     g_worker_ctx = &ctx_;
-    ctx_.gc_state = &gc_state_;  // link GC state for safepoint check
+    ctx_.gc_state = &gc_state_; // link GC state for safepoint check
 
     // Grab metrics pointer (set by scheduler before start)
     auto* my_metrics = worker_metrics_;
@@ -181,7 +186,8 @@ void WorkerThread::run() {
         size_t iter = 0;
         while (iter < MAX_ITER_PER_ROUND) {
             Fiber* fiber = local_queue_.pop();
-            if (!fiber) break;
+            if (!fiber)
+                break;
             ++iter;
             was_busy = true;
 
@@ -261,7 +267,8 @@ void WorkerThread::run() {
                     // Try up to 3 random victims
                     for (int attempt = 0; attempt < 3; ++attempt) {
                         int victim_id = std::rand() % n_workers;
-                        if (victim_id == id_) continue;
+                        if (victim_id == id_)
+                            continue;
                         auto* victim = scheduler_->worker(victim_id);
                         if (my_metrics) {
                             my_metrics->steal_attempts.fetch_add(1, std::memory_order_relaxed);
@@ -280,7 +287,7 @@ void WorkerThread::run() {
             if (stole) {
                 steal_budget_.record_success();
                 was_busy = true;
-                continue;  // go back to Phase 1
+                continue; // go back to Phase 1
             } else {
                 steal_budget_.record_failure();
             }
@@ -294,8 +301,8 @@ void WorkerThread::run() {
             // Record idle time
             if (my_metrics) {
                 auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    now - cycle_start).count();
+                auto elapsed =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(now - cycle_start).count();
                 my_metrics->record_idle(elapsed);
             }
 
@@ -310,17 +317,15 @@ void WorkerThread::run() {
 
             // Wait on condition variable
             std::unique_lock<std::mutex> lock(wake_mutex_);
-            wake_cv_.wait_for(lock, std::chrono::milliseconds(100),
-                [this]() {
-                    return !local_queue_.empty_approx() ||
-                           !running_.load(std::memory_order_acquire);
-                });
+            wake_cv_.wait_for(lock, std::chrono::milliseconds(100), [this]() {
+                return !local_queue_.empty_approx() || !running_.load(std::memory_order_acquire);
+            });
         } else {
             // Record busy time
             if (my_metrics && was_busy) {
                 auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    now - cycle_start).count();
+                auto elapsed =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(now - cycle_start).count();
                 my_metrics->record_busy(elapsed);
             }
         }

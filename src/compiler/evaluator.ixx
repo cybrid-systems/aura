@@ -12,7 +12,7 @@ export module aura.compiler.evaluator;
 import std;
 import aura.core;
 import aura.compiler.ffi_primitives;
-import aura.compiler.adt_runtime;  // Step 2.3 wiring (exact FFI pattern)
+import aura.compiler.adt_runtime; // Step 2.3 wiring (exact FFI pattern)
 import aura.diag;
 import aura.compiler.value;
 import aura.compiler.evaluator_pure;
@@ -26,8 +26,7 @@ using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 export class Primitives {
 public:
     Primitives();
-    std::optional<PrimFn> lookup(const std::string& n) const
-        pre (!n.empty());
+    std::optional<PrimFn> lookup(const std::string& n) const pre(!n.empty());
     void add(const std::string& name, PrimFn fn) {
         auto slot = ordered_names_.size();
         table_[name] = std::move(fn);
@@ -68,8 +67,9 @@ export class Env final {
 public:
     Env() = default;
     explicit Env(const Env* p)
-        : parent_(p), owner_(p ? p->owner_ : nullptr),
-          parent_id_(p ? p->parent_id_ : NULL_ENV_ID) {}
+        : parent_(p)
+        , owner_(p ? p->owner_ : nullptr)
+        , parent_id_(p ? p->parent_id_ : NULL_ENV_ID) {}
     Env(const Env&) = default;
     Env& operator=(const Env&) = default;
     void set_parent(const Env* p) { parent_ = p; }
@@ -103,9 +103,7 @@ public:
     // bind_symid is a Cycle 2 item (requires pool_ to
     // become non-const, which is a bigger refactor that
     // touches many call sites).
-    void bind(const std::string& n, types::EvalValue v) {
-        bindings_.emplace_back(n, std::move(v));
-    }
+    void bind(const std::string& n, types::EvalValue v) { bindings_.emplace_back(n, std::move(v)); }
     // Issue #145: SymId fast path. The apply_closure loop hits
     // this once per parameter per call — replacing the old
     // string-compare lookup with integer-compare. Implemented
@@ -122,7 +120,7 @@ public:
     // (shadowing semantics preserved).
     std::optional<types::EvalValue> lookup_by_symid(aura::ast::SymId s) const;
     [[nodiscard]] std::optional<types::EvalValue> lookup(const std::string& n) const
-        pre (!n.empty());
+        pre(!n.empty());
     // Issue #145 follow-up / Phase 2.5.0: SymId-first lookup that
     // takes a name string. Interns via the given pool (canonical
     // pool in the post-migration path), then routes through
@@ -137,13 +135,11 @@ public:
     // env-captured). Pass canonical_pool() for new code; the
     // helper routes through pool_or_canonical semantics for
     // backward compat with pre-migration captures.
-    std::optional<types::EvalValue>
-    lookup_by_intern(const std::string& n,
-                     const aura::ast::StringPool* pool) const
-        pre (!n.empty());
+    std::optional<types::EvalValue> lookup_by_intern(const std::string& n,
+                                                     const aura::ast::StringPool* pool) const
+        pre(!n.empty());
     // Look up the raw binding without dereferencing cells (returns cell sentinel as-is)
-    std::optional<types::EvalValue> lookup_binding(const std::string& n) const
-        pre (!n.empty());
+    std::optional<types::EvalValue> lookup_binding(const std::string& n) const pre(!n.empty());
     std::optional<PrimFn> lookup_primitive(const std::string& n) const {
         return primitives_ ? primitives_->lookup(n) : std::nullopt;
     }
@@ -188,8 +184,7 @@ public:
     // (e.g., the env inspector primitive). Hot paths should
     // use bindings_symid_iter() instead — this helper pays
     // the resolve() cost per binding.
-    [[nodiscard]] std::vector<std::pair<std::string, types::EvalValue>>
-    bindings_with_names() const;
+    [[nodiscard]] std::vector<std::pair<std::string, types::EvalValue>> bindings_with_names() const;
     // Issue #145: SymId-keyed view of the same bindings. Same
     // length and order as bindings(). Used by EnvView.
     std::span<const std::pair<aura::ast::SymId, types::EvalValue>> bindings_symid() const {
@@ -217,7 +212,7 @@ private:
     // get the right pool with the right fallback. Phase 2.5
     // drop (the original goal) removes this field after the
     // migration completes; see cpp26_guide.md §2.7.7.
-    const aura::ast::StringPool* pool_ = nullptr;  // Issue #145
+    const aura::ast::StringPool* pool_ = nullptr; // Issue #145
     // P0 step 2: cells_ pointer removed (was used for cell deref in
     // lookups). Bindings now always return the raw value (cell
     // sentinel if applicable); deref centralized via Evaluator
@@ -244,6 +239,7 @@ private:
     // Cycle 2+ migrates callers incrementally, watching the
     // metric trend to 0.
     mutable std::size_t bindings_legacy_uses_ = 0;
+
 public:
     // Issue #207: accessors for the metric.
     [[nodiscard]] std::size_t bindings_legacy_uses() const noexcept {
@@ -329,11 +325,8 @@ export struct EnvFrame {
     void bind_symid(aura::ast::SymId s, types::EvalValue v);
     // Local-only lookup (no parent walk). Phase 2.2 will add
     // walk-aware variants alongside `Evaluator::walk_env_frames`.
-    std::optional<types::EvalValue> lookup_local(
-        const std::string& n) const
-        pre (!n.empty());
-    std::optional<types::EvalValue> lookup_local_by_symid(
-        aura::ast::SymId s) const;
+    std::optional<types::EvalValue> lookup_local(const std::string& n) const pre(!n.empty());
+    std::optional<types::EvalValue> lookup_local_by_symid(aura::ast::SymId s) const;
 };
 
 export struct Pair {
@@ -369,7 +362,7 @@ export struct MacroDef {
 };
 
 export struct Closure {
-    std::string name = "";  // function name (empty for lambdas)
+    std::string name = ""; // function name (empty for lambdas)
     // Issue #145: params are now stored as SymId (interned in the
     // closure's StringPool) instead of raw std::string. This is a
     // true SoA change: the hot path (apply_closure parameter
@@ -399,7 +392,7 @@ export struct Closure {
     // This eliminates the legacy captured-env pointer path.
     EnvId env_id = NULL_ENV_ID;
     bool dotted = false;
-    ast::ASTArena* owner_arena = nullptr;  // arena where flat/pool/env lives
+    ast::ASTArena* owner_arena = nullptr; // arena where flat/pool/env lives
     // Issue #223: epoch captured at closure construction. The
     // IRExecutor / apply_closure compares this against the
     // service's bridge_epoch(); a mismatch means the closure's
@@ -432,8 +425,7 @@ public:
     // Hot-swap callback (Issue #97 Action 1). Set by CompilerService
     // to enable the (hot-swap:fn "name" "new-source") primitive.
     // Returns true on success.
-    using HotSwapFn = std::function<bool(const std::string& name,
-                                        const std::string& new_source)>;
+    using HotSwapFn = std::function<bool(const std::string& name, const std::string& new_source)>;
     void set_hot_swap_fn(HotSwapFn fn) { hot_swap_fn_ = std::move(fn); }
     // Per-module arena group: load_module_file allocates each module's
     // StringPool/FlatAST/mod_env in a dedicated arena so the whole module
@@ -523,16 +515,15 @@ public:
         }
         return 0;
     }
-    void install_bridge_epoch_fn(BridgeEpochFn fn) noexcept {
-        bridge_epoch_fn_ = fn;
-    }
+    void install_bridge_epoch_fn(BridgeEpochFn fn) noexcept { bridge_epoch_fn_ = fn; }
     // Issue #223: returns true if a closure's captured bridge_epoch
     // is stale relative to the current epoch. bridge_epoch == 0
     // means "legacy / not tracked" and is treated as trustworthy
     // (the closure pre-dates the tracking; caller manages its own
     // lifetime). Non-zero values are validated strictly.
     static bool is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t current_epoch) noexcept {
-        if (bridge_epoch == 0) return false;  // legacy / unset: trust the closure
+        if (bridge_epoch == 0)
+            return false; // legacy / unset: trust the closure
         return bridge_epoch != current_epoch;
     }
     void set_session_id(const std::string& id) { session_id_ = id; }
@@ -575,9 +566,7 @@ public:
     // Evaluator without a CompilerService).
     using TryJitFn = std::optional<aura::compiler::types::EvalValue>(const std::string&);
     std::function<TryJitFn> try_jit_fn_ = nullptr;
-    void set_try_jit_fn(std::function<TryJitFn> fn) {
-        try_jit_fn_ = std::move(fn);
-    }
+    void set_try_jit_fn(std::function<TryJitFn> fn) { try_jit_fn_ = std::move(fn); }
     // Issue #194: hook to query the runtime→intrinsic migration
     // counter from the AuraJIT. The Evaluator doesn't have a
     // direct pointer to the JIT (that's owned by
@@ -595,8 +584,7 @@ public:
     // compiled, or if no JIT hook is installed.
     using GetJitUnhandledCountFn = std::uint64_t(const char*);
     std::function<GetJitUnhandledCountFn> get_jit_unhandled_count_fn_ = nullptr;
-    void set_get_jit_unhandled_count_fn(
-        std::function<GetJitUnhandledCountFn> fn) {
+    void set_get_jit_unhandled_count_fn(std::function<GetJitUnhandledCountFn> fn) {
         get_jit_unhandled_count_fn_ = std::move(fn);
     }
     // Issue #196: hook to query the incremental-compilation
@@ -628,14 +616,12 @@ public:
     // stay default-safe.
     using GetDirtyBlockCountFn = std::uint64_t(const char*);
     std::function<GetDirtyBlockCountFn> get_dirty_block_count_fn_ = nullptr;
-    void set_get_dirty_block_count_fn(
-        std::function<GetDirtyBlockCountFn> fn) {
+    void set_get_dirty_block_count_fn(std::function<GetDirtyBlockCountFn> fn) {
         get_dirty_block_count_fn_ = std::move(fn);
     }
     using GetFuncDirtyBlockCountFn = std::uint64_t(const char*, std::size_t);
     std::function<GetFuncDirtyBlockCountFn> get_func_dirty_block_count_fn_ = nullptr;
-    void set_get_func_dirty_block_count_fn(
-        std::function<GetFuncDirtyBlockCountFn> fn) {
+    void set_get_func_dirty_block_count_fn(std::function<GetFuncDirtyBlockCountFn> fn) {
         get_func_dirty_block_count_fn_ = std::move(fn);
     }
     using IsBlockDirtyFn = bool(const char*, std::size_t, std::uint32_t);
@@ -740,7 +726,9 @@ public:
     // save + restore cycle.
     void set_panic_safe_cells_size_for_test(std::size_t v) { panic_safe_cells_size_ = v; }
     void set_panic_safe_pairs_size_for_test(std::size_t v) { panic_safe_pairs_size_ = v; }
-    void set_panic_safe_string_heap_size_for_test(std::size_t v) { panic_safe_string_heap_size_ = v; }
+    void set_panic_safe_string_heap_size_for_test(std::size_t v) {
+        panic_safe_string_heap_size_ = v;
+    }
     void set_panic_safe_env_frames_size_for_test(std::size_t v) { panic_safe_env_frames_size_ = v; }
 
     // Set/get a shared workspace tree (for cross-session workspace sharing in serve mode).
@@ -771,8 +759,8 @@ public:
     // Set the AST/pool that source-reading primitives (current-source) read
     // by default. The "per-eval current source" pointer. Set by
     // CompilerService::eval / eval_ir / exec_jit right after parsing the
-    // script, before any user code runs. See dual-workspace design (archived: docs-archive-pre-2026-06)
-    // for the dual-workspace rationale.
+    // script, before any user code runs. See dual-workspace design (archived:
+    // docs-archive-pre-2026-06) for the dual-workspace rationale.
     void set_current_flat(ast::FlatAST* f) { current_flat_ = f; }
     void set_current_pool(ast::StringPool* p) { current_pool_ = p; }
     ast::FlatAST* current_flat() const { return current_flat_; }
@@ -930,11 +918,10 @@ public:
     void* compact_sweep(void* sweep_buffers);
 
 
-
-    void set_messaging_callbacks(
-        std::function<bool(const std::string&, const std::string&)>* send_fn,
-        std::function<std::optional<std::string>(int)>* recv_fn,
-        std::function<std::string()>* id_fn) {
+    void
+    set_messaging_callbacks(std::function<bool(const std::string&, const std::string&)>* send_fn,
+                            std::function<std::optional<std::string>(int)>* recv_fn,
+                            std::function<std::string()>* id_fn) {
         msg_send_fn_ = send_fn;
         msg_recv_fn_ = recv_fn;
         msg_id_fn_ = id_fn;
@@ -956,8 +943,7 @@ public:
     // Allocate a new EnvFrame and return its EnvId. The frame
     // is appended to env_frames_; the id is the new size()-1.
     // Returns NULL_ENV_ID on overflow (>4G envs).
-    EnvId alloc_env_frame(EnvId parent_id = NULL_ENV_ID,
-                          const Primitives* primitives = nullptr);
+    EnvId alloc_env_frame(EnvId parent_id = NULL_ENV_ID, const Primitives* primitives = nullptr);
     // Issue #145 Phase 2.3 — allocate a new EnvFrame from an
     // existing Env's bindings (string + SymId parallel arrays).
     // Mirrors `e.bindings()` and `e.bindings_symid()` into a
@@ -994,16 +980,8 @@ public:
     // closure against a fresh env.
     bool is_env_frame_stale(EnvId id) const;
     // Look up an EnvFrame by id. UB if id is invalid.
-    const EnvFrame& env_frame(EnvId id) const
-        pre (id != NULL_ENV_ID)
-    {
-        return env_frames_[id];
-    }
-    EnvFrame& env_frame_mut(EnvId id)
-        pre (id != NULL_ENV_ID)
-    {
-        return env_frames_[id];
-    }
+    const EnvFrame& env_frame(EnvId id) const pre(id != NULL_ENV_ID) { return env_frames_[id]; }
+    EnvFrame& env_frame_mut(EnvId id) pre(id != NULL_ENV_ID) { return env_frames_[id]; }
     // Validity check (test-only helper; cheap).
     [[nodiscard]] bool is_valid_env_id(EnvId id) const {
         return id != NULL_ENV_ID && id < env_frames_.size();
@@ -1014,13 +992,9 @@ public:
     // reallocating the deque's map array (which would free the
     // pointer a reader is holding). See env_frames_mtx_ below
     // for the full rationale.
-    [[nodiscard]] std::shared_mutex& env_frames_lock() const {
-        return env_frames_mtx_;
-    }
+    [[nodiscard]] std::shared_mutex& env_frames_lock() const { return env_frames_mtx_; }
     // Number of live frames.
-    [[nodiscard]] std::size_t env_frames_size() const {
-        return env_frames_.size();
-    }
+    [[nodiscard]] std::size_t env_frames_size() const { return env_frames_.size(); }
     // Issue #205: walk env_frames_ and collect pair/closure
     // indices reachable through env bindings. The GC calls
     // this (via the env_walk callback) to discover roots
@@ -1037,9 +1011,8 @@ public:
     // bindings_/bindings_symid_ are std::vector, refs are
     // 64-bit tagged pointers. No pointer chase, no
     // recursive descent, no risk of stack overflow.
-    void walk_env_frame_roots(
-        std::vector<std::int64_t>& pair_roots_out,
-        std::vector<std::int64_t>& closure_roots_out) const;
+    void walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
+                              std::vector<std::int64_t>& closure_roots_out) const;
 
     // Issue #206: remap table + resolve_X helpers.
     //
@@ -1066,15 +1039,14 @@ public:
     // focuses on pairs). Other heaps (cells, closures,
     // strings) follow the same pattern; their remap is a
     // follow-up.
-    [[nodiscard]] std::int64_t resolve_pair(
-        std::uint64_t old_id) const noexcept {
-        if (pair_remap_.empty()) return static_cast<std::int64_t>(old_id);
-        if (old_id >= pair_remap_.size()) return -1;
+    [[nodiscard]] std::int64_t resolve_pair(std::uint64_t old_id) const noexcept {
+        if (pair_remap_.empty())
+            return static_cast<std::int64_t>(old_id);
+        if (old_id >= pair_remap_.size())
+            return -1;
         return pair_remap_[old_id];
     }
-    [[nodiscard]] std::size_t pair_remap_size() const noexcept {
-        return pair_remap_.size();
-    }
+    [[nodiscard]] std::size_t pair_remap_size() const noexcept { return pair_remap_.size(); }
     // Issue #206: compact the pairs_ arena. `live_mask[i]`
     // is true if pairs_[i] is live (should be kept). Pairs
     // not in live_mask are removed, and the remap table is
@@ -1092,30 +1064,25 @@ public:
     // If live_mask is empty (no entries), the compact is
     // a no-op and pair_remap_ is rebuilt as identity
     // (all pairs treated as live).
-    [[nodiscard]] std::int64_t compact_pairs(
-        const std::vector<bool>& live_mask);
+    [[nodiscard]] std::int64_t compact_pairs(const std::vector<bool>& live_mask);
     void clear_pair_remap() noexcept { pair_remap_.clear(); }
     // Walk the parent chain starting from `start`, calling
     // `f(EnvId, const EnvFrame&)` for each frame including
     // `start`. Stops when `f` returns false (early exit) or the
     // chain ends (parent_id == NULL_ENV_ID). Pure index walk —
     // no pointer chase, no cache-unfriendly hop.
-    template<typename F>
-    void walk_env_frames(EnvId start, F&& f) const
-        pre (start != NULL_ENV_ID)
-    {
+    template <typename F> void walk_env_frames(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
         EnvId cur = start;
         while (cur != NULL_ENV_ID) {
             const EnvFrame& fr = env_frames_[cur];
-            if (!std::forward<F>(f)(cur, fr)) return;
+            if (!std::forward<F>(f)(cur, fr))
+                return;
             cur = fr.parent_id;
         }
     }
     // Introspection: number of frames in the parent chain
     // starting at `start`. Useful for GC profiling and tests.
-    [[nodiscard]] std::size_t env_depth(EnvId start) const
-        pre (start != NULL_ENV_ID)
-    {
+    [[nodiscard]] std::size_t env_depth(EnvId start) const pre(start != NULL_ENV_ID) {
         std::size_t depth = 0;
         walk_env_frames(start, [&](EnvId, const EnvFrame&) {
             ++depth;
@@ -1134,9 +1101,8 @@ public:
     // Evaluator's central cells_ pmr vector. EnvFrame is now
     // free of raw heap pointers. Legacy Env still uses its
     // cells_ pointer during transition.
-    std::optional<types::EvalValue> lookup_by_symid_chain(
-        EnvId start, aura::ast::SymId s) const
-        pre (start != NULL_ENV_ID);
+    std::optional<types::EvalValue> lookup_by_symid_chain(EnvId start, aura::ast::SymId s) const
+        pre(start != NULL_ENV_ID);
     // Bulk reset (testing + GC integration). Clears env_frames_
     // but does NOT free the modules_ Env* array (those live in
     // module arenas, lifetime managed separately).
@@ -1166,7 +1132,7 @@ private:
                                                aura::ast::FlatAST* flat = nullptr,
                                                aura::ast::StringPool* pool = nullptr);
     Env* copy_env(const Env& env, ast::ASTArena* target = nullptr)
-        pre (target != nullptr);  // arena_ is private; impl also asserts via contract_assert
+        pre(target != nullptr); // arena_ is private; impl also asserts via contract_assert
     void init_pair_primitives();
     void build_primitive_slots();
     // Load a module file, return module object (or void on failure)
@@ -1188,11 +1154,13 @@ private:
     // hand each module its own arena without depending on a caller setting
     // it up. Lives for the Evaluator's whole lifetime.
     std::unique_ptr<ast::ArenaGroup> arena_group_;
-    ast::FlatAST* mutate_target_flat_ = nullptr;     // for mutate:* primitives (set via set_flat_pool or eval_flat)
+    ast::FlatAST* mutate_target_flat_ =
+        nullptr; // for mutate:* primitives (set via set_flat_pool or eval_flat)
     ast::StringPool* mutate_target_pool_ = nullptr;
-    ast::FlatAST* workspace_flat_ = nullptr;         // EDSL persistent workspace (set via (set-code ...))
+    ast::FlatAST* workspace_flat_ = nullptr; // EDSL persistent workspace (set via (set-code ...))
     ast::StringPool* workspace_pool_ = nullptr;
-    ast::FlatAST* current_flat_ = nullptr;           // per-eval source-being-evaluated (set by CompilerService eval paths)
+    ast::FlatAST* current_flat_ =
+        nullptr; // per-eval source-being-evaluated (set by CompilerService eval paths)
     ast::StringPool* current_pool_ = nullptr;
     // Issue #211: (tag, arity) index for the query:pattern
     // primitive. Built on demand, cached for the lifetime
@@ -1213,9 +1181,7 @@ private:
     // build cost is O(N) — a single pass over the
     // workspace, which is faster than the per-call
     // full-walk that the matcher would otherwise do.
-    mutable std::unordered_map<
-        std::uint64_t, std::vector<aura::ast::NodeId>>
-        tag_arity_index_;
+    mutable std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>> tag_arity_index_;
     // The workspace pointer the index was built for.
     // When this changes, the index must be rebuilt.
     mutable const ast::FlatAST* tag_arity_index_workspace_ = nullptr;
@@ -1252,7 +1218,8 @@ private:
     std::unordered_map<std::string, std::uint64_t> module_cache_; // path → index
     std::unordered_set<std::string> loading_stack_;               // circular dep detection
     std::vector<std::string> module_names_;                       // display names for modules
-    std::unordered_map<std::string, ast::ASTArena*> module_arena_ptrs_; // path → owning arena (for gc_module)
+    std::unordered_map<std::string, ast::ASTArena*>
+        module_arena_ptrs_; // path → owning arena (for gc_module)
     // Issue #145 Phase 2.4 — runtime arena for high-churn
     // heap vectors. monotonic_buffer_resource bump-allocates
     // chunks; deallocate() is a no-op (monotonic semantics).
@@ -1309,6 +1276,7 @@ private:
     FFIRuntime ffi_runtime_;
     // Step 2.3: ADT state moved to AdtRuntime (exact same pattern).
     AdtRuntime adt_runtime_;
+
 public:
     // Step 2.3 follow-up: expose AdtRuntime to Env (which holds
     // a back-pointer via owner_). Env::lookup needs to check
@@ -1317,6 +1285,7 @@ public:
     // encapsulation; the accessor returns a const reference
     // so Env can only read.
     const AdtRuntime& adt_runtime() const { return adt_runtime_; }
+
 private:
     std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
     // ── Strategy storage (E2) ──────────────────────────────────
@@ -1325,12 +1294,12 @@ private:
     // (-1 sentinel) from "explicitly 0" (also possible after evolve).
     struct StrategyDef {
         std::string name;
-        std::string body; // strategy body as S-expression string
-        int max_attempts = 3;        // tunable: 1..20
-        double temperature = 0.3;    // tunable: 0.0..1.0
+        std::string body;                // strategy body as S-expression string
+        int max_attempts = 3;            // tunable: 1..20
+        double temperature = 0.3;        // tunable: 0.0..1.0
         std::string sys_prompt_template; // tunable: free-form
-        int evolution = 0;           // generation counter
-        std::string parent;         // parent strategy name
+        int evolution = 0;               // generation counter
+        std::string parent;              // parent strategy name
     };
     std::vector<StrategyDef> strategies_;
     // ── Intend history (E4 Phase 1) ────────────────────────────
@@ -1357,10 +1326,10 @@ private:
     // 6=edsl-query, 7=edsl-mutate, 8=ffi, 9-15=reserved
     std::array<std::uint64_t, 16> coverage_counters_ = {};
     // ── Workspace Tree (P13) ───────────────────────────────────
-    void* workspace_tree_ = nullptr;  // WorkspaceTree*
-    bool workspace_read_only_ = false;  // quick lock flag for P6 mutations
+    void* workspace_tree_ = nullptr;   // WorkspaceTree*
+    bool workspace_read_only_ = false; // quick lock flag for P6 mutations
     // ── CompilerService pointer (for messaging) ─────────────────
-    void* compiler_service_ = nullptr;  // CompilerService*
+    void* compiler_service_ = nullptr; // CompilerService*
     // Issue #223: function pointer that returns the service's
     // current bridge epoch. Set by CompilerService on
     // set_compiler_service() so Evaluator can query the epoch
@@ -1370,12 +1339,13 @@ private:
     std::function<bool(const std::string&, const std::string&)>* msg_send_fn_ = nullptr;
     std::function<std::optional<std::string>(int)>* msg_recv_fn_ = nullptr;
     std::function<std::string()>* msg_id_fn_ = nullptr;
-    std::string session_id_;  // from CompilerService (for my-id)
+    std::string session_id_; // from CompilerService (for my-id)
 
 
     // ── Snapshot storage (ast:snapshot / ast:restore) ───────────
-    std::vector<std::string> snapshot_sources_;  // source code per snapshot (for ast:diff + source-fallback restore)
-    std::vector<std::string> snapshot_names_;    // optional names
+    std::vector<std::string>
+        snapshot_sources_; // source code per snapshot (for ast:diff + source-fallback restore)
+    std::vector<std::string> snapshot_names_; // optional names
 
     // Direct FlatAST snapshots (Issue #107 part 6). Each entry owns
     // a deep copy of the workspace's FlatAST and StringPool at the
@@ -1389,7 +1359,7 @@ private:
     struct FlatSnapshot {
         std::unique_ptr<aura::ast::FlatAST> flat;
         std::unique_ptr<aura::ast::StringPool> pool;
-        bool has_flat = false;  // true if both flat + pool are valid
+        bool has_flat = false; // true if both flat + pool are valid
     };
     std::vector<FlatSnapshot> snapshot_flats_;
 
@@ -1401,15 +1371,15 @@ private:
     // The two Aura callbacks (detect-fn, fix-fn) are stored as closure IDs
     // and invoked via apply_closure.
     bool auto_evolve_running_ = false;
-    double auto_evolve_interval_ = 1.0;  // seconds between cycles
-    std::uint64_t auto_evolve_detect_closure_ = 0;  // 0 = unset
+    double auto_evolve_interval_ = 1.0;            // seconds between cycles
+    std::uint64_t auto_evolve_detect_closure_ = 0; // 0 = unset
     std::uint64_t auto_evolve_fix_closure_ = 0;
     std::uint64_t auto_evolve_cycle_count_ = 0;
     std::uint64_t auto_evolve_total_fixed_ = 0;
 
     // ── Panic auto-rollback (Issue #39) ─────────────────────────
     bool panic_auto_rollback_ = false;
-    std::string panic_safe_source_;  // last known good source code
+    std::string panic_safe_source_; // last known good source code
 
     // Issue #242: panic checkpoint for the 4 pmr/append-only
     // arenas. save_panic_checkpoint() snapshots each size; on
@@ -1465,6 +1435,7 @@ private:
     //     memory_order_acquire — synchronizes with prior releases.
     //   - read for stats / debug: memory_order_relaxed is fine.
     std::atomic<std::uint64_t> defuse_version_{0};
+
 public:
     // Test-only accessor for defuse_version_. Production code
     // reads via member access from inside the class; tests need
@@ -1474,9 +1445,8 @@ public:
     std::uint64_t defuse_version_for_test() const {
         return defuse_version_.load(std::memory_order_acquire);
     }
-    void bump_defuse_version_for_test() {
-        defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-    }
+    void bump_defuse_version_for_test() { defuse_version_.fetch_add(1, std::memory_order_acq_rel); }
+
 private:
     // Issue #189: total mutations counter (for observability).
     // Bumped alongside defuse_version_ so dashboards can see
@@ -1519,16 +1489,14 @@ private:
     // 在 init_pair_primitives 末尾（DefUseIndex 定义完成后）注册。
     // 签名: (defuse_index, sym_id) → [caller node IDs]
     // 用 std::function 而非函数指针，避免不完整类型问题。
-    std::function<std::vector<aura::ast::NodeId>(void*, aura::ast::SymId)>
-        dep_caller_fn_ = nullptr;
+    std::function<std::vector<aura::ast::NodeId>(void*, aura::ast::SymId)> dep_caller_fn_ = nullptr;
 
     // ── DefUseIndex per-sym version touch callback (#107 part 5) ───
     // 在 mutation 原语中调用，标记某个 sym 在 DefUseIndex 中为 stale。
     // 注册位置同 dep_caller_fn_，绕开 DefUseIndex 前向声明问题。
     // 签名: (defuse_index, sym_id) → void
     // 当 defuse_index_ 为 null 时回调内部应 no-op。
-    std::function<void(void*, aura::ast::SymId)>
-        defuse_touch_fn_ = nullptr;
+    std::function<void(void*, aura::ast::SymId)> defuse_touch_fn_ = nullptr;
 
     // ── EDSL IR cache V2 (Phase 2) hooks ─────────────────────────────
     // Function pointers set by CompilerService on init. Avoids
@@ -1544,17 +1512,18 @@ private:
     // 格式: type_str = "param1 param2|rettype" | 分隔
     struct DeclaredType {
         std::string type_str;
-        std::string module_file;  // 来源模块文件（用于跨模块错误定位）
+        std::string module_file; // 来源模块文件（用于跨模块错误定位）
         bool resolved = false;
     };
     std::unordered_map<std::string, DeclaredType> declared_type_sigs_;
 
     // ── Functor 泛型模块模板 ────────────────────────────────────
     struct ModuleTemplate {
-        std::string body_source;                       // body source code (re-parsed at instantiation)
-        std::vector<std::string> type_param_names;     // type parameter names (e.g., ["T", "K"])
-        std::vector<std::string> cap_param_names;      // capability parameter names (e.g., ["cap"])
-        std::vector<std::string> cap_require;           // required capabilities (e.g., ["FileRead", "FileWrite"])
+        std::string body_source;                   // body source code (re-parsed at instantiation)
+        std::vector<std::string> type_param_names; // type parameter names (e.g., ["T", "K"])
+        std::vector<std::string> cap_param_names;  // capability parameter names (e.g., ["cap"])
+        std::vector<std::string>
+            cap_require; // required capabilities (e.g., ["FileRead", "FileWrite"])
     };
     std::unordered_map<std::string, ModuleTemplate> module_templates_;
 
@@ -1575,7 +1544,7 @@ private:
     // (avoids redundant string_heap_ pushes and enables faster equal?)
     std::unordered_map<std::string, types::EvalValue> short_str_cache_;
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
-    std::size_t eval_depth_ = 0; // recursion counter for friendly stack overflow
+    std::size_t eval_depth_ = 0;             // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;
 
     // ── Memory pressure observability (Issue #69) ───────────────
@@ -1660,6 +1629,7 @@ private:
     // "read-only" without acquiring the lock. This is checked
     // BEFORE lock acquisition to keep the no-op fast path.
     std::shared_mutex workspace_mtx_;
+
 public:
     // Issue #211: test accessors for the (tag, arity) index.
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
@@ -1677,12 +1647,8 @@ public:
     // Test accessors for setting the workspace directly
     // (bypassing the Aura primitive pipeline, which is
     // tested separately).
-    void set_workspace_flat_for_test(ast::FlatAST* f) {
-        set_workspace_flat(f);
-    }
-    void invalidate_tag_arity_index_for_test() {
-        invalidate_tag_arity_index();
-    }
+    void set_workspace_flat_for_test(ast::FlatAST* f) { set_workspace_flat(f); }
+    void invalidate_tag_arity_index_for_test() { invalidate_tag_arity_index(); }
     ast::FlatAST* workspace_flat_for_test() const { return workspace_flat_; }
     // Expose the arena allocator so tests can build
     // workspace FlatASTs.
@@ -1723,8 +1689,8 @@ public:
     // and the defuse_version_ is bumped again so any pending
     // readers see the rolled-back state.
     struct MutationCheckpoint {
-        std::uint64_t version;              // defuse_version_ at boundary entry
-        std::size_t mutation_log_size = 0;  // FlatAST::mutation_log_.size() at entry
+        std::uint64_t version;             // defuse_version_ at boundary entry
+        std::size_t mutation_log_size = 0; // FlatAST::mutation_log_.size() at entry
         // Issue #221: snapshot of FlatAST::children_ (the per-node
         // PersistentChildVector list). On rollback (exit(false)),
         // the captured vector is reinstalled in workspace_flat_->
@@ -1737,8 +1703,7 @@ public:
         // each pre-mutation PCV.
         // std::pmr::vector matches the allocator of FlatAST::children_
         // (so the vector copy doesn't require allocator conversion).
-        std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>>
-            children_snapshot;
+        std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
     };
     // Per-fiber checkpoint stack. Each Fiber carries its own
     // `mutation_stack_` (added in Issue #213 Cycle 3), so a
@@ -1756,8 +1721,7 @@ public:
     //
     // When no fiber is active, we fall back to a thread-local
     // stack so the main-thread eval path still works.
-    static thread_local std::vector<MutationCheckpoint>
-        g_main_thread_stack;
+    static thread_local std::vector<MutationCheckpoint> g_main_thread_stack;
 
     // Current fiber on this thread. Set by the scheduler
     // before resume(); cleared after the fiber yields. nullptr
@@ -1813,14 +1777,12 @@ public:
         // holds shared_ptrs that keep the pre-mutation PCs alive).
         // std::pmr::vector matches the allocator of FlatAST::children_
         // (so the vector copy doesn't require allocator conversion).
-        std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>>
-            children_snapshot;
+        std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
         if (workspace_flat_) {
             children_snapshot = workspace_flat_->snapshot_children();
         }
-        active_mutation_stack().push_back(
-            {defuse_version_.load(std::memory_order_acquire), log_size,
-             std::move(children_snapshot)});
+        active_mutation_stack().push_back({defuse_version_.load(std::memory_order_acquire),
+                                           log_size, std::move(children_snapshot)});
         defuse_version_.fetch_add(1, std::memory_order_release);
         // Issue #189: bump the total-mutations counter for
         // observability. Relaxed because it's stats-only.
@@ -1865,7 +1827,8 @@ public:
     // empty — a defensive fallback for unbalanced calls).
     MutationCheckpoint exit_mutation_boundary(bool success) {
         auto& stack = active_mutation_stack();
-        if (stack.empty()) return {0, 0};
+        if (stack.empty())
+            return {0, 0};
         auto cp = stack.back();
         stack.pop_back();
         if (!success && workspace_flat_) {
@@ -1873,7 +1836,7 @@ public:
             // enter and exit. The log size captured at entry
             // tells us how far to undo.
             std::size_t rolled = workspace_flat_->rollback_to_size(cp.mutation_log_size);
-            (void)rolled;  // count is for debug; not exposed via the API
+            (void)rolled; // count is for debug; not exposed via the API
             // Issue #221: restore the per-node children_ from the
             // pre-mutation snapshot. The checkpoint's children_snapshot
             // holds shared_ptrs to the pre-mutation PCs (PCV COW),
@@ -1896,9 +1859,7 @@ public:
     }
     // Get the current checkpoint stack depth (for testing /
     // observability). Returns 0 if the stack is empty.
-    static std::size_t mutation_boundary_depth() {
-        return active_mutation_stack_static().size();
-    }
+    static std::size_t mutation_boundary_depth() { return active_mutation_stack_static().size(); }
 
     // Static version of active_mutation_stack() for observability
     // accessors that don't have an Evaluator instance handy.
@@ -1977,7 +1938,6 @@ public:
     }
 
 
-
     // ── Issue #184: MutationBoundaryGuard (RAII) ─────────────
     // Acquires the exclusive workspace write lock + bumps
     // defuse_version_ on construction, pops the checkpoint on
@@ -2028,30 +1988,34 @@ public:
         // (save_panic_checkpoint returns false if no source is loaded
         //  or if (current-source) isn't registered.)
         bool had_panic_checkpoint_ = false;
+
     public:
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag) noexcept
-            : ev_(&ev), flag_(success_flag),
-              // Issue #233 + #236 follow-up: the unique_lock is
-              // now a MEMBER of the guard (was previously a local
-              // in enter_mutation_boundary() that destructed at
-              // function return, releasing the lock immediately).
-              //
-              // enter_mutation_boundary() now does only the
-              // version bump + log-size capture (no lock
-              // acquire); this constructor acquires the
-              // exclusive write lock and holds it for the
-              // entire guard lifetime.
-              //
-              // NESTED GUARD HANDLING (test_issue_184 Test 5):
-              // shared_mutex is NOT recursive, so a nested guard
-              // would deadlock on the inner acquire. The fix:
-              // only the OUTERMOST guard acquires the lock.
-              // Track nesting depth via a member counter; only
-              // acquire when depth 0→1, release when 1→0.
-              // The depth is shared (static thread_local) so
-              // nested guards in the same thread cooperate.
-              lock_(ev.workspace_mtx_, std::defer_lock) {
-            if (flag_) *flag_ = true;  // optimistic default
+            : ev_(&ev)
+            , flag_(success_flag)
+            ,
+            // Issue #233 + #236 follow-up: the unique_lock is
+            // now a MEMBER of the guard (was previously a local
+            // in enter_mutation_boundary() that destructed at
+            // function return, releasing the lock immediately).
+            //
+            // enter_mutation_boundary() now does only the
+            // version bump + log-size capture (no lock
+            // acquire); this constructor acquires the
+            // exclusive write lock and holds it for the
+            // entire guard lifetime.
+            //
+            // NESTED GUARD HANDLING (test_issue_184 Test 5):
+            // shared_mutex is NOT recursive, so a nested guard
+            // would deadlock on the inner acquire. The fix:
+            // only the OUTERMOST guard acquires the lock.
+            // Track nesting depth via a member counter; only
+            // acquire when depth 0→1, release when 1→0.
+            // The depth is shared (static thread_local) so
+            // nested guards in the same thread cooperate.
+            lock_(ev.workspace_mtx_, std::defer_lock) {
+            if (flag_)
+                *flag_ = true; // optimistic default
             // Issue #236 fix-up: thread_local depth counter
             // keyed by Evaluator address. Each fiber has its
             // own LIFO call stack, so nested guards on a
@@ -2061,7 +2025,8 @@ public:
             int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
             int prev = ++(*slot);
             bool outermost = (prev == 1);
-            if (outermost) lock_.lock();
+            if (outermost)
+                lock_.lock();
             ev_->enter_mutation_boundary();
             // Issue #241: capture panic checkpoint at the OUTERMOST
             // guard only (nested guards share the outer checkpoint).
@@ -2075,7 +2040,8 @@ public:
             }
         }
         ~MutationBoundaryGuard() {
-            if (!ev_) return;
+            if (!ev_)
+                return;
             bool success = flag_ ? *flag_ : true;
             // exit_mutation_boundary runs under the lock for
             // the outermost guard; lockless for nested guards
@@ -2087,7 +2053,8 @@ public:
             int prev = (*slot)--;
             bool outermost = (prev == 1);
             ev_->exit_mutation_boundary(success);
-            if (outermost) lock_.unlock();
+            if (outermost)
+                lock_.unlock();
             // Issue #241: panic-checkpoint commit / restore.
             // Only the outermost guard owns the checkpoint;
             // nested guards (which can't fail independently
@@ -2113,8 +2080,9 @@ public:
         MutationBoundaryGuard(const MutationBoundaryGuard&) = delete;
         MutationBoundaryGuard& operator=(const MutationBoundaryGuard&) = delete;
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
-            : ev_(o.ev_), flag_(o.flag_),
-              lock_(std::move(o.lock_)) {
+            : ev_(o.ev_)
+            , flag_(o.flag_)
+            , lock_(std::move(o.lock_)) {
             // Move transfers the lock state (the unique_lock
             // member moves its ownership to the new guard).
             // The depth counter was already incremented by
@@ -2123,17 +2091,22 @@ public:
             // depth stays correctly at the same value.
             // The new guard will decrement it once when it
             // destructs.
-            o.ev_ = nullptr; o.flag_ = nullptr;
+            o.ev_ = nullptr;
+            o.flag_ = nullptr;
         }
         MutationBoundaryGuard& operator=(MutationBoundaryGuard&& o) noexcept {
             if (this != &o) {
-                if (ev_) ev_->exit_mutation_boundary(flag_ ? *flag_ : true);
-                ev_ = o.ev_; flag_ = o.flag_;
+                if (ev_)
+                    ev_->exit_mutation_boundary(flag_ ? *flag_ : true);
+                ev_ = o.ev_;
+                flag_ = o.flag_;
                 lock_ = std::move(o.lock_);
-                o.ev_ = nullptr; o.flag_ = nullptr;
+                o.ev_ = nullptr;
+                o.flag_ = nullptr;
             }
             return *this;
         }
+
     private:
         Evaluator* ev_;
         bool* flag_;
@@ -2145,6 +2118,7 @@ public:
         // holds it.
         std::unique_lock<std::shared_mutex> lock_;
     };
+
 public:
     // Issue #157 Phase 1: lock hooks for the JIT runtime bridges
     // (aura_lock_workspace_read/write + aura_unlock_workspace_read/write
@@ -2160,9 +2134,9 @@ public:
     // pointer table that service.ixx sets on CompilerService init.
     // This keeps workspace_mtx_ private to Evaluator (no global mutex)
     // while still letting global C functions participate in locking.
-    void lock_workspace_shared()   { workspace_mtx_.lock_shared(); }
+    void lock_workspace_shared() { workspace_mtx_.lock_shared(); }
     void unlock_workspace_shared() { workspace_mtx_.unlock_shared(); }
-    void lock_workspace_unique()   { workspace_mtx_.lock(); }
+    void lock_workspace_unique() { workspace_mtx_.lock(); }
     void unlock_workspace_unique() { workspace_mtx_.unlock(); }
 
     // Issue #157 Phase 1: defuse_version_ accessor for the JIT
@@ -2229,10 +2203,8 @@ public:
     // The pattern mirrors post_mutation_invariant_check
     // (Issue #147) — pure function, no service state, the
     // caller (typed_mutate) invokes it after tx.commit.
-    std::size_t post_mutation_macro_reexpand(
-        aura::ast::FlatAST& flat,
-        aura::ast::StringPool& pool,
-        const aura::ast::MutationRecord& rec);
+    std::size_t post_mutation_macro_reexpand(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                             const aura::ast::MutationRecord& rec);
 
     // Type-aliasing accessor for the mutex type. Lets the
     // C++ test surface verify the lock type (Issue #107) without
@@ -2260,8 +2232,7 @@ public:
 
 
 // Pair-aware value formatting (recursively prints lists)
-export inline std::string format_value(const types::EvalValue& v,
-                                       std::span<const std::string> heap,
+export inline std::string format_value(const types::EvalValue& v, std::span<const std::string> heap,
                                        std::span<const Pair> pairs, int depth = 0,
                                        const Primitives* primitives = nullptr,
                                        std::span<const std::string> keywords = {}) {
@@ -2405,28 +2376,23 @@ export struct EnvView {
 
     // Lookup a name in the string-keyed bindings. Walks to
     // parent_ if not found locally.
-    [[nodiscard]] std::optional<types::EvalValue> lookup(
-        const std::string& name) const;
+    [[nodiscard]] std::optional<types::EvalValue> lookup(const std::string& name) const;
 
     // Lookup a SymId in the SymId-keyed bindings (Issue #145
     // fast path). Walks to parent_ if not found locally.
-    [[nodiscard]] std::optional<types::EvalValue> lookup_by_symid(
-        aura::ast::SymId s) const;
+    [[nodiscard]] std::optional<types::EvalValue> lookup_by_symid(aura::ast::SymId s) const;
 
     // Issue #145 follow-up / Phase 2.5.0: SymId-first lookup
     // helper that takes a name string + pool. Same role as
     // Env::lookup_by_intern but for EnvView (which has no
     // pool_ field — the pool is always passed in). Used by
     // the parent-walk migration in Phase 2.5.0 commit 8.
-    std::optional<types::EvalValue>
-    lookup_by_intern(const std::string& n,
-                     const aura::ast::StringPool* pool) const
-        pre (!n.empty());
+    std::optional<types::EvalValue> lookup_by_intern(const std::string& n,
+                                                     const aura::ast::StringPool* pool) const
+        pre(!n.empty());
 
     // Number of local bindings (excludes parent).
-    [[nodiscard]] std::size_t size() const {
-        return string_bindings.size();
-    }
+    [[nodiscard]] std::size_t size() const { return string_bindings.size(); }
 };
 
 // ── ClosureView — read-only view over a Closure's fields ────

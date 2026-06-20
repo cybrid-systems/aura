@@ -126,8 +126,7 @@ ComputeKindResult compute_kind(const IRFunction& func) {
 // single forward pass — suitable for "give me the kind of
 // this block's instructions in isolation" callers (e.g.,
 // the IR cache v2 re-analysis path).
-std::vector<ComputeKind> compute_kind_instructions(
-    std::span<const IRInstruction> instructions) {
+std::vector<ComputeKind> compute_kind_instructions(std::span<const IRInstruction> instructions) {
     std::vector<ComputeKind> out;
     out.reserve(instructions.size());
     for (const auto& instr : instructions) {

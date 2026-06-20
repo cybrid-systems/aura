@@ -22,7 +22,7 @@
 export module aura.compiler.ir_soa;
 
 import std;
-import aura.compiler.ir;  // for aura::ir::IROpcode (lives in aura::ir)
+import aura.compiler.ir; // for aura::ir::IROpcode (lives in aura::ir)
 
 namespace aura::compiler {
 
@@ -67,7 +67,7 @@ export struct IRFunctionSoA {
     std::vector<std::uint32_t> source_node_ids_;
     std::vector<std::uint32_t> type_ids_;
     std::vector<std::uint32_t> shape_ids_;
-    std::vector<std::uint8_t>  linear_ownership_states_;
+    std::vector<std::uint8_t> linear_ownership_states_;
     std::vector<std::uint32_t> adt_variant_ids_;
     std::vector<std::uint32_t> narrow_evidence_;
 
@@ -123,7 +123,8 @@ export struct IRFunctionSoA {
     // a full invalidate). Cheaper than a loop of individual
     // mark_block_dirty() calls.
     void mark_all_blocks_dirty() {
-        for (auto& b : block_dirty_) b = 1;
+        for (auto& b : block_dirty_)
+            b = 1;
     }
 
     // Clear a single block's dirty flag (called by the
@@ -137,7 +138,8 @@ export struct IRFunctionSoA {
     // Query: is this block dirty? Returns 0 (clean) for
     // out-of-range block_id (treat unknown as clean).
     bool is_block_dirty(std::uint32_t block_id) const {
-        if (block_id >= block_dirty_.size()) return false;
+        if (block_id >= block_dirty_.size())
+            return false;
         return block_dirty_[block_id] != 0;
     }
 
@@ -145,14 +147,17 @@ export struct IRFunctionSoA {
     // observability primitive.
     std::size_t dirty_block_count() const {
         std::size_t n = 0;
-        for (auto b : block_dirty_) if (b) ++n;
+        for (auto b : block_dirty_)
+            if (b)
+                ++n;
         return n;
     }
 
     // Issue #196: public read-only view of the per-block dirty
     // bitmask for the observability layer.
-    [[nodiscard]] const std::pmr::vector<std::uint8_t>&
-    block_dirty_column() const noexcept { return block_dirty_; }
+    [[nodiscard]] const std::pmr::vector<std::uint8_t>& block_dirty_column() const noexcept {
+        return block_dirty_;
+    }
 };
 
 // ── BasicBlockSoA ─────────────────────────────────────────────
@@ -175,9 +180,9 @@ export struct IRFunctionSoA {
 //     contiguous SoA column indices.
 export struct BasicBlockSoA {
     std::uint32_t block_id = 0;
-    std::uint32_t start_idx = 0;   // index into IRFunctionSoA columns
-    std::uint32_t end_idx = 0;     // exclusive
-    std::vector<std::uint32_t> successors;  // block indices in same function
+    std::uint32_t start_idx = 0;           // index into IRFunctionSoA columns
+    std::uint32_t end_idx = 0;             // exclusive
+    std::vector<std::uint32_t> successors; // block indices in same function
 };
 
 // ── IRInstructionView ─────────────────────────────────────────
@@ -196,46 +201,40 @@ export struct IRInstructionView {
 
     constexpr IRInstructionView() = default;
     constexpr IRInstructionView(const IRFunctionSoA& f, std::uint32_t i)
-        : func(&f), idx(i) {}
+        : func(&f)
+        , idx(i) {}
 
     // Accessors — all O(1), one SoA column access each.
-    constexpr aura::ir::IROpcode opcode() const {
-        return func->opcodes_[idx];
-    }
+    constexpr aura::ir::IROpcode opcode() const { return func->opcodes_[idx]; }
     constexpr std::uint32_t operand(std::size_t i) const {
         switch (i) {
-            case 0: return func->operand0_[idx];
-            case 1: return func->operand1_[idx];
-            case 2: return func->operand2_[idx];
-            case 3: return func->operand3_[idx];
-            default: return 0;
+            case 0:
+                return func->operand0_[idx];
+            case 1:
+                return func->operand1_[idx];
+            case 2:
+                return func->operand2_[idx];
+            case 3:
+                return func->operand3_[idx];
+            default:
+                return 0;
         }
     }
-    constexpr std::uint32_t source_node_id() const {
-        return func->source_node_ids_[idx];
-    }
-    constexpr std::uint32_t type_id() const {
-        return func->type_ids_[idx];
-    }
-    constexpr std::uint32_t shape_id() const {
-        return func->shape_ids_[idx];
-    }
+    constexpr std::uint32_t source_node_id() const { return func->source_node_ids_[idx]; }
+    constexpr std::uint32_t type_id() const { return func->type_ids_[idx]; }
+    constexpr std::uint32_t shape_id() const { return func->shape_ids_[idx]; }
     constexpr std::uint8_t linear_ownership_state() const {
         return func->linear_ownership_states_[idx];
     }
-    constexpr std::uint32_t adt_variant_id() const {
-        return func->adt_variant_ids_[idx];
-    }
-    constexpr std::uint32_t narrow_evidence() const {
-        return func->narrow_evidence_[idx];
-    }
+    constexpr std::uint32_t adt_variant_id() const { return func->adt_variant_ids_[idx]; }
+    constexpr std::uint32_t narrow_evidence() const { return func->narrow_evidence_[idx]; }
 
     // Convenience: structured operand access. Many call sites
     // want operands as a span. We allocate a tiny stack array
     // (4 elements) and return a span. O(1), no heap alloc.
     std::array<std::uint32_t, 4> operands() const {
-        return {func->operand0_[idx], func->operand1_[idx],
-                func->operand2_[idx], func->operand3_[idx]};
+        return {func->operand0_[idx], func->operand1_[idx], func->operand2_[idx],
+                func->operand3_[idx]};
     }
 };
 
@@ -248,22 +247,17 @@ export struct IRModuleV2 {
     std::string name;
     std::uint32_t entry_function_id = 0;
     std::vector<IRFunctionSoA> functions;
-    std::vector<std::string> string_pool;  // string constants (for ConstString)
+    std::vector<std::string> string_pool; // string constants (for ConstString)
 
     // Add an instruction to a function. Appends one element to
     // each SoA column. The function index must be in range.
     // Returns the index of the newly added instruction.
-    std::uint32_t add_instruction(
-        std::size_t func_idx,
-        aura::ir::IROpcode opcode,
-        std::array<std::uint32_t, 4> operands = {},
-        std::uint32_t source_node_id = 0,
-        std::uint32_t type_id = 0,
-        std::uint32_t shape_id = 0,
-        std::uint8_t linear_state = 0,
-        std::uint32_t adt_variant_id = 0,
-        std::uint32_t narrow_evidence = 0)
-    {
+    std::uint32_t add_instruction(std::size_t func_idx, aura::ir::IROpcode opcode,
+                                  std::array<std::uint32_t, 4> operands = {},
+                                  std::uint32_t source_node_id = 0, std::uint32_t type_id = 0,
+                                  std::uint32_t shape_id = 0, std::uint8_t linear_state = 0,
+                                  std::uint32_t adt_variant_id = 0,
+                                  std::uint32_t narrow_evidence = 0) {
         auto& func = functions[func_idx];
         auto idx = static_cast<std::uint32_t>(func.size());
         func.opcodes_.push_back(opcode);
@@ -305,8 +299,7 @@ export struct IRModuleV2 {
     // the next block.
     void seal_block(std::size_t func_idx, std::uint32_t block_idx) {
         auto& func = functions[func_idx];
-        func.blocks_[block_idx].end_idx =
-            static_cast<std::uint32_t>(func.size());
+        func.blocks_[block_idx].end_idx = static_cast<std::uint32_t>(func.size());
     }
 };
 

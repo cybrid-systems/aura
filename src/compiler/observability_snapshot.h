@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#include "observability_metrics.h"  // for FnMetrics
+#include "observability_metrics.h" // for FnMetrics
 
 namespace aura::compiler {
 

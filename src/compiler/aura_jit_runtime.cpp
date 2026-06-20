@@ -18,11 +18,11 @@
 // invalidate cached ids. The aliases are the first step —
 // establish the type system that the rest of the migration
 // will build on.
-using PairId   = unsigned int;
-using CellId   = unsigned int;
+using PairId = unsigned int;
+using CellId = unsigned int;
 using StringId = unsigned int;
-inline constexpr PairId   NULL_PAIR_ID   = static_cast<PairId>(~0ULL);
-inline constexpr CellId   NULL_CELL_ID   = static_cast<CellId>(~0ULL);
+inline constexpr PairId NULL_PAIR_ID = static_cast<PairId>(~0ULL);
+inline constexpr CellId NULL_CELL_ID = static_cast<CellId>(~0ULL);
 inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 
 
@@ -62,7 +62,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <unordered_map>
 #include <unwind.h>
 #include "runtime_shared.h"
-#include "value_tags.h"  // Issue #181 Cycle 2: v2 string encoding helpers
+#include "value_tags.h" // Issue #181 Cycle 2: v2 string encoding helpers
 
 // ── TL Arena (thread-local bump allocator) ────────────────────
 __thread TLarena g_tl_arena;
@@ -193,25 +193,21 @@ extern "C" void aura_counters_reset() {
 
 namespace {
 struct LockHooks {
-    void (*lock_read)(void*);       // shared_lock acquire
-    void (*unlock_read)(void*);     // shared_lock release
-    void (*lock_write)(void*);      // unique_lock acquire
-    void (*unlock_write)(void*);    // unique_lock release
-    std::uint64_t (*get_version)(void*);  // current defuse_version_
-    void (*yield_boundary)(void*);  // g_fiber_yield_mutation_boundary hook
-    void* user_data;                // typically the Evaluator*
+    void (*lock_read)(void*);            // shared_lock acquire
+    void (*unlock_read)(void*);          // shared_lock release
+    void (*lock_write)(void*);           // unique_lock acquire
+    void (*unlock_write)(void*);         // unique_lock release
+    std::uint64_t (*get_version)(void*); // current defuse_version_
+    void (*yield_boundary)(void*);       // g_fiber_yield_mutation_boundary hook
+    void* user_data;                     // typically the Evaluator*
 };
-static LockHooks g_lock_hooks = {
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
-};
+static LockHooks g_lock_hooks = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
 } // namespace
 
-extern "C" void aura_set_lock_hooks(
-    void (*lock_read)(void*), void (*unlock_read)(void*),
-    void (*lock_write)(void*), void (*unlock_write)(void*),
-    std::uint64_t (*get_version)(void*),
-    void (*yield_boundary)(void*),
-    void* user_data) {
+extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read)(void*),
+                                    void (*lock_write)(void*), void (*unlock_write)(void*),
+                                    std::uint64_t (*get_version)(void*),
+                                    void (*yield_boundary)(void*), void* user_data) {
     g_lock_hooks.lock_read = lock_read;
     g_lock_hooks.unlock_read = unlock_read;
     g_lock_hooks.lock_write = lock_write;
@@ -348,20 +344,25 @@ extern "C" const FlatHashTable* aura_hash_get_flat_table(int64_t hash_val) {
 // ── FlatHashTable allocation ──
 FlatHashTable* FlatHashTable::create(uint64_t cap) {
     auto* ht = (FlatHashTable*)std::malloc(total_bytes(cap));
-    if (!ht) return nullptr;
+    if (!ht)
+        return nullptr;
     ht->capacity = cap;
     ht->size = 0;
     auto meta = ht->metadata();
-    for (uint64_t i = 0; i < cap; ++i) meta[i] = HASH_EMPTY;
+    for (uint64_t i = 0; i < cap; ++i)
+        meta[i] = HASH_EMPTY;
     auto k = ht->keys();
-    for (uint64_t i = 0; i < cap; ++i) k[i] = 0;
+    for (uint64_t i = 0; i < cap; ++i)
+        k[i] = 0;
     auto v = ht->values();
-    for (uint64_t i = 0; i < cap; ++i) v[i] = 0;
+    for (uint64_t i = 0; i < cap; ++i)
+        v[i] = 0;
     return ht;
 }
 
 void FlatHashTable::destroy(FlatHashTable* ht) {
-    if (ht) std::free(ht);
+    if (ht)
+        std::free(ht);
 }
 
 void FlatHashTable::rebuild(uint64_t new_cap) {
@@ -371,7 +372,8 @@ void FlatHashTable::rebuild(uint64_t new_cap) {
     auto old_keys = keys();
     auto old_vals = values();
     auto* new_ht = create(new_cap);
-    if (!new_ht) return;
+    if (!new_ht)
+        return;
     auto new_meta = new_ht->metadata();
     auto new_keys = new_ht->keys();
     auto new_vals = new_ht->values();
@@ -379,7 +381,8 @@ void FlatHashTable::rebuild(uint64_t new_cap) {
     // entries in their correct hash-determined slot (or
     // following probe chain) instead of scanning linearly.
     for (uint64_t i = 0; i < old_cap; ++i) {
-        if (old_meta[i] != HASH_OCCUPIED) continue;  // skip empty + tombstones
+        if (old_meta[i] != HASH_OCCUPIED)
+            continue; // skip empty + tombstones
         int64_t k = old_keys[i];
         int64_t v = old_vals[i];
         uint64_t h = splitmix64_hash(k);
@@ -397,7 +400,7 @@ void FlatHashTable::rebuild(uint64_t new_cap) {
     // Copy header (capacity, size) from new block
     std::memcpy(this, new_ht, sizeof(FlatHashTable));
     // Copy data arrays (this->metadata() now uses new capacity)
-    auto new_mem_meta = metadata();  // uses this->capacity (just set from new_ht)
+    auto new_mem_meta = metadata(); // uses this->capacity (just set from new_ht)
     uint64_t cp = capacity;
     std::memcpy(new_mem_meta, new_meta, cp);
     std::memcpy(keys(), new_keys, cp * 8);
@@ -445,8 +448,8 @@ int64_t aura_alloc_closure_arena(int64_t func_id) {
     aura_lock_workspace_write();
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
     g_closure_func_ids.push_back(func_id);
-    g_closure_envs.emplace_back();  // still push heap env as fallback
-    g_arena_closure_envs.push_back(nullptr);  // arena ptr, set by later captures
+    g_closure_envs.emplace_back();           // still push heap env as fallback
+    g_arena_closure_envs.push_back(nullptr); // arena ptr, set by later captures
     aura_unlock_workspace_write();
     return id;
 }
@@ -478,9 +481,9 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
         }
         // First capture for this arena closure: allocate env from arena
         // Estimate env size from idx (grow to fit)
-        size_t env_size = static_cast<size_t>(idx) + 4;  // pad for future captures
-        int64_t* arena_env = (int64_t*)tl_arena_alloc(
-            &g_tl_arena, env_size * sizeof(int64_t), alignof(int64_t));
+        size_t env_size = static_cast<size_t>(idx) + 4; // pad for future captures
+        int64_t* arena_env =
+            (int64_t*)tl_arena_alloc(&g_tl_arena, env_size * sizeof(int64_t), alignof(int64_t));
         if (arena_env) {
             for (size_t i = 0; i < env_size; ++i)
                 arena_env[i] = 0;
@@ -497,7 +500,6 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
     env[static_cast<size_t>(idx)] = val;
     aura_unlock_workspace_write();
 }
-
 
 
 // === Registered compiled function table ===
@@ -619,9 +621,10 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
 
     // Place call arguments after env
     int32_t nargs = argc < entry.arg_count ? static_cast<int32_t>(argc) : entry.arg_count;
-    size_t env_count_check = slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid]
-                                 ? static_cast<size_t>(entry.env_count)
-                                 : g_closure_envs[slow_cid].size();
+    size_t env_count_check =
+        slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid]
+            ? static_cast<size_t>(entry.env_count)
+            : g_closure_envs[slow_cid].size();
     int32_t env_offset = static_cast<int32_t>(env_count_check);
     for (int32_t i = 0; i < nargs; ++i) {
         int32_t slot = env_offset + i;
@@ -851,7 +854,6 @@ static int64_t (*g_hash_set_fn)(int64_t hash, int64_t key, int64_t val) = nullpt
 // Hash-ref: (hash-ref hash key) → value or void
 
 
-
 int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
     // Issue #157 Phase 2: read lock — read g_hash_tables[hidx]
     // and the FlatHashTable internals (metadata, keys, values
@@ -870,7 +872,8 @@ int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
         for (uint64_t i = 0; i < cap; ++i) {
             uint64_t slot = probe_slot(h, i, cap);
             uint8_t m = meta[slot];
-            if (m == HASH_EMPTY) break; // not found, void sentinel
+            if (m == HASH_EMPTY)
+                break; // not found, void sentinel
             if (m == HASH_OCCUPIED && keys[slot] == key_val) {
                 result = vals[slot];
                 break;
@@ -909,7 +912,8 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
             // accumulate across remove+insert cycles).
             if (ht->size * 10 > ht->capacity * 7) {
                 uint64_t new_cap = ht->capacity * 2;
-                if (new_cap < 8) new_cap = 8;
+                if (new_cap < 8)
+                    new_cap = 8;
                 ht->rebuild(new_cap);
             }
             auto meta = ht->metadata();
@@ -925,10 +929,11 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
                     if (keys[slot] == key) {
                         vals[slot] = val;
                         aura_unlock_workspace_write();
-                        return 0;  // updated existing
+                        return 0; // updated existing
                     }
                 } else if (m == HASH_TOMBSTONE) {
-                    if (first_tombstone >= cap) first_tombstone = slot;
+                    if (first_tombstone >= cap)
+                        first_tombstone = slot;
                 } else {
                     // HASH_EMPTY: insert here (using first tombstone if seen,
                     // so tombstones get filled and probe sequences stay short).
@@ -966,7 +971,8 @@ int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
         for (uint64_t i = 0; i < cap; ++i) {
             uint64_t slot = probe_slot(h, i, cap);
             uint8_t m = meta[slot];
-            if (m == HASH_EMPTY) break; // not found
+            if (m == HASH_EMPTY)
+                break; // not found
             if (m == HASH_OCCUPIED && keys[slot] == key_val) {
                 // Mark as tombstone. A subsequent insert can fill
                 // this slot (reusing the deleted entry's probe
@@ -995,28 +1001,24 @@ const char* aura_string_ref(int64_t val);
 // Must match the IR interpreter's CastOp cases exactly.
 // Operates on EvalValue-compatible tagged values.
 int64_t aura_cast_op(int64_t val, int64_t type_tag) {
+    using aura::compiler::types::FLOAT_BIAS_VAL;
     using aura::compiler::types::is_string_raw_v2;
     using aura::compiler::types::STRING_BIAS_VAL_2;
-    using aura::compiler::types::FLOAT_BIAS_VAL;
     auto is_bool = [](int64_t v) { return v == 3 || v == 7; };
     // Issue #181 Cycle 2: v2 string encoding. (v & 3) == 2 is
     // the dedicated string tag. Range check via STRING_BIAS_VAL_2
     // is the safety belt (catches fixnums in the right range
     // that happen to have the string tag bit set).
-    auto is_string = [](int64_t v) {
-        return is_string_raw_v2(v) && v <= STRING_BIAS_VAL_2;
-    };
+    auto is_string = [](int64_t v) { return is_string_raw_v2(v) && v <= STRING_BIAS_VAL_2; };
     auto is_fixnum = [](int64_t v) { return (v & 1) == 0 && v > FLOAT_BIAS_VAL; };
-    auto is_float = [](int64_t v) {
-        return v <= FLOAT_BIAS_VAL && v > STRING_BIAS_VAL_2;
-    };
+    auto is_float = [](int64_t v) { return v <= FLOAT_BIAS_VAL && v > STRING_BIAS_VAL_2; };
 
     switch (type_tag) {
         case 0: { // Coerce to Int
             if (is_fixnum(val))
                 return val;
             if (is_bool(val))
-                return (val == 7) ? 2 : 0;  // #t→1<<1=2, #f→0<<1=0
+                return (val == 7) ? 2 : 0; // #t→1<<1=2, #f→0<<1=0
             if (is_string(val)) {
                 auto* s = aura_string_ref(val);
                 if (s && *s)
@@ -1045,8 +1047,8 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
                 return val;
             return aura_alloc_string(s.c_str());
         }
-        case 2: { // Coerce to Bool
-            return (val == 3) ? 3 : 7;  // #f=3, everything else #t=7
+        case 2: {                      // Coerce to Bool
+            return (val == 3) ? 3 : 7; // #f=3, everything else #t=7
         }
         case 4: { // Coerce to Float
             if (is_float(val))
@@ -1145,27 +1147,31 @@ extern "C" void aura_exception_pop() {
     std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     auto& s = g_fiber_ex_stacks[fid];
-    if (!s.empty()) s.pop_back();
+    if (!s.empty())
+        s.pop_back();
 }
 extern "C" std::uint64_t aura_exception_top_handler() {
     std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
-    if (it == g_fiber_ex_stacks.end() || it->second.empty()) return 0;
+    if (it == g_fiber_ex_stacks.end() || it->second.empty())
+        return 0;
     return it->second.back().handler_block;
 }
 extern "C" std::uint64_t aura_exception_top_payload() {
     std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
-    if (it == g_fiber_ex_stacks.end() || it->second.empty()) return ~0ULL;
+    if (it == g_fiber_ex_stacks.end() || it->second.empty())
+        return ~0ULL;
     return it->second.back().payload_slot;
 }
 extern "C" std::uint64_t aura_exception_depth() {
     std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
-    if (it == g_fiber_ex_stacks.end()) return 0;
+    if (it == g_fiber_ex_stacks.end())
+        return 0;
     return static_cast<std::uint64_t>(it->second.size());
 }
 
@@ -1176,7 +1182,8 @@ extern "C" std::uint64_t aura_exception_depth() {
 extern "C" std::uint64_t aura_exception_depth_for_fiber(std::uint64_t fid) {
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
-    if (it == g_fiber_ex_stacks.end()) return 0;
+    if (it == g_fiber_ex_stacks.end())
+        return 0;
     return static_cast<std::uint64_t>(it->second.size());
 }
 
@@ -1262,7 +1269,8 @@ std::int64_t aura_alloc_string(const char* s) {
 
 const char* aura_string_ref(std::int64_t val) {
     using aura::compiler::types::string_idx_raw_v2;
-    if (!aura::compiler::types::is_string_raw_v2(val)) return "";
+    if (!aura::compiler::types::is_string_raw_v2(val))
+        return "";
     std::uint64_t idx = string_idx_raw_v2(val);
     if (idx < g_string_pool.size())
         return g_string_pool[(std::size_t)idx].c_str();
@@ -1272,10 +1280,11 @@ const char* aura_string_ref(std::int64_t val) {
 // Copy a JIT-allocated string into an external string heap.
 // Returns the new string index in the external heap, or -1 if not found.
 // callback(idx) should return the new index after pushing to the external heap.
-// 
+//
 const char* aura_jit_string_content(std::int64_t val) {
     using aura::compiler::types::string_idx_raw_v2;
-    if (!aura::compiler::types::is_string_raw_v2(val)) return nullptr;
+    if (!aura::compiler::types::is_string_raw_v2(val))
+        return nullptr;
     std::uint64_t idx = string_idx_raw_v2(val);
     if (idx < g_string_pool.size())
         return g_string_pool[(std::size_t)idx].c_str();
@@ -1283,9 +1292,15 @@ const char* aura_jit_string_content(std::int64_t val) {
 }
 
 // ── Arena push/pop wrappers (no pointer arg needed for JIT) ──
-void aura_arena_push() { tl_arena_push(&g_tl_arena); }
-void aura_arena_pop() { tl_arena_pop(&g_tl_arena); }
-int64_t aura_arena_offset() { return static_cast<int64_t>(g_tl_arena.offset); }
+void aura_arena_push() {
+    tl_arena_push(&g_tl_arena);
+}
+void aura_arena_pop() {
+    tl_arena_pop(&g_tl_arena);
+}
+int64_t aura_arena_offset() {
+    return static_cast<int64_t>(g_tl_arena.offset);
+}
 
 // ── Single-call hash table info (Phase 4b) ────────────────
 // Returns all hash table data in one call. LLVM IR does 1 call, then GEP from the pointers.
@@ -1302,10 +1317,11 @@ extern "C" void aura_set_hash_str_eq_callback(int64_t (*fn)(int64_t, int64_t)) {
 
 extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
     // Fast path: same raw value
-    if (stored_key == search_key) return 1;
+    if (stored_key == search_key)
+        return 1;
     // Fixnum comparison (low bit 0, not in string range)
-    if ((stored_key & 1) == 0 && stored_key > -9000000000000000000LL &&
-        (search_key & 1) == 0 && search_key > -9000000000000000000LL)
+    if ((stored_key & 1) == 0 && stored_key > -9000000000000000000LL && (search_key & 1) == 0 &&
+        search_key > -9000000000000000000LL)
         return (stored_key >> 1) == (search_key >> 1) ? 1 : 0;
     // String comparison: both use g_string_pool encoding (STRING_BIAS_VAL - idx)
     if (stored_key <= -9000000000000000000LL && search_key <= -9000000000000000000LL) {
@@ -1362,7 +1378,8 @@ void aura_reset_runtime() {
     // which LeakSanitizer flags as false-positive failures.
     // Freeing here makes the function safe to call at process
     // exit (or between serve-async sessions).
-    for (auto* fht : g_hash_tables) FlatHashTable::destroy(fht);
+    for (auto* fht : g_hash_tables)
+        FlatHashTable::destroy(fht);
     g_hash_tables.clear();
     // Clear closure inline cache
     for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
@@ -1404,13 +1421,13 @@ void aura_reset_runtime() {
 // via `__attribute__((personality))` in the LLVM IR
 // once OpTryBegin/OpTryEnd/OpRaise are updated to emit
 // invoke/landingpad.
-extern "C" _Unwind_Reason_Code
-aura_personality(int version, _Unwind_Action actions,
-                 uint64_t exceptionClass,
-                 _Unwind_Exception* exceptionInfo,
-                 _Unwind_Context* context) {
+extern "C" _Unwind_Reason_Code aura_personality(int version, _Unwind_Action actions,
+                                                uint64_t exceptionClass,
+                                                _Unwind_Exception* exceptionInfo,
+                                                _Unwind_Context* context) {
     // Version 1 is the only supported version.
-    if (version != 1) return _URC_FATAL_PHASE1_ERROR;
+    if (version != 1)
+        return _URC_FATAL_PHASE1_ERROR;
 
     // Check the exception class. Aura exceptions use a custom
     // class identifier (top 8 bytes of the _Unwind_Exception).
@@ -1424,8 +1441,7 @@ aura_personality(int version, _Unwind_Action actions,
         // frame has a non-zero handler_block, that handler
         // matches; report _URC_HANDLER_FOUND so the unwinder
         // stops and resumes at the handler.
-        if (aura_exception_depth() > 0 &&
-            aura_exception_top_handler() != 0) {
+        if (aura_exception_depth() > 0 && aura_exception_top_handler() != 0) {
             return _URC_HANDLER_FOUND;
         }
         return _URC_CONTINUE_UNWIND;
@@ -1461,7 +1477,7 @@ extern "C" void aura_throw_exception(uint64_t payload) {
         std::uint64_t payload_storage;
     } ex = {};
     // Set the exception class to "AURA" (just a marker).
-    ex.header.exception_class = 0x4155524100000000ULL;  // "AURA\0\0\0"
+    ex.header.exception_class = 0x4155524100000000ULL; // "AURA\0\0\0"
     ex.header.exception_cleanup = nullptr;
     ex.payload_storage = payload;
     _Unwind_RaiseException(&ex.header);

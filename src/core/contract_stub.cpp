@@ -38,8 +38,8 @@
 
 struct __builtin_contract_violation_type;
 
-int __tu_has_violation(
-    const __builtin_contract_violation_type& v, unsigned short s) {
-    (void)v; (void)s;
+int __tu_has_violation(const __builtin_contract_violation_type& v, unsigned short s) {
+    (void)v;
+    (void)s;
     std::abort();
 }
