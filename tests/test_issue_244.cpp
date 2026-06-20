@@ -70,6 +70,7 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 // ── Minimal CHECK helpers (mirrors test_issue_190.cpp) ────────
+namespace aura_issue_244_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
@@ -368,7 +369,7 @@ bool test_no_workspace_error() {
 // Main
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #244 — SyntaxMarker query primitives ═══\n");
 
     std::println("AC #10: no-workspace handling (run first to set up state)");
@@ -406,3 +407,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_244_detail
+
+int aura_issue_244_run() { return aura_issue_244_detail::run_tests(); }
+

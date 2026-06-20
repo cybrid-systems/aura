@@ -43,6 +43,7 @@ import aura.parser.parser;
 
 // ── Test 1: parse_datatype produces a valid AST ─────────
 
+namespace aura_issue_134_detail {
 bool test_parse_datatype() {
     std::println("\n--- Test: parse_datatype ---");
     auto arena = std::make_unique<aura::ast::ASTArena>();
@@ -103,7 +104,7 @@ bool test_parse_datatype_no_ctors() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #134 verification tests ═══\n");
     test_parse_datatype();
     test_parse_datatype_zero_arity();
@@ -114,3 +115,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_134_detail
+
+int aura_issue_134_run() { return aura_issue_134_detail::run_tests(); }
+

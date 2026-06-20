@@ -50,6 +50,7 @@ import aura.parser.parser;
 // Instead, the test acts as a parseability + typecheckability
 // smoke test for the orch:parallel source shape.
 
+namespace aura_issue_119_detail {
 struct TypecheckEnv {
     std::unique_ptr<aura::ast::ASTArena> arena;
     std::unique_ptr<aura::core::TypeRegistry> treg;
@@ -181,7 +182,7 @@ bool test_fuzz_spawn_join() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #119 verification tests ═══\n");
     test_fiber_join_parseable();
     test_orch_parallel_parseable();
@@ -194,3 +195,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_119_detail
+
+int aura_issue_119_run() { return aura_issue_119_detail::run_tests(); }
+

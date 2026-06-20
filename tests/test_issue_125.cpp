@@ -47,6 +47,7 @@ import aura.parser.parser;
 
 // ── Test 1: the dirty-skip counters exist on CompilerMetrics ──
 
+namespace aura_issue_125_detail {
 bool test_dirty_skip_counters_exist() {
     std::println("\n--- Test: dirty-skip counters exist on CompilerMetrics ---");
 
@@ -98,7 +99,7 @@ bool test_metrics_struct_has_counters() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #125 verification tests ═══\n");
     test_dirty_skip_counters_exist();
     test_parse_smoke();
@@ -108,3 +109,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_125_detail
+
+int aura_issue_125_run() { return aura_issue_125_detail::run_tests(); }
+

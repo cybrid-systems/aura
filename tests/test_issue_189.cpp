@@ -63,6 +63,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_189_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -302,7 +303,7 @@ bool test_fuzzer_many_mutations() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #189 verification tests ═══\n");
     std::println("AC #1: Memory ordering fix — defuse_version_ bump");
     test_version_bump_on_rebind();
@@ -328,3 +329,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_189_detail
+
+int aura_issue_189_run() { return aura_issue_189_detail::run_tests(); }
+

@@ -52,6 +52,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_165_detail {
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
 
 static std::string run_str(aura::compiler::CompilerService& cs, std::string_view src) {
@@ -241,7 +242,7 @@ bool test_snapshot_rollback_preserves_macro() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #165 — macro re-expansion + SyntaxMarker after mutation ═══\n");
 
     test_hygienic_macro_survives_mutation();
@@ -252,3 +253,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_165_detail
+
+int aura_issue_165_run() { return aura_issue_165_detail::run_tests(); }
+

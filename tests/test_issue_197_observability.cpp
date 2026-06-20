@@ -36,6 +36,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_197_observability_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -84,7 +85,7 @@ bool test_inline_pass_stats_no_evaluator_hook_safe() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #197 observability tests ═══\n");
     test_inline_pass_stats_registered();
     test_inline_pass_stats_extra_args_ignored();
@@ -92,3 +93,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_197_observability_detail
+
+int aura_issue_197_observability_run() { return aura_issue_197_observability_detail::run_tests(); }
+

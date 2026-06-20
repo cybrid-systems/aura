@@ -31,6 +31,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_161_detail {
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
 
 // ── Test 1: parse_to_flat exists and is callable (no FlatParser needed) ──
@@ -197,7 +198,7 @@ bool test_independent_flatast() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #161 — Phase 2: pure-function parser ═══\n");
 
     test_parse_to_flat_basic();
@@ -210,3 +211,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_161_detail
+
+int aura_issue_161_run() { return aura_issue_161_detail::run_tests(); }
+

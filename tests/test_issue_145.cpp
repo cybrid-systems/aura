@@ -56,6 +56,7 @@ import aura.compiler.value;
 // AC #1: Closure::params is now SymId[] (was string[])
 // ═══════════════════════════════════════════════════════════════
 
+namespace aura_issue_145_detail {
 bool test_closure_params_is_symid() {
     std::println("\n--- Test 1.1: Closure::params is std::vector<SymId> ---");
     // Build a Closure with empty params — type is now SymId[]
@@ -502,7 +503,7 @@ bool test_materialize_call_env_with_env_id() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #145 verification tests (DOD/SoA Phase 1) ═══\n");
 
     std::println("── AC #1: Closure::params is SymId[] ──");
@@ -551,3 +552,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_145_detail
+
+int aura_issue_145_run() { return aura_issue_145_detail::run_tests(); }
+

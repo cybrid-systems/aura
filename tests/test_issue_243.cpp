@@ -60,6 +60,7 @@
 // so we provide a local stub that mirrors the same global
 // state. The real bridge TU is exercised end-to-end by
 // test_issue_237's aura --emit-binary path.
+namespace aura_issue_243_detail {
 static std::uint64_t g_aot_defuse_version_stub = 0;
 extern "C" void aura_set_aot_defuse_version(std::uint64_t v) {
     g_aot_defuse_version_stub = v;
@@ -221,7 +222,7 @@ bool test_set_get_defuse_version() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #243 verification tests ═══\n");
 
     std::println("AC #1: mangle_aot_name default version is 0");
@@ -247,3 +248,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_243_detail
+
+int aura_issue_243_run() { return aura_issue_243_detail::run_tests(); }
+

@@ -64,6 +64,7 @@ import aura.compiler.service;
 // the same pattern as other test_issue_*.cpp files.
 #include "test_harness.hpp"
 
+namespace aura_issue_224_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -622,7 +623,7 @@ bool test_cascade_body_only_marks_only_body() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     // The harness's CHECK macro handles the per-check
     // pass/fail reporting. The legacy test functions
     // (test_metrics_exposed, etc.) call CHECK() directly,
@@ -669,3 +670,7 @@ int main() {
 
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_224_detail
+
+int aura_issue_224_run() { return aura_issue_224_detail::run_tests(); }
+

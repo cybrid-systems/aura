@@ -74,6 +74,7 @@ import aura.compiler.value;
 
 
 // ── C-API hook for the contract handler (defined in contract_handler.cpp) ──
+namespace aura_issue_144_detail {
 struct AuraContractViolation {
     std::uint16_t kind;
     std::uint16_t semantic;
@@ -281,7 +282,7 @@ bool test_shape_profiler_contracts() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #144 verification tests (C++26 contracts) ═══\n");
 
     std::println("── AC #1: 8-10 hot functions have contract_assert ──");
@@ -313,3 +314,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_144_detail
+
+int aura_issue_144_run() { return aura_issue_144_detail::run_tests(); }
+

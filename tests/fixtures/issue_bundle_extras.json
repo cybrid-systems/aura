@@ -1,0 +1,14 @@
+{
+  "light": {
+    "includes": ["src/compiler", "tests"],
+    "sources": [
+      "src/compiler/aot_mangle.h",
+      "src/compiler/observability_metrics.h",
+      "src/compiler/observability_snapshot.h",
+      "src/compiler/type_concepts_impl.cpp"
+    ]
+  },
+  "jit": {
+    "includes": ["tests"]
+  }
+}

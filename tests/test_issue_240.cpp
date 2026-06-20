@@ -85,6 +85,7 @@ import aura.compiler.service;
 // Helper: run a snippet and return the raw EvalValue (handles
 // errors like test_issue_188's run_on). Use this for queries
 // where we don't care about the typed return value.
+namespace aura_issue_240_detail {
 static aura::compiler::types::EvalValue run_on(
         aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
@@ -534,7 +535,7 @@ bool test_mark_is_idempotent() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #240 verification tests ═══\n");
     std::println("AC #1+#2: compile:mark-narrowing-dirty! sets/clears the bit");
     test_mark_sets_bit();
@@ -557,3 +558,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_240_detail
+
+int aura_issue_240_run() { return aura_issue_240_detail::run_tests(); }
+

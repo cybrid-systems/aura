@@ -56,6 +56,7 @@ import aura.compiler.value;
 
 // ── AC #1: coerce_to_int_pure happy paths ─────────────────────
 
+namespace aura_issue_146_detail {
 bool test_pure_int_passthrough() {
     std::println("\n--- Test 1.1: coerce_to_int_pure on Int ---");
     auto v = aura::compiler::types::make_int(42);
@@ -648,7 +649,7 @@ bool test_arithmetic_sum_no_diag_by_default() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #146 verification tests (pure-function extraction) ═══\n");
 
     std::println("── AC #1: coerce_to_int_pure happy paths ──");
@@ -719,3 +720,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+}  // namespace aura_issue_146_detail
+
+int aura_issue_146_run() { return aura_issue_146_detail::run_tests(); }
+

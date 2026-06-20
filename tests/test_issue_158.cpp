@@ -43,6 +43,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_158_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -174,7 +175,7 @@ bool test_qq_nested_inner_macro() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #158 — qq + inner macro verification ═══\n");
 
     test_qq_legacy_inner_macro();
@@ -188,3 +189,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_158_detail
+
+int aura_issue_158_run() { return aura_issue_158_detail::run_tests(); }
+

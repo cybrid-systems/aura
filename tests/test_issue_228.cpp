@@ -55,6 +55,7 @@ using aura::test::g_failed;
 // Helper: run an Aura expression and return the result as
 // a string representation. Used to read back Aura values
 // (#t/#f/numbers/symbols) from the eval path.
+namespace aura_issue_228_detail {
 static std::string aura_eval_str(aura::compiler::CompilerService& cs,
                                  const std::string& src) {
     auto r = cs.eval(src);
@@ -240,7 +241,7 @@ bool test_typed_signal_full_compat() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #228 (Hardware IR Dependent Type System — Phase 1) ═══\n");
 
     test_bitvec_explicit_width();
@@ -256,3 +257,7 @@ int main() {
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+}  // namespace aura_issue_228_detail
+
+int aura_issue_228_run() { return aura_issue_228_detail::run_tests(); }
+

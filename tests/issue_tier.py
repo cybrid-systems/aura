@@ -1,4 +1,4 @@
-"""Resolve which test_issue_* targets to build/run for fast vs full CI."""
+"""Resolve which issue test targets to build/run for fast vs full CI."""
 
 from __future__ import annotations
 
@@ -11,13 +11,25 @@ from pathlib import Path
 _SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = _SCRIPT_DIR.parent
 FAST_FIXTURE = _SCRIPT_DIR / "fixtures" / "issues_fast.json"
-ISSUE_CPP_RE = re.compile(r"^tests/(test_issue_[\w]+)\.cpp$")
+PROFILES_FIXTURE = _SCRIPT_DIR / "fixtures" / "issue_link_profiles.json"
+ISSUE_CPP_RE = re.compile(r"^tests/(test_[\w]+)\.cpp$")
+
+BUNDLE_PROFILES = ("light", "jit", "jit_minimal", "jit_contract", "jit_tests", "fiber")
 
 
 def issues_tier() -> str:
     """Return 'fast' or 'full' (default full for local dev)."""
     tier = os.environ.get("AURA_ISSUES_TIER", "full").strip().lower()
     return tier if tier in {"fast", "full"} else "full"
+
+
+def _member_to_bundle() -> dict[str, str]:
+    data = json.loads(PROFILES_FIXTURE.read_text(encoding="utf-8"))
+    out: dict[str, str] = {}
+    for profile in BUNDLE_PROFILES:
+        for member in data.get(profile, []):
+            out[member] = f"test_issues_{profile}"
+    return out
 
 
 def load_fast_targets() -> list[str]:
@@ -54,14 +66,20 @@ def _git_diff_names(root: Path) -> list[str]:
 
 
 def git_changed_issue_targets(root: Path | None = None) -> list[str]:
-    """Map touched tests/test_issue_*.cpp files to ninja target names."""
+    """Map touched issue test sources to ninja targets (bundles or standalone)."""
     root = root or ROOT
+    member_bundle = _member_to_bundle()
     names = _git_diff_names(root)
     targets: set[str] = set()
     for name in names:
         m = ISSUE_CPP_RE.match(name.replace("\\", "/"))
-        if m:
-            targets.add(m.group(1))
+        if not m:
+            continue
+        stem = m.group(1)
+        if stem in member_bundle:
+            targets.add(member_bundle[stem])
+        else:
+            targets.add(stem)
     return sorted(targets)
 
 

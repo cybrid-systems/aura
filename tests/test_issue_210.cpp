@@ -42,6 +42,7 @@ import aura.compiler.value;
 
 
 
+namespace aura_issue_210_detail {
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
 
 // ── Test 1: env populated via bind_symid has bindings_legacy_uses == 0 ──
@@ -158,7 +159,7 @@ bool test_env_without_pool_uses_fallback() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #210 Cycle 4 — Env::bindings_ cleanup ═══\n");
     std::fprintf(stdout, "  Verifies the cleanup-readiness invariants.\n");
     std::fprintf(stdout, "  The full drop of bindings_ is deferred to\n");
@@ -173,3 +174,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_210_detail
+
+int aura_issue_210_run() { return aura_issue_210_detail::run_tests(); }
+

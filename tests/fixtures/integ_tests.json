@@ -887,5 +887,257 @@
     "code": "(string->number \"  \")",
     "pipeline": "eval",
     "expected": "#f"
+  },
+  {
+    "name": "issue_135_fiber_join_fiber_spawn_lambda_1",
+    "code": "(fiber:join (fiber:spawn (lambda () (+ 1 2))))",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "issue_135_fiber_join_fiber_spawn_lambda_6",
+    "code": "(fiber:join (fiber:spawn (lambda () (* 6 7))))",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "issue_135_define_sum_0_define",
+    "code": "\n        (define sum 0)\n        (define (loop n)\n          (if (= n 0) sum\n            (begin\n              (set! sum (+ sum (fiber:join (fiber:spawn (lambda () n)))))\n              (loop (- n 1)))))\n        (loop 20)\n    ",
+    "pipeline": "eval",
+    "expected": "210"
+  },
+  {
+    "name": "issue_135_define_fid_fiber_spawn_lambd",
+    "code": "\n        (define fid (fiber:spawn (lambda () (* 100 100))))\n        (fiber:join fid)\n    ",
+    "pipeline": "eval",
+    "expected": "10000"
+  },
+  {
+    "name": "issue_135_require_std_orchestrator_all",
+    "code": "\n        (require \"std/orchestrator\" all:)\n        (null? (orch:parallel (quote ()) 42))\n    ",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "issue_135_workspace_create_ws1",
+    "code": "(workspace:create \"ws1\")",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_135_workspace_current",
+    "code": "(workspace:current)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_135_define_ws_workspace_create_t",
+    "code": "\n        (define ws (workspace:create \"test\"))\n        (workspace:switch ws)\n    ",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "issue_135_workspace_can_write_1",
+    "code": "(workspace:can-write? 1)",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "issue_135_define_loop_n_acc",
+    "code": "\n        (define (loop n acc)\n          (if (= n 0) acc\n            (let ((v (fiber:join (fiber:spawn (lambda () (+ n 1))))))\n              (loop (- n 1) (+ acc v)))))\n        (loop 100 0)\n    ",
+    "pipeline": "eval",
+    "expected": "5150"
+  },
+  {
+    "name": "issue_135_workspace_set_memory_limit_1048576",
+    "code": "(workspace:set-memory-limit 1048576)",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "issue_137_1_2_3_6",
+    "code": "(= (+ 1 2 3) 6)",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "issue_141_if_procedure_workspace_conflicts_with",
+    "code": "(if (procedure? workspace:conflicts-with) 1 0)",
+    "pipeline": "eval",
+    "expected": "1"
+  },
+  {
+    "name": "issue_164_fiber_join_fiber_spawn_lambda_1",
+    "code": "(fiber:join (fiber:spawn (lambda () (+ 1 2))))",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "issue_166_x",
+    "code": "x",
+    "pipeline": "eval",
+    "expected": "10"
+  },
+  {
+    "name": "issue_166_f_5",
+    "code": "(f 5)",
+    "pipeline": "eval",
+    "expected": "25"
+  },
+  {
+    "name": "issue_166_g_10",
+    "code": "(g 10)",
+    "pipeline": "eval",
+    "expected": "11"
+  },
+  {
+    "name": "issue_187_arena_compact",
+    "code": "(arena:compact)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_187_arena_estimate",
+    "code": "(arena:estimate)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_187_string_pool_compact",
+    "code": "(string-pool:compact)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_188_dirty_reasons_999999",
+    "code": "(dirty:reasons 999999)",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "issue_189_concurrency_version_snapshot",
+    "code": "(concurrency:version-snapshot)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_190_syntax_marker_0",
+    "code": "(syntax-marker 0)",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "issue_190_syntax_marker_999999",
+    "code": "(syntax-marker 999999)",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "issue_191_ast_ref_valid_999999_0",
+    "code": "(ast:ref-valid? 999999 0)",
+    "pipeline": "eval",
+    "expected": "#f"
+  },
+  {
+    "name": "issue_194_jit_deopt_fn_never_seen_function",
+    "code": "(jit:deopt-fn? \"never-seen-function\")",
+    "pipeline": "eval",
+    "expected": "#f"
+  },
+  {
+    "name": "issue_194_jit_deopt_fn_f_0",
+    "code": "(jit:deopt-fn? \"f\" 0)",
+    "pipeline": "eval",
+    "expected": "#f"
+  },
+  {
+    "name": "issue_195_jit_exception_depth",
+    "code": "(jit:exception-depth)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_195_jit_exception_fibers",
+    "code": "(jit:exception-fibers)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_196_compile_cache_size",
+    "code": "(compile:cache-size)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_196_compile_dirty_count",
+    "code": "(compile:dirty-count)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_196_compile_epoch",
+    "code": "(compile:epoch)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_196_compile_dep_edges",
+    "code": "(compile:dep-edges)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_196_compile_cache_size_99999",
+    "code": "(compile:cache-size 99999)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_196_ast_generation",
+    "code": "(ast:generation)",
+    "pipeline": "eval",
+    "expected": ">=0"
+  },
+  {
+    "name": "issue_196_compile_block_dirty_count",
+    "code": "(compile:block-dirty-count)",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "issue_196_compile_func_block_dirty_count",
+    "code": "(compile:func-block-dirty-count)",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "issue_196_if_compile_block_dirty_foo_0_0_1_0",
+    "code": "(if (compile:block-dirty? \"foo\" 0 0) 1 0)",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "issue_196_if_compile_mark_block_dirty_1_0",
+    "code": "(if (compile:mark-block-dirty!) 1 0)",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "issue_196_if_compile_clear_block_dirty_1_0",
+    "code": "(if (compile:clear-block-dirty!) 1 0)",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "issue_224_compile_func_block_dirty_count_p_0",
+    "code": "(compile:func-block-dirty-count \"p\" 0)",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "issue_224_if_compile_block_dirty_p_0_0_1_0",
+    "code": "(if (compile:block-dirty? \"p\" 0 0) 1 0)",
+    "pipeline": "eval",
+    "expected": "1"
   }
 ]

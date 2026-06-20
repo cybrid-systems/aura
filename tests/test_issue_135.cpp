@@ -44,6 +44,7 @@ import aura.parser.parser;
 
 // Helper: run a snippet on a fresh CompilerService and return the
 // raw EvalValue. Used by tests that need a clean slate per assertion.
+namespace aura_issue_135_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -773,7 +774,7 @@ bool test_workspace_memory_primitives() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #135 verification tests ═══\n");
     std::println("── Acceptance criterion 1: fiber:join returns spawned value ──");
     test_fiber_join_returns_value();
@@ -820,3 +821,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_135_detail
+
+int aura_issue_135_run() { return aura_issue_135_detail::run_tests(); }
+

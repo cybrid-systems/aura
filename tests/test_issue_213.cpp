@@ -43,6 +43,7 @@ import aura.compiler.value;
 
 
 
+namespace aura_issue_213_detail {
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
 
 // Helper: build a workspace FlatAST with N Int literal nodes
@@ -293,7 +294,7 @@ bool test_rollback_to_size_idempotent() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #213 Cycle 1 — mutation boundary rollback ═══\n");
     std::fprintf(stdout, "  Verifies the new rollback path in\n");
     std::fprintf(stdout, "  `Evaluator::exit_mutation_boundary(false)`.\n\n");
@@ -310,3 +311,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_213_detail
+
+int aura_issue_213_run() { return aura_issue_213_detail::run_tests(); }
+

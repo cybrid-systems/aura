@@ -57,6 +57,7 @@ import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
+namespace aura_issue_248_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
@@ -222,7 +223,7 @@ bool test_no_workspace() {
 // ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
-int main() {
+int run_tests() {
     std::println("═══ Issue #248 — SyntaxMarker + type schema (observability) ═══\n");
 
     std::println("AC #7: no-workspace handling (run first)");
@@ -251,3 +252,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_248_detail
+
+int aura_issue_248_run() { return aura_issue_248_detail::run_tests(); }
+

@@ -37,6 +37,7 @@ import aura.compiler.pass_manager;
 
 
 
+namespace aura_issue_171_detail {
 #define PRINTLN(msg) do { std::fprintf(stdout, "%s\n", (msg)); } while(0)
 
 // Helper: build a trivial callee that returns a constant I64
@@ -1189,7 +1190,7 @@ bool test_inline_three_way_mutual_recursion() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #171 — Function Inliner (Priority 2) ═══\n");
     std::fprintf(stdout, "  Verifies the inliner ACTUALLY inlines, not just counts.\n\n");
 
@@ -1223,3 +1224,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_171_detail
+
+int aura_issue_171_run() { return aura_issue_171_detail::run_tests(); }
+

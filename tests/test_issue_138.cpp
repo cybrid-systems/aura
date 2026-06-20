@@ -63,6 +63,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_138_detail {
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
@@ -345,7 +346,7 @@ bool test_dirty_api_via_cpp() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #138 verification tests ═══\n");
 
     std::println("── AC #1: Dirty propagation correctness ──");
@@ -374,3 +375,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_138_detail
+
+int aura_issue_138_run() { return aura_issue_138_detail::run_tests(); }
+

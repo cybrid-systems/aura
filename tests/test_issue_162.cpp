@@ -41,6 +41,7 @@ import aura.compiler.type_concepts;
 
 
 
+namespace aura_issue_162_detail {
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
 
 // ── Test 1: concept TypeConstraint exists, both concrete types satisfy it
@@ -268,7 +269,7 @@ bool test_rule_dispatch() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #162 — Phases 1+2: Type Concepts ═══\n");
 
     std::fprintf(stdout, "\n--- Phase 1: TypeConstraint + 2 concrete constraints ---\n");
@@ -289,3 +290,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_162_detail
+
+int aura_issue_162_run() { return aura_issue_162_detail::run_tests(); }
+

@@ -35,6 +35,7 @@ import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
+namespace aura_issue_252_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
@@ -187,7 +188,7 @@ bool test_bridge_fraction_observable() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #252 — closure dual-path observability ═══\n");
     test_initial_counters_zero();
     test_tw_closure_bumps();
@@ -200,3 +201,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_252_detail
+
+int aura_issue_252_run() { return aura_issue_252_detail::run_tests(); }
+

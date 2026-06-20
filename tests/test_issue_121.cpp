@@ -39,6 +39,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_121_detail {
 struct TypecheckEnv {
     std::unique_ptr<aura::ast::ASTArena> arena;
     std::unique_ptr<aura::core::TypeRegistry> treg;
@@ -197,7 +198,7 @@ bool test_hygienic_gensym_in_macro() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #121 verification tests ═══\n");
     test_gensym_unique();
     test_gensym_with_prefix();
@@ -212,3 +213,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_121_detail
+
+int aura_issue_121_run() { return aura_issue_121_detail::run_tests(); }
+

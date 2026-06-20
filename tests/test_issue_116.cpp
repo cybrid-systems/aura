@@ -40,6 +40,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_116_detail {
 struct TypecheckResult {
     std::unique_ptr<aura::ast::ASTArena> arena;
     std::unique_ptr<aura::core::TypeRegistry> treg;
@@ -274,7 +275,7 @@ bool test_real_program_defer() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #116 verification tests ═══\n");
     test_well_typed_no_mutation();
     test_apply_round_trip();
@@ -287,3 +288,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_116_detail
+
+int aura_issue_116_run() { return aura_issue_116_detail::run_tests(); }
+

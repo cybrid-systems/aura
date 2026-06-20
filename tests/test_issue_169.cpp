@@ -33,6 +33,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_169_detail {
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
 
 // ── Test 1: enum is defined with 3 distinct values ──
@@ -89,7 +90,7 @@ bool test_no_behavior_change() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #169 — Incremental Compilation v3 (Phase 1: config flag) ═══\n");
 
     test_enum_values();
@@ -100,3 +101,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_169_detail
+
+int aura_issue_169_run() { return aura_issue_169_detail::run_tests(); }
+

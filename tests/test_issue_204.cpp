@@ -37,6 +37,7 @@ using aura::test::g_failed;
 
 
 
+namespace aura_issue_204_detail {
 #define PRINTLN(msg) do { std::fprintf(stdout, "%s\n", (msg)); } while(0)
 
 // ── Test 1: mark_env_frame_roots sets the bits ──
@@ -151,7 +152,7 @@ bool test_env_walk_before_root_set() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #172 (Phase 4) / #204 — GC env_frames_ walk ═══\n");
     std::fprintf(stdout, "  Verifies GCCollector::mark_env_frame_roots().\n\n");
 
@@ -165,3 +166,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_204_detail
+
+int aura_issue_204_run() { return aura_issue_204_detail::run_tests(); }
+

@@ -39,6 +39,7 @@ import aura.compiler.ast_walkers;
 
 // ── Test 1: find_top_level_defines basic ───────────────
 
+namespace aura_issue_132_detail {
 bool test_find_top_level_defines_basic() {
     std::println("\n--- Test: find_top_level_defines — basic ---");
 
@@ -151,7 +152,7 @@ bool test_collect_user_bindings() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #132 verification tests ═══\n");
     test_find_top_level_defines_basic();
     test_find_top_level_defines_nested();
@@ -162,3 +163,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_132_detail
+
+int aura_issue_132_run() { return aura_issue_132_detail::run_tests(); }
+

@@ -58,6 +58,7 @@ import aura.compiler.ir;
 
 
 
+namespace aura_issue_213_panic_fiber_detail {
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
 
 // ── Test 5: Concurrent fibers don't see each other's checkpoints ───
@@ -307,7 +308,7 @@ bool test_stress_1000_iterations() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #213 — follow-up cycle (panic + fiber tests) ═══\n");
     std::fprintf(stdout, "  Verifies the 3 'Test scenarios' from the issue body:\n");
     std::fprintf(stdout, "    5. Concurrent fiber isolation\n");
@@ -322,3 +323,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_213_panic_fiber_detail
+
+int aura_issue_213_panic_fiber_run() { return aura_issue_213_panic_fiber_detail::run_tests(); }
+

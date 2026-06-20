@@ -44,6 +44,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_206_detail {
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
 
 // Helper: allocate N pairs into the evaluator's pairs_ arena.
@@ -227,7 +228,7 @@ bool test_compact_pairs_all_dead() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #206 — GC sweep compact + remap + resolve_X ═══\n");
     std::fprintf(stdout, "  Verifies the compact_pairs() / resolve_pair() API.\n\n");
 
@@ -243,3 +244,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_206_detail
+
+int aura_issue_206_run() { return aura_issue_206_detail::run_tests(); }
+

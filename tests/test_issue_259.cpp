@@ -50,6 +50,7 @@ import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
+namespace aura_issue_259_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
@@ -202,7 +203,7 @@ bool test_no_regression() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #259 — Type propagation observability (scope-limited) ═══\n");
     test_initial_counters_zero();
     test_aura_primitive_returns_hash();
@@ -214,3 +215,6 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_259_detail
+
+int aura_issue_259_run() { return aura_issue_259_detail::run_tests(); }

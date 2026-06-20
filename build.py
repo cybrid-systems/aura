@@ -31,7 +31,7 @@ Test suites:
   safety      安全回归 (gradual + regression + p0)
   fuzz        Fuzz 测试 (fuzz-equiv + fuzz-corpus)
   issues      Issue #226 — unified test_issue_* runner (tier via AURA_ISSUES_TIER)
-  issues-fast 同上，强制 fast 档（PR CI 子集 + git 变更 issue）
+  issues-fast 同上，强制 fast 档（bundle 子集 + git 变更）
   check       构建 + core + safety + fuzz + issues（CI 默认）
 """
 
@@ -278,9 +278,21 @@ def test_integ():
         stderr = r.stderr.strip()
         check_stdout = stdout.split("\n")[-1] if tc.pipeline == "serve" else stdout
 
-        if tc.expected and tc.expected not in check_stdout:
-            ok_case = False
-            issues.append(f"expected '{tc.expected}' in stdout, got: {stdout[:80]}...")
+        if tc.expected:
+            if tc.expected.startswith(">="):
+                try:
+                    threshold = int(tc.expected[2:].strip())
+                    val = int(check_stdout.strip().split()[-1])
+                    if val < threshold:
+                        ok_case = False
+                        issues.append(f"expected value>={threshold}, got: {check_stdout[:80]}...")
+                except ValueError:
+                    if tc.expected not in check_stdout:
+                        ok_case = False
+                        issues.append(f"expected '{tc.expected}' in stdout, got: {stdout[:80]}...")
+            elif tc.expected not in check_stdout:
+                ok_case = False
+                issues.append(f"expected '{tc.expected}' in stdout, got: {stdout[:80]}...")
 
         if tc.expected_err:
             combined = stdout + "\n" + stderr

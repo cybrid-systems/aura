@@ -1,0 +1,6 @@
+{
+  "description": "Issue C++ tests whose scalar eval checks are covered by integ_tests.json",
+  "sources": [
+    "test_issue_164"
+  ]
+}

@@ -41,6 +41,7 @@ import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
+namespace aura_issue_250_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
@@ -175,7 +176,7 @@ bool test_bad_args() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #250 — atomic-batch truly atomic ═══\n");
 
     test_bad_args();
@@ -190,3 +191,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_250_detail
+
+int aura_issue_250_run() { return aura_issue_250_detail::run_tests(); }
+

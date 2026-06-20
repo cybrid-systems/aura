@@ -51,6 +51,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_184_detail {
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
 
 // ── Test 1: defuse_version_ is std::atomic<std::uint64_t> ──
@@ -277,7 +278,7 @@ bool test_typed_mutate_parse_error_releases_guard() {
     return true;
 }
 
-int main() {
+int run_tests() {
     PRINTLN("=== test_issue_184: MutationBoundaryGuard + atomic defuse_version_ ===");
 
     test_defuse_version_is_atomic();
@@ -296,3 +297,7 @@ int main() {
     std::print("========================================\n");
     return g_failed == 0 ? 0 : 1;
 }
+}  // namespace aura_issue_184_detail
+
+int aura_issue_184_run() { return aura_issue_184_detail::run_tests(); }
+

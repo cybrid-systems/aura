@@ -54,6 +54,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_192_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -272,7 +273,7 @@ bool test_fuzzer_many_batches() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #192 verification tests ═══\n");
     std::println("AC #1: basic shape + bad-arg handling");
     test_atomic_batch_bad_arg_no_workspace();
@@ -302,3 +303,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_192_detail
+
+int aura_issue_192_run() { return aura_issue_192_detail::run_tests(); }
+

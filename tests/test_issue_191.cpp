@@ -68,6 +68,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_191_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -324,7 +325,7 @@ bool test_fuzzer_many_structural_mutations() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #191 verification tests ═══\n");
     std::println("AC #1: StableNodeRef struct exists and works");
     test_stable_node_ref_default_invalid();
@@ -353,3 +354,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_191_detail
+
+int aura_issue_191_run() { return aura_issue_191_detail::run_tests(); }
+

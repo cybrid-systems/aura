@@ -41,6 +41,7 @@
 #include "test_harness.hpp"
 using aura::test::g_passed;
 using aura::test::g_failed;
+namespace aura_issue_136_detail {
 using aura::compiler::mangle_aot_name;
 
 
@@ -144,7 +145,7 @@ bool test_mangle_empty_and_alphanumeric() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #136 verification tests ═══\n");
 
     std::println("── Sub-task 3: AOT name mangling ──");
@@ -160,3 +161,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_136_detail
+
+int aura_issue_136_run() { return aura_issue_136_detail::run_tests(); }
+

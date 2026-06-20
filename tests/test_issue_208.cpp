@@ -53,6 +53,7 @@ import aura.compiler.value;
 
 
 
+namespace aura_issue_208_detail {
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
 
 // ── Test 1: bindings_legacy_uses metric on integration path ──
@@ -211,7 +212,7 @@ bool test_inspect_env_uses_bindings_with_names() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #208 Cycle 2 — Env::bindings_ migration ═══\n");
     std::fprintf(stdout, "  Verifies the bindings_legacy_uses metric and the\n");
     std::fprintf(stdout, "  bindings_symid_iter / bindings_with_names accessors.\n");
@@ -228,3 +229,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_208_detail
+
+int aura_issue_208_run() { return aura_issue_208_detail::run_tests(); }
+

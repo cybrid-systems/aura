@@ -38,6 +38,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_159_detail {
 static std::string run_str(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
@@ -236,7 +237,7 @@ bool test_typecheck_current_cache_reuse() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #159 — incremental typecheck + eval (Phases 1-5) ═══\n");
 
     // Phase 1 tests
@@ -256,3 +257,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_159_detail
+
+int aura_issue_159_run() { return aura_issue_159_detail::run_tests(); }
+

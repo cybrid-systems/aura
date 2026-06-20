@@ -59,6 +59,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_196_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -304,7 +305,7 @@ bool test_mark_define_dirty_cascades_to_blocks() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #196 verification tests ═══\n");
     std::println("AC #1: 4 observability primitives registered");
     test_cache_size_primitive();
@@ -339,3 +340,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_196_detail
+
+int aura_issue_196_run() { return aura_issue_196_detail::run_tests(); }
+

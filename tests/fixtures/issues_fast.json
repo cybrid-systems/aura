@@ -1,23 +1,11 @@
 {
-  "description": "Representative test_issue_* binaries for PR/fast CI. One pick per link profile.",
+  "description": "Representative issue targets for PR/fast CI (bundles + standalone).",
   "targets": [
-    "test_issue_115",
-    "test_issue_140",
-    "test_issue_145",
-    "test_issue_146",
-    "test_issue_147",
-    "test_issue_171",
-    "test_issue_197",
-    "test_issue_204",
-    "test_issue_212",
-    "test_issue_213",
+    "test_issues_light",
+    "test_issues_jit_minimal",
+    "test_issues_jit_tests",
+    "test_issues_fiber",
     "test_issue_214",
-    "test_issue_224",
-    "test_issue_224_closure_bridge",
-    "test_issue_225_bridge_invalidation",
-    "test_issue_226",
-    "test_issue_252",
-    "test_issue_246",
-    "test_issue_247"
+    "test_issue_237"
   ]
 }

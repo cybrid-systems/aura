@@ -40,13 +40,16 @@ _print_lock = Lock()
 
 
 def discover_test_issue_binaries() -> list[str]:
-    """Find all test_issue_NNN binaries in build/."""
+    """Find issue bundle + standalone test binaries in build/."""
     bins = []
     if not BUILD.is_dir():
         return bins
     for entry in sorted(BUILD.iterdir()):
-        if entry.is_file() and entry.name.startswith("test_issue_"):
-            bins.append(entry.name)
+        if not entry.is_file():
+            continue
+        name = entry.name
+        if name.startswith("test_issues_") or name.startswith("test_issue_"):
+            bins.append(name)
     return bins
 
 
@@ -68,7 +71,11 @@ def discover_test_issue_targets() -> list[str]:
         if ":" not in line:
             continue
         name = line.split(":", 1)[0].strip()
-        if name.startswith("test_issue_") and not name.startswith("CMakeFiles") and "cmake_object" not in name:
+        if (
+            (name.startswith("test_issues_") or name.startswith("test_issue_"))
+            and not name.startswith("CMakeFiles")
+            and "cmake_object" not in name
+        ):
             targets.append(name)
     return sorted(set(targets))
 

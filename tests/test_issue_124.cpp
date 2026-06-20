@@ -41,6 +41,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_124_detail {
 struct TypecheckEnv {
     std::unique_ptr<aura::ast::ASTArena> arena;
     std::unique_ptr<aura::core::TypeRegistry> treg;
@@ -137,7 +138,7 @@ bool test_end_to_end() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #124 verification tests ═══\n");
     test_try_catch_parses();
     test_safe_div_parses();
@@ -149,3 +150,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_124_detail
+
+int aura_issue_124_run() { return aura_issue_124_detail::run_tests(); }
+

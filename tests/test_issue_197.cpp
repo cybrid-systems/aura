@@ -41,6 +41,7 @@ import aura.compiler.pass_manager;
 
 
 
+namespace aura_issue_197_detail {
 #define PRINTLN(msg) do { std::fprintf(stdout, "%s\n", (msg)); } while(0)
 
 // Helper: build a single-block callee with N params and a body
@@ -581,7 +582,7 @@ bool test_call_in_middle_with_terminator_preserved() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #197 verification tests ═══\n");
     std::println("AC #1: is_inlinable_branch_aware predicate");
     test_predicate_accepts_single_block_with_params();
@@ -607,3 +608,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_197_detail
+
+int aura_issue_197_run() { return aura_issue_197_detail::run_tests(); }
+

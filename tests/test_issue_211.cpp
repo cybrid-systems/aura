@@ -50,6 +50,7 @@ import aura.compiler.value;
 
 
 
+namespace aura_issue_211_detail {
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
 
 // ── Test 1: index is empty before any build ──
@@ -184,7 +185,7 @@ bool test_rebuild_after_invalidate_uses_current_workspace() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #211 — (tag, arity) index for query:pattern ═══\n");
     std::fprintf(stdout, "  Verifies the index is built, cached, and invalidated.\n");
     std::fprintf(stdout, "  Variadic ..., predicates, and memoization are follow-ups.\n\n");
@@ -199,3 +200,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_211_detail
+
+int aura_issue_211_run() { return aura_issue_211_detail::run_tests(); }
+
