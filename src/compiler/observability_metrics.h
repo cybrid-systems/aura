@@ -201,13 +201,13 @@ struct CompilerMetrics {
 // Per-function metrics, returned by CompilerService::snapshot()
 // for --evo-explain. Reflect-friendly.
 struct FnMetrics {
-    std::string name;                // function name
-    std::uint64_t total_calls = 0;   // total invocations observed
-    std::uint64_t deopt_count = 0;   // deopt count (subset of total)
-    std::uint64_t hit_count = 0;     // specialization hit (specialized path)
-    std::uint64_t miss_count = 0;    // specialization miss (generic path)
-    double hit_rate = 0.0;           // hit_count / (hit_count + miss_count)
-    bool has_shape_map = false;      // was compiled with shape_map?
+    std::string name;                  // function name
+    std::uint64_t total_calls = 0;     // total invocations observed
+    std::uint64_t deopt_count = 0;     // deopt count (subset of total)
+    std::uint64_t hit_count = 0;       // specialization hit (specialized path)
+    std::uint64_t miss_count = 0;      // specialization miss (generic path)
+    double hit_rate = 0.0;             // hit_count / (hit_count + miss_count)
+    bool has_shape_map = false;        // was compiled with shape_map?
     std::uint32_t specialized_for = 0; // Issue #61: shape ID
 };
 

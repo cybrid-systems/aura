@@ -49,14 +49,16 @@ inline std::atomic<GcRecordAllocFn> g_arena_record_alloc{nullptr};
 // ── Convenience: call if set ───────────────────────────────
 inline void safepoint_check() noexcept {
     auto fn = g_arena_safepoint_check.load(std::memory_order_acquire);
-    if (fn) fn();
+    if (fn)
+        fn();
 }
 
 inline void record_alloc() noexcept {
     auto fn = g_arena_record_alloc.load(std::memory_order_acquire);
-    if (fn) fn();
+    if (fn)
+        fn();
 }
 
-}  // namespace aura::gc_hooks
+} // namespace aura::gc_hooks
 
-#endif  // AURA_CORE_GC_HOOKS_H
+#endif // AURA_CORE_GC_HOOKS_H

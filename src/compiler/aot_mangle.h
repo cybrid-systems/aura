@@ -45,15 +45,14 @@ namespace aura::compiler {
 //   A valid C identifier that's unlikely to collide with other
 //   names. The version suffix ensures names from different
 //   mutation epochs never collide with each other.
-inline std::string mangle_aot_name(const std::string& original,
-                                    std::uint32_t disambiguator,
-                                    std::uint64_t defuse_version = 0) {
+inline std::string mangle_aot_name(const std::string& original, std::uint32_t disambiguator,
+                                   std::uint64_t defuse_version = 0) {
     // Step 1: replace any non-alphanumeric with `_`
     std::string out;
     out.reserve(original.size() + 16);
     for (char c : original) {
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-            (c >= '0' && c <= '9') || c == '_') {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '_') {
             out.push_back(c);
         } else {
             out.push_back('_');
@@ -63,9 +62,11 @@ inline std::string mangle_aot_name(const std::string& original,
     // preserve leading / trailing underscores (so __top__ stays
     // __top__, not _top_).
     std::size_t first_n = 0;
-    while (first_n < out.size() && out[first_n] == '_') ++first_n;
+    while (first_n < out.size() && out[first_n] == '_')
+        ++first_n;
     std::size_t last_n = out.size();
-    while (last_n > first_n && out[last_n - 1] == '_') --last_n;
+    while (last_n > first_n && out[last_n - 1] == '_')
+        --last_n;
     std::string prefix = out.substr(0, first_n);
     std::string middle = out.substr(first_n, last_n - first_n);
     std::string suffix = out.substr(last_n);
@@ -74,7 +75,8 @@ inline std::string mangle_aot_name(const std::string& original,
     bool prev_underscore = false;
     for (char c : middle) {
         if (c == '_') {
-            if (!prev_underscore) compact.push_back(c);
+            if (!prev_underscore)
+                compact.push_back(c);
             prev_underscore = true;
         } else {
             compact.push_back(c);
@@ -109,4 +111,4 @@ inline std::string mangle_aot_name(const std::string& original,
     return result;
 }
 
-}  // namespace aura::compiler
+} // namespace aura::compiler

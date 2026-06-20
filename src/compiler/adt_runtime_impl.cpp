@@ -29,11 +29,9 @@ namespace aura::compiler {
 using EvalValue = types::EvalValue;
 using namespace aura::compiler::types;
 
-void AdtRuntime::register_primitives(
-    RegisterFn add,
-    std::pmr::vector<std::string>* string_heap,
-    std::vector<void*>* opaque_heap,
-    std::array<std::uint64_t, 16>* coverage_counters) {
+void AdtRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::string>* string_heap,
+                                     std::vector<void*>* opaque_heap,
+                                     std::array<std::uint64_t, 16>* coverage_counters) {
     // Skeleton: register a placeholder or the hook for datatype ctors.
     // Wiring of registration mechanism complete (Step 2.3): Evaluator ctor calls
     // adt_runtime_.register_primitives with the add-callback (exact FFI pattern).
@@ -52,9 +50,11 @@ void AdtRuntime::register_primitives(
 
 std::optional<std::size_t> AdtRuntime::find_ctor(const std::string& name) const {
     auto it = ctors_.find(name);
-    if (it == ctors_.end()) return std::nullopt;
-    // Return a slot/index (for now, just presence; real impl will map to primitive slot or closure id).
-    return 0;  // placeholder
+    if (it == ctors_.end())
+        return std::nullopt;
+    // Return a slot/index (for now, just presence; real impl will map to primitive slot or closure
+    // id).
+    return 0; // placeholder
 }
 
 } // namespace aura::compiler

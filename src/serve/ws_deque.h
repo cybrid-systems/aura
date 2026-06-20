@@ -32,8 +32,7 @@ namespace aura::serve {
 // ── Cache line size (ARM64 L1 data cache) ────────────
 static constexpr std::size_t kCacheLine = 64;
 
-template<typename T>
-class alignas(kCacheLine) WorkStealingDeque {
+template <typename T> class alignas(kCacheLine) WorkStealingDeque {
 public:
     WorkStealingDeque()
         : bottom_(0) {
@@ -78,8 +77,8 @@ public:
 
             if (t == b) {
                 // Last item: race with stealers.
-                if (!top_.compare_exchange_strong(t, t + 1,
-                        std::memory_order_seq_cst, std::memory_order_relaxed)) {
+                if (!top_.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst,
+                                                  std::memory_order_relaxed)) {
                     item = nullptr;
                 }
                 bottom_.store(b + 1, std::memory_order_relaxed);
@@ -103,8 +102,8 @@ public:
             item = buffer_[static_cast<size_t>(t) & mask_];
 
             // CAS to claim the item at top_.
-            if (!top_.compare_exchange_strong(t, t + 1,
-                    std::memory_order_seq_cst, std::memory_order_relaxed)) {
+            if (!top_.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst,
+                                              std::memory_order_relaxed)) {
                 item = nullptr;
             }
         }
@@ -121,8 +120,7 @@ public:
     }
 
     bool empty_approx() const {
-        return bottom_.load(std::memory_order_acquire) <=
-               top_.load(std::memory_order_acquire);
+        return bottom_.load(std::memory_order_acquire) <= top_.load(std::memory_order_acquire);
     }
 
 private:
@@ -151,8 +149,7 @@ private:
         // Position 'b' in the old buffer hasn't been written yet (the
         // current push will write it after growth) — so copy only up to b-1.
         for (int64_t i = t; i < b; ++i) {
-            new_buf[static_cast<size_t>(i) & new_mask] =
-                buffer_[static_cast<size_t>(i) & mask_];
+            new_buf[static_cast<size_t>(i) & new_mask] = buffer_[static_cast<size_t>(i) & mask_];
         }
 
         buffer_.swap(new_buf);

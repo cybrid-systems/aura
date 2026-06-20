@@ -183,9 +183,9 @@ public:
     [[nodiscard]] std::size_t entry_count() const noexcept { return entry_count_; }
     [[nodiscard]] std::size_t hash_capacity() const noexcept { return hash_capacity_; }
     [[nodiscard]] double load_factor() const noexcept {
-        return hash_capacity_ == 0 ? 0.0
-                                   : static_cast<double>(entry_count_) /
-                                         static_cast<double>(hash_capacity_);
+        return hash_capacity_ == 0
+                   ? 0.0
+                   : static_cast<double>(entry_count_) / static_cast<double>(hash_capacity_);
     }
     [[nodiscard]] std::size_t hash_table_bytes() const noexcept {
         return hash_tbl_.size() * sizeof(SymId);
@@ -216,8 +216,7 @@ public:
     [[nodiscard]] double buf_fragmentation() const noexcept {
         std::size_t ds = data_size();
         return ds == 0 ? 0.0
-                       : static_cast<double>(ds - string_bytes_total()) /
-                             static_cast<double>(ds);
+                       : static_cast<double>(ds - string_bytes_total()) / static_cast<double>(ds);
     }
 
     // Issue #187 (P0): conservative compact() that rebuilds the
@@ -237,7 +236,8 @@ public:
         } else {
             // Pick smallest power-of-2 capacity with load <= 0.5.
             std::uint32_t target = 64;
-            while (target / 2 < entry_count_) target *= 2;
+            while (target / 2 < entry_count_)
+                target *= 2;
             if (target < hash_capacity_) {
                 rehash(target);
             }
@@ -334,7 +334,7 @@ export constexpr std::array<NodeMeta, 26> kNodeMeta = {{
     {NodeTag::LiteralFloat, "LiteralFloat", 0, false, false, false, true, false},     // 0x11
     {NodeTag::Pair, "Pair", 2, false, false, false, false, false},                    // 0x12
     {NodeTag::LiteralInt, "<gap>", 0, false, false, false, false, false},             // 0x13 (gap)
-    {NodeTag::DefineModule, "DefineModule", 0, true, false, false, false, false},    // 0x14
+    {NodeTag::DefineModule, "DefineModule", 0, true, false, false, false, false},     // 0x14
     {NodeTag::Export, "Export", 0, true, false, false, false, false},                 // 0x15
     {NodeTag::Linear, "Linear", 1, false, false, false, false, false},                // 0x16
     {NodeTag::Move, "Move", 1, false, false, false, false, false},                    // 0x17
@@ -383,7 +383,7 @@ static_assert(validate_node_meta(), "kNodeMeta misaligned with NodeTag enum");
 
 // ── NodeView — lightweight non-owning read view ────────────────
 export struct NodeView {
-    NodeId id = NULL_NODE;  // node index in the FlatAST
+    NodeId id = NULL_NODE; // node index in the FlatAST
     NodeTag tag = NodeTag::LiteralInt;
     std::int64_t int_value = 0;
     double float_value = 0.0;
@@ -446,10 +446,10 @@ export struct MutationRecord {
     // Issue #142: extended rollback data for subtree-level mutations
     // (mutate:replace-subtree). When set, rollback re-parses old_subtree_source
     // and re-attaches the resulting root at (parent_id, child_idx).
-    NodeId parent_id = NULL_NODE;       // parent of the replaced subtree slot
-    std::uint32_t child_idx = 0;        // child index in parent.children
-    std::string old_subtree_source;     // source of the original subtree
-    bool has_subtree_rollback = false;  // true if old_subtree_source is valid
+    NodeId parent_id = NULL_NODE;      // parent of the replaced subtree slot
+    std::uint32_t child_idx = 0;       // child index in parent.children
+    std::string old_subtree_source;    // source of the original subtree
+    bool has_subtree_rollback = false; // true if old_subtree_source is valid
     // Issue #147: post-mutation invariant check status. Default NotChecked
     // so audit log records the actual state of the check, not a
     // synthetic "always-OK" claim.
@@ -494,7 +494,8 @@ export struct MatchClauseInfo {
 // Used as the type of `FlatAST::structural_mtx_`.
 class OwnedSharedMutex {
 public:
-    OwnedSharedMutex() : ptr_(std::make_unique<std::shared_mutex>()) {}
+    OwnedSharedMutex()
+        : ptr_(std::make_unique<std::shared_mutex>()) {}
     // Copy: allocate a fresh mutex.
     OwnedSharedMutex(const OwnedSharedMutex&) noexcept
         : ptr_(std::make_unique<std::shared_mutex>()) {}
@@ -502,9 +503,7 @@ public:
     OwnedSharedMutex(OwnedSharedMutex&&) noexcept = default;
     // Copy-assign: keep our own mutex (the data being copied
     // doesn't include the mutex state).
-    OwnedSharedMutex& operator=(const OwnedSharedMutex&) noexcept {
-        return *this;
-    }
+    OwnedSharedMutex& operator=(const OwnedSharedMutex&) noexcept { return *this; }
     // Move-assign: transfer ownership.
     OwnedSharedMutex& operator=(OwnedSharedMutex&&) noexcept = default;
     std::shared_mutex& get() noexcept { return *ptr_; }
@@ -516,6 +515,7 @@ public:
     // safe here because acquiring a lock is a "logical const"
     // operation: it doesn't modify the protected data.
     std::shared_mutex& mutable_get() const noexcept { return *ptr_; }
+
 private:
     std::unique_ptr<std::shared_mutex> ptr_;
 };
@@ -681,9 +681,7 @@ private:
     mutable std::atomic<std::uint64_t> mark_dirty_total_nodes_{0};
 
 private:
-
-    public:
-
+public:
     // Low-level raw node creation (for advanced mutation).
     // Creates a minimal node with the given tag and default fields.
     // Children must be set up manually via set_child/insert_child.
@@ -883,7 +881,7 @@ private:
         , param_count_(alloc)
         , cap_require_count_(alloc)
         , param_data_(alloc)
-    , param_annot_data_(alloc)
+        , param_annot_data_(alloc)
         , line_(alloc)
         , col_(alloc)
         , type_id_(alloc)
@@ -936,9 +934,10 @@ private:
 
     [[nodiscard]] NodeId add_call(NodeId func, std::span<const NodeId> args) {
         auto id = add_node(NodeTag::Call);
-        children_[id] = PersistentChildVector<NodeId>(
-            1 + args.size(), [&](std::size_t i) -> NodeId {
-                if (i == 0) return func;
+        children_[id] =
+            PersistentChildVector<NodeId>(1 + args.size(), [&](std::size_t i) -> NodeId {
+                if (i == 0)
+                    return func;
                 return args[i - 1];
             });
         link_children(id);
@@ -947,10 +946,9 @@ private:
 
     [[nodiscard]] NodeId add_if(NodeId cond, NodeId then_b, NodeId else_b) {
         auto id = add_node(NodeTag::IfExpr);
-        children_[id] = PersistentChildVector<NodeId>(
-            3, [&](std::size_t i) -> NodeId {
-                return (i == 0 ? cond : (i == 1 ? then_b : else_b));
-            });
+        children_[id] = PersistentChildVector<NodeId>(3, [&](std::size_t i) -> NodeId {
+            return (i == 0 ? cond : (i == 1 ? then_b : else_b));
+        });
         link_children(id);
         return id;
     }
@@ -959,8 +957,7 @@ private:
                                     bool dotted = false) {
         return add_lambda(params, {}, body, dotted);
     }
-    [[nodiscard]] NodeId add_lambda(std::span<const SymId> params,
-                                    std::span<const NodeId> annots,
+    [[nodiscard]] NodeId add_lambda(std::span<const SymId> params, std::span<const NodeId> annots,
                                     NodeId body, bool dotted = false) {
         auto id = add_node(NodeTag::Lambda);
         int_val_[id] = dotted ? 1 : 0; // store dotted flag
@@ -972,10 +969,8 @@ private:
             param_annot_data_[pstart + i] = annots[i];
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return body;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return body; });
         link_children(id);
         return id;
     }
@@ -984,9 +979,7 @@ private:
         auto id = add_node(NodeTag::Let);
         sym_id_[id] = name;
         children_[id] = PersistentChildVector<NodeId>(
-            2, [&](std::size_t i) -> NodeId {
-                return (i == 0 ? val : body);
-            });
+            2, [&](std::size_t i) -> NodeId { return (i == 0 ? val : body); });
         link_children(id);
         return id;
     }
@@ -995,9 +988,7 @@ private:
         auto id = add_node(NodeTag::LetRec);
         sym_id_[id] = name;
         children_[id] = PersistentChildVector<NodeId>(
-            2, [&](std::size_t i) -> NodeId {
-                return (i == 0 ? val : body);
-            });
+            2, [&](std::size_t i) -> NodeId { return (i == 0 ? val : body); });
         link_children(id);
         return id;
     }
@@ -1005,10 +996,8 @@ private:
     [[nodiscard]] NodeId add_define(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Define);
         sym_id_[id] = name;
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return val;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return val; });
         link_children(id);
         return id;
     }
@@ -1030,9 +1019,7 @@ private:
     // get_function_region_for_sym(sym) and
     // get_function_region_for_lambda(node_id) — both return
     // std::optional<std::uint8_t>; nullopt means no annotation.
-    void set_function_region(SymId name, std::uint8_t region) {
-        region_by_sym_[name] = region;
-    }
+    void set_function_region(SymId name, std::uint8_t region) { region_by_sym_[name] = region; }
     // Overload tag: pass a 0 literal to disambiguate. We
     // use a sentinel parameter (an unused int) so the two
     // overloads don't collide on the same uint32_t underlying
@@ -1041,16 +1028,17 @@ private:
     void set_function_region_lambda(NodeId lambda_id, std::uint8_t region) {
         region_by_lambda_id_[lambda_id] = region;
     }
-    [[nodiscard]] std::optional<std::uint8_t>
-    get_function_region_for_sym(SymId name) const {
+    [[nodiscard]] std::optional<std::uint8_t> get_function_region_for_sym(SymId name) const {
         auto it = region_by_sym_.find(name);
-        if (it == region_by_sym_.end()) return std::nullopt;
+        if (it == region_by_sym_.end())
+            return std::nullopt;
         return it->second;
     }
     [[nodiscard]] std::optional<std::uint8_t>
     get_function_region_for_lambda(NodeId lambda_id) const {
         auto it = region_by_lambda_id_.find(lambda_id);
-        if (it == region_by_lambda_id_.end()) return std::nullopt;
+        if (it == region_by_lambda_id_.end())
+            return std::nullopt;
         return it->second;
     }
 
@@ -1070,16 +1058,19 @@ private:
     // need invalidation but isn't flagged. The follow-up
     // (Phase 3b) would walk the call graph from these
     // results to find the transitive set.
-    [[nodiscard]] std::pmr::vector<aura::ast::NodeId>
-    defines_referencing_sym(SymId sym) const {
+    [[nodiscard]] std::pmr::vector<aura::ast::NodeId> defines_referencing_sym(SymId sym) const {
         std::pmr::vector<aura::ast::NodeId> result(
             std::pmr::polymorphic_allocator<aura::ast::NodeId>{});
         for (aura::ast::NodeId i = 0; i < size(); ++i) {
-            if (i >= size()) break;
+            if (i >= size())
+                break;
             auto v = get(i);
-            if (v.tag != aura::ast::NodeTag::Define) continue;
-            if (v.sym_id == sym) continue;  // the mutated Define itself
-            if (v.children.empty()) continue;
+            if (v.tag != aura::ast::NodeTag::Define)
+                continue;
+            if (v.sym_id == sym)
+                continue; // the mutated Define itself
+            if (v.children.empty())
+                continue;
             if (subtree_uses_sym(v.child(0), sym)) {
                 result.push_back(i);
             }
@@ -1090,12 +1081,14 @@ private:
     // Recursive helper: does the subtree rooted at `root`
     // contain a Variable node whose sym_id == `sym`?
     bool subtree_uses_sym(aura::ast::NodeId root, SymId sym) const {
-        if (root == aura::ast::NULL_NODE || root >= size()) return false;
+        if (root == aura::ast::NULL_NODE || root >= size())
+            return false;
         auto v = get(root);
         if (v.tag == aura::ast::NodeTag::Variable && v.sym_id == sym)
             return true;
         for (auto c : v.children) {
-            if (subtree_uses_sym(c, sym)) return true;
+            if (subtree_uses_sym(c, sym))
+                return true;
         }
         return false;
     }
@@ -1110,8 +1103,7 @@ private:
         param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
-        children_[id] = PersistentChildVector<NodeId>(
-            ctors.begin(), ctors.end());
+        children_[id] = PersistentChildVector<NodeId>(ctors.begin(), ctors.end());
         return id;
     }
 
@@ -1119,19 +1111,15 @@ private:
         auto id = add_node(NodeTag::Begin);
         // Build the N-element PCV directly from the exprs array via
         // the fill-constructor (single allocation, no temp vector).
-        children_[id] = PersistentChildVector<NodeId>(
-            count, [&](std::size_t i) -> NodeId {
-                return exprs[i];
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(count, [&](std::size_t i) -> NodeId { return exprs[i]; });
         link_children(id);
         return id;
     }
     [[nodiscard]] NodeId add_begin(std::span<const NodeId> exprs) {
         auto id = add_node(NodeTag::Begin);
         children_[id] = PersistentChildVector<NodeId>(
-            exprs.size(), [&](std::size_t i) -> NodeId {
-                return exprs[i];
-            });
+            exprs.size(), [&](std::size_t i) -> NodeId { return exprs[i]; });
         link_children(id);
         return id;
     }
@@ -1166,9 +1154,7 @@ private:
     [[nodiscard]] NodeId add_export(std::span<const NodeId> syms) {
         auto id = add_node(NodeTag::Export);
         children_[id] = PersistentChildVector<NodeId>(
-            syms.size(), [&](std::size_t i) -> NodeId {
-                return syms[i];
-            });
+            syms.size(), [&](std::size_t i) -> NodeId { return syms[i]; });
         link_children(id);
         return id;
     }
@@ -1176,10 +1162,8 @@ private:
     [[nodiscard]] NodeId add_set(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Set);
         sym_id_[id] = name;
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return val;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return val; });
         link_children(id);
         return id;
     }
@@ -1201,10 +1185,8 @@ private:
         // readability — if the macro is `define-hygienic-macro*`
         // (preserved), ALL params use the env-binding semantics.
         int_val_[id] = (preserved ? 4 : 0) | (hygienic ? 2 : 0) | (dotted ? 1 : 0);
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return body;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return body; });
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), params.begin(), params.end());
         param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
@@ -1216,11 +1198,13 @@ private:
     // Issue #120: query the hygienic flag on a MacroDef node.
     // Encoded in bit 1 of int_val_ (dotted is bit 0).
     bool is_hygienic_macrodef(NodeId id) const {
-        if (id >= int_val_.size()) return false;
+        if (id >= int_val_.size())
+            return false;
         return (int_val_[id] & 2) != 0;
     }
     bool is_dotted_macrodef(NodeId id) const {
-        if (id >= int_val_.size()) return false;
+        if (id >= int_val_.size())
+            return false;
         return (int_val_[id] & 1) != 0;
     }
     // Issue #230 #2: query the preserved flag (set by
@@ -1228,16 +1212,15 @@ private:
     // env-binding expansion (params bound in a child env)
     // instead of AST substitution.
     bool is_preserved_macrodef(NodeId id) const {
-        if (id >= int_val_.size()) return false;
+        if (id >= int_val_.size())
+            return false;
         return (int_val_[id] & 4) != 0;
     }
 
     [[nodiscard]] NodeId add_quote(NodeId val) {
         auto id = add_node(NodeTag::Quote);
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return val;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return val; });
         link_children(id);
         return id;
     }
@@ -1245,20 +1228,17 @@ private:
     [[nodiscard]] NodeId add_pair(NodeId car, NodeId cdr) {
         auto id = add_node(NodeTag::Pair);
         children_[id] = PersistentChildVector<NodeId>(
-            2, [&](std::size_t i) -> NodeId {
-                return (i == 0 ? car : cdr);
-            });
+            2, [&](std::size_t i) -> NodeId { return (i == 0 ? car : cdr); });
         link_children(id);
         return id;
     }
 
-    [[nodiscard]] NodeId add_type_annotation(SymId type_name, NodeId inner, SymId var_sym = INVALID_SYM) {
+    [[nodiscard]] NodeId add_type_annotation(SymId type_name, NodeId inner,
+                                             SymId var_sym = INVALID_SYM) {
         auto id = add_node(NodeTag::TypeAnnotation);
         sym_id_[id] = type_name;
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return inner;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
         if (var_sym != INVALID_SYM) {
             int_val_[id] = static_cast<std::int64_t>(var_sym);
         }
@@ -1266,29 +1246,21 @@ private:
         return id;
     }
 
-    bool has_var_annot(NodeId id) const {
-        return id < size() && int_val_[id] != 0;
-    }
-    SymId var_annot_sym(NodeId id) const {
-        return static_cast<SymId>(int_val_[id]);
-    }
+    bool has_var_annot(NodeId id) const { return id < size() && int_val_[id] != 0; }
+    SymId var_annot_sym(NodeId id) const { return static_cast<SymId>(int_val_[id]); }
 
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_id) {
         auto id = add_node(NodeTag::Coercion);
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return inner;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
         type_id_[id] = type_id;
         link_children(id);
         return id;
     }
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_tag, std::uint32_t type_id) {
         auto id = add_node(NodeTag::Coercion);
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return inner;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
         int_val_[id] = static_cast<std::int64_t>(type_tag);
         type_id_[id] = type_id;
         link_children(id);
@@ -1297,50 +1269,40 @@ private:
     // ── M4 Linear ownership builders ───────────────────────────
     [[nodiscard]] NodeId add_linear(NodeId inner) {
         auto id = add_node(NodeTag::Linear);
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return inner;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_move(NodeId inner) {
         auto id = add_node(NodeTag::Move);
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return inner;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_borrow(NodeId inner) {
         auto id = add_node(NodeTag::Borrow);
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return inner;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_mut_borrow(NodeId inner) {
         auto id = add_node(NodeTag::MutBorrow);
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return inner;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_drop(NodeId inner) {
         auto id = add_node(NodeTag::Drop);
-        children_[id] = PersistentChildVector<NodeId>(
-            1, [&](std::size_t i) -> NodeId {
-                return inner;
-            });
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
         link_children(id);
         return id;
     }
@@ -1385,15 +1347,15 @@ private:
             .type_id = id < type_id_.size() ? type_id_[id] : 0u,
             .children = std::span<const NodeId>(children_[id].data(), children_[id].size()),
             .params = std::span(param_data_.data() + param_begin_[id], param_count_[id]),
-            .param_annotations = std::span(param_annot_data_.data() + param_begin_[id], param_count_[id]),
+            .param_annotations =
+                std::span(param_annot_data_.data() + param_begin_[id], param_count_[id]),
             .marker = id < marker_.size() ? marker_[id] : SyntaxMarker::User,
         };
     }
 
     // ── Location ──────────────────────────────────────────────
-    void set_loc(NodeId id, std::uint32_t line, std::uint32_t col)
-        pre (id < line_.size())
-        pre (id < col_.size()) {
+    void set_loc(NodeId id, std::uint32_t line, std::uint32_t col) pre(id < line_.size())
+        pre(id < col_.size()) {
         line_[id] = line;
         col_[id] = col;
     }
@@ -1420,7 +1382,8 @@ private:
         // want to count how often callers probe with bad ids
         // (cheap error metric).
         children_call_count_.fetch_add(1, std::memory_order_relaxed);
-        if (id >= children_.size()) return {};
+        if (id >= children_.size())
+            return {};
         return std::span<const NodeId>(children_[id].data(), children_[id].size());
     }
     // Mutable overload (for code paths that need to write through
@@ -1429,7 +1392,8 @@ private:
     // mutation, use insert_child / remove_child / set_child
     // (which return a new PCV and assign back to children_[id]).
     std::span<const NodeId> children_mutable(NodeId id) {
-        if (id >= children_.size()) return {};
+        if (id >= children_.size())
+            return {};
         return std::span<const NodeId>(children_[id].data(), children_[id].size());
     }
 
@@ -1470,8 +1434,10 @@ private:
     public:
         StructuralMutationGuard() noexcept = default;
         explicit StructuralMutationGuard(FlatAST* ast) noexcept
-            : ast_(ast), lock_() {
-            if (ast_) lock_ = std::unique_lock<std::shared_mutex>(ast->structural_mtx_.get());
+            : ast_(ast)
+            , lock_() {
+            if (ast_)
+                lock_ = std::unique_lock<std::shared_mutex>(ast->structural_mtx_.get());
         }
         ~StructuralMutationGuard() {
             if (ast_) {
@@ -1490,13 +1456,15 @@ private:
         StructuralMutationGuard(const StructuralMutationGuard&) = delete;
         StructuralMutationGuard& operator=(const StructuralMutationGuard&) = delete;
         StructuralMutationGuard(StructuralMutationGuard&& o) noexcept
-            : ast_(o.ast_), lock_(std::move(o.lock_)) {
+            : ast_(o.ast_)
+            , lock_(std::move(o.lock_)) {
             o.ast_ = nullptr;
         }
         StructuralMutationGuard& operator=(StructuralMutationGuard&& o) noexcept {
             if (this != &o) {
                 // Release any current lock first.
-                if (ast_) ast_->bump_generation();
+                if (ast_)
+                    ast_->bump_generation();
                 ast_ = o.ast_;
                 lock_ = std::move(o.lock_);
                 o.ast_ = nullptr;
@@ -1507,6 +1475,7 @@ private:
         [[nodiscard]] explicit operator bool() const noexcept {
             return ast_ != nullptr && lock_.owns_lock();
         }
+
     private:
         FlatAST* ast_ = nullptr;
         std::unique_lock<std::shared_mutex> lock_;
@@ -1531,14 +1500,19 @@ private:
     public:
         ReaderLockGuard() noexcept = default;
         explicit ReaderLockGuard(const FlatAST* ast) noexcept
-            : ast_(ast), lock_() {
-            if (ast_) lock_ = std::shared_lock<std::shared_mutex>(ast->structural_mtx_.mutable_get());
+            : ast_(ast)
+            , lock_() {
+            if (ast_)
+                lock_ = std::shared_lock<std::shared_mutex>(ast->structural_mtx_.mutable_get());
         }
         ~ReaderLockGuard() = default;
         ReaderLockGuard(const ReaderLockGuard&) = delete;
         ReaderLockGuard& operator=(const ReaderLockGuard&) = delete;
         ReaderLockGuard(ReaderLockGuard&& o) noexcept
-            : ast_(o.ast_), lock_(std::move(o.lock_)) { o.ast_ = nullptr; }
+            : ast_(o.ast_)
+            , lock_(std::move(o.lock_)) {
+            o.ast_ = nullptr;
+        }
         ReaderLockGuard& operator=(ReaderLockGuard&& o) noexcept {
             if (this != &o) {
                 ast_ = o.ast_;
@@ -1550,13 +1524,12 @@ private:
         [[nodiscard]] explicit operator bool() const noexcept {
             return ast_ != nullptr && lock_.owns_lock();
         }
+
     private:
         const FlatAST* ast_ = nullptr;
         std::shared_lock<std::shared_mutex> lock_;
     };
-    [[nodiscard]] ReaderLockGuard try_acquire_reader_lock() const {
-        return ReaderLockGuard(this);
-    }
+    [[nodiscard]] ReaderLockGuard try_acquire_reader_lock() const { return ReaderLockGuard(this); }
 
     // Issue #222 slice 3/3: _locked() variants of the structural
     // mutators. Caller MUST hold the structural mutation lock
@@ -1571,7 +1544,8 @@ private:
     // guard acquisition.
     void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
         const auto& list = children_[id];
-        if (idx >= list.size()) return;
+        if (idx >= list.size())
+            return;
         auto old_cid = list[idx];
         if (old_cid != NULL_NODE && old_cid < parent_.size())
             parent_[old_cid] = NULL_NODE;
@@ -1629,7 +1603,7 @@ private:
     // children_ (PCV COW); the snapshot is O(1) per node.
     // Returns std::pmr::vector to match children_'s allocator.
     std::pmr::vector<PersistentChildVector<NodeId>> snapshot_children() const {
-        return children_;  // vector copy ctor; each PCV is shared_ptr copy
+        return children_; // vector copy ctor; each PCV is shared_ptr copy
     }
 
     // Issue #221: restore children_ from a pre-captured snapshot.
@@ -1755,10 +1729,12 @@ private:
             buf.insert(buf.end(), reinterpret_cast<char*>(&count),
                        reinterpret_cast<char*>(&count) + 4);
             if (!col.empty()) {
-                buf.insert(buf.end(),
-                           reinterpret_cast<const char*>(col.data()),
-                           reinterpret_cast<const char*>(col.data()) +
-                               col.size() * sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
+                buf.insert(
+                    buf.end(), reinterpret_cast<const char*>(col.data()),
+                    reinterpret_cast<const char*>(col.data()) +
+                        col.size() *
+                            sizeof(
+                                typename std::remove_reference<decltype(col)>::type::value_type));
             }
         };
         // 19 SoA columns + 2 children columns (per-node count +
@@ -1784,9 +1760,7 @@ private:
             std::vector<NodeId> flat_children;
             flat_children.reserve(total_children);
             for (NodeId i = 0; i < num_nodes; ++i) {
-                flat_children.insert(flat_children.end(),
-                                     children_[i].begin(),
-                                     children_[i].end());
+                flat_children.insert(flat_children.end(), children_[i].begin(), children_[i].end());
             }
             write_column(flat_children);
         }
@@ -1831,7 +1805,8 @@ private:
     static FlatAST deserialize_soa(const std::vector<char>& buf, std::size_t& pos) {
         FlatAST ast;
         std::uint32_t version;
-        std::memcpy(&version, &buf[pos], 4); pos += 4;
+        std::memcpy(&version, &buf[pos], 4);
+        pos += 4;
         // Only v1 is supported. The caller is responsible for
         // version dispatch in a future multi-version loader.
         if (version != 1) {
@@ -1840,12 +1815,14 @@ private:
             return ast;
         }
         std::uint32_t num_nodes;
-        std::memcpy(&num_nodes, &buf[pos], 4); pos += 4;
+        std::memcpy(&num_nodes, &buf[pos], 4);
+        pos += 4;
 
         auto read_column = [&buf, &pos](auto& col) {
             using T = typename std::remove_reference<decltype(col)>::type::value_type;
             std::uint32_t count;
-            std::memcpy(&count, &buf[pos], 4); pos += 4;
+            std::memcpy(&count, &buf[pos], 4);
+            pos += 4;
             col.resize(count);
             // Issue #219: GapBuffer's `data()` is not contiguous
             // when the gap is in the middle. compact() moves the
@@ -1881,8 +1858,7 @@ private:
                 // Issue #221: build each per-node PCV from the
                 // flat column via the range constructor.
                 ast.children_[i] = PersistentChildVector<NodeId>(
-                    flat_children.begin() + offset,
-                    flat_children.begin() + offset + count);
+                    flat_children.begin() + offset, flat_children.begin() + offset + count);
                 offset += count;
             }
         }
@@ -1901,9 +1877,11 @@ private:
         read_column(ast.value_cache_);
         read_column(ast.node_first_mutation_);
         read_column(ast.node_gen_);
-        std::memcpy(&ast.next_mutation_id_, &buf[pos], 4); pos += 4;
-        std::memcpy(&ast.generation_, &buf[pos], 2); pos += 2;
-        pos += 2;  // reserved
+        std::memcpy(&ast.next_mutation_id_, &buf[pos], 4);
+        pos += 4;
+        std::memcpy(&ast.generation_, &buf[pos], 2);
+        pos += 2;
+        pos += 2; // reserved
         return ast;
     }
 
@@ -1914,7 +1892,7 @@ private:
         // query:pattern and mutate:replace-subtree (Issue #140,
         // #142). A silent no-op on stale id would let a
         // macro-introduced node appear user-written.
-        pre (id < marker_.size()) {
+        pre(id < marker_.size()) {
         marker_[id] = m;
     }
     SyntaxMarker marker(NodeId id) const {
@@ -1940,11 +1918,11 @@ private:
     // a single mutation triggers multiple concerns. Bit 0 (kGeneral)
     // is the backward-compatible "this node needs re-inference" bit.
     enum DirtyReason : std::uint8_t {
-        kGeneralDirty       = 0x01, // node type must be re-inferred
-        kConstraintDirty    = 0x02, // constraints involving this var changed
-        kOccurrenceDirty    = 0x04, // occurrence-narrowing affected
-        kOwnershipDirty     = 0x08, // Linear/Move/Borrow state changed
-        kCoercionDirty      = 0x10, // deferred coercion needs re-apply
+        kGeneralDirty = 0x01,    // node type must be re-inferred
+        kConstraintDirty = 0x02, // constraints involving this var changed
+        kOccurrenceDirty = 0x04, // occurrence-narrowing affected
+        kOwnershipDirty = 0x08,  // Linear/Move/Borrow state changed
+        kCoercionDirty = 0x10,   // deferred coercion needs re-apply
     };
 
     // Issue #188: mark a node dirty for one or more specific reasons.
@@ -1954,7 +1932,7 @@ private:
         if (id >= dirty_.size())
             dirty_.resize(id + 1, 0);
         dirty_[id] |= reasons;
-        clear_cached_value(id);  // invalidate result cache
+        clear_cached_value(id); // invalidate result cache
     }
     void mark_subtree_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) {
         mark_dirty(id, reasons);
@@ -1967,9 +1945,7 @@ private:
     // Issue #188: backward-compatible single-bit semantics — true if
     // any dirty bit is set. The pre-#188 callers that asked "is this
     // node dirty?" still get the right answer.
-    bool is_dirty(NodeId id) const {
-        return id < dirty_.size() && dirty_[id] != 0;
-    }
+    bool is_dirty(NodeId id) const { return id < dirty_.size() && dirty_[id] != 0; }
     // Issue #188: targeted check — true if a specific reason bit
     // (or any of the bits in the reason mask) is set. Lets the type
     // checker say "this node's occurrence narrowing is stale but
@@ -1978,9 +1954,7 @@ private:
         return id < dirty_.size() && (dirty_[id] & reason_mask) != 0;
     }
     // Issue #188: return the full dirty bitmask (for diagnostics).
-    std::uint8_t dirty_reasons(NodeId id) const {
-        return id < dirty_.size() ? dirty_[id] : 0;
-    }
+    std::uint8_t dirty_reasons(NodeId id) const { return id < dirty_.size() ? dirty_[id] : 0; }
     void clear_dirty(NodeId id) {
         if (id < dirty_.size())
             dirty_[id] = 0;
@@ -2030,7 +2004,7 @@ private:
     // Stores the last EvalValue result for each node.
     // kNotCached = not yet evaluated or cache invalidated.
     // When a node is marked dirty, its cache is cleared automatically.
-    static constexpr std::int64_t kNotCached = 0x7FFFFFFFFFFFFFFFLL;  // INT64_MAX as sentinel
+    static constexpr std::int64_t kNotCached = 0x7FFFFFFFFFFFFFFFLL; // INT64_MAX as sentinel
     std::int64_t get_cached_value(NodeId id) const {
         return id < static_cast<NodeId>(value_cache_.size()) ? value_cache_[id] : kNotCached;
     }
@@ -2051,12 +2025,15 @@ private:
         match_info_[id] = std::move(info);
     }
     bool has_match_info(NodeId id) const {
-        if (id >= match_info_.size()) return false;
+        if (id >= match_info_.size())
+            return false;
         const auto& mi = match_info_[id];
-        return !mi.used_constructors.empty() || !mi.candidate_constructors.empty() || mi.has_wildcard;
+        return !mi.used_constructors.empty() || !mi.candidate_constructors.empty() ||
+               mi.has_wildcard;
     }
     const MatchClauseInfo* get_match_info(NodeId id) const {
-        if (!has_match_info(id)) return nullptr;
+        if (!has_match_info(id))
+            return nullptr;
         return &match_info_[id];
     }
     // Propagate dirty upward: mark this node AND all ancestors dirty
@@ -2151,10 +2128,8 @@ private:
     // kept verbatim so rollback can re-parse and re-attach without needing
     // a generation-aware node lookup.
     std::uint64_t add_mutation_subtree(NodeId target_node, NodeId parent_id,
-                                       std::uint32_t child_idx,
-                                       std::string_view old_subtree_source,
-                                       std::string_view op_name,
-                                       std::string_view summary) {
+                                       std::uint32_t child_idx, std::string_view old_subtree_source,
+                                       std::string_view op_name, std::string_view summary) {
         std::uint64_t mid = next_mutation_id_++;
         auto now =
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2184,13 +2159,11 @@ private:
     // marked dirty for incremental re-eval (#148) / dirty-aware
     // caching (#188). The "structural-" prefix on op_name distinguishes
     // these from typed_mutate's "replace-type" / "replace-value" kinds.
-    std::uint64_t add_mutation_child_op(NodeId parent, std::uint32_t child_idx,
-                                        NodeId old_child, NodeId new_child,
-                                        std::string_view op_name) {
+    std::uint64_t add_mutation_child_op(NodeId parent, std::uint32_t child_idx, NodeId old_child,
+                                        NodeId new_child, std::string_view op_name) {
         return add_mutation_with_rollback(
-            parent, op_name, "", "", op_name, MutationStatus::Committed,
-            child_idx, static_cast<std::uint64_t>(old_child),
-            static_cast<std::uint64_t>(new_child),
+            parent, op_name, "", "", op_name, MutationStatus::Committed, child_idx,
+            static_cast<std::uint64_t>(old_child), static_cast<std::uint64_t>(new_child),
             /*has_rollback=*/true);
     }
 
@@ -2259,9 +2232,7 @@ private:
         std::uint16_t gen = 0;
 
         // Default-constructed refs are always invalid (id=NULL).
-        bool is_valid_in(const FlatAST& ast) const noexcept {
-            return ast.is_valid(*this);
-        }
+        bool is_valid_in(const FlatAST& ast) const noexcept { return ast.is_valid(*this); }
     };
 
     // Issue #191: make a StableNodeRef capturing the current
@@ -2278,11 +2249,9 @@ private:
     [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
-        bool ok = ref.id != NULL_NODE
-            && ref.id < tag_.size()
-            && ref.id < node_gen_.size()
-            && node_gen_[ref.id] == ref.gen
-            && ref.gen == generation_;  // gen must also match current
+        bool ok = ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
+                  node_gen_[ref.id] == ref.gen &&
+                  ref.gen == generation_; // gen must also match current
         if (!ok) {
             // Stale ref — bump the invalidations counter.
             // The whole point of StableNodeRef is to detect
@@ -2315,7 +2284,8 @@ private:
             return;
         }
         ++generation_;
-        if (generation_ == 0) generation_ = 1;
+        if (generation_ == 0)
+            generation_ = 1;
         // Issue #255: only count actual bumps (suppressed
         // ones are accounted for via atomic_batch_commits_).
         bump_generation_count_.fetch_add(1, std::memory_order_relaxed);
@@ -2342,7 +2312,7 @@ private:
     // does many mutations under it.
     void begin_atomic_batch() noexcept {
         bump_generation_suppressed_ = true;
-        atomic_batch_bumps_saved_ = 0;  // reset counter for this batch
+        atomic_batch_bumps_saved_ = 0; // reset counter for this batch
     }
 
     // Commit the batch. Calls bump_generation() once, marks
@@ -2350,7 +2320,8 @@ private:
     void commit_atomic_batch() noexcept {
         bump_generation_suppressed_ = false;
         ++generation_;
-        if (generation_ == 0) generation_ = 1;
+        if (generation_ == 0)
+            generation_ = 1;
         // Note: we don't have a per-batch dirty list (would
         // require tracking all touched nodes in the lockless
         // mutates). The first post-commit structural mutate
@@ -2379,16 +2350,12 @@ private:
     // Issue #250: how many generation bumps the latest batch
     // saved by suppressing per-op bumps. Updated on each
     // commit. Exposed via observability snapshot.
-    std::uint64_t atomic_batch_bumps_saved() const noexcept {
-        return atomic_batch_bumps_saved_;
-    }
+    std::uint64_t atomic_batch_bumps_saved() const noexcept { return atomic_batch_bumps_saved_; }
 
     // True iff an atomic batch is active. Used by
     // mark_dirty_upward to skip dirty propagation during
     // a batch (the commit path handles it).
-    bool atomic_batch_active() const noexcept {
-        return bump_generation_suppressed_;
-    }
+    bool atomic_batch_active() const noexcept { return bump_generation_suppressed_; }
     // Issue #255: reference stability observability accessors.
     // Read by CompilerService::snapshot() (service.ixx) to
     // accumulate into CompilerMetrics for the
@@ -2441,7 +2408,8 @@ private:
                     // just marks the record as rolled back and bumps generation.
                     rec.status = MutationStatus::RolledBack;
                     ++generation_;
-                    if (generation_ == 0) generation_ = 1;
+                    if (generation_ == 0)
+                        generation_ = 1;
                     if (rec.parent_id < tag_.size())
                         mark_dirty_upward(rec.parent_id);
                     return true;
@@ -2457,7 +2425,8 @@ private:
                                     static_cast<std::int64_t>(rec.old_value);
                                 rec.status = MutationStatus::RolledBack;
                                 ++generation_;
-                                if (generation_ == 0) generation_ = 1; // wrap around
+                                if (generation_ == 0)
+                                    generation_ = 1; // wrap around
                                 return true;
                             }
                             break;
@@ -2467,7 +2436,8 @@ private:
                                     static_cast<std::uint32_t>(rec.old_value);
                                 rec.status = MutationStatus::RolledBack;
                                 ++generation_;
-                                if (generation_ == 0) generation_ = 1; // wrap around
+                                if (generation_ == 0)
+                                    generation_ = 1; // wrap around
                                 return true;
                             }
                             break;
@@ -2512,9 +2482,9 @@ private:
         // past the log end, in which case it's a no-op). The
         // contract documents the semantic: result count
         // is 0 when checkpoint_size >= log.size().
-        pre (true)
-    {
-        if (mutation_log_.size() <= checkpoint_size) return 0;
+        pre(true) {
+        if (mutation_log_.size() <= checkpoint_size)
+            return 0;
         std::size_t count = 0;
         for (std::size_t i = mutation_log_.size(); i > checkpoint_size; --i) {
             auto& rec = mutation_log_[i - 1];
@@ -2556,17 +2526,11 @@ private:
         // a stale NodeId from a previous generation would
         // silently no-op (the size check below) and the mutation
         // would vanish without a diagnostic.
-        pre (id < int_val_.size()) {
+        pre(id < int_val_.size()) {
         int_val_[id] = val;
     }
-    void set_float(NodeId id, double val)
-        pre (id < float_val_.size()) {
-        float_val_[id] = val;
-    }
-    void set_sym(NodeId id, SymId val)
-        pre (id < sym_id_.size()) {
-        sym_id_[id] = val;
-    }
+    void set_float(NodeId id, double val) pre(id < float_val_.size()) { float_val_[id] = val; }
+    void set_sym(NodeId id, SymId val) pre(id < sym_id_.size()) { sym_id_[id] = val; }
 
     // Capability require count for DefineModule nodes
     std::uint32_t cap_require_count(NodeId id) const {
@@ -2597,7 +2561,8 @@ private:
     // of `(lambda (x) ...)` is updated when the caller renames `x`.
     template <typename Callback>
     std::size_t rename_param(NodeId id, SymId oldsym, SymId newsym, Callback next_idx) {
-        if (id >= param_count_.size() || id >= param_begin_.size()) return 0;
+        if (id >= param_count_.size() || id >= param_begin_.size())
+            return 0;
         std::size_t n = 0;
         for (std::uint32_t i = 0; i < param_count_[id] + cap_require_count_[id]; ++i) {
             if (param_data_[param_begin_[id] + i] == oldsym) {
@@ -2623,20 +2588,24 @@ private:
     // way to use NodeIds in EDSL / query / mutate code that
     // may span multiple mutating calls.
     [[nodiscard]] StableNodeRef parent_stable(NodeId id) const noexcept {
-        if (id >= parent_.size()) return StableNodeRef{};
+        if (id >= parent_.size())
+            return StableNodeRef{};
         auto pid = parent_[id];
-        if (pid == NULL_NODE) return StableNodeRef{};
+        if (pid == NULL_NODE)
+            return StableNodeRef{};
         return StableNodeRef{pid, generation_};
     }
 
     [[nodiscard]] std::vector<StableNodeRef> children_stable(NodeId id) const {
         std::vector<StableNodeRef> out;
-        if (id >= children_.size()) return out;
+        if (id >= children_.size())
+            return out;
         const auto& pcv = children_[id];
         out.reserve(pcv.size());
         for (std::size_t i = 0; i < pcv.size(); ++i) {
             auto cid = pcv[i];
-            if (cid == NULL_NODE) continue;
+            if (cid == NULL_NODE)
+                continue;
             out.push_back(StableNodeRef{cid, generation_});
         }
         return out;
@@ -2664,8 +2633,7 @@ private:
 };
 
 // ── Patch application ──────────────────────────────────────────
-export bool apply_patches(FlatAST& ast, std::span<const Patch> patches)
-    pre (!patches.empty());
+export bool apply_patches(FlatAST& ast, std::span<const Patch> patches) pre(!patches.empty());
 
 // ── Delta fixup (for deserialization) ──────────────────────────
 export void fixup_deltas(FlatAST& ast);

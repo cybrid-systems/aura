@@ -33,19 +33,18 @@ operation_state when_all_sender::connect(fiber_receiver rcvr) && {
 
     // Spawn each fiber
     for (auto& fn : fns_) {
-        auto sched_ref = *sched_;  // copy the scheduler
+        auto sched_ref = *sched_; // copy the scheduler
         auto fn_copy = std::move(fn);
         auto state_copy = state;
 
-        auto sender = sched_->schedule([fn_copy = std::move(fn_copy),
-                                         state_copy]() mutable {
+        auto sender = sched_->schedule([fn_copy = std::move(fn_copy), state_copy]() mutable {
             try {
                 fn_copy();
             } catch (...) {
                 // Store the first error
                 auto expected = false;
-                if (state_copy->has_error.compare_exchange_strong(
-                        expected, true, std::memory_order_acq_rel)) {
+                if (state_copy->has_error.compare_exchange_strong(expected, true,
+                                                                  std::memory_order_acq_rel)) {
                     state_copy->error = std::current_exception();
                 }
             }
@@ -116,14 +115,12 @@ operation_state with_timeout_sender::connect(fiber_receiver rcvr) && {
             fn();
             // Check if the timeout already fired
             auto expected = false;
-            if (state->done.compare_exchange_strong(expected, true,
-                    std::memory_order_acq_rel)) {
+            if (state->done.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
                 state->receiver.set_value();
             }
         } catch (...) {
             auto expected = false;
-            if (state->done.compare_exchange_strong(expected, true,
-                    std::memory_order_acq_rel)) {
+            if (state->done.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
                 state->receiver.set_error(std::current_exception());
             }
         }
@@ -136,8 +133,7 @@ operation_state with_timeout_sender::connect(fiber_receiver rcvr) && {
     std::thread([state, timeout = timeout_]() {
         std::this_thread::sleep_for(timeout);
         auto expected = false;
-        if (state->done.compare_exchange_strong(expected, true,
-                std::memory_order_acq_rel)) {
+        if (state->done.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
             state->receiver.set_stopped();
         }
     }).detach();

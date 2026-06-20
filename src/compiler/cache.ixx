@@ -50,7 +50,8 @@ public:
     // unknown (or no type_ids column in this cache file). Cheap,
     // bounds-checked.
     std::uint32_t type_id(NodeId id) const {
-        if (id >= num_nodes_ || !type_ids_) return 0;
+        if (id >= num_nodes_ || !type_ids_)
+            return 0;
         return type_ids_[id];
     }
 
@@ -116,11 +117,10 @@ public:
     std::uint32_t ir_entry() const { return ir_entry_function_id_; }
     const std::vector<std::string>& ir_strings() const { return ir_string_pool_; }
     // Signature data access (embedded .aura-type)
-    bool has_sig() const {
-        return header_ && header_->sig_offset > 0 && header_->sig_size > 0;
-    }
+    bool has_sig() const { return header_ && header_->sig_offset > 0 && header_->sig_size > 0; }
     std::string_view sig_data() const {
-        if (!has_sig() || !data_) return {};
+        if (!has_sig() || !data_)
+            return {};
         auto off = static_cast<std::size_t>(header_->sig_offset);
         // 跳过 4 字节的 size 前缀
         return {static_cast<const char*>(data_) + off + 4, header_->sig_size};

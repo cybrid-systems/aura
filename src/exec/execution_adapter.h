@@ -33,7 +33,7 @@
 #include <vector>
 
 namespace aura::serve {
-    class Scheduler;
+class Scheduler;
 }
 
 namespace aura::exec {
@@ -44,9 +44,9 @@ class fiber_sender;
 class operation_state;
 
 // ── Execution tags (lightweight alternative to P2300 tags) ──
-struct set_value_t {};        // operation completed successfully
-struct set_error_t {};        // operation completed with error
-struct set_stopped_t {};      // operation was cancelled
+struct set_value_t {};   // operation completed successfully
+struct set_error_t {};   // operation completed with error
+struct set_stopped_t {}; // operation was cancelled
 
 inline constexpr set_value_t set_value{};
 inline constexpr set_error_t set_error{};
@@ -66,27 +66,30 @@ public:
 
     // Construct with all three callbacks
     fiber_receiver(value_fn v, error_fn e, stopped_fn s)
-        : on_value_(std::move(v)), on_error_(std::move(e)), on_stopped_(std::move(s)) {}
+        : on_value_(std::move(v))
+        , on_error_(std::move(e))
+        , on_stopped_(std::move(s)) {}
 
     // Called when operation succeeds
     void set_value() {
-        if (on_value_) on_value_();
+        if (on_value_)
+            on_value_();
     }
 
     // Called when operation fails
     void set_error(std::exception_ptr e) {
-        if (on_error_) on_error_(std::move(e));
+        if (on_error_)
+            on_error_(std::move(e));
     }
 
     // Called when operation is cancelled
     void set_stopped() {
-        if (on_stopped_) on_stopped_();
+        if (on_stopped_)
+            on_stopped_();
     }
 
     // Check if receiver is valid
-    explicit operator bool() const {
-        return static_cast<bool>(on_value_);
-    }
+    explicit operator bool() const { return static_cast<bool>(on_value_); }
 
 private:
     value_fn on_value_;
@@ -134,7 +137,8 @@ public:
     fiber_sender() = default;
 
     fiber_sender(aura::serve::Scheduler* sched, std::function<void()> fn)
-        : scheduler_(sched), fn_(std::move(fn)) {}
+        : scheduler_(sched)
+        , fn_(std::move(fn)) {}
 
     // Connect this sender to a receiver. Returns an operation_state.
     // The caller must keep the state alive until the receiver fires.
@@ -160,9 +164,7 @@ public:
         : sched_(&sched) {}
 
     // Create a sender that will schedule fn on the fiber scheduler.
-    fiber_sender schedule(std::function<void()> fn) {
-        return fiber_sender(sched_, std::move(fn));
-    }
+    fiber_sender schedule(std::function<void()> fn) { return fiber_sender(sched_, std::move(fn)); }
 
     // Access the underlying scheduler
     aura::serve::Scheduler& underlying() { return *sched_; }

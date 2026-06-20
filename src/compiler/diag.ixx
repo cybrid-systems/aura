@@ -233,7 +233,8 @@ export struct Diagnostic {
                     auto tok_start = line_start + (location.column - 1);
                     if (tok_start < line_end) {
                         auto tok_end = tok_start;
-                        while (tok_end < line_end && !std::isspace(static_cast<unsigned char>(*tok_end)) &&
+                        while (tok_end < line_end &&
+                               !std::isspace(static_cast<unsigned char>(*tok_end)) &&
                                *tok_end != ')' && *tok_end != '(')
                             tok_end++;
                         for (auto c = tok_start + 1; c < tok_end; ++c)

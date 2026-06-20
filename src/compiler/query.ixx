@@ -99,8 +99,8 @@ export struct QueryExpr {
         // Issue #62 Iter 4: global observability queries. Routed
         // through a separate code path (not per-node match); see
         // QueryEngine::execute_global().
-        DeoptCount,         // (:deopt-count)
-        ArenaUsage,         // (:arena-usage)
+        DeoptCount,          // (:deopt-count)
+        ArenaUsage,          // (:arena-usage)
         SpecializationCount, // (:specialization-count)
     };
 
@@ -136,8 +136,7 @@ public:
     QueryExpr parse(std::string_view sexpr);
 
     // Execute a parsed query, returning matching NodeIds
-    std::vector<aura::ast::NodeId> execute(const QueryExpr& q)
-        pre (index_.ast.size() > 0);
+    std::vector<aura::ast::NodeId> execute(const QueryExpr& q) pre(index_.ast.size() > 0);
 
     // Issue #62 Iter 4: global observability query. Returns the
     // counter value for one of the 3 new kinds (DeoptCount,
@@ -154,8 +153,7 @@ public:
 
 private:
     // Internal recursive matching (depth-limited)
-    bool match(aura::ast::NodeId id, const QueryExpr& q, int depth = 0)
-        pre (depth >= 0);
+    bool match(aura::ast::NodeId id, const QueryExpr& q, int depth = 0) pre(depth >= 0);
 
     // Parse helpers
     QueryExpr parse_node_type(std::string_view tag);

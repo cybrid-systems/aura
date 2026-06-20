@@ -37,8 +37,7 @@ extern "C" std::uint64_t aura_fiber_current_id() {
 // aura_jit_runtime.cpp).
 extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*)());
 // One-time hook installer via a static initializer.
-static int s_fiber_hook_init = (aura_set_current_fiber_id_fn(
-    &aura_fiber_current_id), 0);
+static int s_fiber_hook_init = (aura_set_current_fiber_id_fn(&aura_fiber_current_id), 0);
 
 Scheduler* g_scheduler = nullptr;
 
@@ -46,9 +45,11 @@ Scheduler* g_scheduler = nullptr;
 
 void Fiber::check_gc_safepoint() {
     auto* wctx = g_worker_ctx;
-    if (!wctx) return;
+    if (!wctx)
+        return;
     auto* gc = wctx->gc_state;
-    if (!gc) return;
+    if (!gc)
+        return;
     auto phase = gc->phase.load(std::memory_order_acquire);
     if (phase == GCPhase::Requested) {
         // Arrive at safepoint: increment counter
@@ -61,21 +62,23 @@ void Fiber::check_gc_safepoint() {
 // ── Constructor ───────────────────────────────────────
 
 Fiber::Fiber(Func func, size_t stack_size)
-    : id_(next_id_++), stack_size_(stack_size), func_(std::move(func)) {
+    : id_(next_id_++)
+    , stack_size_(stack_size)
+    , func_(std::move(func)) {
 
     // 1. Allocate stack via mmap with guard page
     // Guard page is the first page (PROT_NONE)
     size_t guard_size = 4096;
     size_t alloc_size = guard_size + stack_size_;
 
-    void* base = ::mmap(nullptr, alloc_size, PROT_READ | PROT_WRITE,
-                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void* base =
+        ::mmap(nullptr, alloc_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (base == MAP_FAILED)
         throw std::system_error(errno, std::generic_category(), "fiber mmap stack");
 
     // Guard page at the bottom (to catch stack underflow from overflow)
     ::mprotect(base, guard_size, PROT_NONE);
-    stack_ = static_cast<char*>(base) + guard_size;  // usable starts after guard
+    stack_ = static_cast<char*>(base) + guard_size; // usable starts after guard
 
     // 2. Create eventfd
     eventfd_ = ::eventfd(0, EFD_NONBLOCK);
@@ -97,14 +100,15 @@ Fiber::Fiber(Func func, size_t stack_size)
 
     // makecontext needs function pointer with (int, int) signature on all POSIX
     uint32_t id_high = static_cast<uint32_t>(id_ >> 32);
-    uint32_t id_low  = static_cast<uint32_t>(id_ & 0xFFFFFFFF);
-    ::makecontext(&ctx_, reinterpret_cast<void(*)()>(&trampoline), 2, id_high, id_low);
+    uint32_t id_low = static_cast<uint32_t>(id_ & 0xFFFFFFFF);
+    ::makecontext(&ctx_, reinterpret_cast<void (*)()>(&trampoline), 2, id_high, id_low);
 }
 
 // ── Destructor ───────────────────────────────────────
 
 Fiber::~Fiber() {
-    if (eventfd_ >= 0) ::close(eventfd_);
+    if (eventfd_ >= 0)
+        ::close(eventfd_);
     if (stack_) {
         // stack_ = usable start; the mmap base is one guard page before
         auto* base = static_cast<char*>(stack_) - 4096;
@@ -159,11 +163,12 @@ void Fiber::resume() {
 
     // Swap from worker's loop context to fiber's context
     if (::swapcontext(&wctx->uctx, &ctx_) == -1) {
-        std::fprintf(stderr, "fiber[%lu]: resume swapcontext failed: %s\n",
-                     (unsigned long)id_, std::strerror(errno));
+        std::fprintf(stderr, "fiber[%lu]: resume swapcontext failed: %s\n", (unsigned long)id_,
+                     std::strerror(errno));
     }
 
-    if (g_fiber_setter_) g_fiber_setter_(prev_fiber_void);
+    if (g_fiber_setter_)
+        g_fiber_setter_(prev_fiber_void);
     g_current_fiber = prev;
 }
 
@@ -184,15 +189,15 @@ void Fiber::yield() {
     check_gc_safepoint();
 
     auto* fb = g_current_fiber;
-    if (!fb) return;
+    if (!fb)
+        return;
 
     // Mark as explicit yield (safe to steal)
     fb->set_yield_reason(YieldReason::Explicit);
 
     // Swap from fiber's context back to worker's loop context
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
-        std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n",
-                     std::strerror(errno));
+        std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n", std::strerror(errno));
     }
 }
 
@@ -206,7 +211,8 @@ void Fiber::yield(YieldReason reason) {
     }
 
     auto* fb = g_current_fiber;
-    if (!fb) return;
+    if (!fb)
+        return;
 
     // Check GC safepoint before yielding (P2)
     check_gc_safepoint();
@@ -221,8 +227,7 @@ void Fiber::yield(YieldReason reason) {
 
     // Swap from fiber's context back to worker's loop context
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
-        std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n",
-                     std::strerror(errno));
+        std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n", std::strerror(errno));
     }
 }
 

@@ -30,15 +30,11 @@ public:
     // Try to pop a message.
     // wait=false: non-blocking, returns empty if no message.
     // wait=true: blocking, yields fiber until message arrives.
-    std::string pop(bool wait = false) {
-        return pop_impl(wait, -1);
-    }
+    std::string pop(bool wait = false) { return pop_impl(wait, -1); }
 
     // Pop with optional timeout_ms (>0). Returns empty string on timeout.
     // timeout_ms = -1 means wait forever (if wait=true).
-    std::string pop(bool wait, int timeout_ms) {
-        return pop_impl(wait, timeout_ms);
-    }
+    std::string pop(bool wait, int timeout_ms) { return pop_impl(wait, timeout_ms); }
 
     size_t size() const { return queue_.size(); }
     bool empty() const { return queue_.empty(); }

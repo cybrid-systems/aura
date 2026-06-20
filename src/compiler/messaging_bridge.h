@@ -70,7 +70,7 @@ extern FiberYieldMutationFn g_fiber_yield_mutation_boundary;
 
 // Fiber join — wait for a fiber to complete and return its result (future use)
 // Currently a placeholder — evaluator handles fiber:join internally.
-using FiberJoinFn = void(*)();
+using FiberJoinFn = void (*)();
 extern FiberJoinFn g_fiber_join;
 
 // Session create — set by serve_async.cpp, used by evaluator
@@ -80,7 +80,7 @@ extern std::function<SessionCreateFn>* g_session_create;
 
 // Session list — return all active session IDs
 // Returns empty vector if no sessions or not in serve mode
-using SessionListFn = std::vector<std::string>(*)();
+using SessionListFn = std::vector<std::string> (*)();
 extern SessionListFn g_session_list;
 
 
@@ -88,7 +88,7 @@ extern SessionListFn g_session_list;
 // Since evaluator can't import the CompilerService module,
 // we provide a function that the CompilerService registers.
 using MailboxReadFn = std::optional<std::string> (*)(void* compiler_service, int timeout_ms);
-using MailboxSenderFn = std::string (*)(void* compiler_service);  // sender of last read
+using MailboxSenderFn = std::string (*)(void* compiler_service); // sender of last read
 using MailboxCountFn = std::size_t (*)(void* compiler_service);
 using SessionIdFn = std::string (*)(void* compiler_service);
 using SessionExistsFn = bool (*)(const std::string& id);
@@ -99,19 +99,19 @@ extern MailboxSenderFn g_mailbox_last_sender;
 extern MailboxCountFn g_mailbox_count;
 extern SessionIdFn g_session_id;
 extern SessionExistsFn g_session_exists;
-extern void* g_current_compiler_service;  // set before each eval in serve
+extern void* g_current_compiler_service; // set before each eval in serve
 
 // Arena reset callback — set by CompilerService, called by Evaluator
 // to reclaim arena memory between benchmark tasks.
 // Takes a pointer to the service, returns void.
-using ResetArenaFn = void(*)(void* compiler_service);
+using ResetArenaFn = void (*)(void* compiler_service);
 extern ResetArenaFn g_reset_arena;
 
 // Async HTTP callback — set by serve_async.cpp, used by http-post primitive.
 // When set, http-post uses thread + eventfd for non-blocking HTTP.
 // Returns the response string (or "" on failure).
 using HttpPostAsyncFn = std::string (*)(const std::string& url, const std::string& body,
-                                         const std::string& auth);
+                                        const std::string& auth);
 extern HttpPostAsyncFn g_http_post_async;
 
 // Thread pool enqueue — set by serve_async.cpp, used by thread_pool:enqueue primitive.
@@ -192,6 +192,6 @@ extern GCSweepFn g_gc_sweep;
 using HeapMutexFn = std::function<std::mutex&()>;
 extern HeapMutexFn g_heap_mutex;
 
-}  // namespace aura::messaging
+} // namespace aura::messaging
 
-#endif  // AURA_MESSAGING_BRIDGE_H
+#endif // AURA_MESSAGING_BRIDGE_H

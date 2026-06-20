@@ -27,37 +27,37 @@ namespace aura::compiler::shape {
 using ShapeID = std::uint64_t;
 
 constexpr ShapeID SHAPE_UNKNOWN = 0;
-constexpr ShapeID SHAPE_ANY     = 1;  // Any/generic
-constexpr ShapeID SHAPE_INT     = 2;
-constexpr ShapeID SHAPE_FLOAT   = 3;
-constexpr ShapeID SHAPE_BOOL    = 4;
-constexpr ShapeID SHAPE_STRING  = 5;
-constexpr ShapeID SHAPE_VOID    = 6;
-constexpr ShapeID SHAPE_PAIR    = 10;
-constexpr ShapeID SHAPE_VECTOR  = 11;
-constexpr ShapeID SHAPE_HASH    = 12;
+constexpr ShapeID SHAPE_ANY = 1; // Any/generic
+constexpr ShapeID SHAPE_INT = 2;
+constexpr ShapeID SHAPE_FLOAT = 3;
+constexpr ShapeID SHAPE_BOOL = 4;
+constexpr ShapeID SHAPE_STRING = 5;
+constexpr ShapeID SHAPE_VOID = 6;
+constexpr ShapeID SHAPE_PAIR = 10;
+constexpr ShapeID SHAPE_VECTOR = 11;
+constexpr ShapeID SHAPE_HASH = 12;
 constexpr ShapeID SHAPE_CLOSURE = 13;
-constexpr ShapeID SHAPE_REF     = 14;
+constexpr ShapeID SHAPE_REF = 14;
 
 // ── ShapeTag: top-level classification ─────────────────────────
 enum class ShapeTag : std::uint8_t {
-    Any    = 0,
-    Int    = 1,
-    Float  = 2,
-    Bool   = 3,
+    Any = 0,
+    Int = 1,
+    Float = 2,
+    Bool = 3,
     String = 4,
-    Void   = 5,
-    Pair   = 6,
+    Void = 5,
+    Pair = 6,
     Vector = 7,
-    Hash   = 8,
+    Hash = 8,
     Closure = 9,
-    Struct  = 10,
-    Union   = 11,
-    Ref     = 12,  // Generic ref (not further specialized)
+    Struct = 10,
+    Union = 11,
+    Ref = 12, // Generic ref (not further specialized)
 };
 
 // ── FnKey: identifies a function uniquely ──────────────────────
-using FnKey = std::uint64_t;  // hash of (session_id + function_name)
+using FnKey = std::uint64_t; // hash of (session_id + function_name)
 
 inline FnKey make_fn_key(const std::string& session, const std::string& name) {
     auto h1 = std::hash<std::string>{}(session);
@@ -71,7 +71,7 @@ inline FnKey make_fn_key(const std::string& session, const std::string& name) {
 struct Shape {
     ShapeTag tag = ShapeTag::Any;
     ShapeID id = SHAPE_UNKNOWN;
-    std::int32_t type_id = -1;  // TypeRegistry type ID (if known)
+    std::int32_t type_id = -1; // TypeRegistry type ID (if known)
 
     // Child shapes (heap-allocated)
     Shape* car_shape = nullptr;
@@ -118,6 +118,6 @@ struct ShapeSnapshot {
     std::uint64_t version = 0;
 };
 
-}  // namespace aura::compiler::shape
+} // namespace aura::compiler::shape
 
-#endif  // AURA_COMPILER_SHAPE_H
+#endif // AURA_COMPILER_SHAPE_H

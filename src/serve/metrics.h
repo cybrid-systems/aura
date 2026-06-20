@@ -55,13 +55,9 @@ struct WorkerMetrics {
     std::atomic<uint64_t> qdepth_samples{0};
     std::atomic<uint64_t> qdepth_sum{0};
 
-    void record_busy(int64_t ns) {
-        busy_ns.fetch_add(ns, std::memory_order_relaxed);
-    }
+    void record_busy(int64_t ns) { busy_ns.fetch_add(ns, std::memory_order_relaxed); }
 
-    void record_idle(int64_t ns) {
-        idle_ns.fetch_add(ns, std::memory_order_relaxed);
-    }
+    void record_idle(int64_t ns) { idle_ns.fetch_add(ns, std::memory_order_relaxed); }
 
     void record_qdepth(size_t depth) {
         uint64_t d = static_cast<uint64_t>(depth);
@@ -69,20 +65,22 @@ struct WorkerMetrics {
         qdepth_samples.fetch_add(1, std::memory_order_relaxed);
         // Update max
         uint64_t cur = qdepth_max.load(std::memory_order_relaxed);
-        while (d > cur && !qdepth_max.compare_exchange_weak(cur, d,
-                std::memory_order_relaxed)) {}
+        while (d > cur && !qdepth_max.compare_exchange_weak(cur, d, std::memory_order_relaxed)) {
+        }
     }
 
     double avg_qdepth() const {
         auto samples = qdepth_samples.load(std::memory_order_acquire);
         return samples ? static_cast<double>(qdepth_sum.load(std::memory_order_acquire)) /
-                         static_cast<double>(samples) : 0.0;
+                             static_cast<double>(samples)
+                       : 0.0;
     }
 
     double steal_success_rate() const {
         auto attempts = steal_attempts.load(std::memory_order_acquire);
         return attempts ? static_cast<double>(steal_successes.load(std::memory_order_acquire)) *
-                           100.0 / static_cast<double>(attempts) : 0.0;
+                              100.0 / static_cast<double>(attempts)
+                        : 0.0;
     }
 
     double utilization() const {
@@ -94,25 +92,22 @@ struct WorkerMetrics {
 
     void dump(int id, FILE* out = stdout) const {
         std::fprintf(out,
-            "  [W-%d] fibers=%lu yields=%lu waits=%lu\n"
-            "         steals=%lu/%lu (%.1f%%) pushes=%lu pops=%lu\n"
-            "         util=%.1f%% busy=%ldms idle=%ldms\n"
-            "         wakups=%lu avg_qd=%.1f max_qd=%lu\n",
-            id,
-            (unsigned long)fibers_executed.load(std::memory_order_acquire),
-            (unsigned long)fibers_yielded.load(std::memory_order_acquire),
-            (unsigned long)fibers_waiting.load(std::memory_order_acquire),
-            (unsigned long)steal_successes.load(std::memory_order_acquire),
-            (unsigned long)steal_attempts.load(std::memory_order_acquire),
-            steal_success_rate(),
-            (unsigned long)local_pushes.load(std::memory_order_acquire),
-            (unsigned long)local_pops.load(std::memory_order_acquire),
-            utilization(),
-            (unsigned long)(busy_ns.load(std::memory_order_acquire) / 1000000),
-            (unsigned long)(idle_ns.load(std::memory_order_acquire) / 1000000),
-            (unsigned long)wake_events.load(std::memory_order_acquire),
-            avg_qdepth(),
-            (unsigned long)qdepth_max.load(std::memory_order_acquire));
+                     "  [W-%d] fibers=%lu yields=%lu waits=%lu\n"
+                     "         steals=%lu/%lu (%.1f%%) pushes=%lu pops=%lu\n"
+                     "         util=%.1f%% busy=%ldms idle=%ldms\n"
+                     "         wakups=%lu avg_qd=%.1f max_qd=%lu\n",
+                     id, (unsigned long)fibers_executed.load(std::memory_order_acquire),
+                     (unsigned long)fibers_yielded.load(std::memory_order_acquire),
+                     (unsigned long)fibers_waiting.load(std::memory_order_acquire),
+                     (unsigned long)steal_successes.load(std::memory_order_acquire),
+                     (unsigned long)steal_attempts.load(std::memory_order_acquire),
+                     steal_success_rate(),
+                     (unsigned long)local_pushes.load(std::memory_order_acquire),
+                     (unsigned long)local_pops.load(std::memory_order_acquire), utilization(),
+                     (unsigned long)(busy_ns.load(std::memory_order_acquire) / 1000000),
+                     (unsigned long)(idle_ns.load(std::memory_order_acquire) / 1000000),
+                     (unsigned long)wake_events.load(std::memory_order_acquire), avg_qdepth(),
+                     (unsigned long)qdepth_max.load(std::memory_order_acquire));
     }
 };
 
@@ -134,9 +129,7 @@ struct GlobalMetrics {
     // Per-worker metrics (stored as unique_ptr to avoid atomic copy issues)
     std::vector<std::unique_ptr<WorkerMetrics>> workers;
 
-    explicit GlobalMetrics(size_t num_workers = 0) {
-        resize_workers(num_workers);
-    }
+    explicit GlobalMetrics(size_t num_workers = 0) { resize_workers(num_workers); }
 
     void resize_workers(size_t n) {
         workers.clear();
@@ -145,13 +138,9 @@ struct GlobalMetrics {
         }
     }
 
-    WorkerMetrics& worker(size_t id) {
-        return *workers[id];
-    }
+    WorkerMetrics& worker(size_t id) { return *workers[id]; }
 
-    const WorkerMetrics& worker(size_t id) const {
-        return *workers[id];
-    }
+    const WorkerMetrics& worker(size_t id) const { return *workers[id]; }
 
     size_t num_workers() const { return workers.size(); }
 
@@ -172,19 +161,17 @@ struct GlobalMetrics {
         }
 
         std::fprintf(out,
-            "\n═══ Scheduler Metrics ═══\n"
-            "  fibers: %lu spawned, %lu completed\n"
-            "  steal:  %lu/%lu (%.1f%% success)\n"
-            "  IO:     %lu events (%lu stdin)\n"
-            "  errors: %lu\n",
-            (unsigned long)spawned, (unsigned long)completed,
-            (unsigned long)total_steal_successes,
-            (unsigned long)total_steal_attempts,
-            total_steal_attempts ?
-                static_cast<double>(total_steal_successes) * 100.0 /
-                static_cast<double>(total_steal_attempts) : 0.0,
-            (unsigned long)io_events, (unsigned long)io_stdin,
-            (unsigned long)errors);
+                     "\n═══ Scheduler Metrics ═══\n"
+                     "  fibers: %lu spawned, %lu completed\n"
+                     "  steal:  %lu/%lu (%.1f%% success)\n"
+                     "  IO:     %lu events (%lu stdin)\n"
+                     "  errors: %lu\n",
+                     (unsigned long)spawned, (unsigned long)completed,
+                     (unsigned long)total_steal_successes, (unsigned long)total_steal_attempts,
+                     total_steal_attempts ? static_cast<double>(total_steal_successes) * 100.0 /
+                                                static_cast<double>(total_steal_attempts)
+                                          : 0.0,
+                     (unsigned long)io_events, (unsigned long)io_stdin, (unsigned long)errors);
 
         for (size_t i = 0; i < workers.size(); ++i) {
             workers[i]->dump(static_cast<int>(i), out);
@@ -211,9 +198,8 @@ struct GlobalMetrics {
             steal_s += w->steal_successes.load(std::memory_order_acquire);
         }
         append("steal_attempts", steal_a);
-        steal_s < steal_a ?
-            (json += "  \"steal_successes\": " + std::to_string(steal_s) + ",\n") :
-            (json += "  \"steal_successes\": " + std::to_string(steal_s) + ",\n");
+        steal_s < steal_a ? (json += "  \"steal_successes\": " + std::to_string(steal_s) + ",\n")
+                          : (json += "  \"steal_successes\": " + std::to_string(steal_s) + ",\n");
 
         json += "  \"workers\": [\n";
         for (size_t i = 0; i < workers.size(); ++i) {
@@ -240,7 +226,8 @@ struct GlobalMetrics {
             json.pop_back();
             json.pop_back();
             json += "\n    }";
-            if (i + 1 < workers.size()) json += ",";
+            if (i + 1 < workers.size())
+                json += ",";
             json += "\n";
         }
         json += "  ]\n}\n";
@@ -258,22 +245,27 @@ struct GlobalMetrics {
 
 struct TraceEvent {
     enum Type : uint8_t {
-        Spawn, Resume, Yield, Wait, Done,
+        Spawn,
+        Resume,
+        Yield,
+        Wait,
+        Done,
     };
     Type type;
     uint64_t fiber_id;
-    int64_t timestamp_ns;  // steady_clock
+    int64_t timestamp_ns; // steady_clock
 };
 
 // Ring buffer per fiber (global pool managed by scheduler)
 struct TraceBuffer {
     static constexpr size_t CAPACITY = 256;
     TraceEvent events[CAPACITY];
-    std::atomic<uint32_t> head{0};  // write cursor
+    std::atomic<uint32_t> head{0}; // write cursor
 
     void record(TraceEvent::Type type, uint64_t fiber_id) {
         auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
+                       std::chrono::steady_clock::now().time_since_epoch())
+                       .count();
         uint32_t pos = head.fetch_add(1, std::memory_order_relaxed) % CAPACITY;
         events[pos] = {type, fiber_id, now};
     }
@@ -281,11 +273,16 @@ struct TraceBuffer {
 
 inline const char* trace_type_name(TraceEvent::Type t) {
     switch (t) {
-        case TraceEvent::Spawn: return "spawn";
-        case TraceEvent::Resume: return "resume";
-        case TraceEvent::Yield: return "yield";
-        case TraceEvent::Wait: return "wait";
-        case TraceEvent::Done: return "done";
+        case TraceEvent::Spawn:
+            return "spawn";
+        case TraceEvent::Resume:
+            return "resume";
+        case TraceEvent::Yield:
+            return "yield";
+        case TraceEvent::Wait:
+            return "wait";
+        case TraceEvent::Done:
+            return "done";
     }
     return "?";
 }

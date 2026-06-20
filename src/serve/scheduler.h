@@ -48,7 +48,7 @@ public:
     // worker_id: 0..num_workers-1. The fiber will always run on
     // that worker, even after yield/wakeup (cache-aware scheduling).
     Fiber* spawn_with_affinity(Fiber::Func func, int worker_id,
-                                size_t stack_size = 2 * 1024 * 1024);
+                               size_t stack_size = 2 * 1024 * 1024);
 
     // Run the event loop until all fibers are done.
     // This is called on the main thread (IO thread).
@@ -110,7 +110,7 @@ public:
     // ── Worker management ───────────────────────────
     int num_workers() const { return num_workers_; }
     WorkerThread* worker(int idx);
-    int next_worker_id();  // round-robin assignment
+    int next_worker_id(); // round-robin assignment
 
     // ── Phase 4: load-aware worker selection ─────────
     // Picks the worker with the smallest local queue.
@@ -149,7 +149,7 @@ public:
 private:
     int num_workers_;
     std::vector<std::unique_ptr<WorkerThread>> workers_;
-    std::atomic<int> next_worker_{0};  // round-robin counter
+    std::atomic<int> next_worker_{0}; // round-robin counter
 
     // IO thread resources
     int epoll_fd_ = -1;

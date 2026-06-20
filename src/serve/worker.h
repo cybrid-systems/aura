@@ -29,7 +29,7 @@ class Scheduler;
 // they stay alert longer.
 struct StealBudget {
     int consecutive_failures = 0;
-    int max_before_sleep = 3;  // after N failures, go to sleep
+    int max_before_sleep = 3; // after N failures, go to sleep
 
     // Adaptive tuning state
     static constexpr int WINDOW_SIZE = 10;
@@ -41,11 +41,10 @@ struct StealBudget {
 
     StealBudget() = default;
 
-    explicit StealBudget(bool adaptive) : adaptive_enabled(adaptive) {}
+    explicit StealBudget(bool adaptive)
+        : adaptive_enabled(adaptive) {}
 
-    bool should_steal() const {
-        return consecutive_failures < max_before_sleep;
-    }
+    bool should_steal() const { return consecutive_failures < max_before_sleep; }
 
     void record_success() {
         consecutive_failures = 0;
@@ -73,10 +72,12 @@ struct StealBudget {
     //   - Medium success (20-50%): default (3-4)
     //   - Low success (<20%): sleep sooner (1-2)
     void adapt() {
-        if (history_idx < WINDOW_SIZE) return;  // not enough data yet
+        if (history_idx < WINDOW_SIZE)
+            return; // not enough data yet
 
         int successes = 0;
-        for (int i = 0; i < WINDOW_SIZE; ++i) successes += history[i];
+        for (int i = 0; i < WINDOW_SIZE; ++i)
+            successes += history[i];
         double rate = static_cast<double>(successes) / WINDOW_SIZE;
 
         if (rate > 0.50) {

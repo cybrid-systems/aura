@@ -36,16 +36,15 @@ namespace aura::compiler {
 using EvalValue = types::EvalValue;
 using namespace aura::compiler::types;
 
-void FFIRuntime::register_primitives(
-    RegisterFn add,
-    std::pmr::vector<std::string>* string_heap,
-    std::vector<void*>* opaque_heap,
-    std::array<std::uint64_t, 16>* coverage_counters) {
+void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::string>* string_heap,
+                                     std::vector<void*>* opaque_heap,
+                                     std::array<std::uint64_t, 16>* coverage_counters) {
     auto* sh = string_heap;
     auto* oh = opaque_heap;
 
     add("c-load", [this, sh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
-        if (coverage_counters) (*coverage_counters)[8]++;
+        if (coverage_counters)
+            (*coverage_counters)[8]++;
         if (a.empty() || !types::is_string(a[0]))
             return make_int(0);
         auto path = (*sh)[types::as_string_idx(a[0])];
@@ -62,12 +61,14 @@ void FFIRuntime::register_primitives(
     });
 
     add("c-func", [this, sh, coverage_counters](const auto& a) -> EvalValue {
-        if (coverage_counters) (*coverage_counters)[8]++;
+        if (coverage_counters)
+            (*coverage_counters)[8]++;
         // (c-func lib-id "name" sig-string)
         // lib-id -1 uses RTLD_DEFAULT
         if (a.size() < 3 || !types::is_int(a[0]) || !types::is_string(a[1])) {
             fprintf(stdout, "c-func: expected (c-func lib-id \"name\" signature\n");
-            fprintf(stdout, "  signature format: \"(ArgType) -> RetType\"  e.g. \"(String) -> Int\"\n");
+            fprintf(stdout,
+                    "  signature format: \"(ArgType) -> RetType\"  e.g. \"(String) -> Int\"\n");
             return make_int(0);
         }
         auto raw_lib_id = types::as_int(a[0]);
@@ -75,7 +76,8 @@ void FFIRuntime::register_primitives(
         if (raw_lib_id >= 0) {
             auto lib_idx = static_cast<std::size_t>(raw_lib_id);
             if (lib_idx >= libs_.size()) {
-                fprintf(stdout, "c-func: invalid library handle %zu (use -1 for RTLD_DEFAULT)\n", lib_idx);
+                fprintf(stdout, "c-func: invalid library handle %zu (use -1 for RTLD_DEFAULT)\n",
+                        lib_idx);
                 return make_int(0);
             }
             lib = libs_[lib_idx];
@@ -99,7 +101,8 @@ void FFIRuntime::register_primitives(
                 if (types::is_int(a[i]))
                     arg_types.push_back(static_cast<int>(types::as_int(a[i])));
         } else {
-            fprintf(stdout, "c-func: third arg must be signature string like \"(String) -> Int\"\n");
+            fprintf(stdout,
+                    "c-func: third arg must be signature string like \"(String) -> Int\"\n");
             return make_int(0);
         }
         auto* fn_ptr = ::dlsym(lib, name.c_str());
@@ -108,7 +111,8 @@ void FFIRuntime::register_primitives(
             fprintf(stdout, "c-func: symbol '%s' not found in library\n", name.c_str());
             if (err)
                 fprintf(stdout, "  dlerror: %s\n", err);
-            fprintf(stdout, "  tip: use (c-func -1 \"%s\" \"(String) -> Int\") with RTLD_DEFAULT\n", name.c_str());
+            fprintf(stdout, "  tip: use (c-func -1 \"%s\" \"(String) -> Int\") with RTLD_DEFAULT\n",
+                    name.c_str());
             return make_int(0);
         }
         auto fidx = funcs_.size();
@@ -118,7 +122,8 @@ void FFIRuntime::register_primitives(
     });
 
     add("c-opaque", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
-        if (coverage_counters) (*coverage_counters)[8]++;
+        if (coverage_counters)
+            (*coverage_counters)[8]++;
         if (a.empty() || !types::is_int(a[0]))
             return make_int(0);
         auto addr = types::as_int(a[0]);
@@ -135,16 +140,19 @@ void FFIRuntime::register_primitives(
         if (a.empty() || !types::is_opaque(a[0]))
             return make_int(0);
         auto idx = types::as_opaque_idx(a[0]);
-        if (idx >= oh->size()) return make_int(0);
+        if (idx >= oh->size())
+            return make_int(0);
         return make_int(reinterpret_cast<std::int64_t>((*oh)[idx]));
     });
 
     add("c-alloc", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
-        if (coverage_counters) (*coverage_counters)[8]++;
+        if (coverage_counters)
+            (*coverage_counters)[8]++;
         if (a.empty() || !types::is_int(a[0]))
             return make_int(0);
         auto size = static_cast<std::size_t>(types::as_int(a[0]));
-        if (size == 0) return make_int(0);
+        if (size == 0)
+            return make_int(0);
         auto* ptr = std::calloc(1, size);
         auto idx = oh->size();
         oh->push_back(ptr);
@@ -155,7 +163,8 @@ void FFIRuntime::register_primitives(
         if (a.empty() || !types::is_opaque(a[0]))
             return make_void();
         auto idx = types::as_opaque_idx(a[0]);
-        if (idx >= oh->size()) return make_void();
+        if (idx >= oh->size())
+            return make_void();
         std::free((*oh)[idx]);
         (*oh)[idx] = nullptr;
         return make_void();
@@ -171,11 +180,13 @@ void FFIRuntime::register_primitives(
     });
 
     add("c-struct-set!", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
-        if (coverage_counters) (*coverage_counters)[8]++;
+        if (coverage_counters)
+            (*coverage_counters)[8]++;
         if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]))
             return make_void();
         auto oi = types::as_opaque_idx(a[0]);
-        if (oi >= oh->size() || !(*oh)[oi]) return make_void();
+        if (oi >= oh->size() || !(*oh)[oi])
+            return make_void();
         auto offset = static_cast<std::size_t>(types::as_int(a[1]));
         auto* base = static_cast<char*>((*oh)[oi]);
         auto& val = a[2];
@@ -194,12 +205,13 @@ void FFIRuntime::register_primitives(
     });
 
     add("c-struct-ref", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
-        if (coverage_counters) (*coverage_counters)[8]++;
-        if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]) ||
-            !types::is_int(a[2]))
+        if (coverage_counters)
+            (*coverage_counters)[8]++;
+        if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]) || !types::is_int(a[2]))
             return make_int(0);
         auto oi = types::as_opaque_idx(a[0]);
-        if (oi >= oh->size() || !(*oh)[oi]) return make_int(0);
+        if (oi >= oh->size() || !(*oh)[oi])
+            return make_int(0);
         auto offset = static_cast<std::size_t>(types::as_int(a[1]));
         auto type = static_cast<int>(types::as_int(a[2]));
         auto* base = static_cast<const char*>((*oh)[oi]);

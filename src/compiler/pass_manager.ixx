@@ -59,8 +59,7 @@ bool run_analysis_pipeline(aura::ir::IRModule& mod, Passes&... passes) {
     return (run_analysis_one(mod, passes) && ...);
 }
 
-export template <AnalysisPass P>
-bool run_analysis_one(aura::ir::IRModule& mod, P& pass) {
+export template <AnalysisPass P> bool run_analysis_one(aura::ir::IRModule& mod, P& pass) {
     pass.run(mod);
     return !pass.has_error();
 }
@@ -287,10 +286,9 @@ public:
         // and the pass produces a clean run instead of silently
         // dropping every type-driven optimization.
         if (!type_reg_) {
-            std::println(std::cerr,
-                "TypeSpecializationWrap: no TypeRegistry provided; "
-                "CastOp insertion will be a no-op. "
-                "Pass TypeRegistry* to the constructor to enable.");
+            std::println(std::cerr, "TypeSpecializationWrap: no TypeRegistry provided; "
+                                    "CastOp insertion will be a no-op. "
+                                    "Pass TypeRegistry* to the constructor to enable.");
             return;
         }
         auto dyn_id = type_reg_->lookup_type("Any");
@@ -366,8 +364,8 @@ public:
                             auto cast_tag = type_tag_for_coercion(aura::core::TypeId{ret_type, 1});
                             // Snapshot ops[0] before insert (insert may reallocate instructions).
                             auto ops0_snapshot = ops[0];
-                            cast_instr.operands =
-                                std::array<std::uint32_t, 4>{cast_slot, ops0_snapshot, cast_tag, 0u};
+                            cast_instr.operands = std::array<std::uint32_t, 4>{
+                                cast_slot, ops0_snapshot, cast_tag, 0u};
                             cast_instr.type_id = ret_type;
                             block.instructions.insert(block.instructions.begin() +
                                                           static_cast<std::ptrdiff_t>(i),
@@ -397,10 +395,9 @@ public:
                         // still needed — a Branch without a concrete
                         // result type (e.g. an if-conditional used as a
                         // statement) shouldn't be type-checked.
-                        bool narrowed_type_known =
-                            (instr.narrow_evidence != 0);
-                        if (!narrowed_type_known &&
-                            if_result_type != 0 && if_result_type != dyn_id.index) {
+                        bool narrowed_type_known = (instr.narrow_evidence != 0);
+                        if (!narrowed_type_known && if_result_type != 0 &&
+                            if_result_type != dyn_id.index) {
                             auto then_blk = ops[1];
                             auto else_blk = ops[2];
                             auto check_and_cast = [&](std::uint32_t blk_id) {
@@ -571,61 +568,59 @@ export struct CoercionMarker {
 // coercion needed). Dynamic→static or ground→ground needs
 // a CoercionNode.
 namespace detail_pass {
-inline bool needs_coercion_impl(const aura::core::TypeRegistry& reg,
-                                 std::uint32_t actual_id,
-                                 std::uint32_t expected_id) {
-    if (actual_id == expected_id || actual_id == 0 || expected_id == 0)
-        return false;
-    auto actual = aura::core::TypeId{actual_id, 1};
-    auto expected = aura::core::TypeId{expected_id, 1};
-    if (actual == expected)
-        return false;
-    // static→dynamic: erasure
-    if (actual != reg.dynamic_type() && expected == reg.dynamic_type())
-        return false;
-    return true; // dynamic→static or ground→ground
-}
-
-inline void visit_for_coercion(const aura::core::TypeRegistry& reg,
-                                const aura::ast::FlatAST& flat,
-                                aura::ast::NodeId id,
-                                std::vector<CoercionMarker>& out) {
-    auto v = flat.get(id);
-    // Post-order: children first
-    for (auto child_id : v.children) {
-        if (child_id != aura::ast::NULL_NODE)
-            visit_for_coercion(reg, flat, child_id, out);
+    inline bool needs_coercion_impl(const aura::core::TypeRegistry& reg, std::uint32_t actual_id,
+                                    std::uint32_t expected_id) {
+        if (actual_id == expected_id || actual_id == 0 || expected_id == 0)
+            return false;
+        auto actual = aura::core::TypeId{actual_id, 1};
+        auto expected = aura::core::TypeId{expected_id, 1};
+        if (actual == expected)
+            return false;
+        // static→dynamic: erasure
+        if (actual != reg.dynamic_type() && expected == reg.dynamic_type())
+            return false;
+        return true; // dynamic→static or ground→ground
     }
 
-    if (v.tag == aura::ast::NodeTag::TypeAnnotation) {
-        if (v.children.empty())
-            return;
-        auto inner_id = v.child(0);
-        auto inner_type = flat.type_id(inner_id);
-        auto ann_type = flat.type_id(id);
-        if (needs_coercion_impl(reg, inner_type, ann_type)) {
-            out.push_back(CoercionMarker{
-                .source_node = inner_id,
-                .target_type_id = ann_type,
-                .context = aura::ast::NodeTag::TypeAnnotation,
-                .parent = id,
-                .child_index = 0,
-            });
+    inline void visit_for_coercion(const aura::core::TypeRegistry& reg,
+                                   const aura::ast::FlatAST& flat, aura::ast::NodeId id,
+                                   std::vector<CoercionMarker>& out) {
+        auto v = flat.get(id);
+        // Post-order: children first
+        for (auto child_id : v.children) {
+            if (child_id != aura::ast::NULL_NODE)
+                visit_for_coercion(reg, flat, child_id, out);
         }
+
+        if (v.tag == aura::ast::NodeTag::TypeAnnotation) {
+            if (v.children.empty())
+                return;
+            auto inner_id = v.child(0);
+            auto inner_type = flat.type_id(inner_id);
+            auto ann_type = flat.type_id(id);
+            if (needs_coercion_impl(reg, inner_type, ann_type)) {
+                out.push_back(CoercionMarker{
+                    .source_node = inner_id,
+                    .target_type_id = ann_type,
+                    .context = aura::ast::NodeTag::TypeAnnotation,
+                    .parent = id,
+                    .child_index = 0,
+                });
+            }
+        }
+        // Call arg coercion: future work (handled at IR level by
+        // TypeSpecializationWrap for now).
     }
-    // Call arg coercion: future work (handled at IR level by
-    // TypeSpecializationWrap for now).
-}
 } // namespace detail_pass
 
 // Free function: replaces the old class CoercionMarkerPass.
 // All inputs are passed explicitly (no member state). The
 // return value is the collected coercion markers.
 export std::vector<CoercionMarker> mark_coercions(aura::core::TypeRegistry& reg,
-                                                   aura::ast::FlatAST& flat,
-                                                   aura::ast::StringPool& pool,
-                                                   aura::ast::NodeId root) {
-    (void)pool;  // pool not used by current logic (kept for future)
+                                                  aura::ast::FlatAST& flat,
+                                                  aura::ast::StringPool& pool,
+                                                  aura::ast::NodeId root) {
+    (void)pool; // pool not used by current logic (kept for future)
     std::vector<CoercionMarker> markers;
     if (root == aura::ast::NULL_NODE || root >= flat.size())
         return markers;
@@ -806,11 +801,16 @@ public:
     // LinearOwnershipPass) that need operand counts.
     static std::uint32_t operand_count_local(aura::ir::IROpcode op) {
         switch (op) {
-            case aura::ir::IROpcode::Nop: return 0;
-            case aura::ir::IROpcode::ConstI64: return 1;
-            case aura::ir::IROpcode::ConstF64: return 1;
-            case aura::ir::IROpcode::Local: return 2;
-            case aura::ir::IROpcode::Arg: return 2;
+            case aura::ir::IROpcode::Nop:
+                return 0;
+            case aura::ir::IROpcode::ConstI64:
+                return 1;
+            case aura::ir::IROpcode::ConstF64:
+                return 1;
+            case aura::ir::IROpcode::Local:
+                return 2;
+            case aura::ir::IROpcode::Arg:
+                return 2;
             case aura::ir::IROpcode::Add:
             case aura::ir::IROpcode::Sub:
             case aura::ir::IROpcode::Mul:
@@ -821,45 +821,84 @@ public:
             case aura::ir::IROpcode::Le:
             case aura::ir::IROpcode::Ge:
             case aura::ir::IROpcode::And:
-            case aura::ir::IROpcode::Or: return 3;
-            case aura::ir::IROpcode::Not: return 2;
-            case aura::ir::IROpcode::Branch: return 3;
-            case aura::ir::IROpcode::Jump: return 1;
-            case aura::ir::IROpcode::Call: return 4;  // callee, args, count, result
-            case aura::ir::IROpcode::Return: return 1;
-            case aura::ir::IROpcode::MakeClosure: return 3;
-            case aura::ir::IROpcode::Capture: return 3;
-            case aura::ir::IROpcode::CaptureRef: return 3;
-            case aura::ir::IROpcode::Apply: return 4;
-            case aura::ir::IROpcode::NewCell: return 1;
-            case aura::ir::IROpcode::CellSet: return 2;
-            case aura::ir::IROpcode::CellGet: return 2;
-            case aura::ir::IROpcode::CastOp: return 3;
-            case aura::ir::IROpcode::ConstString: return 2;
-            case aura::ir::IROpcode::PrimCall: return 3;
-            case aura::ir::IROpcode::Primitive: return 2;
-            case aura::ir::IROpcode::ConstBool: return 2;
-            case aura::ir::IROpcode::ConstVoid: return 1;
-            case aura::ir::IROpcode::MakePair: return 3;
-            case aura::ir::IROpcode::Car: return 2;
-            case aura::ir::IROpcode::Cdr: return 2;
-            case aura::ir::IROpcode::Raise: return 2;
-            case aura::ir::IROpcode::IsError: return 2;
-            case aura::ir::IROpcode::TryBegin: return 1;
-            case aura::ir::IROpcode::TryEnd: return 2;
-            case aura::ir::IROpcode::HashRef: return 3;
-            case aura::ir::IROpcode::HashSet: return 3;
-            case aura::ir::IROpcode::HashRemove: return 3;
-            case aura::ir::IROpcode::LinearWrap: return 2;
-            case aura::ir::IROpcode::MoveOp: return 2;
-            case aura::ir::IROpcode::BorrowOp: return 2;
-            case aura::ir::IROpcode::MutBorrowOp: return 2;
-            case aura::ir::IROpcode::DropOp: return 1;
-            case aura::ir::IROpcode::RefCountOp: return 3;
-            case aura::ir::IROpcode::ArenaPush: return 2;
-            case aura::ir::IROpcode::ArenaPop: return 1;
-            case aura::ir::IROpcode::GuardShape: return 4;
-            default: return 4;  // conservative: assume full operand count
+            case aura::ir::IROpcode::Or:
+                return 3;
+            case aura::ir::IROpcode::Not:
+                return 2;
+            case aura::ir::IROpcode::Branch:
+                return 3;
+            case aura::ir::IROpcode::Jump:
+                return 1;
+            case aura::ir::IROpcode::Call:
+                return 4; // callee, args, count, result
+            case aura::ir::IROpcode::Return:
+                return 1;
+            case aura::ir::IROpcode::MakeClosure:
+                return 3;
+            case aura::ir::IROpcode::Capture:
+                return 3;
+            case aura::ir::IROpcode::CaptureRef:
+                return 3;
+            case aura::ir::IROpcode::Apply:
+                return 4;
+            case aura::ir::IROpcode::NewCell:
+                return 1;
+            case aura::ir::IROpcode::CellSet:
+                return 2;
+            case aura::ir::IROpcode::CellGet:
+                return 2;
+            case aura::ir::IROpcode::CastOp:
+                return 3;
+            case aura::ir::IROpcode::ConstString:
+                return 2;
+            case aura::ir::IROpcode::PrimCall:
+                return 3;
+            case aura::ir::IROpcode::Primitive:
+                return 2;
+            case aura::ir::IROpcode::ConstBool:
+                return 2;
+            case aura::ir::IROpcode::ConstVoid:
+                return 1;
+            case aura::ir::IROpcode::MakePair:
+                return 3;
+            case aura::ir::IROpcode::Car:
+                return 2;
+            case aura::ir::IROpcode::Cdr:
+                return 2;
+            case aura::ir::IROpcode::Raise:
+                return 2;
+            case aura::ir::IROpcode::IsError:
+                return 2;
+            case aura::ir::IROpcode::TryBegin:
+                return 1;
+            case aura::ir::IROpcode::TryEnd:
+                return 2;
+            case aura::ir::IROpcode::HashRef:
+                return 3;
+            case aura::ir::IROpcode::HashSet:
+                return 3;
+            case aura::ir::IROpcode::HashRemove:
+                return 3;
+            case aura::ir::IROpcode::LinearWrap:
+                return 2;
+            case aura::ir::IROpcode::MoveOp:
+                return 2;
+            case aura::ir::IROpcode::BorrowOp:
+                return 2;
+            case aura::ir::IROpcode::MutBorrowOp:
+                return 2;
+            case aura::ir::IROpcode::DropOp:
+                return 1;
+            case aura::ir::IROpcode::RefCountOp:
+                return 3;
+            case aura::ir::IROpcode::ArenaPush:
+                return 2;
+            case aura::ir::IROpcode::ArenaPop:
+                return 1;
+            case aura::ir::IROpcode::GuardShape:
+                return 4;
+            default:
+                return 4; // conservative: assume full operand count
         }
     }
 
@@ -924,16 +963,19 @@ public:
         // as references to slot 0. operand_count is the number
         // of MEANINGFUL operands (per kOpcodeInfo in ir.ixx).
         const std::size_t n = block.instructions.size();
-        if (n == 0) return;
+        if (n == 0)
+            return;
         std::vector<bool> used(n, false);
         for (const auto& instr : block.instructions) {
             auto op_count = DCEPass::operand_count_local(instr.opcode);
             for (std::uint32_t k = 0; k < op_count; ++k) {
                 auto op = instr.operands[k];
                 // Skip the result slot of has_result_slot ops.
-                if (k == 0 && has_result_slot_local(instr.opcode)) continue;
+                if (k == 0 && has_result_slot_local(instr.opcode))
+                    continue;
                 // Call's result slot is operands[3], not [0].
-                if (k == 3 && instr.opcode == aura::ir::IROpcode::Call) continue;
+                if (k == 3 && instr.opcode == aura::ir::IROpcode::Call)
+                    continue;
                 if (op < n) {
                     used[op] = true;
                 }
@@ -944,8 +986,10 @@ public:
         // unused. Replace with Nop (preserves indices).
         for (std::size_t i = 0; i < n; ++i) {
             const auto& instr = block.instructions[i];
-            if (!is_pure(instr.opcode)) continue;
-            if (!has_result_slot_local(instr.opcode)) continue;
+            if (!is_pure(instr.opcode))
+                continue;
+            if (!has_result_slot_local(instr.opcode))
+                continue;
             auto result_slot = instr.operands[0];
             if (result_slot < n && !used[result_slot]) {
                 // Dead pure compute — replace with Nop. (We
@@ -1016,10 +1060,8 @@ private:
 
     // Mark the operand indices of the given escape-point
     // instruction as escaped in `escape_map`.
-    void mark_escape_point(
-        const aura::ir::IRInstruction& instr,
-        const aura::ir::BasicBlock& block,
-        std::vector<std::uint8_t>& escape_map) {
+    void mark_escape_point(const aura::ir::IRInstruction& instr, const aura::ir::BasicBlock& block,
+                           std::vector<std::uint8_t>& escape_map) {
         const std::size_t n = block.instructions.size();
         const std::size_t local_count = escape_map.size();
         switch (instr.opcode) {
@@ -1079,35 +1121,34 @@ private:
 
     // Backward propagation: if a result escapes, its operands
     // escape (Local source, MakePair car/cdr).
-    bool propagate_backward(
-        const aura::ir::IRFunction& func,
-        std::vector<std::uint8_t>& escape_map) {
+    bool propagate_backward(const aura::ir::IRFunction& func,
+                            std::vector<std::uint8_t>& escape_map) {
         const std::size_t local_count = escape_map.size();
         bool changed = false;
         for (const auto& block : func.blocks) {
             for (const auto& instr : block.instructions) {
-                if (!is_escape_point_or_pure_propagator(instr.opcode)) continue;
-                if (instr.operands[0] >= local_count) continue;
-                if (!escape_map[instr.operands[0]]) continue;
+                if (!is_escape_point_or_pure_propagator(instr.opcode))
+                    continue;
+                if (instr.operands[0] >= local_count)
+                    continue;
+                if (!escape_map[instr.operands[0]])
+                    continue;
 
                 switch (instr.opcode) {
                     case aura::ir::IROpcode::Local:
                         // Local(result, src) — src escapes
-                        if (instr.operands[1] < local_count &&
-                            !escape_map[instr.operands[1]]) {
+                        if (instr.operands[1] < local_count && !escape_map[instr.operands[1]]) {
                             escape_map[instr.operands[1]] = 1;
                             changed = true;
                         }
                         break;
                     case aura::ir::IROpcode::MakePair:
                         // MakePair(result, car, cdr) — car + cdr escape
-                        if (instr.operands[1] < local_count &&
-                            !escape_map[instr.operands[1]]) {
+                        if (instr.operands[1] < local_count && !escape_map[instr.operands[1]]) {
                             escape_map[instr.operands[1]] = 1;
                             changed = true;
                         }
-                        if (instr.operands[2] < local_count &&
-                            !escape_map[instr.operands[2]]) {
+                        if (instr.operands[2] < local_count && !escape_map[instr.operands[2]]) {
                             escape_map[instr.operands[2]] = 1;
                             changed = true;
                         }
@@ -1124,8 +1165,7 @@ private:
     // propagator (Local, MakePair) whose operands may need
     // backward propagation.
     static bool is_escape_point_or_pure_propagator(aura::ir::IROpcode op) {
-        return is_escape_point(op) ||
-               op == aura::ir::IROpcode::Local ||
+        return is_escape_point(op) || op == aura::ir::IROpcode::Local ||
                op == aura::ir::IROpcode::MakePair;
     }
 
@@ -1144,7 +1184,7 @@ private:
 
         // Pass 2: backward propagation until fixpoint.
         bool changed = true;
-        int max_iters = 100;  // safety bound
+        int max_iters = 100; // safety bound
         while (changed && max_iters-- > 0) {
             changed = propagate_backward(func, func.escape_map);
         }
@@ -1198,7 +1238,7 @@ private:
         switch (op) {
             case aura::ir::IROpcode::MoveOp:
             case aura::ir::IROpcode::DropOp:
-            case aura::ir::IROpcode::RefCountOp:  // dec variant
+            case aura::ir::IROpcode::RefCountOp: // dec variant
                 return true;
             default:
                 return false;
@@ -1220,9 +1260,9 @@ private:
             case aura::ir::IROpcode::ConstVoid:
             case aura::ir::IROpcode::CellGet:
             case aura::ir::IROpcode::MakePair:
-                return false;  // no input slots
+                return false; // no input slots
             default:
-                return true;  // has at least one input
+                return true; // has at least one input
         }
     }
 
@@ -1245,8 +1285,7 @@ private:
                         }
                         moved[consumed] = 1;
                     }
-                } else if (reads_input(instr.opcode) &&
-                           func.local_count > 0) {
+                } else if (reads_input(instr.opcode) && func.local_count > 0) {
                     // Check all input operands for use-after-move.
                     // Skip operands[0] (result slot, a write).
                     auto op_count = DCEPass::operand_count_local(instr.opcode);
@@ -1331,7 +1370,8 @@ private:
         // (assumes slots are dense, which is the convention
         // for Aura's IR).
         const std::size_t n = block.instructions.size();
-        if (n == 0) return;
+        if (n == 0)
+            return;
         // Find max slot referenced in the block.
         std::uint32_t max_slot = 0;
         for (const auto& instr : block.instructions) {
@@ -1340,11 +1380,13 @@ private:
                     max_slot = instr.operands[k];
             }
         }
-        if (max_slot == 0) return;
+        if (max_slot == 0)
+            return;
         // Allocate slot_type_id sized to max_slot + 1.
         std::vector<std::uint32_t> slot_type_id(max_slot + 1, 0);
         for (const auto& instr : block.instructions) {
-            if (!DCEPass::has_result_slot_local(instr.opcode)) continue;
+            if (!DCEPass::has_result_slot_local(instr.opcode))
+                continue;
             if (instr.type_id != 0) {
                 auto slot = instr.operands[0];
                 if (slot <= max_slot) {
@@ -1355,9 +1397,12 @@ private:
 
         // Pass 2: propagate to instructions with type_id == 0.
         for (auto& instr : block.instructions) {
-            if (!should_propagate(instr.opcode)) continue;
-            if (instr.type_id != 0) continue;  // already set
-            if (!DCEPass::has_result_slot_local(instr.opcode)) continue;
+            if (!should_propagate(instr.opcode))
+                continue;
+            if (instr.type_id != 0)
+                continue; // already set
+            if (!DCEPass::has_result_slot_local(instr.opcode))
+                continue;
             std::uint32_t inferred = 0;
             switch (instr.opcode) {
                 case aura::ir::IROpcode::Local:
@@ -1378,11 +1423,12 @@ private:
                     // Two source operands. If both have the same
                     // type_id, propagate. If they differ, leave 0
                     // (downstream pass handles mixed-type ops).
-                    auto t1 = (instr.operands[1] <= max_slot)
-                                   ? slot_type_id[instr.operands[1]] : 0u;
-                    auto t2 = (instr.operands[2] <= max_slot)
-                                   ? slot_type_id[instr.operands[2]] : 0u;
-                    if (t1 != 0 && t1 == t2) inferred = t1;
+                    auto t1 =
+                        (instr.operands[1] <= max_slot) ? slot_type_id[instr.operands[1]] : 0u;
+                    auto t2 =
+                        (instr.operands[2] <= max_slot) ? slot_type_id[instr.operands[2]] : 0u;
+                    if (t1 != 0 && t1 == t2)
+                        inferred = t1;
                     break;
                 }
                 default:
@@ -1469,8 +1515,7 @@ public:
         // component (i.e., reachable from each other through
         // the call graph).
         const auto call_graph = build_call_graph(module);
-        scc_id_of_fid_ = compute_sccs(module.functions.size(),
-                                       call_graph);
+        scc_id_of_fid_ = compute_sccs(module.functions.size(), call_graph);
         for (std::size_t fi = 0; fi < module.functions.size(); ++fi) {
             auto& func = module.functions[fi];
             // Recursion guard: skip inlining back into the same
@@ -1500,23 +1545,15 @@ public:
     // separately from inlined_count_ (which counts the
     // pre-#197 constant-substitution path) so callers can
     // measure the new path's contribution.
-    std::size_t inlined_branch_aware_count() const {
-        return inlined_branch_aware_count_;
-    }
+    std::size_t inlined_branch_aware_count() const { return inlined_branch_aware_count_; }
     // Issue #197: per-run and lifetime totals for the
     // (compile:inline-pass-stats) Aura primitive. run_*
     // are reset on each run() call; total_* are lifetime
     // sums (process-wide).
-    static std::size_t total_inlined() {
-        return total_inlined_;
-    }
-    static std::size_t total_inlined_branch_aware() {
-        return total_inlined_branch_aware_;
-    }
+    static std::size_t total_inlined() { return total_inlined_; }
+    static std::size_t total_inlined_branch_aware() { return total_inlined_branch_aware_; }
     std::size_t run_inlined() const { return run_inlined_; }
-    std::size_t run_inlined_branch_aware() const {
-        return run_inlined_branch_aware_;
-    }
+    std::size_t run_inlined_branch_aware() const { return run_inlined_branch_aware_; }
 
     // Issue #246: macro-hygiene toggle. When true (the default),
     // the inliner refuses to inline callees whose IRFunction.marker
@@ -1527,12 +1564,8 @@ public:
     // Setter:
     //   InlinePass::set_respect_macro_hygiene(false)
     //   → opt in to inlining macro-introduced code.
-    static void set_respect_macro_hygiene(bool v) {
-        respect_macro_hygiene_ = v;
-    }
-    static bool get_respect_macro_hygiene() {
-        return respect_macro_hygiene_;
-    }
+    static void set_respect_macro_hygiene(bool v) { respect_macro_hygiene_ = v; }
+    static bool get_respect_macro_hygiene() { return respect_macro_hygiene_; }
 
 private:
     // True if the function is a "constant-returning single-block
@@ -1554,16 +1587,18 @@ private:
         if (respect_macro_hygiene_ && func.marker == 1 /*MacroIntroduced*/) {
             return false;
         }
-        if (func.blocks.size() != 1) return false;
+        if (func.blocks.size() != 1)
+            return false;
         const auto& block = func.blocks[0];
-        if (block.instructions.size() != 2) return false;
+        if (block.instructions.size() != 2)
+            return false;
         const auto& a = block.instructions[0];
         const auto& b = block.instructions[1];
-        bool a_is_const = (a.opcode == aura::ir::IROpcode::ConstI64 ||
-                           a.opcode == aura::ir::IROpcode::ConstF64 ||
-                           a.opcode == aura::ir::IROpcode::ConstBool ||
-                           a.opcode == aura::ir::IROpcode::ConstString ||
-                           a.opcode == aura::ir::IROpcode::ConstVoid);
+        bool a_is_const =
+            (a.opcode == aura::ir::IROpcode::ConstI64 || a.opcode == aura::ir::IROpcode::ConstF64 ||
+             a.opcode == aura::ir::IROpcode::ConstBool ||
+             a.opcode == aura::ir::IROpcode::ConstString ||
+             a.opcode == aura::ir::IROpcode::ConstVoid);
         bool b_is_return = (b.opcode == aura::ir::IROpcode::Return);
         bool slots_match = (a.operands[0] == b.operands[0]);
         return a_is_const && b_is_return && slots_match;
@@ -1571,42 +1606,37 @@ private:
 
     // Find the function with the given name in the module.
     // Returns nullptr if not found.
-    static const aura::ir::IRFunction* find_function(
-        const aura::ir::IRModule& module, const std::string& name) {
+    static const aura::ir::IRFunction* find_function(const aura::ir::IRModule& module,
+                                                     const std::string& name) {
         for (const auto& func : module.functions) {
-            if (func.name == name) return &func;
+            if (func.name == name)
+                return &func;
         }
         return nullptr;
     }
 
 public:
     // Public wrapper for tests.
-    static bool is_trivial_inlinable_for_test(
-        const aura::ir::IRFunction& func) {
+    static bool is_trivial_inlinable_for_test(const aura::ir::IRFunction& func) {
         return is_trivial_inlinable(func);
     }
     // Issue #197: public test wrapper for the branch-aware
     // predicate.
-    static bool is_inlinable_branch_aware_for_test(
-        const aura::ir::IRFunction& func) {
+    static bool is_inlinable_branch_aware_for_test(const aura::ir::IRFunction& func) {
         return is_inlinable_branch_aware(func);
     }
     // Issue #197: public test wrapper for the branch-aware
     // inliner transformation. Returns true on success.
-    static bool try_inline_branch_aware_for_test(
-        aura::ir::IRFunction& caller,
-        aura::ir::BasicBlock& block,
-        std::size_t call_pos,
-        const aura::ir::IRFunction& callee,
-        const aura::ir::IRInstruction& call_instr) {
+    static bool try_inline_branch_aware_for_test(aura::ir::IRFunction& caller,
+                                                 aura::ir::BasicBlock& block, std::size_t call_pos,
+                                                 const aura::ir::IRFunction& callee,
+                                                 const aura::ir::IRInstruction& call_instr) {
         InlinePass p;
-        return p.try_inline_branch_aware(caller, block, call_pos,
-                                          callee, call_instr);
+        return p.try_inline_branch_aware(caller, block, call_pos, callee, call_instr);
     }
 
 private:
-    void run_on_block(aura::ir::IRFunction& caller,
-                      aura::ir::BasicBlock& block,
+    void run_on_block(aura::ir::IRFunction& caller, aura::ir::BasicBlock& block,
                       const std::unordered_map<std::uint32_t, std::uint32_t>& slot_to_func,
                       std::uint32_t caller_fid) {
         // Walk the block, find Call sites with a known static
@@ -1622,11 +1652,13 @@ private:
         (void)caller;
         for (std::size_t i = 0; i < block.instructions.size(); ++i) {
             auto& instr = block.instructions[i];
-            if (instr.opcode != aura::ir::IROpcode::Call) continue;
+            if (instr.opcode != aura::ir::IROpcode::Call)
+                continue;
             // Operands[0] = callee slot. Look up static func_id.
             auto callee_slot = instr.operands[0];
             auto it = slot_to_func.find(callee_slot);
-            if (it == slot_to_func.end()) continue;  // dynamic callee
+            if (it == slot_to_func.end())
+                continue; // dynamic callee
             auto callee_fid = it->second;
             // Recursion guard: don't inline into self OR into a
             // function in the same SCC (mutual recursion).
@@ -1634,22 +1666,23 @@ private:
             // once per run() call; scc_id_of_fid_[i] == scc_id_of_fid_[j]
             // iff i and j are in the same strongly-connected
             // component of the call graph.
-            if (callee_fid == caller_fid) continue;
-            if (callee_fid < scc_id_of_fid_.size() &&
-                caller_fid < scc_id_of_fid_.size() &&
+            if (callee_fid == caller_fid)
+                continue;
+            if (callee_fid < scc_id_of_fid_.size() && caller_fid < scc_id_of_fid_.size() &&
                 scc_id_of_fid_[callee_fid] == scc_id_of_fid_[caller_fid]) {
-                continue;  // mutual recursion: same SCC
+                continue; // mutual recursion: same SCC
             }
             // Look up the callee function
-            if (callee_fid >= func_index_.size()) continue;
+            if (callee_fid >= func_index_.size())
+                continue;
             const auto* callee = func_index_[callee_fid];
-            if (!callee) continue;
+            if (!callee)
+                continue;
             // Check trivial-inlinable (pre-#197 fast path:
             // single-block + constant return + no params)
             if (is_trivial_inlinable(*callee)) {
                 // Fast path: constant substitution in place
-                const auto& const_instr =
-                    callee->blocks[0].instructions[0];
+                const auto& const_instr = callee->blocks[0].instructions[0];
                 auto result_slot = instr.operands[3];
                 instr.opcode = const_instr.opcode;
                 instr.operands[0] = result_slot;
@@ -1681,7 +1714,7 @@ private:
                     // (after the Call) are now in a different
                     // block and will be visited via the
                     // successor chain.
-                    break;  // done with this block for now
+                    break; // done with this block for now
                 }
             }
         }
@@ -1708,12 +1741,15 @@ private:
             return false;
         }
         // Size heuristic: avoid blowing up the caller.
-        if (func.blocks.empty()) return false;
-        if (func.blocks.size() > 8) return false;
+        if (func.blocks.empty())
+            return false;
+        if (func.blocks.size() > 8)
+            return false;
         std::size_t total_instrs = 0;
         for (const auto& b : func.blocks) {
             total_instrs += b.instructions.size();
-            if (total_instrs > 32) return false;
+            if (total_instrs > 32)
+                return false;
         }
         // Entry block must exist (block 0).
         // All instructions must be: pure (no side effects)
@@ -1727,10 +1763,10 @@ private:
                 if (instr.opcode == aura::ir::IROpcode::Call ||
                     instr.opcode == aura::ir::IROpcode::MakeClosure ||
                     instr.opcode == aura::ir::IROpcode::Apply) {
-                    return false;  // nested inlining is a follow-up
+                    return false; // nested inlining is a follow-up
                 }
                 if (instr.opcode == aura::ir::IROpcode::CellSet) {
-                    return false;  // observable side effect
+                    return false; // observable side effect
                 }
             }
         }
@@ -1739,11 +1775,12 @@ private:
         // ancestor of B in the DFS tree.
         std::unordered_set<std::uint32_t> visited;
         std::vector<std::uint32_t> stack;
-        stack.push_back(0);  // entry block
+        stack.push_back(0); // entry block
         while (!stack.empty()) {
             auto bid = stack.back();
             stack.pop_back();
-            if (!visited.insert(bid).second) continue;
+            if (!visited.insert(bid).second)
+                continue;
             for (auto succ : successors_of(func, bid)) {
                 if (visited.count(succ)) {
                     // back-edge → loop → not inlinable (yet)
@@ -1754,7 +1791,8 @@ private:
         }
         // Every block must end with Branch, Jump, or Return.
         for (const auto& b : func.blocks) {
-            if (b.instructions.empty()) return false;
+            if (b.instructions.empty())
+                return false;
             const auto& last = b.instructions.back();
             if (last.opcode != aura::ir::IROpcode::Branch &&
                 last.opcode != aura::ir::IROpcode::Jump &&
@@ -1768,12 +1806,14 @@ private:
     // Helper: get the successor block ids for a given block
     // in a function. Reads the Branch/Jump terminator to
     // extract true/false targets. Returns at most 2 ids.
-    static std::vector<std::uint32_t> successors_of(
-        const aura::ir::IRFunction& func, std::uint32_t block_id) {
+    static std::vector<std::uint32_t> successors_of(const aura::ir::IRFunction& func,
+                                                    std::uint32_t block_id) {
         std::vector<std::uint32_t> out;
-        if (block_id >= func.blocks.size()) return out;
+        if (block_id >= func.blocks.size())
+            return out;
         const auto& b = func.blocks[block_id];
-        if (b.instructions.empty()) return out;
+        if (b.instructions.empty())
+            return out;
         const auto& last = b.instructions.back();
         if (last.opcode == aura::ir::IROpcode::Branch) {
             // Branch: cond, true_block, false_block
@@ -1814,40 +1854,36 @@ private:
     // Returns true on success; false if the inlining can't
     // be performed (e.g. arg_count != callee.arg_count, the
     // callee has no Return, or some other pre-condition fails).
-    bool try_inline_branch_aware(aura::ir::IRFunction& caller,
-                                  aura::ir::BasicBlock& block,
-                                  std::size_t call_pos,
-                                  const aura::ir::IRFunction& callee,
-                                  const aura::ir::IRInstruction& call_instr) {
+    bool try_inline_branch_aware(aura::ir::IRFunction& caller, aura::ir::BasicBlock& block,
+                                 std::size_t call_pos, const aura::ir::IRFunction& callee,
+                                 const aura::ir::IRInstruction& call_instr) {
         // arg_count must match callee.arg_count.
         std::uint32_t arg_count = call_instr.operands[2];
         std::uint32_t arg_base = call_instr.operands[1];
         std::uint32_t result_slot = call_instr.operands[3];
-        if (arg_count != callee.arg_count) return false;
+        if (arg_count != callee.arg_count)
+            return false;
         // Find the callee's exit block (the one ending in
         // Return). Exactly one block should end in Return;
         // the others end in Branch/Jump.
         std::size_t exit_block = callee.blocks.size();
         for (std::size_t b = 0; b < callee.blocks.size(); ++b) {
-            if (callee.blocks[b].instructions.empty()) continue;
-            if (callee.blocks[b].instructions.back().opcode ==
-                aura::ir::IROpcode::Return) {
+            if (callee.blocks[b].instructions.empty())
+                continue;
+            if (callee.blocks[b].instructions.back().opcode == aura::ir::IROpcode::Return) {
                 exit_block = b;
                 break;
             }
         }
-        if (exit_block >= callee.blocks.size()) return false;
+        if (exit_block >= callee.blocks.size())
+            return false;
         // Dispatch: single-block vs multi-block.
         if (callee.blocks.size() == 1) {
-            return try_inline_single_block(caller, block, call_pos,
-                                            callee, call_instr,
-                                            arg_count, arg_base,
-                                            result_slot, exit_block);
+            return try_inline_single_block(caller, block, call_pos, callee, call_instr, arg_count,
+                                           arg_base, result_slot, exit_block);
         }
-        return try_inline_multi_block(caller, block, call_pos,
-                                        callee, call_instr,
-                                        arg_count, arg_base,
-                                        result_slot, exit_block);
+        return try_inline_multi_block(caller, block, call_pos, callee, call_instr, arg_count,
+                                      arg_base, result_slot, exit_block);
     }
 
     // Single-block fast path: in-place rewrite. The Call
@@ -1855,25 +1891,19 @@ private:
     // Pre-conditions: callee has 1 block, the block ends
     // with Return, and the caller's local_count is grown
     // to include the callee's locals.
-    bool try_inline_single_block(aura::ir::IRFunction& caller,
-                                  aura::ir::BasicBlock& block,
-                                  std::size_t call_pos,
-                                  const aura::ir::IRFunction& callee,
-                                  const aura::ir::IRInstruction& call_instr,
-                                  std::uint32_t arg_count,
-                                  std::uint32_t arg_base,
-                                  std::uint32_t result_slot,
-                                  std::size_t exit_block) {
+    bool try_inline_single_block(aura::ir::IRFunction& caller, aura::ir::BasicBlock& block,
+                                 std::size_t call_pos, const aura::ir::IRFunction& callee,
+                                 const aura::ir::IRInstruction& call_instr, std::uint32_t arg_count,
+                                 std::uint32_t arg_base, std::uint32_t result_slot,
+                                 std::size_t exit_block) {
         const auto& callee_block = callee.blocks[0];
         // Fast path only applies when the Call is the last
         // instruction in the caller's block. If the Call is
         // in the middle, delegate to the multi-block path
         // (which handles the block split correctly).
         if (call_pos != block.instructions.size() - 1) {
-            return try_inline_multi_block(caller, block, call_pos,
-                                            callee, call_instr,
-                                            arg_count, arg_base,
-                                            result_slot, exit_block);
+            return try_inline_multi_block(caller, block, call_pos, callee, call_instr, arg_count,
+                                          arg_base, result_slot, exit_block);
         }
         const auto& last_instr = callee_block.instructions.back();
         // Build slot_rename_map. Same approach as
@@ -1911,29 +1941,33 @@ private:
             const auto* info = lookup_opcode(cp.opcode);
             if (info && info->has_result_slot) {
                 auto it = slot_rename.find(cp.operands[0]);
-                if (it != slot_rename.end()) cp.operands[0] = it->second;
+                if (it != slot_rename.end())
+                    cp.operands[0] = it->second;
             }
             if (cp.opcode == aura::ir::IROpcode::Branch) {
                 auto it = slot_rename.find(cp.operands[0]);
-                if (it != slot_rename.end()) cp.operands[0] = it->second;
+                if (it != slot_rename.end())
+                    cp.operands[0] = it->second;
             }
-            bool is_branch = (cp.opcode ==
-                aura::ir::IROpcode::Branch);
-            bool is_jump = (cp.opcode ==
-                aura::ir::IROpcode::Jump);
+            bool is_branch = (cp.opcode == aura::ir::IROpcode::Branch);
+            bool is_jump = (cp.opcode == aura::ir::IROpcode::Jump);
             std::size_t remap_end = 4;
-            if (is_branch) remap_end = 1;
-            if (is_jump) remap_end = 0;
+            if (is_branch)
+                remap_end = 1;
+            if (is_jump)
+                remap_end = 0;
             for (std::size_t op = 1; op < remap_end; ++op) {
                 auto it = slot_rename.find(cp.operands[op]);
-                if (it != slot_rename.end()) cp.operands[op] = it->second;
+                if (it != slot_rename.end())
+                    cp.operands[op] = it->second;
             }
             new_instrs.push_back(cp);
         }
         // 3. Final Return → Local(result_slot, return_source).
         std::uint32_t ret_src = last_instr.operands[0];
         auto rit = slot_rename.find(ret_src);
-        if (rit != slot_rename.end()) ret_src = rit->second;
+        if (rit != slot_rename.end())
+            ret_src = rit->second;
         aura::ir::IRInstruction final_copy;
         final_copy.opcode = aura::ir::IROpcode::Local;
         final_copy.operands[0] = result_slot;
@@ -1941,10 +1975,8 @@ private:
         new_instrs.push_back(final_copy);
         // In-place rewrite.
         auto insert_pos = block.instructions.begin() + call_pos;
-        block.instructions.insert(insert_pos, new_instrs.begin(),
-                                  new_instrs.end());
-        block.instructions.erase(block.instructions.begin() +
-                                  call_pos + new_instrs.size());
+        block.instructions.insert(insert_pos, new_instrs.begin(), new_instrs.end());
+        block.instructions.erase(block.instructions.begin() + call_pos + new_instrs.size());
         return true;
     }
 
@@ -1953,15 +1985,11 @@ private:
     // caller with slot + block remap, and wires the cloned
     // entry/exit blocks to the caller's "before" and "after"
     // blocks.
-    bool try_inline_multi_block(aura::ir::IRFunction& caller,
-                                 aura::ir::BasicBlock& block,
-                                 std::size_t call_pos,
-                                 const aura::ir::IRFunction& callee,
-                                 const aura::ir::IRInstruction& call_instr,
-                                 std::uint32_t arg_count,
-                                 std::uint32_t arg_base,
-                                 std::uint32_t result_slot,
-                                 std::size_t exit_block) {
+    bool try_inline_multi_block(aura::ir::IRFunction& caller, aura::ir::BasicBlock& block,
+                                std::size_t call_pos, const aura::ir::IRFunction& callee,
+                                const aura::ir::IRInstruction& call_instr, std::uint32_t arg_count,
+                                std::uint32_t arg_base, std::uint32_t result_slot,
+                                std::size_t exit_block) {
         // Step 1: Capture the original terminator and the
         // "after" instructions (instructions after the Call)
         // BEFORE we mutate the block.
@@ -1985,8 +2013,7 @@ private:
             // instructions between the Call and the
             // terminator. Let's handle both.
             // after_instrs = instructions [call_pos+1, end)
-            for (std::size_t k = call_pos + 1;
-                 k < block.instructions.size(); ++k) {
+            for (std::size_t k = call_pos + 1; k < block.instructions.size(); ++k) {
                 after_instrs.push_back(block.instructions[k]);
             }
             // The terminator is the LAST of those, if any.
@@ -2026,22 +2053,21 @@ private:
         // caller blocks; new block ids start there.
         // We'll have N callee blocks + 1 B_after, so the
         // ids are [caller.blocks.size(), caller.blocks.size() + N).
-        std::uint32_t new_block_start =
-            static_cast<std::uint32_t>(caller.blocks.size());
+        std::uint32_t new_block_start = static_cast<std::uint32_t>(caller.blocks.size());
         std::unordered_map<std::uint32_t, std::uint32_t> block_rename;
         for (std::uint32_t j = 0; j < callee.blocks.size(); ++j) {
             block_rename[j] = new_block_start + j;
         }
-        std::uint32_t b_after_id = new_block_start +
-                                    static_cast<std::uint32_t>(callee.blocks.size());
+        std::uint32_t b_after_id =
+            new_block_start + static_cast<std::uint32_t>(callee.blocks.size());
         // Step 4: Clone the callee's exit block first to
         // figure out the return-source slot after remap
         // (the Local that writes to call_result_slot will
         // read from this remapped slot).
-        std::uint32_t ret_src = callee.blocks[exit_block]
-                                    .instructions.back().operands[0];
+        std::uint32_t ret_src = callee.blocks[exit_block].instructions.back().operands[0];
         auto rit = slot_rename.find(ret_src);
-        if (rit != slot_rename.end()) ret_src = rit->second;
+        if (rit != slot_rename.end())
+            ret_src = rit->second;
         // Step 5: Rewrite the caller's original block to
         // hold I_0..I_{call_pos-1} (instructions before the
         // Call), then the param copies, then a Jump to
@@ -2080,7 +2106,8 @@ private:
                 // (opcodes like Local, Add, Const*, etc.).
                 if (info && info->has_result_slot) {
                     auto it = slot_rename.find(cp.operands[0]);
-                    if (it != slot_rename.end()) cp.operands[0] = it->second;
+                    if (it != slot_rename.end())
+                        cp.operands[0] = it->second;
                 }
                 // For Branch, operands[0] is the cond slot
                 // (Branch has no result slot, so the
@@ -2088,7 +2115,8 @@ private:
                 // Remap operands[0] explicitly for Branch.
                 if (cp.opcode == aura::ir::IROpcode::Branch) {
                     auto it = slot_rename.find(cp.operands[0]);
-                    if (it != slot_rename.end()) cp.operands[0] = it->second;
+                    if (it != slot_rename.end())
+                        cp.operands[0] = it->second;
                 }
                 // Remap slot-typed source operands only.
                 // Branch operands[1..2] are block ids, not
@@ -2097,16 +2125,17 @@ private:
                 // slot-typed (and the remap is a no-op for
                 // operands that aren't in slot_rename, e.g.
                 // arg_base which is a caller slot).
-                bool is_branch = (cp.opcode ==
-                    aura::ir::IROpcode::Branch);
-                bool is_jump = (cp.opcode ==
-                    aura::ir::IROpcode::Jump);
+                bool is_branch = (cp.opcode == aura::ir::IROpcode::Branch);
+                bool is_jump = (cp.opcode == aura::ir::IROpcode::Jump);
                 std::size_t remap_end = 4;
-                if (is_branch) remap_end = 1;  // only operands[0] is a slot
-                if (is_jump) remap_end = 0;    // no slot operands
+                if (is_branch)
+                    remap_end = 1; // only operands[0] is a slot
+                if (is_jump)
+                    remap_end = 0; // no slot operands
                 for (std::size_t op = 1; op < remap_end; ++op) {
                     auto it = slot_rename.find(cp.operands[op]);
-                    if (it != slot_rename.end()) cp.operands[op] = it->second;
+                    if (it != slot_rename.end())
+                        cp.operands[op] = it->second;
                 }
                 clone.instructions.push_back(cp);
             }
@@ -2142,13 +2171,16 @@ private:
                 } else if (term.opcode == aura::ir::IROpcode::Branch) {
                     // Branch: cond, true_block, false_block
                     auto bit0 = block_rename.find(term.operands[1]);
-                    if (bit0 != block_rename.end()) term.operands[1] = bit0->second;
+                    if (bit0 != block_rename.end())
+                        term.operands[1] = bit0->second;
                     auto bit1 = block_rename.find(term.operands[2]);
-                    if (bit1 != block_rename.end()) term.operands[2] = bit1->second;
+                    if (bit1 != block_rename.end())
+                        term.operands[2] = bit1->second;
                 } else if (term.opcode == aura::ir::IROpcode::Jump) {
                     // Jump: target_block
                     auto bit = block_rename.find(term.operands[0]);
-                    if (bit != block_rename.end()) term.operands[0] = bit->second;
+                    if (bit != block_rename.end())
+                        term.operands[0] = bit->second;
                 }
             }
             caller.blocks.push_back(std::move(clone));
@@ -2165,10 +2197,9 @@ private:
             after_block.instructions.push_back(*orig_terminator);
         }
         caller.blocks.push_back(std::move(after_block));
-        (void)call_instr;  // suppress unused
+        (void)call_instr; // suppress unused
         return true;
     }
-
 
 
     std::size_t inlined_count_ = 0;
@@ -2202,8 +2233,8 @@ private:
     // static Call to g (resolved via MakeClosure + Call).
     // Returns graph[i] = list of fids called by function i.
     // Functions that don't call anything get an empty list.
-    static std::vector<std::vector<std::uint32_t>> build_call_graph(
-        const aura::ir::IRModule& module) {
+    static std::vector<std::vector<std::uint32_t>>
+    build_call_graph(const aura::ir::IRModule& module) {
         const std::size_t n = module.functions.size();
         std::vector<std::vector<std::uint32_t>> graph(n);
         for (std::size_t fi = 0; fi < n; ++fi) {
@@ -2223,12 +2254,15 @@ private:
             std::unordered_set<std::uint32_t> callees;
             for (const auto& block : func.blocks) {
                 for (const auto& instr : block.instructions) {
-                    if (instr.opcode != aura::ir::IROpcode::Call) continue;
+                    if (instr.opcode != aura::ir::IROpcode::Call)
+                        continue;
                     auto callee_slot = instr.operands[0];
                     auto it = slot_to_func.find(callee_slot);
-                    if (it == slot_to_func.end()) continue;
+                    if (it == slot_to_func.end())
+                        continue;
                     auto callee_fid = it->second;
-                    if (callee_fid >= n) continue;
+                    if (callee_fid >= n)
+                        continue;
                     callees.insert(callee_fid);
                 }
             }
@@ -2242,9 +2276,8 @@ private:
     // numbered in reverse topological order (a later SCC has
     // no edges to an earlier SCC). Two nodes are mutually
     // reachable iff they have the same scc_id. O(V + E) time.
-    static std::vector<std::uint32_t> compute_sccs(
-        std::size_t n,
-        const std::vector<std::vector<std::uint32_t>>& graph) {
+    static std::vector<std::uint32_t>
+    compute_sccs(std::size_t n, const std::vector<std::vector<std::uint32_t>>& graph) {
         std::vector<std::int64_t> index(n, -1);
         std::vector<std::int64_t> lowlink(n, -1);
         std::vector<bool> on_stack(n, false);
@@ -2259,15 +2292,15 @@ private:
         // have a self-referential closure. The std::function
         // heap-allocates the closure, which is fine for the
         // one-time per-run cost.
-        std::function<void(std::uint32_t)> strongconnect =
-            [&](std::uint32_t v) {
+        std::function<void(std::uint32_t)> strongconnect = [&](std::uint32_t v) {
             index[v] = static_cast<std::int64_t>(next_index);
             lowlink[v] = static_cast<std::int64_t>(next_index);
             ++next_index;
             stack.push_back(v);
             on_stack[v] = true;
             for (std::uint32_t w : graph[v]) {
-                if (w >= n) continue;
+                if (w >= n)
+                    continue;
                 if (index[w] == -1) {
                     strongconnect(w);
                     lowlink[v] = std::min(lowlink[v], lowlink[w]);
@@ -2287,7 +2320,8 @@ private:
             }
         };
         for (std::uint32_t v = 0; v < n; ++v) {
-            if (index[v] == -1) strongconnect(v);
+            if (index[v] == -1)
+                strongconnect(v);
         }
         return scc_id;
     }
@@ -2375,16 +2409,14 @@ public:
     bool has_error() const { return false; }
     std::string_view name() const { return "tco"; }
     std::size_t tco_count() const { return tco_count_; }
-    std::size_t tco_inter_block_count() const {
-        return tco_inter_block_count_;
-    }
+    std::size_t tco_inter_block_count() const { return tco_inter_block_count_; }
 
 private:
-    void run_on_block(aura::ir::IRFunction& caller,
-                      aura::ir::BasicBlock& block,
+    void run_on_block(aura::ir::IRFunction& caller, aura::ir::BasicBlock& block,
                       const std::unordered_map<std::uint32_t, std::uint32_t>& slot_to_func) {
         // Need at least 2 instructions to have Call+Return
-        if (block.instructions.size() < 2) return;
+        if (block.instructions.size() < 2)
+            return;
         // Look at the last 2 instructions
         const auto n = block.instructions.size();
         // Use POINTERS (not references) so we can re-assign
@@ -2394,20 +2426,27 @@ private:
         aura::ir::IRInstruction* call_instr = &block.instructions[n - 2];
         aura::ir::IRInstruction* ret_instr = &block.instructions[n - 1];
         // Must be Call followed by Return
-        if (call_instr->opcode != aura::ir::IROpcode::Call) return;
-        if (ret_instr->opcode != aura::ir::IROpcode::Return) return;
+        if (call_instr->opcode != aura::ir::IROpcode::Call)
+            return;
+        if (ret_instr->opcode != aura::ir::IROpcode::Return)
+            return;
         // The Return's value must be the Call's result (otherwise
         // the Call is not actually the tail position).
-        if (ret_instr->operands[0] != call_instr->operands[3]) return;
+        if (ret_instr->operands[0] != call_instr->operands[3])
+            return;
         // The Call's callee must be statically known
         auto callee_slot = call_instr->operands[0];
         auto it = slot_to_func.find(callee_slot);
-        if (it == slot_to_func.end()) return;  // dynamic callee
+        if (it == slot_to_func.end())
+            return; // dynamic callee
         auto callee_fid = it->second;
-        if (callee_fid >= func_index_.size()) return;
+        if (callee_fid >= func_index_.size())
+            return;
         const auto* callee = func_index_[callee_fid];
-        if (!callee) return;
-        if (callee->blocks.empty()) return;
+        if (!callee)
+            return;
+        if (callee->blocks.empty())
+            return;
         // The callee's entry block id is callee->blocks[0].id
         // (we use the block's id for Branch target).
         auto callee_entry_id = callee->blocks[0].id;
@@ -2453,18 +2492,17 @@ private:
             // reference).
             const auto src_node_id = call_instr->source_ast_node_id;
             const auto src_type_id = call_instr->type_id;
-            const std::size_t call_idx = n - 2;  // index of the Call instruction
+            const std::size_t call_idx = n - 2; // index of the Call instruction
             for (std::uint32_t i = 0; i < arg_count; ++i) {
                 aura::ir::IRInstruction local;
                 local.opcode = aura::ir::IROpcode::Local;
                 local.operands = {i, arg_base + i, 0, 0};
                 local.source_ast_node_id = src_node_id;
                 local.type_id = src_type_id;
-                block.instructions.insert(
-                    block.instructions.begin() +
-                        static_cast<std::ptrdiff_t>(call_idx) +
-                        static_cast<std::ptrdiff_t>(i),
-                    local);
+                block.instructions.insert(block.instructions.begin() +
+                                              static_cast<std::ptrdiff_t>(call_idx) +
+                                              static_cast<std::ptrdiff_t>(i),
+                                          local);
             }
             // The Call was at call_idx; after arg_count inserts
             // it's now at position (call_idx + arg_count).
@@ -2483,7 +2521,7 @@ private:
         // remove Return. The Branch takes no args (callee's
         // params are already at slots 0..arg_count-1, after the
         // Local copies above for non-zero arg_base).
-        call_instr->opcode = aura::ir::IROpcode::Jump;  // wait, Jump is unconditional; need Branch
+        call_instr->opcode = aura::ir::IROpcode::Jump; // wait, Jump is unconditional; need Branch
         // Actually, use Jump since the target is unconditional
         // (after the tail call there's no condition to check).
         call_instr->opcode = aura::ir::IROpcode::Jump;
@@ -2516,41 +2554,48 @@ private:
     // (the Local copies would need to be propagated to all
     // preds, and the args must be at compatible slots in
     // all preds).
-    void run_inter_block_tco(
-        aura::ir::IRFunction& func,
-        const std::unordered_map<std::uint32_t, std::uint32_t>& slot_to_func) {
+    void run_inter_block_tco(aura::ir::IRFunction& func,
+                             const std::unordered_map<std::uint32_t, std::uint32_t>& slot_to_func) {
         // For each block, check if it's a tail-call block.
         // If yes, find all preds and rewrite them to jump
         // to the callee entry.
         for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
             const auto& block = func.blocks[bi];
-            if (!is_tail_call_block(block, slot_to_func)) continue;
+            if (!is_tail_call_block(block, slot_to_func))
+                continue;
             // Get the callee entry id
-            const auto& call_instr =
-                block.instructions[block.instructions.size() - 2];
+            const auto& call_instr = block.instructions[block.instructions.size() - 2];
             auto callee_slot = call_instr.operands[0];
             auto arg_base = call_instr.operands[1];
             auto it = slot_to_func.find(callee_slot);
-            if (it == slot_to_func.end()) continue;
+            if (it == slot_to_func.end())
+                continue;
             auto callee_fid = it->second;
-            if (callee_fid >= func_index_.size()) continue;
+            if (callee_fid >= func_index_.size())
+                continue;
             const auto* callee = func_index_[callee_fid];
-            if (!callee || callee->blocks.empty()) continue;
+            if (!callee || callee->blocks.empty())
+                continue;
             auto callee_entry_id = callee->blocks[0].id;
             // For now, skip non-zero arg_base (see header comment).
-            if (arg_base != 0) continue;
+            if (arg_base != 0)
+                continue;
             // Find all unconditional-Jump predecessors of bi
             // (other blocks whose terminator is Jump(bi)).
             // We skip Branch predecessors (a Branch into B
             // would mean B is one of two outcomes, and TCO
             // is only sound if B is the unique successor).
             for (std::size_t pi = 0; pi < func.blocks.size(); ++pi) {
-                if (pi == bi) continue;
+                if (pi == bi)
+                    continue;
                 auto& pred = func.blocks[pi];
-                if (pred.instructions.empty()) continue;
+                if (pred.instructions.empty())
+                    continue;
                 auto& last = pred.instructions.back();
-                if (last.opcode != aura::ir::IROpcode::Jump) continue;
-                if (last.operands[0] != block.id) continue;
+                if (last.opcode != aura::ir::IROpcode::Jump)
+                    continue;
+                if (last.operands[0] != block.id)
+                    continue;
                 // Rewrite pred's terminator: Jump(bi) → Jump(callee_entry)
                 last.operands[0] = callee_entry_id;
                 ++tco_inter_block_count_;
@@ -2562,16 +2607,20 @@ private:
     // A tail-call block ends with Call+Return where the
     // Return's value is the Call's result, and the Call's
     // callee is statically known.
-    static bool is_tail_call_block(
-        const aura::ir::BasicBlock& block,
-        const std::unordered_map<std::uint32_t, std::uint32_t>& slot_to_func) {
-        if (block.instructions.size() < 2) return false;
+    static bool
+    is_tail_call_block(const aura::ir::BasicBlock& block,
+                       const std::unordered_map<std::uint32_t, std::uint32_t>& slot_to_func) {
+        if (block.instructions.size() < 2)
+            return false;
         const auto n = block.instructions.size();
         const auto& call = block.instructions[n - 2];
         const auto& ret = block.instructions[n - 1];
-        if (call.opcode != aura::ir::IROpcode::Call) return false;
-        if (ret.opcode != aura::ir::IROpcode::Return) return false;
-        if (ret.operands[0] != call.operands[3]) return false;
+        if (call.opcode != aura::ir::IROpcode::Call)
+            return false;
+        if (ret.opcode != aura::ir::IROpcode::Return)
+            return false;
+        if (ret.operands[0] != call.operands[3])
+            return false;
         if (slot_to_func.find(call.operands[0]) == slot_to_func.end())
             return false;
         return true;
@@ -2628,9 +2677,11 @@ public:
         for (std::size_t i = 0; i < original_count; ++i) {
             // Skip if we already specialized this function
             // (idempotency for re-running the pass).
-            if (module.functions[i].specialized_for != 0) continue;
+            if (module.functions[i].specialized_for != 0)
+                continue;
             // Need ≥ 1 arg to guard on.
-            if (module.functions[i].arg_count == 0) continue;
+            if (module.functions[i].arg_count == 0)
+                continue;
             // Need a shape to specialize for. For Cycle 2
             // scaffolding, we read from an external
             // shape_to_specialize_ map (filled by the test).
@@ -2639,9 +2690,11 @@ public:
             // function name (simple; production would use
             // function id).
             auto it = shape_to_specialize_.find(module.functions[i].name);
-            if (it == shape_to_specialize_.end()) continue;
+            if (it == shape_to_specialize_.end())
+                continue;
             std::uint32_t shape_id = it->second;
-            if (shape_id == 0) continue;  // 0 = no specialization
+            if (shape_id == 0)
+                continue; // 0 = no specialization
 
             Result r;
             r.shape_id = shape_id;
@@ -2679,7 +2732,7 @@ public:
                 aura::ir::IRInstruction call_instr;
                 call_instr.opcode = aura::ir::IROpcode::Call;
                 call_instr.operands = std::array<std::uint32_t, 4>{
-                    r.generic_id,   // callee
+                    r.generic_id,    // callee
                     0u,              // arg_base = 0 (params at slots 0..N-1)
                     spec.arg_count,  // arg_count
                     call_result_slot // result slot
@@ -2689,9 +2742,7 @@ public:
             {
                 aura::ir::IRInstruction ret_instr;
                 ret_instr.opcode = aura::ir::IROpcode::Return;
-                ret_instr.operands = std::array<std::uint32_t, 4>{
-                    call_result_slot, 0u, 0u, 0u
-                };
+                ret_instr.operands = std::array<std::uint32_t, 4>{call_result_slot, 0u, 0u, 0u};
                 trampoline.instructions.push_back(ret_instr);
             }
             spec.blocks.push_back(trampoline);
@@ -2700,28 +2751,27 @@ public:
             // existing entry block.
             // The guard writes a bool to local slot 0 (the
             // branch's cond input).
-            std::uint32_t guard_result = 0u;  // local 0 is the convention
+            std::uint32_t guard_result = 0u; // local 0 is the convention
             // (but local 0 might be a param; to be safe, use
             // a fresh local for the guard result)
-            if (spec.local_count == 0) spec.local_count = 1;
+            if (spec.local_count == 0)
+                spec.local_count = 1;
             guard_result = spec.local_count++;
             aura::ir::IRInstruction guard_instr;
             guard_instr.opcode = aura::ir::IROpcode::GuardShape;
             // OpGuardShape: result, arg_slot, expected, generic_block
             guard_instr.operands = std::array<std::uint32_t, 4>{
-                guard_result,  // result slot (bool 1/0)
-                0u,            // arg slot 0 (the first param)
-                shape_id,      // expected shape
-                1u             // generic trampoline block id
+                guard_result, // result slot (bool 1/0)
+                0u,           // arg slot 0 (the first param)
+                shape_id,     // expected shape
+                1u            // generic trampoline block id
             };
             // Branch: cond, true_target, false_target
             // true  = existing entry block body (id 0)
             // false = trampoline (id 1)
             aura::ir::IRInstruction branch_instr;
             branch_instr.opcode = aura::ir::IROpcode::Branch;
-            branch_instr.operands = std::array<std::uint32_t, 4>{
-                guard_result, 0u, 1u, 0u
-            };
+            branch_instr.operands = std::array<std::uint32_t, 4>{guard_result, 0u, 1u, 0u};
 
             // Splice guard + branch at the front of entry.instructions
             std::vector<aura::ir::IRInstruction> new_body;

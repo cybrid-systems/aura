@@ -80,7 +80,7 @@ export class ConstraintSystem {
     // vector<bool> is checked once per solve iteration; a set
     // would have pointer-chasing on every check.
     std::vector<bool> constraint_dirty_;
-    std::size_t dirty_count_ = 0;  // O(1) "is anything dirty?"
+    std::size_t dirty_count_ = 0; // O(1) "is anything dirty?"
 public:
     explicit ConstraintSystem(aura::core::TypeRegistry& reg);
     void add(Constraint c);
@@ -209,14 +209,10 @@ public:
     }
 
     // Can move the variable (only if fully owned, no outstanding borrows)
-    bool can_move(const std::string& name) const {
-        return get(name) == OwnershipState::Owned;
-    }
+    bool can_move(const std::string& name) const { return get(name) == OwnershipState::Owned; }
 
     // Can drop the variable (only if fully owned)
-    bool can_drop(const std::string& name) const {
-        return get(name) == OwnershipState::Owned;
-    }
+    bool can_drop(const std::string& name) const { return get(name) == OwnershipState::Owned; }
 
     // Can imm-borrow (allowed if owned or already imm-borrowed)
     bool can_borrow(const std::string& name) const {
@@ -245,9 +241,7 @@ public:
 
     // ── Ownership Dirt Tracking ───────────────────────────────
     // After structural mutations, mark affected bindings as ownership-dirty.
-    void mark_ownership_dirty(const std::string& name) {
-        ownership_dirty_.insert(name);
-    }
+    void mark_ownership_dirty(const std::string& name) { ownership_dirty_.insert(name); }
     void mark_ownership_dirty_subtree(const std::vector<std::string>& names) {
         for (auto& n : names)
             ownership_dirty_.insert(n);
@@ -255,9 +249,7 @@ public:
     bool is_ownership_dirty(const std::string& name) const {
         return ownership_dirty_.count(name) > 0;
     }
-    void clear_ownership_dirty() {
-        ownership_dirty_.clear();
-    }
+    void clear_ownership_dirty() { ownership_dirty_.clear(); }
     const std::unordered_set<std::string>& ownership_dirty_bindings() const {
         return ownership_dirty_;
     }
@@ -265,12 +257,10 @@ public:
     // ── Post-Mutation Ownership Validation ────────────────────
     // Walks the AST within the dirty set, re-simulates ownership flow,
     // and reports any violations. Returns true if all checks pass.
-    static bool validate_ownership(
-        const aura::ast::FlatAST& flat,
-        const aura::ast::StringPool& pool,
-        aura::ast::NodeId root,
-        const std::unordered_set<std::string>& dirty_bindings,
-        std::vector<OwnershipNote>& notes_out);
+    static bool validate_ownership(const aura::ast::FlatAST& flat,
+                                   const aura::ast::StringPool& pool, aura::ast::NodeId root,
+                                   const std::unordered_set<std::string>& dirty_bindings,
+                                   std::vector<OwnershipNote>& notes_out);
 
     // Issue #117: full re-simulation mode. Walks the AST to
     // discover ALL linear-typed bindings (not just dirty ones)
@@ -291,22 +281,18 @@ public:
     // by a prior infer_flat call) to discover linear-typed
     // bindings. The caller is expected to have run infer_flat
     // before calling this.
-    static bool validate_ownership_full(
-        const aura::ast::FlatAST& flat,
-        const aura::ast::StringPool& pool,
-        aura::ast::NodeId root,
-        std::vector<OwnershipNote>& notes_out);
+    static bool validate_ownership_full(const aura::ast::FlatAST& flat,
+                                        const aura::ast::StringPool& pool, aura::ast::NodeId root,
+                                        std::vector<OwnershipNote>& notes_out);
 
     // Internal: shared implementation of the post-hoc ownership
     // walk. Public callers should use validate_ownership or
     // validate_ownership_full. Kept separate so the two
     // discovery paths can share the same walk.
-    static bool validate_ownership_impl(
-        const aura::ast::FlatAST& flat,
-        const aura::ast::StringPool& pool,
-        aura::ast::NodeId root,
-        const std::unordered_set<std::string>& dirty_bindings,
-        std::vector<OwnershipNote>& notes_out);
+    static bool validate_ownership_impl(const aura::ast::FlatAST& flat,
+                                        const aura::ast::StringPool& pool, aura::ast::NodeId root,
+                                        const std::unordered_set<std::string>& dirty_bindings,
+                                        std::vector<OwnershipNote>& notes_out);
 };
 export class InferenceEngine {
     aura::core::TypeRegistry& reg_;
@@ -356,9 +342,8 @@ public:
     // ConstraintSystem so solve_delta timing accumulates
     // into CompilerMetrics::delta_solve_time_us.
     void set_metrics(void* m) { cs_.set_metrics(m); }
-    std::uint64_t epoch_invalidations() const {
-        return epoch_invalidations_;
-    }
+    std::uint64_t epoch_invalidations() const { return epoch_invalidations_; }
+
 public:
     // declared_modules: name → module_path, 用于跨模块错误定位
     std::unordered_map<std::string, std::string> declared_modules_;
@@ -455,7 +440,8 @@ private:
     // impossible to tag the AST node where the error was
     // detected (AuraQuery's `has-error?` was silently broken
     // for unbound-variable and module-member lookups).
-    aura::core::TypeId synthesize_flat_var(aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId id, aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_var(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                           aura::ast::NodeId id, aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_call(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                             aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_lambda(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
@@ -481,8 +467,7 @@ private:
     // Register all built-in primitives in the type environment
     void register_primitive(std::string name, std::vector<aura::core::TypeId> param_types,
                             aura::core::TypeId ret_type);
-   void register_poly_primitive(std::string name,
-                                 std::vector<aura::core::TypeId> param_types,
+    void register_poly_primitive(std::string name, std::vector<aura::core::TypeId> param_types,
                                  aura::core::TypeId ret_type,
                                  std::vector<aura::core::TypeId> type_vars);
 };
@@ -513,8 +498,8 @@ private:
 //     the caller doesn't need to call into the TypeChecker
 //     to get the stats or take the coercions.
 export struct TypeCheckResult {
-    aura::core::TypeId inferred_type{};     // default-constructed = invalid
-    CoercionMap coercions;                  // deferred coercion intent
+    aura::core::TypeId inferred_type{}; // default-constructed = invalid
+    CoercionMap coercions;              // deferred coercion intent
     std::uint64_t cache_hits = 0;
     std::uint64_t cache_misses = 0;
     std::uint64_t stale_cache = 0;
@@ -535,17 +520,13 @@ export struct TypeCheckResult {
 // produced by `TypeChecker::inject_type_sigs`. The string→string
 // form stays in `inject_type_sigs` (the stateful setup step);
 // this pure function assumes resolution has already happened.
-export TypeCheckResult type_check_flat_pure(
-    aura::ast::FlatAST& flat,
-    aura::ast::StringPool& pool,
-    aura::ast::NodeId root,
-    aura::core::TypeRegistry& types,
-    aura::diag::DiagnosticCollector& diag,
-    const std::unordered_map<std::string, aura::core::TypeId>& sigs = {},
-    const std::unordered_map<std::string, std::string>& module_src = {},
-    bool strict = false,
-    std::uint64_t cache_epoch = 0,
-    void* metrics = nullptr)  // Issue #258: optional metrics pointer
+export TypeCheckResult
+type_check_flat_pure(aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId root,
+                     aura::core::TypeRegistry& types, aura::diag::DiagnosticCollector& diag,
+                     const std::unordered_map<std::string, aura::core::TypeId>& sigs = {},
+                     const std::unordered_map<std::string, std::string>& module_src = {},
+                     bool strict = false, std::uint64_t cache_epoch = 0,
+                     void* metrics = nullptr) // Issue #258: optional metrics pointer
     // Issue #213 follow-up: C++26 contract. The function
     // is total: it handles any `root` (including
     // NULL_NODE — returns an invalid TypeId), any sigs /
@@ -553,7 +534,7 @@ export TypeCheckResult type_check_flat_pure(
     // only precondition is that `diag` is a live
     // DiagnosticCollector (i.e. not moved-from). This is
     // implicit at the language level.
-    pre (true);
+    pre(true);
 
 export struct TypeChecker {
     aura::core::TypeRegistry& types;
@@ -564,9 +545,8 @@ export struct TypeChecker {
     // 在 infer_flat 前调用。name_to_sig: (name → "param1 param2|rettype")。
     // 格式示例: "Int Int|Int" 表示 (Int, Int) -> Int
     // module_src: name → 来源模块文件（用于跨模块错误定位）
-    void inject_type_sigs(
-        const std::unordered_map<std::string, std::string>& sigs,
-        const std::unordered_map<std::string, std::string>& module_src = {});
+    void inject_type_sigs(const std::unordered_map<std::string, std::string>& sigs,
+                          const std::unordered_map<std::string, std::string>& module_src = {});
 
     // 查询已注入类型的来源模块名
     std::string declared_type_module(const std::string& name) const;
@@ -610,7 +590,8 @@ export struct TypeChecker {
     double cache_hit_rate() const {
         const auto s = stats_;
         const std::uint64_t total = s.cache_hits + s.cache_misses + s.stale_cache;
-        if (total == 0) return 0.0;
+        if (total == 0)
+            return 0.0;
         return static_cast<double>(s.cache_hits) / static_cast<double>(total);
     }
 
@@ -629,11 +610,9 @@ export struct TypeChecker {
     // Returns the number of nodes that were re-inferred.
     // cache_hits is the number of nodes that were NOT in the
     // affected set (i.e. kept their cached type_id).
-    std::size_t infer_flat_partial(
-        aura::ast::FlatAST& flat,
-        const aura::ast::StringPool& pool,
-        const aura::ast::MutationRecord& rec,
-        aura::diag::DiagnosticCollector& diag);
+    std::size_t infer_flat_partial(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                                   const aura::ast::MutationRecord& rec,
+                                   aura::diag::DiagnosticCollector& diag);
 
     // Issue #116: deferred CoercionNode insertion. infer_flat
     // now collects coercion intent in this map rather than
@@ -725,12 +704,10 @@ private:
 //   - Warnings if the check produced any notes. The mode-based
 //     decision (warn vs block) is the caller's responsibility — this
 //     function does not see InvariantCheckMode by design (kept pure).
-export aura::ast::InvariantStatus post_mutation_invariant_check(
-    aura::ast::FlatAST& flat,
-    const aura::ast::StringPool& pool,
-    aura::core::TypeRegistry& reg,
-    const aura::ast::MutationRecord& rec,
-    std::vector<OwnershipNote>& notes_out);
+export aura::ast::InvariantStatus
+post_mutation_invariant_check(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                              aura::core::TypeRegistry& reg, const aura::ast::MutationRecord& rec,
+                              std::vector<OwnershipNote>& notes_out);
 
 // Issue #148 Phase 3: identify the affected node set for a mutation.
 // Returns NodeIds in the dirty subtree (descendants of the mutated
@@ -751,8 +728,7 @@ export aura::ast::InvariantStatus post_mutation_invariant_check(
 // Returns an empty vector if walk_root is NULL or out-of-range
 // (the caller can then fall back to a full infer_flat).
 export std::vector<aura::ast::NodeId>
-affected_subtree_from_mutation(
-    const aura::ast::FlatAST& flat,
-    const aura::ast::MutationRecord& rec);
+affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
+                               const aura::ast::MutationRecord& rec);
 
 } // namespace aura::compiler

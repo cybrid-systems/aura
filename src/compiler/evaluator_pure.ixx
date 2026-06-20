@@ -48,8 +48,10 @@ namespace aura::compiler::pure {
 // common case (bool / int) to keep the hot path branch-free
 // at the cost of an int comparison. Matches legacy.
 export inline bool is_truthy(const types::EvalValue& v) noexcept {
-    if (v.val == 3) return false;           // #f
-    if (types::is_int(v) && types::as_int(v) == 0) return false;  // integer 0
+    if (v.val == 3)
+        return false; // #f
+    if (types::is_int(v) && types::as_int(v) == 0)
+        return false; // integer 0
     return true;
 }
 
@@ -62,12 +64,15 @@ export inline bool is_truthy(const types::EvalValue& v) noexcept {
 export inline std::size_t edit_distance_pure(std::string_view a, std::string_view b) {
     auto m = a.size();
     auto n = b.size();
-    if (m == 0) return n;
-    if (n == 0) return m;
+    if (m == 0)
+        return n;
+    if (n == 0)
+        return m;
     // Two-row DP — swap prev/cur each iteration.
     std::vector<std::size_t> prev(n + 1);
     std::vector<std::size_t> cur(n + 1);
-    for (std::size_t j = 0; j <= n; ++j) prev[j] = j;
+    for (std::size_t j = 0; j <= n; ++j)
+        prev[j] = j;
     for (std::size_t i = 1; i <= m; ++i) {
         cur[0] = i;
         for (std::size_t j = 1; j <= n; ++j) {
@@ -87,10 +92,9 @@ export inline std::size_t edit_distance_pure(std::string_view a, std::string_vie
 // (default 3), or empty string if no candidate is close
 // enough. The empty-string sentinel matches the legacy
 // "no match" convention.
-export inline std::string closest_match_pure(
-    std::string_view name,
-    std::span<const std::string> candidates,
-    std::size_t max_dist = 3) {
+export inline std::string closest_match_pure(std::string_view name,
+                                             std::span<const std::string> candidates,
+                                             std::size_t max_dist = 3) {
     std::string best;
     std::size_t best_dist = max_dist + 1;
     for (auto& c : candidates) {
@@ -119,10 +123,10 @@ export inline std::string closest_match_pure(
 // elsewhere in FFIRuntime for the arg_types array.
 //   1 = Int, 2 = Float, 3 = String, 4 = Opaque
 struct FFIMarshalled {
-    std::array<std::int64_t, 6> i_vals{};     // raw i64 registers
-    std::array<double, 6> d_vals{};          // raw f64 registers
-    std::array<const char*, 6> s_vals{};     // char* registers (point into str_bufs)
-    std::vector<std::string> str_bufs;  // owns string contents
+    std::array<std::int64_t, 6> i_vals{}; // raw i64 registers
+    std::array<double, 6> d_vals{};       // raw f64 registers
+    std::array<const char*, 6> s_vals{};  // char* registers (point into str_bufs)
+    std::vector<std::string> str_bufs;    // owns string contents
     bool any_float = false;
 };
 
@@ -138,18 +142,16 @@ struct FFIMarshalled {
 // opaque_heap, treats the void* as i64).
 //
 // All inputs are read-only spans. No `this` access.
-export inline FFIMarshalled ffi_marshal_args_pure(
-    std::span<const types::EvalValue> args,
-    std::span<const int> arg_types,
-    std::span<const std::string> string_heap,
-    std::span<void* const> opaque_heap)
-{
+export inline FFIMarshalled ffi_marshal_args_pure(std::span<const types::EvalValue> args,
+                                                  std::span<const int> arg_types,
+                                                  std::span<const std::string> string_heap,
+                                                  std::span<void* const> opaque_heap) {
     FFIMarshalled out{};
     constexpr std::size_t kMaxArgs = 6;
     for (std::size_t i = 0; i < args.size() && i < kMaxArgs; ++i) {
-        int atype = (i < arg_types.size()) ? arg_types[i] : 1;  // default Int
+        int atype = (i < arg_types.size()) ? arg_types[i] : 1; // default Int
         const auto& a = args[i];
-        if (atype == 2) {  // Float
+        if (atype == 2) { // Float
             if (types::is_float(a)) {
                 out.d_vals[i] = types::as_float(a);
             } else if (types::is_int(a)) {
@@ -157,7 +159,7 @@ export inline FFIMarshalled ffi_marshal_args_pure(
             }
             out.i_vals[i] = static_cast<std::int64_t>(out.d_vals[i]);
             out.any_float = true;
-        } else if (atype == 3) {  // String → char*
+        } else if (atype == 3) { // String → char*
             if (types::is_string(a)) {
                 auto idx = types::as_string_idx(a);
                 if (idx < string_heap.size()) {
@@ -167,19 +169,18 @@ export inline FFIMarshalled ffi_marshal_args_pure(
                     out.d_vals[i] = 0.0;
                 }
             }
-        } else if (atype == 4) {  // Opaque (void*)
+        } else if (atype == 4) { // Opaque (void*)
             if (types::is_opaque(a)) {
                 auto oi = types::as_opaque_idx(a);
-                out.i_vals[i] = oi < opaque_heap.size()
-                    ? reinterpret_cast<std::int64_t>(opaque_heap[oi])
-                    : 0;
+                out.i_vals[i] =
+                    oi < opaque_heap.size() ? reinterpret_cast<std::int64_t>(opaque_heap[oi]) : 0;
             } else if (types::is_int(a)) {
                 out.i_vals[i] = types::as_int(a);
             } else {
                 out.i_vals[i] = 0;
             }
             out.d_vals[i] = 0.0;
-        } else {  // Int (default for atype 1 or unknown)
+        } else { // Int (default for atype 1 or unknown)
             if (types::is_int(a)) {
                 out.i_vals[i] = types::as_int(a);
             } else if (types::is_float(a)) {
@@ -214,19 +215,12 @@ export inline FFIMarshalled ffi_marshal_args_pure(
 // map with the rest-param binding (a synthesized pair
 // list) after this returns.
 export inline std::unordered_map<std::string, aura::ast::NodeId>
-compute_macro_subst_pure(
-    const std::vector<std::string>& params,
-    const std::vector<aura::ast::NodeId>& call_args,
-    bool dotted)
-{
+compute_macro_subst_pure(const std::vector<std::string>& params,
+                         const std::vector<aura::ast::NodeId>& call_args, bool dotted) {
     using aura::ast::NodeId;
     std::unordered_map<std::string, NodeId> subst;
-    std::size_t regular_count = dotted && params.size() > 0
-                                    ? params.size() - 1
-                                    : params.size();
-    for (std::size_t ai = 0;
-         ai < regular_count && ai + 1 < call_args.size();
-         ++ai) {
+    std::size_t regular_count = dotted && params.size() > 0 ? params.size() - 1 : params.size();
+    for (std::size_t ai = 0; ai < regular_count && ai + 1 < call_args.size(); ++ai) {
         subst[params[ai]] = call_args[ai + 1];
     }
     return subst;
@@ -243,7 +237,7 @@ compute_macro_subst_pure(
 // Note: using-declaration (not using-alias) because the
 // target is a function, not a type.
 namespace aura::compiler::types {
-    using ::aura::compiler::pure::is_truthy;
+using ::aura::compiler::pure::is_truthy;
 }
 
 namespace aura::compiler::pure {
@@ -264,8 +258,8 @@ namespace aura::compiler::pure {
 // This matches the legacy `coerce_to_int` semantics for callers
 // that ignore the Result, but adds an error path for callers
 // that want to handle string-parse failures explicitly.
-export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(
-    const types::EvalValue& v, std::span<const std::string> heap)
+export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(const types::EvalValue& v,
+                                                                  std::span<const std::string> heap)
     // Issue #213 follow-up: C++26 contract. The function
     // gracefully handles v being any EvalValue (returns 0 for
     // non-coercible types), so the precondition is just
@@ -274,7 +268,7 @@ export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(
     // that uses the heap) — but this is a soft precondition
     // (the function falls back to 0 on bad heap indices, so
     // there's no hard requirement here).
-    pre (true) // function is total; heap is consulted only for string values
+    pre(true) // function is total; heap is consulted only for string values
 {
     if (types::is_int(v))
         return types::as_int(v);
@@ -282,22 +276,21 @@ export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(
         return static_cast<std::int64_t>(types::as_float(v));
     if (types::is_string(v)) {
         if (heap.empty())
-            return 0;  // no heap to resolve index — silent fallback
+            return 0; // no heap to resolve index — silent fallback
         auto idx = types::as_string_idx(v);
         if (idx >= heap.size())
-            return 0;  // out-of-bounds index — silent fallback
+            return 0; // out-of-bounds index — silent fallback
         try {
             return static_cast<std::int64_t>(std::stoll(heap[idx]));
         } catch (const std::exception&) {
             return std::unexpected(aura::diag::Diagnostic(
                 aura::diag::ErrorKind::TypeError,
-                std::string("coerce: cannot parse string '") + heap[idx]
-                    + "' as integer"));
+                std::string("coerce: cannot parse string '") + heap[idx] + "' as integer"));
         }
     }
     if (types::is_bool(v))
         return types::as_bool(v) ? 1 : 0;
-    return 0;  // void, pair, closure, etc. — silent 0
+    return 0; // void, pair, closure, etc. — silent 0
 }
 
 // coerce_value_pure — Issue #146 Phase 2 extract.
@@ -313,12 +306,10 @@ export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(
 // for INT→STRING / FLOAT→STRING is allowed (and expected) since
 // heap is a parameter, not Evaluator state. The legacy in-out
 // `coerce_value` in evaluator_impl.cpp becomes a thin wrapper.
-export inline aura::diag::Result<void> coerce_value_pure(
-    types::EvalValue& val,
-    aura::core::TypeTag from,
-    aura::core::TypeTag to,
-    std::pmr::vector<std::string>& heap)
-{
+export inline aura::diag::Result<void> coerce_value_pure(types::EvalValue& val,
+                                                         aura::core::TypeTag from,
+                                                         aura::core::TypeTag to,
+                                                         std::pmr::vector<std::string>& heap) {
     using aura::core::TypeTag;
     if (from == to)
         return {};
@@ -347,13 +338,12 @@ export inline aura::diag::Result<void> coerce_value_pure(
             } catch (const std::exception&) {
                 return std::unexpected(aura::diag::Diagnostic(
                     aura::diag::ErrorKind::TypeError,
-                    "coerce_value: cannot parse string '" + std::string(heap[static_cast<std::size_t>(idx)])
-                        + "' as integer"));
+                    "coerce_value: cannot parse string '" +
+                        std::string(heap[static_cast<std::size_t>(idx)]) + "' as integer"));
             }
         }
-        return std::unexpected(aura::diag::Diagnostic(
-            aura::diag::ErrorKind::TypeError,
-            "coerce_value: string index out of bounds"));
+        return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError,
+                                                      "coerce_value: string index out of bounds"));
     }
     if (from == TypeTag::INT && to == TypeTag::BOOL) {
         val = types::make_bool(types::as_int(val) != 0);
@@ -374,23 +364,20 @@ export inline aura::diag::Result<void> coerce_value_pure(
         auto idx = types::as_string_idx(val);
         if (idx < heap.size()) {
             try {
-                val = types::make_float(
-                    std::stod(heap[static_cast<std::size_t>(idx)]));
+                val = types::make_float(std::stod(heap[static_cast<std::size_t>(idx)]));
                 return {};
             } catch (const std::exception&) {
                 return std::unexpected(aura::diag::Diagnostic(
                     aura::diag::ErrorKind::TypeError,
-                    "coerce_value: cannot parse string '" + std::string(heap[static_cast<std::size_t>(idx)])
-                        + "' as float"));
+                    "coerce_value: cannot parse string '" +
+                        std::string(heap[static_cast<std::size_t>(idx)]) + "' as float"));
             }
         }
-        return std::unexpected(aura::diag::Diagnostic(
-            aura::diag::ErrorKind::TypeError,
-            "coerce_value: string index out of bounds"));
+        return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError,
+                                                      "coerce_value: string index out of bounds"));
     }
-    return std::unexpected(aura::diag::Diagnostic(
-        aura::diag::ErrorKind::TypeError,
-        "coerce_value: unsupported coercion"));
+    return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError,
+                                                  "coerce_value: unsupported coercion"));
 }
 
 // arithmetic_sum_pure — Issue #146 (7th extract).
@@ -408,15 +395,13 @@ export inline aura::diag::Result<void> coerce_value_pure(
 // (default), no diagnostics are emitted. The function remains
 // pure modulo the sink: every dependency (args, heap, diag
 // stream) is passed in, no `this` or Evaluator member access.
-export inline types::EvalValue
-arithmetic_sum_pure(
-    std::span<const types::EvalValue> args,
-    std::span<const std::string> string_heap,
-    std::ostream* diag = nullptr)
-{
+export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalValue> args,
+                                                   std::span<const std::string> string_heap,
+                                                   std::ostream* diag = nullptr) {
     auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
         auto r = coerce_to_int_pure(v, string_heap);
-        if (r) return *r;
+        if (r)
+            return *r;
         // Coercion failed. If the failing value is a String and
         // a diag sink is provided, mirror the pre-Phase-1 stderr
         // line so callers that previously relied on the
@@ -426,8 +411,8 @@ arithmetic_sum_pure(
         if (diag && types::is_string(v) && !string_heap.empty()) {
             auto idx = types::as_string_idx(v);
             if (idx < string_heap.size()) {
-                *diag << "error: type mismatch — expected Int, got String '"
-                       << string_heap[idx] << "'\n";
+                *diag << "error: type mismatch — expected Int, got String '" << string_heap[idx]
+                      << "'\n";
             }
         }
         return 0;
@@ -436,14 +421,15 @@ arithmetic_sum_pure(
         return types::make_int(0);
     bool any_f = false;
     for (const auto& v : args) {
-        if (types::is_float(v)) { any_f = true; break; }
+        if (types::is_float(v)) {
+            any_f = true;
+            break;
+        }
     }
     if (any_f) {
         double r = 0.0;
         for (const auto& v : args)
-            r += types::is_float(v)
-                     ? types::as_float(v)
-                     : static_cast<double>(coerce_one(v));
+            r += types::is_float(v) ? types::as_float(v) : static_cast<double>(coerce_one(v));
         return types::make_float(r);
     }
     std::int64_t r = 0;
@@ -458,20 +444,18 @@ arithmetic_sum_pure(
 // Promotes to float if any arg is float. Returns the result as a
 // fresh EvalValue (make_int or make_float). Same diag sink
 // convention as arithmetic_sum_pure.
-export inline types::EvalValue
-arithmetic_sub_pure(
-    std::span<const types::EvalValue> args,
-    std::span<const std::string> string_heap,
-    std::ostream* diag = nullptr)
-{
+export inline types::EvalValue arithmetic_sub_pure(std::span<const types::EvalValue> args,
+                                                   std::span<const std::string> string_heap,
+                                                   std::ostream* diag = nullptr) {
     auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
         auto r = coerce_to_int_pure(v, string_heap);
-        if (r) return *r;
+        if (r)
+            return *r;
         if (diag && types::is_string(v) && !string_heap.empty()) {
             auto idx = types::as_string_idx(v);
             if (idx < string_heap.size()) {
-                *diag << "error: type mismatch — expected Int, got String '"
-                       << string_heap[idx] << "'\n";
+                *diag << "error: type mismatch — expected Int, got String '" << string_heap[idx]
+                      << "'\n";
             }
         }
         return 0;
@@ -480,20 +464,21 @@ arithmetic_sub_pure(
         return types::make_int(0);
     bool any_f = false;
     for (const auto& v : args) {
-        if (types::is_float(v)) { any_f = true; break; }
+        if (types::is_float(v)) {
+            any_f = true;
+            break;
+        }
     }
     if (any_f) {
         if (args.size() == 1)
             return types::make_float(-(types::is_float(args[0])
-                                          ? types::as_float(args[0])
-                                          : static_cast<double>(coerce_one(args[0]))));
-        double r = types::is_float(args[0])
-                       ? types::as_float(args[0])
-                       : static_cast<double>(coerce_one(args[0]));
+                                           ? types::as_float(args[0])
+                                           : static_cast<double>(coerce_one(args[0]))));
+        double r = types::is_float(args[0]) ? types::as_float(args[0])
+                                            : static_cast<double>(coerce_one(args[0]));
         for (std::size_t i = 1; i < args.size(); ++i)
-            r -= types::is_float(args[i])
-                     ? types::as_float(args[i])
-                     : static_cast<double>(coerce_one(args[i]));
+            r -= types::is_float(args[i]) ? types::as_float(args[i])
+                                          : static_cast<double>(coerce_one(args[i]));
         return types::make_float(r);
     }
     if (args.size() == 1)
@@ -508,20 +493,18 @@ arithmetic_sub_pure(
 //
 // Pure variadic multiplication: (*) → 1, (* x) → x, (* x y z ...) → x * y * z.
 // Promotes to float if any arg is float.
-export inline types::EvalValue
-arithmetic_mul_pure(
-    std::span<const types::EvalValue> args,
-    std::span<const std::string> string_heap,
-    std::ostream* diag = nullptr)
-{
+export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalValue> args,
+                                                   std::span<const std::string> string_heap,
+                                                   std::ostream* diag = nullptr) {
     auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
         auto r = coerce_to_int_pure(v, string_heap);
-        if (r) return *r;
+        if (r)
+            return *r;
         if (diag && types::is_string(v) && !string_heap.empty()) {
             auto idx = types::as_string_idx(v);
             if (idx < string_heap.size()) {
-                *diag << "error: type mismatch — expected Int, got String '"
-                       << string_heap[idx] << "'\n";
+                *diag << "error: type mismatch — expected Int, got String '" << string_heap[idx]
+                      << "'\n";
             }
         }
         return 0;
@@ -530,14 +513,15 @@ arithmetic_mul_pure(
         return types::make_int(1);
     bool any_f = false;
     for (const auto& v : args) {
-        if (types::is_float(v)) { any_f = true; break; }
+        if (types::is_float(v)) {
+            any_f = true;
+            break;
+        }
     }
     if (any_f) {
         double r = 1.0;
         for (const auto& v : args)
-            r *= types::is_float(v)
-                     ? types::as_float(v)
-                     : static_cast<double>(coerce_one(v));
+            r *= types::is_float(v) ? types::as_float(v) : static_cast<double>(coerce_one(v));
         return types::make_float(r);
     }
     std::int64_t r = 1;
@@ -558,61 +542,58 @@ arithmetic_mul_pure(
 // of args that were non-zero. Useful for callers that want to
 // short-circuit on all-zeros.
 export inline aura::diag::Result<types::EvalValue>
-arithmetic_div_pure(
-    std::span<const types::EvalValue> args,
-    std::span<const std::string> string_heap,
-    std::ostream* diag = nullptr)
+arithmetic_div_pure(std::span<const types::EvalValue> args,
+                    std::span<const std::string> string_heap, std::ostream* diag = nullptr)
     // Issue #213 follow-up: C++26 contract. Division by
     // zero is detected at runtime via std::unexpected; the
     // function gracefully handles empty args (returns
     // TypeError), so the only precondition is that the
     // span's data() is non-null (i.e. not a default-constructed
     // span with a null pointer).
-    pre (args.data() != nullptr || args.empty())
-{
+    pre(args.data() != nullptr || args.empty()) {
     auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
         auto r = coerce_to_int_pure(v, string_heap);
-        if (r) return *r;
+        if (r)
+            return *r;
         if (diag && types::is_string(v) && !string_heap.empty()) {
             auto idx = types::as_string_idx(v);
             if (idx < string_heap.size()) {
-                *diag << "error: type mismatch — expected Int, got String '"
-                       << string_heap[idx] << "'\n";
+                *diag << "error: type mismatch — expected Int, got String '" << string_heap[idx]
+                      << "'\n";
             }
         }
         return 0;
     };
     if (args.empty()) {
-        return std::unexpected(aura::diag::Diagnostic(
-            aura::diag::ErrorKind::TypeError,
-            "division: at least one argument required"));
+        return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError,
+                                                      "division: at least one argument required"));
     }
     if (args.size() == 1)
-        return types::make_int(1 / coerce_one(args[0]));  // legacy: 1/x
+        return types::make_int(1 / coerce_one(args[0])); // legacy: 1/x
 
     // Multi-arg: a / b / c / ...
     // Check all divisors (args[1..]) for zero first; bail out
     // before mutating any state.
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (coerce_one(args[i]) == 0) {
-            return std::unexpected(aura::diag::Diagnostic(
-                aura::diag::ErrorKind::DivisionByZero,
-                "division by zero"));
+            return std::unexpected(
+                aura::diag::Diagnostic(aura::diag::ErrorKind::DivisionByZero, "division by zero"));
         }
     }
 
     bool any_f = false;
     for (const auto& v : args) {
-        if (types::is_float(v)) { any_f = true; break; }
+        if (types::is_float(v)) {
+            any_f = true;
+            break;
+        }
     }
     if (any_f) {
-        double r = types::is_float(args[0])
-                       ? types::as_float(args[0])
-                       : static_cast<double>(coerce_one(args[0]));
+        double r = types::is_float(args[0]) ? types::as_float(args[0])
+                                            : static_cast<double>(coerce_one(args[0]));
         for (std::size_t i = 1; i < args.size(); ++i)
-            r /= types::is_float(args[i])
-                     ? types::as_float(args[i])
-                     : static_cast<double>(coerce_one(args[i]));
+            r /= types::is_float(args[i]) ? types::as_float(args[i])
+                                          : static_cast<double>(coerce_one(args[i]));
         return types::make_float(r);
     }
     std::int64_t r = coerce_one(args[0]);

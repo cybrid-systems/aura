@@ -40,12 +40,23 @@ static std::string json_escape(const std::string& s) {
     out.reserve(s.size() + 16);
     for (auto c : s) {
         switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:   out += c;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            default:
+                out += c;
         }
     }
     return out;
@@ -60,18 +71,25 @@ static std::string json_field(const std::string& json, const std::string& field)
         key = "\"" + field + "\":\"";
         pos = json.find(key);
     }
-    if (pos == std::string::npos) return {};
+    if (pos == std::string::npos)
+        return {};
     pos += key.size();
     std::string val;
     while (pos < json.size() && json[pos] != '"') {
         if (json[pos] == '\\' && pos + 1 < json.size()) {
             auto next = json[pos + 1];
-            if (next == 'n') val += '\n';
-            else if (next == 't') val += '\t';
-            else if (next == 'r') val += '\r';
-            else if (next == '"') val += '"';
-            else if (next == '\\') val += '\\';
-            else val += next;
+            if (next == 'n')
+                val += '\n';
+            else if (next == 't')
+                val += '\t';
+            else if (next == 'r')
+                val += '\r';
+            else if (next == '"')
+                val += '"';
+            else if (next == '\\')
+                val += '\\';
+            else
+                val += next;
             pos += 2;
         } else {
             val += json[pos++];
@@ -85,11 +103,10 @@ static std::string json_field(const std::string& json, const std::string& field)
 using EvalValue = aura::compiler::types::EvalValue;
 using aura::compiler::types::is_closure;
 
-static std::string fmt_val(const EvalValue& v,
-                            aura::compiler::CompilerService& cs) {
+static std::string fmt_val(const EvalValue& v, aura::compiler::CompilerService& cs) {
     return aura::compiler::format_value(v, cs.evaluator().primitives().string_heap(),
-                                         cs.evaluator().pairs(), 0, &cs.evaluator().primitives(),
-                                         cs.evaluator().keyword_table());
+                                        cs.evaluator().pairs(), 0, &cs.evaluator().primitives(),
+                                        cs.evaluator().keyword_table());
 }
 
 // ── run_serve_async ─────────────────────────────────────
@@ -110,17 +127,21 @@ void run_serve_async(int num_workers) {
     // and any other blocking tasks without blocking the event loop.
     // Pool size = num CPUs is a reasonable default.
     unsigned pool_size = std::thread::hardware_concurrency();
-    if (pool_size < 2) pool_size = 2;
-    if (pool_size > 8) pool_size = 8;
+    if (pool_size < 2)
+        pool_size = 2;
+    if (pool_size > 8)
+        pool_size = 8;
     static aura::serve::ThreadPool s_thread_pool(pool_size);
 
     // Register thread pool enqueue callback:
     // Injects the current fiber's eventfd as the wakeup mechanism.
     aura::messaging::g_thread_pool_enqueue = [](std::function<void()> fn, int) {
         auto* fiber = aura::serve::g_current_fiber;
-        if (!fiber) return;
+        if (!fiber)
+            return;
         int evfd = fiber->eventfd();
-        if (evfd < 0) return;
+        if (evfd < 0)
+            return;
         s_thread_pool.enqueue(std::move(fn), evfd);
     };
 
@@ -130,25 +151,29 @@ void run_serve_async(int num_workers) {
     // state is captured in the closure and executed FIFO on the pool).
     aura::messaging::g_eval_async = [](const std::string& code) -> std::string {
         auto* fiber = aura::serve::g_current_fiber;
-        if (!fiber) return "";
+        if (!fiber)
+            return "";
         auto evfd = fiber->eventfd();
-        if (evfd < 0) return "";
+        if (evfd < 0)
+            return "";
         // Capture current compiler service for eval
         auto* svc = static_cast<aura::compiler::CompilerService*>(
             aura::messaging::g_current_compiler_service);
-        if (!svc) return "";
+        if (!svc)
+            return "";
         std::string result;
-        s_thread_pool.enqueue([svc, code, &result]() {
-            auto r = svc->exec_with_cache(code);
-            if (r) {
-                result = aura::compiler::format_value(
-                    *r, svc->evaluator().primitives().string_heap(),
-                    svc->evaluator().pairs(), 0, &svc->evaluator().primitives(),
-                    svc->evaluator().keyword_table());
-            } else {
-                result = "[error] " + r.error().format();
-            }
-        }, evfd);
+        s_thread_pool.enqueue(
+            [svc, code, &result]() {
+                auto r = svc->exec_with_cache(code);
+                if (r) {
+                    result = aura::compiler::format_value(
+                        *r, svc->evaluator().primitives().string_heap(), svc->evaluator().pairs(),
+                        0, &svc->evaluator().primitives(), svc->evaluator().keyword_table());
+                } else {
+                    result = "[error] " + r.error().format();
+                }
+            },
+            evfd);
         // Yield and wait for completion
         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
         aura::serve::Fiber::yield();
@@ -173,9 +198,9 @@ void run_serve_async(int num_workers) {
     // on the target's completion; the lookup is needed first to
     // check if the target is already done).
     aura::messaging::g_fiber_lookup = +[](int64_t fid) -> void* {
-        return static_cast<void*>(aura::serve::g_scheduler
-            ? aura::serve::g_scheduler->fiber_by_id(static_cast<std::uint64_t>(fid))
-            : nullptr);
+        return static_cast<void*>(aura::serve::g_scheduler ? aura::serve::g_scheduler->fiber_by_id(
+                                                                 static_cast<std::uint64_t>(fid))
+                                                           : nullptr);
     };
 
     // Register fiber:yield callback (non-blocking yield, fiber stays Ready)
@@ -228,8 +253,10 @@ void run_serve_async(int num_workers) {
     aura::messaging::g_gc_flush_root_set = [&sched](void* root_set_out) {
         auto* svc = static_cast<aura::compiler::CompilerService*>(
             aura::messaging::g_current_compiler_service);
-        if (!svc) return;
-        if (!root_set_out) return;
+        if (!svc)
+            return;
+        if (!root_set_out)
+            return;
         svc->evaluator().flush_gc_roots(root_set_out);
     };
 
@@ -246,7 +273,8 @@ void run_serve_async(int num_workers) {
     aura::messaging::g_gc_sweep = [&sched](void* sweep_buffers) -> void* {
         auto* svc = static_cast<aura::compiler::CompilerService*>(
             aura::messaging::g_current_compiler_service);
-        if (!svc || !sweep_buffers) return nullptr;
+        if (!svc || !sweep_buffers)
+            return nullptr;
         return svc->evaluator().compact_sweep(sweep_buffers);
     };
 
@@ -279,15 +307,16 @@ void run_serve_async(int num_workers) {
     // alloc hot path but keeps the API simple.
     thread_local aura::serve::GCCollector* tls_gc_collector = nullptr;
     tls_gc_collector = sched.gc_collector();
-    aura::gc_hooks::g_arena_record_alloc.store(
-        +[]() noexcept {
-            if (auto* gc = tls_gc_collector) gc->record_alloc();
-        });
+    aura::gc_hooks::g_arena_record_alloc.store(+[]() noexcept {
+        if (auto* gc = tls_gc_collector)
+            gc->record_alloc();
+    });
     sched.gc_collector()->register_sweep_fn(
         [&sched](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
             auto* svc = static_cast<aura::compiler::CompilerService*>(
                 aura::messaging::g_current_compiler_service);
-            if (!svc) return {};
+            if (!svc)
+                return {};
             // Reconstruct a view that compact_sweep can consume.
             // We use a stack-allocated stub with the same shape
             // as GCSweepBuffers so we can pass it through the
@@ -310,12 +339,11 @@ void run_serve_async(int num_workers) {
                 std::size_t closures_freed = 0;
                 std::size_t fiber_results_freed = 0;
             };
-            auto* msg_ptr = static_cast<SweepResultMsg*>(
-                svc->evaluator().compact_sweep(&holder));
-            if (!msg_ptr) return {};
-            aura::serve::GCSweepResult r{
-                msg_ptr->strings_freed, msg_ptr->pairs_freed,
-                msg_ptr->closures_freed, msg_ptr->fiber_results_freed};
+            auto* msg_ptr = static_cast<SweepResultMsg*>(svc->evaluator().compact_sweep(&holder));
+            if (!msg_ptr)
+                return {};
+            aura::serve::GCSweepResult r{msg_ptr->strings_freed, msg_ptr->pairs_freed,
+                                         msg_ptr->closures_freed, msg_ptr->fiber_results_freed};
             delete msg_ptr;
             return r;
         });
@@ -324,7 +352,8 @@ void run_serve_async(int num_workers) {
     // Called from (gc-heap) primitives.
     aura::messaging::g_gc_collect = [&sched]() -> bool {
         auto* gc = sched.gc_collector();
-        if (!gc) return false;
+        if (!gc)
+            return false;
         gc->set_alloc_threshold(1);
         gc->reset_alloc_counter();
         gc->record_alloc();
@@ -342,28 +371,26 @@ void run_serve_async(int num_workers) {
     // the active Evaluator (set per-session on the IO
     // thread). The GC is called from the IO thread via
     // (gc-heap), so the active service is the session's.
-    sched.gc_collector()->register_env_walk_fn(
-        [](aura::serve::EnvFrameRoots& out) {
-            auto* svc = static_cast<aura::compiler::CompilerService*>(
-                aura::messaging::g_current_compiler_service);
-            if (!svc) return;
-            // CompilerService exposes the Evaluator; walk
-            // the Evaluator's env_frames_ arena. The walk
-            // is read-only and SoA-friendly (no allocations
-            // in the hot path; only pair/closure indices
-            // are appended to the output vectors).
-            svc->evaluator().walk_env_frame_roots(
-                out.pair_roots, out.closure_roots);
-        });
+    sched.gc_collector()->register_env_walk_fn([](aura::serve::EnvFrameRoots& out) {
+        auto* svc = static_cast<aura::compiler::CompilerService*>(
+            aura::messaging::g_current_compiler_service);
+        if (!svc)
+            return;
+        // CompilerService exposes the Evaluator; walk
+        // the Evaluator's env_frames_ arena. The walk
+        // is read-only and SoA-friendly (no allocations
+        // in the hot path; only pair/closure indices
+        // are appended to the output vectors).
+        svc->evaluator().walk_env_frame_roots(out.pair_roots, out.closure_roots);
+    });
 
     // 3. Shared state between stdin_reader and session fibers
-    std::deque<std::string> stdin_lines;  // complete JSON lines from stdin
+    std::deque<std::string> stdin_lines; // complete JSON lines from stdin
     bool stdin_eof = false;
 
     // 4. Spawn stdin_reader fiber
 
     auto* stdin_fiber = sched.spawn([&sched, &stdin_lines, &stdin_eof]() {
-
         std::string buf;
         bool local_eof = false;
         while (!local_eof) {
@@ -379,7 +406,7 @@ void run_serve_async(int num_workers) {
                     local_eof = true;
                     break;
                 } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    break;  // no more data now
+                    break; // no more data now
                 } else {
                     local_eof = true;
                     break;
@@ -455,10 +482,9 @@ void run_serve_async(int num_workers) {
     // "default" session; sessions are added on top.)
     auto gc_collect = sched.gc_collector();
     auto register_session_root = [&](Session& s, int worker_id) {
-        gc_collect->register_root_source(worker_id,
-            [&s](aura::serve::GCRootSet& out) {
-                s.service.evaluator().flush_gc_roots(&out);
-            });
+        gc_collect->register_root_source(worker_id, [&s](aura::serve::GCRootSet& out) {
+            s.service.evaluator().flush_gc_roots(&out);
+        });
     };
     {
         // Use 0 for default; the active-session g_gc_flush_root_set
@@ -468,45 +494,62 @@ void run_serve_async(int num_workers) {
 
     // Register async HTTP handler (uses thread + fork+exec curl + pipe with drain)
     // Thread does blocking fork+exec; pipe read has a 30s timeout to avoid deadlock.
-    aura::messaging::g_http_post_async = [](const std::string& url,
-                                              const std::string& body,
-                                              const std::string& auth) -> std::string {
+    aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
+                                            const std::string& auth) -> std::string {
         auto* fiber = aura::serve::g_current_fiber;
-        if (!fiber) return {};
+        if (!fiber)
+            return {};
         auto evfd = fiber->eventfd();
-        if (evfd < 0) return {};
+        if (evfd < 0)
+            return {};
 
         std::string result;
         std::thread t([evfd, url, body, auth, &result]() {
             int in[2], out[2];
             if (::pipe(in) < 0 || ::pipe(out) < 0) {
-                uint64_t v = 1; ::write(evfd, &v, sizeof(v)); return;
+                uint64_t v = 1;
+                ::write(evfd, &v, sizeof(v));
+                return;
             }
 
             pid_t pid = ::fork();
             if (pid < 0) {
-                ::close(in[0]); ::close(in[1]); ::close(out[0]); ::close(out[1]);
-                uint64_t v = 1; ::write(evfd, &v, sizeof(v)); return;
+                ::close(in[0]);
+                ::close(in[1]);
+                ::close(out[0]);
+                ::close(out[1]);
+                uint64_t v = 1;
+                ::write(evfd, &v, sizeof(v));
+                return;
             }
 
             if (pid == 0) {
-                ::close(in[1]); ::close(out[0]);
-                ::dup2(in[0], STDIN_FILENO); ::dup2(out[1], STDOUT_FILENO);
-                ::close(in[0]); ::close(out[1]);
+                ::close(in[1]);
+                ::close(out[0]);
+                ::dup2(in[0], STDIN_FILENO);
+                ::dup2(out[1], STDOUT_FILENO);
+                ::close(in[0]);
+                ::close(out[1]);
 
                 // Build argv
                 std::vector<const char*> argv;
                 argv.push_back("curl");
-                argv.push_back("-s"); argv.push_back("-X"); argv.push_back("POST");
-                argv.push_back("--data-binary"); argv.push_back("@-");
-                argv.push_back("-H"); argv.push_back("Content-Type: application/json");
+                argv.push_back("-s");
+                argv.push_back("-X");
+                argv.push_back("POST");
+                argv.push_back("--data-binary");
+                argv.push_back("@-");
+                argv.push_back("-H");
+                argv.push_back("Content-Type: application/json");
                 if (!auth.empty()) {
                     auto auth_hdr = "Authorization: Bearer " + auth;
                     argv.push_back("-H");
                     argv.push_back(auth_hdr.c_str());
                 }
-                argv.push_back("--max-time"); argv.push_back("30");
-                argv.push_back("--connect-timeout"); argv.push_back("10");
+                argv.push_back("--max-time");
+                argv.push_back("30");
+                argv.push_back("--connect-timeout");
+                argv.push_back("10");
                 argv.push_back(url.c_str());
                 argv.push_back(nullptr);
 
@@ -515,23 +558,29 @@ void run_serve_async(int num_workers) {
             }
 
             // Parent: send body, close stdin pipe
-            ::close(in[0]); ::close(out[1]);
-            ::write(in[1], body.data(), body.size()); ::close(in[1]);
+            ::close(in[0]);
+            ::close(out[1]);
+            ::write(in[1], body.data(), body.size());
+            ::close(in[1]);
 
             // Read response with timeout to prevent pipe deadlock
             // Large LLM responses (>64KB pipe buffer) can block child write
             auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(35);
-            std::array<char, 65536> fbuf;  // Large buffer to drain pipe fast
+            std::array<char, 65536> fbuf; // Large buffer to drain pipe fast
             struct pollfd pfd = {out[0], POLLIN, 0};
             ssize_t nr;
             while (true) {
                 auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    deadline - std::chrono::steady_clock::now()).count();
-                if (remaining <= 0) break;
+                                     deadline - std::chrono::steady_clock::now())
+                                     .count();
+                if (remaining <= 0)
+                    break;
                 int pr = ::poll(&pfd, 1, static_cast<int>(remaining));
-                if (pr <= 0) break;
+                if (pr <= 0)
+                    break;
                 nr = ::read(out[0], fbuf.data(), fbuf.size());
-                if (nr <= 0) break;
+                if (nr <= 0)
+                    break;
                 result.append(fbuf.data(), static_cast<std::size_t>(nr));
             }
             ::close(out[0]);
@@ -552,10 +601,13 @@ void run_serve_async(int num_workers) {
 
     // Register session:create for Aura code (primitive in evaluator)
     std::function<aura::messaging::SessionCreateFn> sc_fn =
-        [&sessions, &sched, shared_workspace_tree, &stdin_lines, &stdin_eof](const std::string& name) -> bool {
-        if (sessions.count(name) > 0) return false;
+        [&sessions, &sched, shared_workspace_tree, &stdin_lines,
+         &stdin_eof](const std::string& name) -> bool {
+        if (sessions.count(name) > 0)
+            return false;
         auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
-        if (!created) return false;
+        if (!created)
+            return false;
         it->second->id = name;
         it->second->service.set_session_id(name);
         it->second->service.set_workspace_tree(shared_workspace_tree);
@@ -575,7 +627,8 @@ void run_serve_async(int num_workers) {
                     }
                 }
                 if (sl.empty()) {
-                    if (stdin_eof) break;
+                    if (stdin_eof)
+                        break;
                     aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
                     aura::serve::Fiber::yield();
                     continue;
@@ -587,11 +640,13 @@ void run_serve_async(int num_workers) {
                         aura::messaging::g_current_compiler_service = &sess.service;
                         auto r = sess.service.exec_with_cache(code);
                         if (r) {
-                            std::println("{{\"session\":\"{}\" ,\"status\":\"ok\",\"value\":\"{}\" }}",
-                                         json_escape(nsid), json_escape(fmt_val(*r, sess.service)));
+                            std::println(
+                                "{{\"session\":\"{}\" ,\"status\":\"ok\",\"value\":\"{}\" }}",
+                                json_escape(nsid), json_escape(fmt_val(*r, sess.service)));
                         } else {
-                            std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"{}\" }}",
-                                         json_escape(nsid), json_escape(r.error().format()));
+                            std::println(
+                                "{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"{}\" }}",
+                                json_escape(nsid), json_escape(r.error().format()));
                         }
                     }
                 }
@@ -607,7 +662,8 @@ void run_serve_async(int num_workers) {
     // For now, spawn one fiber for the default session
     // In the future, spawn as needed
     for (auto& [sid, sess] : sessions) {
-        auto* fiber = sched.spawn([sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions, &sched, &shared_workspace_tree]() {
+        auto* fiber = sched.spawn([sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions,
+                                   &sched, &shared_workspace_tree]() {
             // Attach mailbox to this fiber
             sess.mailbox.attach(g_current_fiber);
 
@@ -647,7 +703,8 @@ void run_serve_async(int num_workers) {
                     }
 
                     // Nothing to do
-                    if (stdin_eof) break;
+                    if (stdin_eof)
+                        break;
                     g_current_fiber->set_state(FiberState::Waiting);
                     Fiber::yield();
                     continue;
@@ -656,16 +713,18 @@ void run_serve_async(int num_workers) {
                 // Parse and execute
                 auto cmd = json_field(line, "cmd");
                 if (cmd.empty()) {
-                    std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing cmd\"}}",
-                                 json_escape(sid));
+                    std::println(
+                        "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing cmd\"}}",
+                        json_escape(sid));
                     continue;
                 }
 
                 if (cmd == "exec") {
                     auto code = json_field(line, "code");
                     if (code.empty()) {
-                        std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing code\"}}",
-                                     json_escape(sid));
+                        std::println(
+                            "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing code\"}}",
+                            json_escape(sid));
                         continue;
                     }
                     aura::messaging::g_current_compiler_service = &sess.service;
@@ -675,14 +734,17 @@ void run_serve_async(int num_workers) {
                             auto& v = *result;
                             // Check if closure
                             if (is_closure(v)) {
-                                std::println("{{\"session\":\"{}\",\"status\":\"closure\",\"value\":\"#<procedure>\"}}",
+                                std::println("{{\"session\":\"{}\",\"status\":\"closure\","
+                                             "\"value\":\"#<procedure>\"}}",
                                              json_escape(sid));
                             } else {
-                                std::println("{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
-                                             json_escape(sid), json_escape(fmt_val(v, sess.service)));
+                                std::println(
+                                    "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
+                                    json_escape(sid), json_escape(fmt_val(v, sess.service)));
                             }
                         } catch (const std::bad_alloc&) {
-                            std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"out of memory\"}}",
+                            std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"out "
+                                         "of memory\"}}",
                                          json_escape(sid));
                         }
                     } else {
@@ -697,44 +759,53 @@ void run_serve_async(int num_workers) {
                     if (action == "create") {
                         auto name = json_field(line, "name");
                         if (name.empty()) {
-                            std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"missing name\"}}",
+                            std::println("{{\"session\":\"{}\" "
+                                         ",\"status\":\"error\",\"msg\":\"missing name\"}}",
                                          json_escape(sid));
                         } else {
-                            auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
+                            auto [it, created] =
+                                sessions.try_emplace(name, std::make_unique<Session>());
                             if (created) {
                                 it->second->id = name;
                                 it->second->service.set_session_id(name);
                                 it->second->service.set_workspace_tree(shared_workspace_tree);
-                                aura::compiler::CompilerService::register_session(name, &it->second->service);
+                                aura::compiler::CompilerService::register_session(
+                                    name, &it->second->service);
                                 // Register this new session's evaluator as
                                 // a GC root source so the GC walks its
                                 // heaps during collect_roots(). Worker_id
                                 // is the session's hash mod a small prime
                                 // to spread them; the value only needs to
                                 // be unique per session.
-                                int wid = static_cast<int>(
-                                    std::hash<std::string>{}(name) % 997) + 1;
-                                sched.gc_collector()->register_root_source(wid,
-                                    [&sess = *it->second](aura::serve::GCRootSet& out) {
+                                int wid =
+                                    static_cast<int>(std::hash<std::string>{}(name) % 997) + 1;
+                                sched.gc_collector()->register_root_source(
+                                    wid, [&sess = *it->second](aura::serve::GCRootSet& out) {
                                         sess.service.evaluator().flush_gc_roots(&out);
                                     });
                                 // Spawn fiber for new session
                                 auto nsid = name;
-                                auto* nf = sched.spawn([nsid, &sess = *it->second, &stdin_lines, &stdin_eof, &sessions, &sched]() {
+                                auto* nf = sched.spawn([nsid, &sess = *it->second, &stdin_lines,
+                                                        &stdin_eof, &sessions, &sched]() {
                                     sess.mailbox.attach(aura::serve::g_current_fiber);
-                                    sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
+                                    sess.service.set_wake_eventfd(
+                                        aura::serve::g_current_fiber->eventfd());
                                     while (sess.active) {
                                         std::string sl;
-                                        for (auto sit = stdin_lines.begin(); sit != stdin_lines.end(); ++sit) {
-                                            if (sit->find("\"session\":\"" + nsid + "\"") != std::string::npos) {
+                                        for (auto sit = stdin_lines.begin();
+                                             sit != stdin_lines.end(); ++sit) {
+                                            if (sit->find("\"session\":\"" + nsid + "\"") !=
+                                                std::string::npos) {
                                                 sl = std::move(*sit);
                                                 stdin_lines.erase(sit);
                                                 break;
                                             }
                                         }
                                         if (sl.empty()) {
-                                            if (stdin_eof) break;
-                                            aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+                                            if (stdin_eof)
+                                                break;
+                                            aura::serve::g_current_fiber->set_state(
+                                                aura::serve::FiberState::Waiting);
                                             aura::serve::Fiber::yield();
                                             continue;
                                         }
@@ -744,26 +815,35 @@ void run_serve_async(int num_workers) {
                                             if (!code.empty()) {
                                                 auto r = sess.service.exec_with_cache(code);
                                                 if (r) {
-                                                    std::println("{{\"session\":\"{}\" ,\"status\":\"ok\",\"value\":\"{}\" }}",
-                                                                 json_escape(nsid), json_escape(fmt_val(*r, sess.service)));
+                                                    std::println(
+                                                        "{{\"session\":\"{}\" "
+                                                        ",\"status\":\"ok\",\"value\":\"{}\" }}",
+                                                        json_escape(nsid),
+                                                        json_escape(fmt_val(*r, sess.service)));
                                                 } else {
-                                                    std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"{}\" }}",
-                                                                 json_escape(nsid), json_escape(r.error().format()));
+                                                    std::println(
+                                                        "{{\"session\":\"{}\" "
+                                                        ",\"status\":\"error\",\"msg\":\"{}\" }}",
+                                                        json_escape(nsid),
+                                                        json_escape(r.error().format()));
                                                 }
                                             }
                                         }
                                     }
                                 });
                                 it->second->fiber = nf;
-                                std::println("{{\"session\":\"{}\" ,\"status\":\"created\",\"name\":\"{}\" }}",
+                                std::println("{{\"session\":\"{}\" "
+                                             ",\"status\":\"created\",\"name\":\"{}\" }}",
                                              json_escape(sid), json_escape(name));
                             } else {
-                                std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"already exists\"}}",
+                                std::println("{{\"session\":\"{}\" "
+                                             ",\"status\":\"error\",\"msg\":\"already exists\"}}",
                                              json_escape(sid));
                             }
                         }
                     } else {
-                        std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"unknown action: {}\" }}",
+                        std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"unknown "
+                                     "action: {}\" }}",
                                      json_escape(sid), json_escape(action));
                     }
 
@@ -774,16 +854,18 @@ void run_serve_async(int num_workers) {
                         auto it = sessions.find(target);
                         if (it != sessions.end() && it->second->active) {
                             it->second->mailbox.push(data);
-                            std::println("{{\"session\":\"{}\",\"status\":\"sent\",\"target\":\"{}\"}}",
-                                         json_escape(sid), json_escape(target));
+                            std::println(
+                                "{{\"session\":\"{}\",\"status\":\"sent\",\"target\":\"{}\"}}",
+                                json_escape(sid), json_escape(target));
                         } else {
-                            std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"session not found\"}}",
+                            std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":"
+                                         "\"session not found\"}}",
                                          json_escape(sid));
                         }
                     }
 
                 } else if (cmd == "session-recv") {
-                    auto msg = sess.mailbox.pop(true);  // blocking pop (yields)
+                    auto msg = sess.mailbox.pop(true); // blocking pop (yields)
                     if (!msg.empty()) {
                         std::println("{{\"session\":\"{}\",\"status\":\"msg\",\"data\":\"{}\"}}",
                                      json_escape(sid), json_escape(msg));
@@ -793,8 +875,9 @@ void run_serve_async(int num_workers) {
                     }
 
                 } else {
-                    std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown cmd: {}\"}}",
-                                 json_escape(sid), json_escape(cmd));
+                    std::println(
+                        "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown cmd: {}\"}}",
+                        json_escape(sid), json_escape(cmd));
                 }
                 std::fflush(stdout);
             }
@@ -807,7 +890,6 @@ void run_serve_async(int num_workers) {
     sched.run();
 
     std::fflush(stdout);
-
 }
 
 // ── run_serve_async_bench ────────────────────────────
@@ -829,9 +911,9 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     // Issue #119: register fiber-by-id lookup (see comment in
     // the main registration above for the rationale).
     aura::messaging::g_fiber_lookup = +[](int64_t fid) -> void* {
-        return static_cast<void*>(aura::serve::g_scheduler
-            ? aura::serve::g_scheduler->fiber_by_id(static_cast<std::uint64_t>(fid))
-            : nullptr);
+        return static_cast<void*>(aura::serve::g_scheduler ? aura::serve::g_scheduler->fiber_by_id(
+                                                                 static_cast<std::uint64_t>(fid))
+                                                           : nullptr);
     };
 
     // Register fiber:yield callback
@@ -862,60 +944,83 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     };
 
     // Register async HTTP handler (same as run_serve_async)
-    aura::messaging::g_http_post_async = [](const std::string& url,
-                                              const std::string& body,
-                                              const std::string& auth) -> std::string {
+    aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
+                                            const std::string& auth) -> std::string {
         auto* fiber = aura::serve::g_current_fiber;
-        if (!fiber) return {};
+        if (!fiber)
+            return {};
         auto evfd = fiber->eventfd();
-        if (evfd < 0) return {};
+        if (evfd < 0)
+            return {};
 
         std::string result;
         std::thread t([evfd, url, body, auth, &result]() {
             int in[2], out[2];
             if (::pipe(in) < 0 || ::pipe(out) < 0) {
-                uint64_t v = 1; ::write(evfd, &v, sizeof(v)); return;
+                uint64_t v = 1;
+                ::write(evfd, &v, sizeof(v));
+                return;
             }
             pid_t pid = ::fork();
             if (pid < 0) {
-                ::close(in[0]); ::close(in[1]); ::close(out[0]); ::close(out[1]);
-                uint64_t v = 1; ::write(evfd, &v, sizeof(v)); return;
+                ::close(in[0]);
+                ::close(in[1]);
+                ::close(out[0]);
+                ::close(out[1]);
+                uint64_t v = 1;
+                ::write(evfd, &v, sizeof(v));
+                return;
             }
             if (pid == 0) {
-                ::close(in[1]); ::close(out[0]);
-                ::dup2(in[0], STDIN_FILENO); ::dup2(out[1], STDOUT_FILENO);
-                ::close(in[0]); ::close(out[1]);
+                ::close(in[1]);
+                ::close(out[0]);
+                ::dup2(in[0], STDIN_FILENO);
+                ::dup2(out[1], STDOUT_FILENO);
+                ::close(in[0]);
+                ::close(out[1]);
                 std::vector<const char*> argv;
                 argv.push_back("curl");
-                argv.push_back("-s"); argv.push_back("-X"); argv.push_back("POST");
-                argv.push_back("--data-binary"); argv.push_back("@-");
-                argv.push_back("-H"); argv.push_back("Content-Type: application/json");
+                argv.push_back("-s");
+                argv.push_back("-X");
+                argv.push_back("POST");
+                argv.push_back("--data-binary");
+                argv.push_back("@-");
+                argv.push_back("-H");
+                argv.push_back("Content-Type: application/json");
                 if (!auth.empty()) {
                     auto auth_hdr = "Authorization: Bearer " + auth;
                     argv.push_back("-H");
                     argv.push_back(auth_hdr.c_str());
                 }
-                argv.push_back("--max-time"); argv.push_back("30");
-                argv.push_back("--connect-timeout"); argv.push_back("10");
+                argv.push_back("--max-time");
+                argv.push_back("30");
+                argv.push_back("--connect-timeout");
+                argv.push_back("10");
                 argv.push_back(url.c_str());
                 argv.push_back(nullptr);
                 ::execvp("curl", const_cast<char* const*>(argv.data()));
                 ::_exit(1);
             }
-            ::close(in[0]); ::close(out[1]);
-            ::write(in[1], body.data(), body.size()); ::close(in[1]);
+            ::close(in[0]);
+            ::close(out[1]);
+            ::write(in[1], body.data(), body.size());
+            ::close(in[1]);
             auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(35);
             std::array<char, 65536> fbuf;
             struct pollfd pfd = {out[0], POLLIN, 0};
             ssize_t nr;
             while (true) {
                 auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    deadline - std::chrono::steady_clock::now()).count();
-                if (remaining <= 0) break;
+                                     deadline - std::chrono::steady_clock::now())
+                                     .count();
+                if (remaining <= 0)
+                    break;
                 int pr = ::poll(&pfd, 1, static_cast<int>(remaining));
-                if (pr <= 0) break;
+                if (pr <= 0)
+                    break;
                 nr = ::read(out[0], fbuf.data(), fbuf.size());
-                if (nr <= 0) break;
+                if (nr <= 0)
+                    break;
                 result.append(fbuf.data(), static_cast<std::size_t>(nr));
             }
             ::close(out[0]);
@@ -980,7 +1085,8 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
                     break;
                 }
             }
-            if (start >= remaining.size()) break;
+            if (start >= remaining.size())
+                break;
 
             // Find the end of this balanced expression
             int depth = 0;
@@ -990,7 +1096,7 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
                 auto c = remaining[end];
                 if (in_str) {
                     if (c == '\\' && end + 1 < remaining.size()) {
-                        ++end;  // skip escaped char
+                        ++end; // skip escaped char
                     } else if (c == '"') {
                         in_str = false;
                     }
@@ -1000,7 +1106,7 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
                     ++depth;
                 } else if ((c == ')' || c == ']') && depth > 0) {
                     if (--depth == 0) {
-                        ++end;  // include closing paren
+                        ++end; // include closing paren
                         break;
                     }
                 }
@@ -1024,7 +1130,7 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
                 }
             }
         }
-        done:
+    done:
         std::fflush(stdout);
         (void)any_error;
     });

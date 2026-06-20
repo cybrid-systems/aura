@@ -29,12 +29,11 @@ import aura.compiler.lowering;
 
 namespace aura::compiler {
 
-std::optional<std::uint32_t> try_lower_linear_type(
-    LoweringState& state,
-    const aura::ast::FlatAST& flat,
-    const aura::ast::StringPool& pool,
-    aura::ast::NodeView v,
-    LinearLowerInner lower_inner) {
+std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
+                                                   const aura::ast::FlatAST& flat,
+                                                   const aura::ast::StringPool& pool,
+                                                   aura::ast::NodeView v,
+                                                   LinearLowerInner lower_inner) {
     switch (v.tag) {
         case aura::ast::NodeTag::Linear: {
             // (Linear e): wrap value in linear container

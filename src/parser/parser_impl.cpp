@@ -7,125 +7,124 @@ using namespace aura::ast;
 FlatParseResult parse(ParserState& s, std::string_view src) {
     FlatParseResult r;
     try {
-    s.lex = Lexer(src);
+        s.lex = Lexer(src);
 
-    // Helper: record a parse error and skip to next recoverable point
-    // Token kind to readable string for error messages
-    auto token_desc = [&](const Token& t) -> std::string {
-        switch (t.kind) {
-            case TokenKind::Identifier:
-                return "identifier '" + std::string(t.text) + "'";
-            case TokenKind::Integer:
-                return "integer '" + std::string(t.text) + "'";
-            case TokenKind::Float:
-                return "float '" + std::string(t.text) + "'";
-            case TokenKind::String:
-                return "string literal '" + std::string(t.text) + "'";
-            case TokenKind::Bool:
-                return "boolean '" + std::string(t.text) + "'";
-            case TokenKind::LParen:
-                return "'('";
-            case TokenKind::RParen:
-                return "')'";
-            case TokenKind::Quote:
-                return "''";
-            case TokenKind::QuasiQuote:
-                return "'`'";
-            case TokenKind::Unquote:
-                return "','";
-            case TokenKind::Dot:
-                return "'.'";
-            case TokenKind::Ellipsis:
-                return "'...'";
-            case TokenKind::EndOfFile:
-                return "end of input";
-            case TokenKind::Error:
-                return "invalid character";
-            default:
-                return "token";
-        }
-    };
-
-    // Record structured parse error with token location
-    auto record_error = [&](const std::string& msg, std::optional<Token> err_tok = std::nullopt) {
-        auto loc = err_tok ? aura::diag::SourceLocation{err_tok->line, err_tok->column, 0}
-                           : aura::diag::SourceLocation{};
-        auto formatted = loc.valid()
-            ? std::format("{}: {}", loc.format(), msg)
-            : msg;
-        if (r.error.empty())
-            r.error = formatted;
-        r.errors.push_back({msg, loc});
-        // Skip tokens until we can try parsing again
-        int depth = 0;
-        while (!s.lex.eof()) {
-            auto tok = s.lex.peek();
-            if (depth == 0) {
-                // At top level, try to find the start of a new expression
-                if (tok.kind == TokenKind::LParen || tok.kind == TokenKind::Integer ||
-                    tok.kind == TokenKind::Float || tok.kind == TokenKind::String ||
-                    tok.kind == TokenKind::Identifier || tok.kind == TokenKind::Bool ||
-                    tok.kind == TokenKind::Quote || tok.kind == TokenKind::QuasiQuote ||
-                    tok.kind == TokenKind::Unquote) {
-                    break;
-                }
-                s.lex.consume();
-            } else {
-                // Inside parens, skip until matching close
-                if (tok.kind == TokenKind::RParen) {
-                    depth--;
-                } else if (tok.kind == TokenKind::LParen) {
-                    depth++;
-                }
-                s.lex.consume();
+        // Helper: record a parse error and skip to next recoverable point
+        // Token kind to readable string for error messages
+        auto token_desc = [&](const Token& t) -> std::string {
+            switch (t.kind) {
+                case TokenKind::Identifier:
+                    return "identifier '" + std::string(t.text) + "'";
+                case TokenKind::Integer:
+                    return "integer '" + std::string(t.text) + "'";
+                case TokenKind::Float:
+                    return "float '" + std::string(t.text) + "'";
+                case TokenKind::String:
+                    return "string literal '" + std::string(t.text) + "'";
+                case TokenKind::Bool:
+                    return "boolean '" + std::string(t.text) + "'";
+                case TokenKind::LParen:
+                    return "'('";
+                case TokenKind::RParen:
+                    return "')'";
+                case TokenKind::Quote:
+                    return "''";
+                case TokenKind::QuasiQuote:
+                    return "'`'";
+                case TokenKind::Unquote:
+                    return "','";
+                case TokenKind::Dot:
+                    return "'.'";
+                case TokenKind::Ellipsis:
+                    return "'...'";
+                case TokenKind::EndOfFile:
+                    return "end of input";
+                case TokenKind::Error:
+                    return "invalid character";
+                default:
+                    return "token";
             }
-        }
-    };
+        };
 
-    r.root = parse_expr(s);
-    if (r.root == NULL_NODE) {
-        auto tok = s.lex.peek();
-        if (tok.kind != TokenKind::EndOfFile) {
-            record_error("expected expression, got " + token_desc(tok), tok);
-        } else {
-            record_error("expected expression, reached end of input");
-        }
-        // If we recovered but got nothing, return as failure
-        if (r.root == NULL_NODE)
-            return r;
-    }
+        // Record structured parse error with token location
+        auto record_error = [&](const std::string& msg,
+                                std::optional<Token> err_tok = std::nullopt) {
+            auto loc = err_tok ? aura::diag::SourceLocation{err_tok->line, err_tok->column, 0}
+                               : aura::diag::SourceLocation{};
+            auto formatted = loc.valid() ? std::format("{}: {}", loc.format(), msg) : msg;
+            if (r.error.empty())
+                r.error = formatted;
+            r.errors.push_back({msg, loc});
+            // Skip tokens until we can try parsing again
+            int depth = 0;
+            while (!s.lex.eof()) {
+                auto tok = s.lex.peek();
+                if (depth == 0) {
+                    // At top level, try to find the start of a new expression
+                    if (tok.kind == TokenKind::LParen || tok.kind == TokenKind::Integer ||
+                        tok.kind == TokenKind::Float || tok.kind == TokenKind::String ||
+                        tok.kind == TokenKind::Identifier || tok.kind == TokenKind::Bool ||
+                        tok.kind == TokenKind::Quote || tok.kind == TokenKind::QuasiQuote ||
+                        tok.kind == TokenKind::Unquote) {
+                        break;
+                    }
+                    s.lex.consume();
+                } else {
+                    // Inside parens, skip until matching close
+                    if (tok.kind == TokenKind::RParen) {
+                        depth--;
+                    } else if (tok.kind == TokenKind::LParen) {
+                        depth++;
+                    }
+                    s.lex.consume();
+                }
+            }
+        };
 
-    // Check for multiple top-level expressions
-    auto next = s.lex.peek();
-    if (next.kind == TokenKind::EndOfFile || next.kind == TokenKind::Error) {
-        r.success = r.root != NULL_NODE;
-        return r;
-    }
-
-    // Multiple forms → wrap in begin
-    std::vector<NodeId> exprs;
-    exprs.push_back(r.root);
-    do {
-        auto e = parse_expr(s);
-        if (e == NULL_NODE) {
+        r.root = parse_expr(s);
+        if (r.root == NULL_NODE) {
             auto tok = s.lex.peek();
             if (tok.kind != TokenKind::EndOfFile) {
                 record_error("expected expression, got " + token_desc(tok), tok);
-                e = parse_expr(s); // try again after skip
+            } else {
+                record_error("expected expression, reached end of input");
             }
+            // If we recovered but got nothing, return as failure
+            if (r.root == NULL_NODE)
+                return r;
+        }
+
+        // Check for multiple top-level expressions
+        auto next = s.lex.peek();
+        if (next.kind == TokenKind::EndOfFile || next.kind == TokenKind::Error) {
+            r.success = r.root != NULL_NODE;
+            return r;
+        }
+
+        // Multiple forms → wrap in begin
+        std::vector<NodeId> exprs;
+        exprs.push_back(r.root);
+        do {
+            auto e = parse_expr(s);
+            if (e == NULL_NODE) {
+                auto tok = s.lex.peek();
+                if (tok.kind != TokenKind::EndOfFile) {
+                    record_error("expected expression, got " + token_desc(tok), tok);
+                    e = parse_expr(s); // try again after skip
+                }
+                if (s.lex.eof())
+                    break;
+            }
+            if (e != NULL_NODE)
+                exprs.push_back(e);
             if (s.lex.eof())
                 break;
-        }
-        if (e != NULL_NODE)
-            exprs.push_back(e);
-        if (s.lex.eof())
-            break;
-        next = s.lex.peek();
-    } while (next.kind != TokenKind::EndOfFile);
+            next = s.lex.peek();
+        } while (next.kind != TokenKind::EndOfFile);
 
-    r.root = s.flat.add_begin(exprs);
-    r.success = !exprs.empty();
-    return r;
+        r.root = s.flat.add_begin(exprs);
+        r.success = !exprs.empty();
+        return r;
     } catch (const std::bad_alloc&) {
         r.success = false;
         r.error = "out of memory during parse";
@@ -234,7 +233,8 @@ NodeId parse_expr(ParserState& s) {
             std::vector<aura::ast::NodeId> args;
             while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
                 auto arg = parse_expr(s);
-                if (arg == NULL_NODE) break;
+                if (arg == NULL_NODE)
+                    break;
                 args.push_back(arg);
             }
             if (s.lex.peek().kind == TokenKind::RParen)
@@ -507,12 +507,10 @@ NodeId parse_lambda(ParserState& s) {
             // plain-param path if the next token is anything else
             // (regular `x` followed by `y` → two params).
             auto next = s.lex.peek();
-            if (next.kind == TokenKind::Identifier &&
-                (next.text == ":?" || next.text == "_")) {
+            if (next.kind == TokenKind::Identifier && (next.text == ":?" || next.text == "_")) {
                 auto hole_text = std::string(next.text);
                 s.lex.consume(); // :? or _
-                auto var_node = s.flat.add_variable(
-                    s.pool.intern(std::string(t.text)));
+                auto var_node = s.flat.add_variable(s.pool.intern(std::string(t.text)));
                 auto hole_sym = s.pool.intern(hole_text);
                 auto annot_node = s.flat.add_type_annotation(hole_sym, var_node);
                 s.flat.set_loc(annot_node, tok.line, tok.column);
@@ -682,7 +680,8 @@ NodeId parse_define_type(ParserState& s) {
         std::vector<NodeId> field_nodes;
         while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
             auto ft = parse_expr(s);
-            if (ft == NULL_NODE) break;
+            if (ft == NULL_NODE)
+                break;
             field_nodes.push_back(ft);
         }
         s.lex.consume(); // ')'
@@ -759,7 +758,7 @@ NodeId parse_define_module(ParserState& s) {
             }
             skip_rparen(s); // skip ')'
         } else if (param_tok.kind == TokenKind::Identifier && !param_tok.text.empty() &&
-            param_tok.text[0] != '(') {
+                   param_tok.text[0] != '(') {
             s.lex.consume();
             type_params.push_back(s.pool.intern(param_tok.text));
         } else {
@@ -1204,7 +1203,8 @@ NodeId parse_defmacro(ParserState& s, bool hygienic, bool preserve_dotted) {
         s.lex.consume();
     if (body_exprs.size() > 1)
         body = s.flat.add_begin(body_exprs);
-    auto mid = s.flat.add_macrodef(s.pool.intern(std::string(name.text)), params, body, dotted, hygienic, preserved_macro);
+    auto mid = s.flat.add_macrodef(s.pool.intern(std::string(name.text)), params, body, dotted,
+                                   hygienic, preserved_macro);
     s.flat.set_loc(mid, tok.line, tok.column);
     return mid;
 }
@@ -1403,8 +1403,7 @@ NodeId parse_datatype(ParserState& s) {
     // after the colon; Phase 1 ignores them). (Either : a b)
     // is parsed as spec = (Either) and the ": a b" suffix is
     // skipped entirely.
-    if (s.lex.peek().kind == TokenKind::Identifier &&
-        s.lex.peek().text == ":") {
+    if (s.lex.peek().kind == TokenKind::Identifier && s.lex.peek().text == ":") {
         s.lex.consume(); // ':'
         // Consume any number of type-param identifiers
         while (s.lex.peek().kind == TokenKind::Identifier) {
@@ -1468,7 +1467,7 @@ NodeId parse_datatype(ParserState& s) {
     // produced at eval time by calling `cons`. (add_call wants
     // a NodeId for the func, not a bare SymId.)
     auto cons_var = s.flat.add_variable(s.pool.intern("cons"));
-    auto nil_lit = s.flat.add_literal(0);  // () — empty list
+    auto nil_lit = s.flat.add_literal(0); // () — empty list
     aura::ast::NodeId name_list = nil_lit;
     for (auto it = ctor_entries.rbegin(); it != ctor_entries.rend(); ++it) {
         // Each entry: (cons "Name" arity)  — a single cons cell
@@ -1554,8 +1553,7 @@ NodeId parse_check(ParserState& s) {
     // token text itself. This lets LLM-generated code use either
     // `(check x :?)` or `(check x _)` interchangeably.
     if (s.lex.peek().kind == TokenKind::Identifier &&
-        (s.lex.peek().text == ":" || s.lex.peek().text == ":?" ||
-         s.lex.peek().text == "_")) {
+        (s.lex.peek().text == ":" || s.lex.peek().text == ":?" || s.lex.peek().text == "_")) {
         auto type_text = std::string(s.lex.peek().text);
         if (type_text == ":") {
             s.lex.consume(); // ':'
@@ -1658,8 +1656,8 @@ NodeId parse_type_annot(ParserState& s) {
     return id;
 }
 
-std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pattern_node, SymId tmp,
-                                                                  NodeId* out_test) {
+std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pattern_node,
+                                                      SymId tmp, NodeId* out_test) {
     auto v = s.flat.get(pattern_node);
     std::vector<std::pair<SymId, NodeId>> bindings;
     auto var_tmp = s.flat.add_variable(tmp);
@@ -1773,7 +1771,8 @@ std::vector<std::pair<SymId, NodeId>> compile_pattern(ParserState& s, NodeId pat
 
                 // Final: (null? current) — proper list length check
                 auto null_test = make_call(sym_null_q, {current});
-                accumulated_test = s.flat.add_if(accumulated_test, null_test, s.flat.add_literal(0));
+                accumulated_test =
+                    s.flat.add_if(accumulated_test, null_test, s.flat.add_literal(0));
 
                 *out_test = accumulated_test;
                 return bindings;
@@ -1989,8 +1988,8 @@ NodeId expand_qq(ParserState& s, NodeId expr, int depth) {
             if (v.tag == NodeTag::Lambda) {
                 NodeId params_list = s.flat.add_quote(s.flat.add_literal(0)); // (quote ())
                 for (int pi = static_cast<int>(v.params.size()) - 1; pi >= 0; --pi) {
-                    auto param_var =
-                        s.flat.add_variable(s.pool.intern(std::string(s.pool.resolve(v.params[pi]))));
+                    auto param_var = s.flat.add_variable(
+                        s.pool.intern(std::string(s.pool.resolve(v.params[pi]))));
                     auto param_quoted = s.flat.add_quote(param_var);
                     auto cv = s.flat.add_variable(s.pool.intern("cons"));
                     params_list = s.flat.add_call(
@@ -2043,7 +2042,7 @@ NodeId expand_qq(ParserState& s, NodeId expr, int depth) {
             for (int i = static_cast<int>(args_to_expand.size()) - 1; i >= 0; --i) {
                 auto cons_var = s.flat.add_variable(s.pool.intern("cons"));
                 result = s.flat.add_call(cons_var,
-                                        std::vector<aura::ast::NodeId>{args_to_expand[i], result});
+                                         std::vector<aura::ast::NodeId>{args_to_expand[i], result});
             }
 
             // Prepend (quote <form-name>)
@@ -2073,7 +2072,8 @@ NodeId expand_qq(ParserState& s, NodeId expr, int depth) {
         if (v.children.size() > 1) {
             auto inner = expand_qq(s, v.child(1), depth - 1);
             auto unq_var = s.flat.add_variable(s.pool.intern("unquote"));
-            return s.flat.add_quote(s.flat.add_call(unq_var, std::vector<aura::ast::NodeId>{inner}));
+            return s.flat.add_quote(
+                s.flat.add_call(unq_var, std::vector<aura::ast::NodeId>{inner}));
         }
         return s.flat.add_quote(expr);
     }

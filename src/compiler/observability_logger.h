@@ -35,15 +35,14 @@ namespace aura::compiler {
 // Issue #62 Iter 2: log a structured deopt event as JSON.
 // Enabled by AURA_OBS_LOG=1 in the env. Cost when off: one
 // getenv() call (cached as a static bool).
-inline void log_event_deopt(const char* fn,
-                            std::uint32_t expected_shape,
-                            std::uint32_t actual_shape,
-                            std::uint32_t generic_block) {
+inline void log_event_deopt(const char* fn, std::uint32_t expected_shape,
+                            std::uint32_t actual_shape, std::uint32_t generic_block) {
     static const bool enabled = []() {
         const char* e = std::getenv("AURA_OBS_LOG");
         return e && (e[0] == '1' || e[0] == 't' || e[0] == 'T');
     }();
-    if (!enabled) return;
+    if (!enabled)
+        return;
     const char* fn_str = fn ? fn : "?";
     // Hand-formatted JSON: avoid the JSON serializer dependency
     // (reflect.hh uses consteval which is not available in the
@@ -62,5 +61,3 @@ std::string snapshot_to_json(const CompilerSnapshot& s);
 } // namespace aura::compiler
 
 #endif // AURA_COMPILER_OBSERVABILITY_LOGGER_H
-
-

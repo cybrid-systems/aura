@@ -43,11 +43,10 @@ using LinearLowerInner = std::function<std::uint32_t(aura::ast::NodeId)>;
 //   Borrow     -> BorrowOp
 //   MutBorrow  -> MutBorrowOp
 //   Drop       -> DropOp + ConstVoid
-std::optional<std::uint32_t> try_lower_linear_type(
-    LoweringState& state,
-    const aura::ast::FlatAST& flat,
-    const aura::ast::StringPool& pool,
-    aura::ast::NodeView v,
-    LinearLowerInner lower_inner);
+std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
+                                                   const aura::ast::FlatAST& flat,
+                                                   const aura::ast::StringPool& pool,
+                                                   aura::ast::NodeView v,
+                                                   LinearLowerInner lower_inner);
 
 } // namespace aura::compiler

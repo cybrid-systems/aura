@@ -38,7 +38,9 @@ extern "C" void aura_exception_clear_all();
 #define EVAL_CACHE_RETURN(expr)                                                                    \
     do {                                                                                           \
         auto _er_ = (expr);                                                                        \
-        if (_er_) { f->set_cached_value(current_id, _er_->val); }                                  \
+        if (_er_) {                                                                                \
+            f->set_cached_value(current_id, _er_->val);                                            \
+        }                                                                                          \
         return _er_;                                                                               \
     } while (0)
 
@@ -138,10 +140,10 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
 // expand nested macro calls in the cloned body (Issue #121).
 // Bounded by `max_depth` to prevent infinite recursion.
 struct MacroDef;
-static aura::ast::NodeId expand_inner_macros(
-    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
-    int depth, int max_depth,
-    const std::unordered_map<std::string, MacroDef>& macros);
+static aura::ast::NodeId
+expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
+                    int depth, int max_depth,
+                    const std::unordered_map<std::string, MacroDef>& macros);
 
 // Depth guard: protects Env::lookup against cyclic parent chains
 // (thread_local since lookup can be called from multiple fibers)
@@ -165,8 +167,7 @@ thread_local std::size_t g_env_lookup_depth = 0;
 // between the two.
 thread_local std::vector<aura::compiler::Evaluator::MutationCheckpoint>
     aura::compiler::Evaluator::g_main_thread_stack;
-thread_local void*
-    aura::compiler::Evaluator::g_current_fiber_void;
+thread_local void* aura::compiler::Evaluator::g_current_fiber_void;
 
 // Implementation of active_mutation_stack() — the
 // header has the declaration only (to avoid pulling
@@ -194,16 +195,16 @@ aura::compiler::Evaluator::active_mutation_stack() {
 // storage. Both are defined here because the storage type
 // (std::vector<MutationCheckpoint>) is opaque to fiber.cpp.
 namespace {
-void* fiber_setter_impl(void* f) {
-    auto prev = aura::compiler::Evaluator::get_current_fiber();
-    aura::compiler::Evaluator::set_current_fiber(f);
-    return prev;
-}
-void fiber_storage_deleter_impl(void* p) {
-    using C = aura::compiler::Evaluator::MutationCheckpoint;
-    delete static_cast<std::vector<C>*>(p);
-}
-}  // namespace
+    void* fiber_setter_impl(void* f) {
+        auto prev = aura::compiler::Evaluator::get_current_fiber();
+        aura::compiler::Evaluator::set_current_fiber(f);
+        return prev;
+    }
+    void fiber_storage_deleter_impl(void* p) {
+        using C = aura::compiler::Evaluator::MutationCheckpoint;
+        delete static_cast<std::vector<C>*>(p);
+    }
+} // namespace
 
 // Register the function pointers at static-init time. The
 // fiber side calls them; we don't need the Evaluator to
@@ -266,7 +267,9 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
         --g_env_lookup_depth;
         return std::nullopt;
     }
-    struct _{ ~_() { --g_env_lookup_depth; } } dec;
+    struct _ {
+        ~_() { --g_env_lookup_depth; }
+    } dec;
 
     // 1. Check local bindings
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
@@ -295,8 +298,7 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
     // deque's map array underneath us (which would free the
     // map pointer we're reading).
     if (parent_id_ != NULL_ENV_ID && owner_) {
-        std::shared_lock<std::shared_mutex> env_rlock(
-            owner_->env_frames_lock());
+        std::shared_lock<std::shared_mutex> env_rlock(owner_->env_frames_lock());
         const EnvFrame& pfr = owner_->env_frame(parent_id_);
         // Walk the parent frame's bindings (string-keyed)
         for (auto& b : pfr.bindings_) {
@@ -318,7 +320,8 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
             Env tmp;
             tmp.set_owner(owner_);
             tmp.set_parent_id(pfr.parent_id);
-            if (auto r = tmp.lookup(n)) return *r;
+            if (auto r = tmp.lookup(n))
+                return *r;
         }
         // Final fallback: the frame at parent_id_ has the snapshot
         // of the env at capture time. If that env is still live
@@ -334,7 +337,8 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
         if (parent_id_ == 0 && owner_) {
             // Check live top_ env'"'"'s bindings
             for (auto it = const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rbegin();
-                 it != const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rend(); ++it) {
+                 it != const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rend();
+                 ++it) {
                 if (it->first == n) {
                     if (is_cell(it->second)) {
                         auto ci = as_cell_id(it->second);
@@ -439,8 +443,7 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
 // For envs without pool_ set, the name is rendered as
 // "@<symid:N>" where N is the SymId value. This is a
 // fallback for envs that haven't been migrated yet.
-std::vector<std::pair<std::string, types::EvalValue>>
-Env::bindings_with_names() const {
+std::vector<std::pair<std::string, types::EvalValue>> Env::bindings_with_names() const {
     std::vector<std::pair<std::string, types::EvalValue>> out;
     out.reserve(bindings_symid_.size());
     for (const auto& [sym, val] : bindings_symid_) {
@@ -451,8 +454,8 @@ Env::bindings_with_names() const {
             // is not in the pool (defensive), the resolved
             // view is empty.
             std::string_view resolved = pool_->resolve(sym);
-            if (!resolved.empty()) name.assign(resolved.data(),
-                                              resolved.size());
+            if (!resolved.empty())
+                name.assign(resolved.data(), resolved.size());
         }
         if (name.empty()) {
             // Fallback: render the SymId as a string for
@@ -482,9 +485,8 @@ Env::bindings_with_names() const {
 // (apply_closure parent walk, EnvView parent walk, module
 // lookup, fn_name lookup, eval-time lookup, capture lookup)
 // will migrate one per Phase 2.5.0 commit.
-std::optional<types::EvalValue>
-Env::lookup_by_intern(const std::string& n,
-                      const aura::ast::StringPool* pool) const {
+std::optional<types::EvalValue> Env::lookup_by_intern(const std::string& n,
+                                                      const aura::ast::StringPool* pool) const {
     // Resolve which pool to use: legacy passed-in pool if
     // non-null, else fall back to the env's own pool_ (set
     // via set_pool for closures that captured a non-canonical
@@ -497,8 +499,7 @@ Env::lookup_by_intern(const std::string& n,
     // logically const (no observable env state change beyond
     // the pool's intern side effect, which is idempotent for
     // already-interned names).
-    aura::ast::StringPool* use_pool =
-        const_cast<aura::ast::StringPool*>(pool ? pool : pool_);
+    aura::ast::StringPool* use_pool = const_cast<aura::ast::StringPool*>(pool ? pool : pool_);
     if (!use_pool) {
         // No pool available — can't intern. Fall through to
         // the legacy string-based lookup as a last resort.
@@ -506,7 +507,8 @@ Env::lookup_by_intern(const std::string& n,
     }
     auto sym = use_pool->intern(n);
     auto found = lookup_by_symid(sym);
-    if (found) return found;
+    if (found)
+        return found;
     // Fallbacks mirror Env::lookup's primitive + ADT paths.
     // These are not SymId-specific — the slot_for_name lookup
     // uses the string name directly.
@@ -572,11 +574,11 @@ void EnvFrame::bind_symid(aura::ast::SymId s, types::EvalValue v) {
 // lookup_by_symid_chain (and legacy Env paths) using the
 // owning Evaluator's central cells_ pmr::vector. This
 // makes frames fully index-driven and reallocation-safe.
-std::optional<types::EvalValue> EnvFrame::lookup_local(
-    const std::string& n) const {
+std::optional<types::EvalValue> EnvFrame::lookup_local(const std::string& n) const {
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it) {
         if (it->first == n) {
-            return it->second;  // sentinel returned; deref happens at caller (Evaluator chain or legacy)
+            return it
+                ->second; // sentinel returned; deref happens at caller (Evaluator chain or legacy)
         }
     }
     return std::nullopt;
@@ -587,8 +589,7 @@ std::optional<types::EvalValue> EnvFrame::lookup_local(
 //
 // P0 migration: same as lookup_local — return raw sentinel
 // (cell or not). Central deref lives in Evaluator.
-std::optional<types::EvalValue> EnvFrame::lookup_local_by_symid(
-    aura::ast::SymId s) const {
+std::optional<types::EvalValue> EnvFrame::lookup_local_by_symid(aura::ast::SymId s) const {
     for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
         if (it->first == s) {
             return it->second;
@@ -605,8 +606,7 @@ std::optional<types::EvalValue> EnvFrame::lookup_local_by_symid(
 // P0 (EnvFrame SoA): frames are allocated with only parent_id +
 // primitives_. No cells_ pointer (pure data). Cell resolution
 // centralized later in lookup paths using Evaluator::cells_.
-aura::compiler::EnvId Evaluator::alloc_env_frame(
-    EnvId parent_id, const Primitives* primitives) {
+aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitives* primitives) {
     // Issue #145 P0 follow-up: unique_lock on env_frames_mtx_
     // to serialize push_back with fiber-thread readers
     // (materialize_call_env). The deque's map array can be
@@ -647,11 +647,11 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(
 // (cells_ removed entirely from EnvFrame struct in P0 step 1;
 // resolution centralized on Evaluator). This keeps frames
 // as pure, index-only data.
-aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(
-    const Env& e, EnvId parent_id) {
+aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId parent_id) {
     EnvId pid = (parent_id != NULL_ENV_ID) ? parent_id : e.parent_id();
     EnvId id = alloc_env_frame(pid);
-    if (id == NULL_ENV_ID) return NULL_ENV_ID;
+    if (id == NULL_ENV_ID)
+        return NULL_ENV_ID;
     // Issue #145 P0 follow-up: hold a shared lock while
     // mutating the freshly-allocated frame. A concurrent
     // alloc_env_frame on another thread (e.g. a fiber)
@@ -733,18 +733,16 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         // or removing frames, just updating a metadata
         // field, the shared lock is sufficient (no other
         // reader depends on version_ being immutable).
-        const_cast<EnvFrame&>(fr).version_ =
-            defuse_version_.load(std::memory_order_acquire);
+        const_cast<EnvFrame&>(fr).version_ = defuse_version_.load(std::memory_order_acquire);
         // Logging is best-effort — a fiber thread might not
         // have a tty. We use std::println(std::cerr, ...) so
         // the warning is always emitted (not just in debug).
         std::println(std::cerr,
-            "[#242 warning] materialize_call_env: stale EnvFrame id={} "
-            "(frame.version_={}, current defuse_version_={}). "
-            "Bindings may be inconsistent with post-mutation state. "
-            "Bumped frame.version_ to silence future warnings.",
-            cl.env_id, fr.version_,
-            defuse_version_.load(std::memory_order_acquire));
+                     "[#242 warning] materialize_call_env: stale EnvFrame id={} "
+                     "(frame.version_={}, current defuse_version_={}). "
+                     "Bindings may be inconsistent with post-mutation state. "
+                     "Bumped frame.version_ to silence future warnings.",
+                     cl.env_id, fr.version_, defuse_version_.load(std::memory_order_acquire));
     }
     ne.bindings() = fr.bindings_;
     ne.bindings_symid_mut() = fr.bindings_symid_;
@@ -761,12 +759,12 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
 // the captured scope). Returns true for invalid ids as a
 // safety net so callers can treat invalid frames as stale.
 bool Evaluator::is_env_frame_stale(EnvId id) const {
-    if (id == NULL_ENV_ID || id >= env_frames_.size()) return true;
+    if (id == NULL_ENV_ID || id >= env_frames_.size())
+        return true;
     // env_frames_ is a deque guarded by env_frames_mtx_; a
     // shared_lock keeps the frame alive across the load.
     std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
-    return env_frames_[id].version_ <
-           defuse_version_.load(std::memory_order_acquire);
+    return env_frames_[id].version_ < defuse_version_.load(std::memory_order_acquire);
 }
 
 // Evaluator::lookup_by_symid_chain — demonstrate the SoA walk.
@@ -780,8 +778,8 @@ bool Evaluator::is_env_frame_stale(EnvId id) const {
 // cells_ pointer; frames are pure data + indices. This is
 // the canonical path for new SoA code. Legacy Env paths
 // (still using Env::cells_ pointer) remain for transition.
-std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
-    EnvId start, aura::ast::SymId s) const {
+std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(EnvId start,
+                                                                 aura::ast::SymId s) const {
     std::optional<types::EvalValue> result;
     walk_env_frames(start, [&](EnvId, const EnvFrame& fr) {
         auto v = fr.lookup_local_by_symid(s);
@@ -796,9 +794,9 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
             } else {
                 result = std::move(val);
             }
-            return false;  // stop walking — closest frame wins
+            return false; // stop walking — closest frame wins
         }
-        return true;  // continue walking
+        return true; // continue walking
     });
     return result;
 }
@@ -841,15 +839,15 @@ void Evaluator::build_tag_arity_index() const {
     // workspace, no-op. This is the fast path: the index
     // is built once and reused across multiple
     // query:pattern calls.
-    if (tag_arity_index_workspace_ == workspace_flat_ &&
-        !tag_arity_index_.empty()) {
+    if (tag_arity_index_workspace_ == workspace_flat_ && !tag_arity_index_.empty()) {
         return;
     }
     // The index is stale (different workspace or empty).
     // Rebuild.
     tag_arity_index_.clear();
     tag_arity_index_workspace_ = workspace_flat_;
-    if (!workspace_flat_) return;
+    if (!workspace_flat_)
+        return;
     const auto& flat = *workspace_flat_;
     const std::size_t n = flat.size();
     tag_arity_index_.reserve(n);
@@ -858,15 +856,13 @@ void Evaluator::build_tag_arity_index() const {
         const auto tag = static_cast<std::uint32_t>(node.tag);
         const auto arity = static_cast<std::uint32_t>(node.children.size());
         const std::uint64_t key =
-            (static_cast<std::uint64_t>(tag) << 32) |
-            static_cast<std::uint64_t>(arity);
+            (static_cast<std::uint64_t>(tag) << 32) | static_cast<std::uint64_t>(arity);
         tag_arity_index_[key].push_back(id);
     }
 }
 
-void Evaluator::walk_env_frame_roots(
-    std::vector<std::int64_t>& pair_roots_out,
-    std::vector<std::int64_t>& closure_roots_out) const {
+void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
+                                     std::vector<std::int64_t>& closure_roots_out) const {
     // De-dup: a pair/closure may be bound in multiple envs.
     // Using a small set per pass; if the size grows beyond
     // a threshold, we fall back to dedup-after-the-fact
@@ -881,21 +877,17 @@ void Evaluator::walk_env_frame_roots(
         for (const auto& [name, val] : fr.bindings_) {
             (void)name;
             if (is_pair(val)) {
-                pair_roots_out.push_back(
-                    static_cast<std::int64_t>(as_pair_idx(val)));
+                pair_roots_out.push_back(static_cast<std::int64_t>(as_pair_idx(val)));
             } else if (is_closure(val)) {
-                closure_roots_out.push_back(
-                    static_cast<std::int64_t>(as_closure_id(val)));
+                closure_roots_out.push_back(static_cast<std::int64_t>(as_closure_id(val)));
             }
         }
         for (const auto& [sym, val] : fr.bindings_symid_) {
             (void)sym;
             if (is_pair(val)) {
-                pair_roots_out.push_back(
-                    static_cast<std::int64_t>(as_pair_idx(val)));
+                pair_roots_out.push_back(static_cast<std::int64_t>(as_pair_idx(val)));
             } else if (is_closure(val)) {
-                closure_roots_out.push_back(
-                    static_cast<std::int64_t>(as_closure_id(val)));
+                closure_roots_out.push_back(static_cast<std::int64_t>(as_closure_id(val)));
             }
         }
     }
@@ -918,24 +910,22 @@ void Evaluator::walk_env_frame_roots(
 // MutationRecord) might still be in [0, old_size). The
 // remap tells us if that id is live (and what its new
 // index is) or freed (-1).
-std::int64_t Evaluator::compact_pairs(
-    const std::vector<bool>& live_mask) {
+std::int64_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
     const std::size_t n_old = pairs_.size();
     pair_remap_.clear();
     pair_remap_.reserve(n_old);
     // Build a new vector with only the live pairs. Use
     // move-semantics to avoid copies where possible.
     std::pmr::vector<Pair> new_pairs{&runtime_resource_};
-    new_pairs.reserve(n_old);  // upper bound
+    new_pairs.reserve(n_old); // upper bound
     std::int64_t new_idx = 0;
     for (std::size_t i = 0; i < n_old; ++i) {
         // If live_mask is empty, treat all as live.
         // If live_mask is sized to n_old, use the bit.
         // If live_mask is shorter than i, treat as dead
         // (defensive).
-        const bool is_live = live_mask.empty()
-            ? true
-            : (i < live_mask.size() ? live_mask[i] : false);
+        const bool is_live =
+            live_mask.empty() ? true : (i < live_mask.size() ? live_mask[i] : false);
         if (is_live) {
             pair_remap_.push_back(new_idx);
             new_pairs.push_back(std::move(pairs_[i]));
@@ -966,13 +956,13 @@ EnvView make_env_view(const Env& env) {
 
 std::optional<EvalValue> EnvView::lookup(const std::string& name) const {
     for (auto it = string_bindings.rbegin(); it != string_bindings.rend(); ++it)
-        if (it->first == name) return it->second;
+        if (it->first == name)
+            return it->second;
     return parent ? parent->lookup(name) : std::nullopt;
 }
 
-std::optional<EvalValue>
-EnvView::lookup_by_intern(const std::string& n,
-                          const aura::ast::StringPool* pool) const {
+std::optional<EvalValue> EnvView::lookup_by_intern(const std::string& n,
+                                                   const aura::ast::StringPool* pool) const {
     // Mirror Env::lookup_by_intern: intern via the resolved
     // pool, route through lookup_by_symid, return local
     // symid_bindings lookup if not found, then fall through
@@ -980,7 +970,8 @@ EnvView::lookup_by_intern(const std::string& n,
     // fallbacks (those live on Env, not EnvView), so the
     // behavior matches EnvView::lookup for the "name not
     // found" case: nullopt.
-    if (!pool) return std::nullopt;  // EnvView: no fallback pool
+    if (!pool)
+        return std::nullopt; // EnvView: no fallback pool
     // const_cast is safe — intern() is logically idempotent
     // (already-interned names are no-ops) and EnvView callers
     // pass a non-const pool pointer (canonical_pool() or
@@ -988,13 +979,15 @@ EnvView::lookup_by_intern(const std::string& n,
     // (no observable EnvView state change).
     auto sym = const_cast<aura::ast::StringPool*>(pool)->intern(n);
     for (auto it = symid_bindings.rbegin(); it != symid_bindings.rend(); ++it)
-        if (it->first == sym) return it->second;
+        if (it->first == sym)
+            return it->second;
     return parent ? parent->lookup_by_intern(n, pool) : std::nullopt;
 }
 
 std::optional<EvalValue> EnvView::lookup_by_symid(aura::ast::SymId s) const {
     for (auto it = symid_bindings.rbegin(); it != symid_bindings.rend(); ++it)
-        if (it->first == s) return it->second;
+        if (it->first == s)
+            return it->second;
     return parent ? parent->lookup_by_symid(s) : std::nullopt;
 }
 
@@ -1031,12 +1024,12 @@ namespace {
         // "error: type mismatch" message (see test_regression
         // tc-strict-runtime-typed-arg-mismatch).
         auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
-        if (r) return *r;
+        if (r)
+            return *r;
         if (v.val != 3 && is_string(v) && !heap.empty()) {
             auto idx = as_string_idx(v);
             if (idx < heap.size()) {
-                std::println(std::cerr,
-                             "error: type mismatch — expected Int, got String '{}'",
+                std::println(std::cerr, "error: type mismatch — expected Int, got String '{}'",
                              heap[idx]);
             }
         }
@@ -1085,12 +1078,14 @@ Primitives::Primitives() {
     // doesn't change. A future migration can surface the error.
     table_["/"] = [this](std::span<const EvalValue> a) {
         auto r = aura::compiler::pure::arithmetic_div_pure(a, *string_heap_, &std::cerr);
-        if (r) return *r;
+        if (r)
+            return *r;
         // Error path: legacy behavior. For (/) empty → 1 (but
         // the pure function already errors on empty, so legacy
         // returned 1; we mirror that). For other errors (div by
         // zero, type mismatch), legacy returned 0; mirror that.
-        if (a.empty()) return make_int(1);
+        if (a.empty())
+            return make_int(1);
         return make_int(0);
     };
     auto chain_cmp = [this](const auto& a, auto fn_int, auto fn_float) -> EvalValue {
@@ -1137,7 +1132,9 @@ Primitives::Primitives() {
             a, [](auto x, auto y) { return x >= y; }, [](auto x, auto y) { return x >= y; });
     };
     // Ghuloum Step 9: booleans
-    table_["not"] = [](std::span<const EvalValue> a) { return make_bool(a.empty() || !is_truthy(a[0])); };
+    table_["not"] = [](std::span<const EvalValue> a) {
+        return make_bool(a.empty() || !is_truthy(a[0]));
+    };
     table_["and"] = [](std::span<const EvalValue> a) {
         for (std::size_t i = 0; i + 1 < a.size(); ++i)
             if (!is_truthy(a[i]))
@@ -1150,7 +1147,9 @@ Primitives::Primitives() {
                 return a[i];
         return a.empty() ? make_int(0) : a.back();
     };
-    table_["eq?"] = [](std::span<const EvalValue> a) { return make_bool(a.size() >= 2 && a[0] == a[1]); };
+    table_["eq?"] = [](std::span<const EvalValue> a) {
+        return make_bool(a.size() >= 2 && a[0] == a[1]);
+    };
     table_["current-time"] = [](std::span<const EvalValue> a) {
         (void)a;
         return make_int(static_cast<std::int64_t>(::time(nullptr)));
@@ -1182,8 +1181,7 @@ namespace {
     }
     // Format a value to string (same formatting as io_print_val but returns string)
     static std::string fmt_val_to_string(const EvalValue& v, std::span<const std::string> heap,
-                                         std::span<const Pair> pairs, bool quote,
-                                         int depth = 0) {
+                                         std::span<const Pair> pairs, bool quote, int depth = 0) {
         std::string out;
         auto app = [&](const auto&... args) { (out += ... += args); };
         if (depth > 64)
@@ -1358,10 +1356,14 @@ namespace {
 // Replaces duplicated local `auto merr = ...` lambdas (orig ~14-15 in mutate + query).
 // See evaluator.ixx private decl and docs/contributing.md §3.
 EvalValue Evaluator::make_merr(const std::string& k, const std::string& m) {
-    auto mi = string_heap_.size(); string_heap_.push_back(m);
-    auto ki = string_heap_.size(); string_heap_.push_back(k);
-    auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-    auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+    auto mi = string_heap_.size();
+    string_heap_.push_back(m);
+    auto ki = string_heap_.size();
+    string_heap_.push_back(k);
+    auto mp = make_pair(pairs_.size());
+    pairs_.push_back({make_string(mi), EvalValue(0)});
+    auto kp = make_pair(pairs_.size());
+    pairs_.push_back({make_string(ki), mp});
     return kp;
 }
 
@@ -1404,9 +1406,7 @@ void Evaluator::init_pair_primitives() {
             return make_bool(false);
         return make_bool(is_void(a[0]));
     });
-    primitives_.add("void", [](const auto&) {
-        return make_void();
-    });
+    primitives_.add("void", [](const auto&) { return make_void(); });
     // ── Character operations (chars are integers in Aura) ──────────
     primitives_.add("char=?", [](const auto& a) {
         if (a.size() < 2)
@@ -2071,7 +2071,8 @@ void Evaluator::init_pair_primitives() {
         auto parse_object = [&]() -> EvalValue {
             pos++; // skip {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2098,7 +2099,8 @@ void Evaluator::init_pair_primitives() {
                     kh = static_cast<std::uint64_t>(types::as_int(key_val)) * 0x9e3779b97f4a7c15ull;
                 }
                 auto fp = static_cast<std::uint8_t>((kh >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 // Check if key already exists (need string content comparison)
                 bool found = false;
                 for (std::size_t at = 0; at < cap; ++at) {
@@ -2310,11 +2312,14 @@ void Evaluator::init_pair_primitives() {
         if (a.size() < 2)
             return make_int(-1);
         auto haystack = (is_string(a[0]) && as_string_idx(a[0]) < string_heap_.size())
-            ? string_heap_[as_string_idx(a[0])] : "";
+                            ? string_heap_[as_string_idx(a[0])]
+                            : "";
         auto needle = (is_string(a[1]) && as_string_idx(a[1]) < string_heap_.size())
-            ? string_heap_[as_string_idx(a[1])] : "";
+                          ? string_heap_[as_string_idx(a[1])]
+                          : "";
         auto start = (a.size() > 2 && is_int(a[2])) ? static_cast<std::size_t>(as_int(a[2])) : 0;
-        if (needle.empty()) return make_int(0);
+        if (needle.empty())
+            return make_int(0);
         auto pos = haystack.find(needle, start);
         return make_int(pos != std::string::npos ? static_cast<std::int64_t>(pos) : -1);
     });
@@ -2460,14 +2465,17 @@ void Evaluator::init_pair_primitives() {
         auto& val = a[0];
         auto v = a[1];
         auto elem_eq = [&](const EvalValue& x, const EvalValue& y) -> bool {
-            if (x == y) return true;
-            if (is_int(x) && is_int(y)) return as_int(x) == as_int(y);
+            if (x == y)
+                return true;
+            if (is_int(x) && is_int(y))
+                return as_int(x) == as_int(y);
             if (is_string(x) && is_string(y)) {
                 auto xi = as_string_idx(x), yi = as_string_idx(y);
                 return xi < string_heap_.size() && yi < string_heap_.size() &&
                        string_heap_[xi] == string_heap_[yi];
             }
-            if (is_bool(x) && is_bool(y)) return as_bool(x) == as_bool(y);
+            if (is_bool(x) && is_bool(y))
+                return as_bool(x) == as_bool(y);
             return false;
         };
         while (!is_end_of_list(v)) {
@@ -2765,7 +2773,8 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("hash", [this](std::span<const EvalValue> a) {
         auto sh = &string_heap_;
         auto* ht = FlatHashTable::create(8);
-        if (!ht) return make_void();
+        if (!ht)
+            return make_void();
         auto meta = ht->metadata();
         auto keys = ht->keys();
         auto vals = ht->values();
@@ -2788,7 +2797,8 @@ void Evaluator::init_pair_primitives() {
         for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
             auto h = khash(a[i]);
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+            if (fp == 0xFF)
+                fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
             for (std::size_t at = 0; at < cap; ++at) {
                 auto idx = ((h >> 1) + at) & (cap - 1);
                 if (meta[idx] == 0xFF) {
@@ -3060,11 +3070,13 @@ void Evaluator::init_pair_primitives() {
     // through the parser path; the m4-* primitives here are for
     // solutions that reach for the documented API.
     primitives_.add("m4-move", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty()) return make_void();
+        if (a.empty())
+            return make_void();
         return a[0];
     });
     primitives_.add("m4-borrow", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty()) return make_void();
+        if (a.empty())
+            return make_void();
         return a[0];
     });
     primitives_.add("m4-return!", [this](std::span<const EvalValue> a) -> EvalValue {
@@ -3116,31 +3128,49 @@ void Evaluator::init_pair_primitives() {
     //   For scalars:       (list 'scalar "name")
     // Returns '() (void) if the type is not found.
     primitives_.add("reflect-type", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0])) return make_void();
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
         auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size()) return make_void();
+        if (idx >= string_heap_.size())
+            return make_void();
         // Copy `name` to a local std::string. The name is a reference
         // into string_heap_, and push_back can reallocate the
         // vector's backing storage, invalidating the reference.
         // Copying first avoids the use-after-realloc crash.
         std::string name = string_heap_[idx];
         auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry_);
-        if (!treg) return make_void();
+        if (!treg)
+            return make_void();
         auto ty = treg->lookup_type(name);
-        if (!ty.valid()) return make_void();
+        if (!ty.valid())
+            return make_void();
         // Build (list kind name members...)
         std::vector<EvalValue> out;
         // kind symbol
         auto kind_idx = string_heap_.size();
         std::string kind;
         switch (treg->tag_of(ty)) {
-            case aura::core::TypeTag::MODULE:  kind = "module"; break;
-            case aura::core::TypeTag::RECORD: kind = "record"; break;
-            case aura::core::TypeTag::VARIANT: kind = "variant"; break;
-            case aura::core::TypeTag::LINEAR: kind = "linear"; break;
-            case aura::core::TypeTag::FORALL: kind = "forall"; break;
-            case aura::core::TypeTag::FUNC:   kind = "function"; break;
-            default: kind = "scalar"; break;
+            case aura::core::TypeTag::MODULE:
+                kind = "module";
+                break;
+            case aura::core::TypeTag::RECORD:
+                kind = "record";
+                break;
+            case aura::core::TypeTag::VARIANT:
+                kind = "variant";
+                break;
+            case aura::core::TypeTag::LINEAR:
+                kind = "linear";
+                break;
+            case aura::core::TypeTag::FORALL:
+                kind = "forall";
+                break;
+            case aura::core::TypeTag::FUNC:
+                kind = "function";
+                break;
+            default:
+                kind = "scalar";
+                break;
         }
         string_heap_.push_back(kind);
         out.push_back(make_string(kind_idx));
@@ -3195,14 +3225,18 @@ void Evaluator::init_pair_primitives() {
     // For module types: members list. For record types: field
     // list. For other types: '() (void).
     primitives_.add("reflect-members", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0])) return make_void();
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
         auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size()) return make_void();
+        if (idx >= string_heap_.size())
+            return make_void();
         std::string name = string_heap_[idx]; // fix: copy, see Issue #122 (push_back can realloc)
         auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry_);
-        if (!treg) return make_void();
+        if (!treg)
+            return make_void();
         auto ty = treg->lookup_type(name);
-        if (!ty.valid()) return make_void();
+        if (!ty.valid())
+            return make_void();
         std::vector<std::pair<std::string, std::string>> members;
         if (treg->tag_of(ty) == aura::core::TypeTag::MODULE) {
             auto* mt = treg->module_of(ty);
@@ -3224,7 +3258,8 @@ void Evaluator::init_pair_primitives() {
                 for (auto& [vname, ftypes] : vt->variants) {
                     std::string joined;
                     for (auto& ft : ftypes) {
-                        if (!joined.empty()) joined += " ";
+                        if (!joined.empty())
+                            joined += " ";
                         joined += std::string(treg->name_of(ft));
                     }
                     members.emplace_back(vname, joined);
@@ -3256,24 +3291,32 @@ void Evaluator::init_pair_primitives() {
     // `require std/xxx all:` symbol tables without having to
     // read the .aura source file by hand.
     primitives_.add("reflect-module-exports", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0])) return make_void();
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
         auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size()) return make_void();
+        if (idx >= string_heap_.size())
+            return make_void();
         std::string name = string_heap_[idx]; // fix: copy, see Issue #122 (push_back can realloc)
         auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry_);
-        if (!treg) return make_void();
+        if (!treg)
+            return make_void();
         auto ty = treg->lookup_type(name);
-        if (!ty.valid()) return make_void();
-        if (treg->tag_of(ty) != aura::core::TypeTag::MODULE) return make_void();
+        if (!ty.valid())
+            return make_void();
+        if (treg->tag_of(ty) != aura::core::TypeTag::MODULE)
+            return make_void();
         auto* mt = treg->module_of(ty);
-        if (!mt) return make_void();
+        if (!mt)
+            return make_void();
         // Build a list of exported symbol names in reverse
         EvalValue lst = make_void();
         for (auto it = mt->members.rbegin(); it != mt->members.rend(); ++it) {
             auto nidx = string_heap_.size();
             string_heap_.push_back(it->first);
             auto pid = pairs_.size();
-            auto pid2 = pairs_.size(); pairs_.push_back({make_string(nidx), lst}); lst = make_pair(pid2);
+            auto pid2 = pairs_.size();
+            pairs_.push_back({make_string(nidx), lst});
+            lst = make_pair(pid2);
             lst = make_pair(pid);
         }
         return lst;
@@ -3308,8 +3351,7 @@ void Evaluator::init_pair_primitives() {
         std::ifstream f(resolved);
         if (!f.is_open())
             return make_void();
-        std::string content((std::istreambuf_iterator<char>(f)),
-                             std::istreambuf_iterator<char>());
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         f.close();
         // Find the first `(export` form. Scan character by
         // character to handle multi-line exports.
@@ -3318,7 +3360,8 @@ void Evaluator::init_pair_primitives() {
         while (pos < content.size()) {
             // Find next `(export` token (skip whitespace + comments)
             auto export_pos = content.find("(export", pos);
-            if (export_pos == std::string::npos) break;
+            if (export_pos == std::string::npos)
+                break;
             // Verify the previous char is start-of-line or whitespace
             // (avoid matching `(exported-thing)`).
             if (export_pos > 0) {
@@ -3339,14 +3382,15 @@ void Evaluator::init_pair_primitives() {
             std::size_t i = sym_start;
             while (i < content.size() && content[i] != ')') {
                 // Skip whitespace + comments between symbols.
-                if (content[i] == ' ' || content[i] == '\t' ||
-                    content[i] == '\n' || content[i] == '\r') {
+                if (content[i] == ' ' || content[i] == '\t' || content[i] == '\n' ||
+                    content[i] == '\r') {
                     ++i;
                     continue;
                 }
                 // Skip line comments (; ...) — skip to end of line.
                 if (content[i] == ';') {
-                    while (i < content.size() && content[i] != '\n') ++i;
+                    while (i < content.size() && content[i] != '\n')
+                        ++i;
                     continue;
                 }
                 // Read a symbol: [a-zA-Z0-9_?!<>=*+-/.]
@@ -3354,9 +3398,8 @@ void Evaluator::init_pair_primitives() {
                 while (i < content.size()) {
                     char c = content[i];
                     if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                        (c >= '0' && c <= '9') || c == '_' || c == '?' ||
-                        c == '!' || c == '<' || c == '>' || c == '=' ||
-                        c == '*' || c == '+' || c == '-' || c == '/' ||
+                        (c >= '0' && c <= '9') || c == '_' || c == '?' || c == '!' || c == '<' ||
+                        c == '>' || c == '=' || c == '*' || c == '+' || c == '-' || c == '/' ||
                         c == '.' || c == '$') {
                         ++i;
                     } else {
@@ -3417,17 +3460,20 @@ void Evaluator::init_pair_primitives() {
         }
         // Look up the type in the registry
         auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry_);
-        if (!treg) return make_bool(false);
+        if (!treg)
+            return make_bool(false);
         auto ty = treg->lookup_type(name);
-        if (!ty.valid()) return make_bool(false);
+        if (!ty.valid())
+            return make_bool(false);
         // For now, return a minimal schema indicating the
         // type is recognized. A future cycle can expand
         // this to full P2996 reflection via the C++
         // schema<T>() template (requires linking
         // aura-reflect into the eval binary).
         std::string schema = "{\"title\": \"" + name + "\"";
-        schema += ", \"type\": \"" + std::string(
-            treg->tag_of(ty) == aura::core::TypeTag::MODULE ? "object" : "any") + "\"}";
+        schema += ", \"type\": \"" +
+                  std::string(treg->tag_of(ty) == aura::core::TypeTag::MODULE ? "object" : "any") +
+                  "\"}";
         auto sidx = string_heap_.size();
         string_heap_.push_back(schema);
         return make_string(sidx);
@@ -3590,7 +3636,7 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("display", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_void();
-io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
+        io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         std::fflush(stdout);
         return make_void();
     });
@@ -3761,16 +3807,16 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             norm_out.pop_back();
         // Detect if output looks like an error message
         auto lower = norm_out;
-        for (auto& c : lower) c = std::tolower(static_cast<unsigned char>(c));
-        bool is_error_like =
-            lower.find("error:") != std::string::npos ||
-            lower.find("parse error") != std::string::npos ||
-            lower.find("unbound variable") != std::string::npos ||
-            lower.find("type error") != std::string::npos ||
-            lower.find("syntax error") != std::string::npos ||
-            lower.find("invalid syntax") != std::string::npos ||
-            lower.find("expected expression") != std::string::npos ||
-            (norm_out.size() > 1 && norm_out[0] == '(' && norm_out[1] == '"');
+        for (auto& c : lower)
+            c = std::tolower(static_cast<unsigned char>(c));
+        bool is_error_like = lower.find("error:") != std::string::npos ||
+                             lower.find("parse error") != std::string::npos ||
+                             lower.find("unbound variable") != std::string::npos ||
+                             lower.find("type error") != std::string::npos ||
+                             lower.find("syntax error") != std::string::npos ||
+                             lower.find("invalid syntax") != std::string::npos ||
+                             lower.find("expected expression") != std::string::npos ||
+                             (norm_out.size() > 1 && norm_out[0] == '(' && norm_out[1] == '"');
         // Iterate expected list
         auto pair_idx = as_pair_idx(a[1]);
         while (pair_idx < pairs_.size()) {
@@ -3783,8 +3829,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
                         // Guard: for error-like output with short keywords
                         if (is_error_like && kw.size() <= 5) {
                             // Generic error words that should never match in error output
-                            static const std::unordered_set<std::string> generic_words =
-                                {"error", "type", "parse", "syntax", "kind"};
+                            static const std::unordered_set<std::string> generic_words = {
+                                "error", "type", "parse", "syntax", "kind"};
                             if (generic_words.count(kw)) {
                                 // Skip — too generic, likely part of error message
                                 if (is_pair(p.cdr)) {
@@ -3875,28 +3921,39 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             std::string explanation;
         };
         static const std::unordered_map<std::string, FixEntry> unbound_fixes = {
-            {"for-each", {"missing-require", "add-require", "std/list",
-                          "Add (require \"std/list\" all:) to use for-each"}},
-            {"map", {"missing-require", "add-require", "std/list",
-                     "Add (require \"std/list\" all:) to use map"}},
-            {"filter", {"missing-require", "add-require", "std/list",
-                        "Add (require \"std/list\" all:) to use filter"}},
-            {"foldl", {"missing-require", "add-require", "std/list",
-                       "Add (require \"std/list\" all:) to use foldl"}},
-            {"make-hash", {"missing-require", "add-require", "std/hash",
-                           "Add (require \"std/hash\" all:) to use make-hash"}},
-            {"hash-ref", {"missing-require", "add-require", "std/hash",
-                          "Add (require \"std/hash\" all:) to use hash-ref"}},
-            {"rule:define", {"missing-require", "add-require", "std/rule",
-                            "Add (require \"std/rule\" all:) to use rule:define"}},
-            {"synthesize:fill", {"missing-require", "add-require", "std/pipeline",
-                                "Add (require \"std/pipeline\" all:) to use synthesize"}},
-            {"synthesize:pipeline", {"missing-require", "add-require", "std/pipeline",
-                                    "Add (require \"std/pipeline\" all:) to use synthesize"}},
-            {"define-type", {"missing-require", "add-require", "std/data",
-                            "Add (require \"std/data\" all:) to use define-type"}},
-            {"c-func", {"missing-require", "add-require", "std/ffi",
-                        "Add (require \"std/ffi\" all:) to use c-func"}},
+            {"for-each",
+             {"missing-require", "add-require", "std/list",
+              "Add (require \"std/list\" all:) to use for-each"}},
+            {"map",
+             {"missing-require", "add-require", "std/list",
+              "Add (require \"std/list\" all:) to use map"}},
+            {"filter",
+             {"missing-require", "add-require", "std/list",
+              "Add (require \"std/list\" all:) to use filter"}},
+            {"foldl",
+             {"missing-require", "add-require", "std/list",
+              "Add (require \"std/list\" all:) to use foldl"}},
+            {"make-hash",
+             {"missing-require", "add-require", "std/hash",
+              "Add (require \"std/hash\" all:) to use make-hash"}},
+            {"hash-ref",
+             {"missing-require", "add-require", "std/hash",
+              "Add (require \"std/hash\" all:) to use hash-ref"}},
+            {"rule:define",
+             {"missing-require", "add-require", "std/rule",
+              "Add (require \"std/rule\" all:) to use rule:define"}},
+            {"synthesize:fill",
+             {"missing-require", "add-require", "std/pipeline",
+              "Add (require \"std/pipeline\" all:) to use synthesize"}},
+            {"synthesize:pipeline",
+             {"missing-require", "add-require", "std/pipeline",
+              "Add (require \"std/pipeline\" all:) to use synthesize"}},
+            {"define-type",
+             {"missing-require", "add-require", "std/data",
+              "Add (require \"std/data\" all:) to use define-type"}},
+            {"c-func",
+             {"missing-require", "add-require", "std/ffi",
+              "Add (require \"std/ffi\" all:) to use c-func"}},
         };
 
         // Detect "unbound variable: X" and match against known symbols
@@ -3910,12 +3967,13 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
                 target.pop_back();
             auto it = unbound_fixes.find(target);
             if (it != unbound_fixes.end()) {
-                return make_diag(it->second.cause, target, it->second.fix_type,
-                                 it->second.fix_data, it->second.explanation);
+                return make_diag(it->second.cause, target, it->second.fix_type, it->second.fix_data,
+                                 it->second.explanation);
             }
             // Unknown unbound variable — generic suggestion
             return make_diag("unbound-variable", target, "define-or-require", "",
-                            "Define '" + target + "' with (define ...) or add the right (require ...)");
+                             "Define '" + target +
+                                 "' with (define ...) or add the right (require ...)");
         }
 
         // Detect "type error: cannot call: X"
@@ -3924,14 +3982,14 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         if (tpos != std::string::npos) {
             auto target = msg.substr(tpos + prefix.size());
             return make_diag("type-error-unbound", target, "define-function", "",
-                            "Define the function '" + target + "' before calling it");
+                             "Define the function '" + target + "' before calling it");
         }
 
         // Detect parse errors
         if (msg.find("parse error") != std::string::npos ||
             msg.find("expected expression") != std::string::npos) {
             return make_diag("parse-error", "", "fix-syntax", msg.substr(0, 60),
-                            "Check syntax: unbalanced parens, missing quotes, or wrong form");
+                             "Check syntax: unbalanced parens, missing quotes, or wrong form");
         }
 
         // Detect #<procedure> / closure
@@ -3975,7 +4033,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         // 1=cause, 2=target, 3=fix-type, 4=fix-data, 5=explanation
         auto fix_type = get_elem(a[1], 3);
         auto fix_data = get_elem(a[1], 4);
-        auto target = get_elem(a[1], 2);  // function name
+        auto target = get_elem(a[1], 2); // function name
 
         std::string result;
         if (fix_type == "add-require") {
@@ -4326,11 +4384,13 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             // Fallback: popen
             std::array<char, 4096> buf;
             auto* fp = ::popen("git status --short 2>/dev/null", "r");
-            if (!fp) return make_void();
+            if (!fp)
+                return make_void();
             while (::fgets(buf.data(), buf.size(), fp) != nullptr)
                 result += buf.data();
             ::pclose(fp);
-            if (!result.empty() && result.back() == '\n') result.pop_back();
+            if (!result.empty() && result.back() == '\n')
+                result.pop_back();
         }
         auto sid = string_heap_.size();
         string_heap_.push_back(std::move(result));
@@ -4355,11 +4415,11 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 #endif
         if (result.empty()) {
             // Fallback: popen
-            std::string cmd = staged ? "git diff --staged 2>/dev/null"
-                                     : "git diff 2>/dev/null";
+            std::string cmd = staged ? "git diff --staged 2>/dev/null" : "git diff 2>/dev/null";
             std::array<char, 4096> buf;
             auto* fp = ::popen(cmd.c_str(), "r");
-            if (!fp) return make_void();
+            if (!fp)
+                return make_void();
             while (::fgets(buf.data(), buf.size(), fp) != nullptr)
                 result += buf.data();
             ::pclose(fp);
@@ -4374,8 +4434,10 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         int n = 10;
         if (a.size() >= 1 && is_int(a[0]))
             n = static_cast<int>(as_int(a[0]));
-        if (n < 1) n = 1;
-        if (n > 1000) n = 1000;
+        if (n < 1)
+            n = 1;
+        if (n > 1000)
+            n = 1000;
         std::string result;
 #ifdef AURA_HAVE_LIBGIT2
         thread_local GitContext ctx;
@@ -4388,11 +4450,13 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             std::string cmd = "git log --oneline -n " + std::to_string(n) + " 2>/dev/null";
             std::array<char, 4096> buf;
             auto* fp = ::popen(cmd.c_str(), "r");
-            if (!fp) return make_void();
+            if (!fp)
+                return make_void();
             while (::fgets(buf.data(), buf.size(), fp) != nullptr)
                 result += buf.data();
             ::pclose(fp);
-            if (!result.empty() && result.back() == '\n') result.pop_back();
+            if (!result.empty() && result.back() == '\n')
+                result.pop_back();
         }
         auto sid = string_heap_.size();
         string_heap_.push_back(std::move(result));
@@ -4420,8 +4484,10 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             esc.reserve(msg.size() + 2);
             esc += '\'';
             for (char c : msg) {
-                if (c == '\'') esc += "'\\\''";
-                else esc += c;
+                if (c == '\'')
+                    esc += "'\\\''";
+                else
+                    esc += c;
             }
             esc += '\'';
             std::string cmd = "git commit -m " + esc + " 2>/dev/null";
@@ -4442,11 +4508,13 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         if (result.empty()) {
             std::array<char, 256> buf;
             auto* fp = ::popen("git rev-parse --abbrev-ref HEAD 2>/dev/null", "r");
-            if (!fp) return make_void();
+            if (!fp)
+                return make_void();
             while (::fgets(buf.data(), buf.size(), fp) != nullptr)
                 result += buf.data();
             ::pclose(fp);
-            if (!result.empty() && result.back() == '\n') result.pop_back();
+            if (!result.empty() && result.back() == '\n')
+                result.pop_back();
         }
         auto sid = string_heap_.size();
         string_heap_.push_back(std::move(result));
@@ -4455,14 +4523,17 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (git-stage "file1" "file2" ...) → exit code
     primitives_.add("git-stage", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty()) return make_int(-1);
+        if (a.empty())
+            return make_int(-1);
         int rc = -1;
 #ifdef AURA_HAVE_LIBGIT2
         std::vector<std::string> paths;
         for (const auto& v : a) {
-            if (!is_string(v)) return make_int(-1);
+            if (!is_string(v))
+                return make_int(-1);
             auto si = as_string_idx(v);
-            if (si >= string_heap_.size()) return make_int(-1);
+            if (si >= string_heap_.size())
+                return make_int(-1);
             paths.push_back(string_heap_[si]);
         }
         thread_local GitContext ctx;
@@ -4474,9 +4545,11 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             // Fallback: popen with single-quote escaping (safe for libgit2 path)
             std::string cmd = "git add";
             for (const auto& v : a) {
-                if (!is_string(v)) return make_int(-1);
+                if (!is_string(v))
+                    return make_int(-1);
                 auto si = as_string_idx(v);
-                if (si >= string_heap_.size()) return make_int(-1);
+                if (si >= string_heap_.size())
+                    return make_int(-1);
                 cmd += " \'";
                 cmd += string_heap_[si];
                 cmd += "\'";
@@ -4499,11 +4572,13 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         if (result.empty()) {
             std::array<char, 64> buf;
             auto* fp = ::popen("git rev-parse --short HEAD 2>/dev/null", "r");
-            if (!fp) return make_void();
+            if (!fp)
+                return make_void();
             while (::fgets(buf.data(), buf.size(), fp) != nullptr)
                 result += buf.data();
             ::pclose(fp);
-            if (!result.empty() && result.back() == '\n') result.pop_back();
+            if (!result.empty() && result.back() == '\n')
+                result.pop_back();
         }
         auto sid = string_heap_.size();
         string_heap_.push_back(std::move(result));
@@ -4708,7 +4783,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         if (mod_idx >= modules_.size() || name_idx >= string_heap_.size())
             return make_void();
         auto result = modules_[mod_idx]->lookup(std::string(string_heap_[name_idx]));
-        if (!result) return make_void();
+        if (!result)
+            return make_void();
         // Issue #229 fix: deref cell sentinel
         if (is_cell(*result)) {
             auto ci = as_cell_id(*result);
@@ -4766,11 +4842,14 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         auto body_cid = types::as_closure_id(a[1]);
         for (;;) {
             auto pred_result = apply_closure(pred_cid, {});
-            if (!pred_result) break;
+            if (!pred_result)
+                break;
             auto& val = *pred_result;
-            bool cont = types::is_bool(val) ? types::as_bool(val) :
-                         types::is_int(val) ? types::as_int(val) != 0 : false;
-            if (!cont) break;
+            bool cont = types::is_bool(val)  ? types::as_bool(val)
+                        : types::is_int(val) ? types::as_int(val) != 0
+                                             : false;
+            if (!cont)
+                break;
             (void)apply_closure(body_cid, {});
         }
         return make_void();
@@ -5217,7 +5296,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         auto& flat = *workspace_flat_;
         if (node >= flat.size()) {
             ok = false;
-            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                                 std::to_string(flat.size()));
         }
 
         auto old_tid = flat.type_id(node);
@@ -5270,8 +5350,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         // (Step 0.2/0.3) local merr removed; using centralized make_merr
         // (declared in evaluator.ixx, defined above).
         aura::messaging::g_fiber_yield_mutation_boundary
-                ? aura::messaging::g_fiber_yield_mutation_boundary()
-                : (void)0;  // safe point before mutation
+            ? aura::messaging::g_fiber_yield_mutation_boundary()
+            : (void)0; // safe point before mutation
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2])) {
             ok = false;
             return make_merr("bad-arg", "usage: (mutate:replace-value node-id new-value summary)");
@@ -5289,7 +5369,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         auto& flat = *workspace_flat_;
         if (node >= flat.size()) {
             ok = false;
-            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                                 std::to_string(flat.size()));
         }
 
         auto nv = flat.get(node);
@@ -5333,7 +5414,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             case aura::ast::NodeTag::LiteralString: {
                 if (!is_string(a[1])) {
                     ok = false;
-                    return make_merr("type-error", "Variable/LiteralString node requires a string value");
+                    return make_merr("type-error",
+                                     "Variable/LiteralString node requires a string value");
                 }
                 auto new_sym_idx = as_string_idx(a[1]);
                 if (new_sym_idx >= string_heap_.size()) {
@@ -5352,7 +5434,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             }
             default:
                 ok = false;
-                return make_merr("type-error", "node tag does not support value replacement: " + std::to_string(static_cast<int>(nv.tag)));
+                return make_merr("type-error", "node tag does not support value replacement: " +
+                                                   std::to_string(static_cast<int>(nv.tag)));
         }
     });
 
@@ -5367,8 +5450,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
         // (Step 0.3 continuation) local merr removed; use centralized make_merr
         aura::messaging::g_fiber_yield_mutation_boundary
-                ? aura::messaging::g_fiber_yield_mutation_boundary()
-                : (void)0;  // safe point before mutation
+            ? aura::messaging::g_fiber_yield_mutation_boundary()
+            : (void)0; // safe point before mutation
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[1]) || !is_string(a[2])) {
             ok = false;
             return make_merr("bad-arg", "usage: (mutate:record-patch node-id op-name summary)");
@@ -5387,7 +5470,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         auto& flat = *workspace_flat_;
         if (node >= flat.size()) {
             ok = false;
-            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                                 std::to_string(flat.size()));
         }
 
         auto mid = flat.add_mutation(node, string_heap_[op_idx], "<runtime>", "<runtime>",
@@ -5440,20 +5524,20 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     //   rollback only marks the record as rolled back and bumps
     //   generation (it doesn't have access to the parser).
     primitives_.add("workspace:rollback-latest", [this](const auto&) -> EvalValue {
-        if (!workspace_flat_ || !workspace_pool_) return make_int(0);
+        if (!workspace_flat_ || !workspace_pool_)
+            return make_int(0);
         // Walk the log in reverse; the latest Committed record wins.
         const auto& log = workspace_flat_->all_mutations();
         for (auto it = log.rbegin(); it != log.rend(); ++it) {
-            if (it->status != aura::ast::MutationStatus::Committed) continue;
+            if (it->status != aura::ast::MutationStatus::Committed)
+                continue;
             // For subtree records, do the re-parse + re-attach here
-            if (it->has_subtree_rollback &&
-                it->parent_id != aura::ast::NULL_NODE &&
+            if (it->has_subtree_rollback && it->parent_id != aura::ast::NULL_NODE &&
                 !it->old_subtree_source.empty()) {
-                auto pr = aura::parser::parse_to_flat(
-                    it->old_subtree_source, *workspace_flat_, *workspace_pool_);
+                auto pr = aura::parser::parse_to_flat(it->old_subtree_source, *workspace_flat_,
+                                                      *workspace_pool_);
                 if (pr.success && pr.root != aura::ast::NULL_NODE) {
-                    workspace_flat_->set_child(
-                        it->parent_id, it->child_idx, pr.root);
+                    workspace_flat_->set_child(it->parent_id, it->child_idx, pr.root);
                     workspace_flat_->mark_dirty_upward(it->parent_id);
                     // Mark the record as rolled back (bump generation
                     // so any cached NodeIds become stale).
@@ -5479,7 +5563,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (workspace:mutation-count) → total mutations recorded
     primitives_.add("workspace:mutation-count", [this](const auto&) -> EvalValue {
-        if (!workspace_flat_) return make_int(0);
+        if (!workspace_flat_)
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(workspace_flat_->mutation_count()));
     });
 
@@ -5502,12 +5587,14 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         auto detect_cid = as_closure_id(a[0]);
         auto fix_cid = as_closure_id(a[1]);
         auto detect_result = apply_closure(detect_cid, {});
-        if (!detect_result) return make_int(0);
+        if (!detect_result)
+            return make_int(0);
         EvalValue current = *detect_result;
         std::int64_t fixed = 0;
         while (is_pair(current)) {
             auto idx = as_pair_idx(current);
-            if (idx >= pairs_.size()) break;
+            if (idx >= pairs_.size())
+                break;
             auto gap = pairs_[idx].car;
             auto fix_result = apply_closure(fix_cid, {gap});
             if (fix_result) {
@@ -5524,10 +5611,15 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         if (a.size() < 3 || !is_string(a[0]) || !is_closure(a[1]) || !is_closure(a[2]))
             return make_int(0);
         auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size()) return make_int(0);
+        if (idx >= string_heap_.size())
+            return make_int(0);
         double interval = 1.0;
-        try { interval = std::stod(string_heap_[idx]); } catch (...) {}
-        if (interval < 0.1) interval = 0.1;
+        try {
+            interval = std::stod(string_heap_[idx]);
+        } catch (...) {
+        }
+        if (interval < 0.1)
+            interval = 0.1;
         auto_evolve_running_ = true;
         auto_evolve_interval_ = interval;
         auto_evolve_detect_closure_ = as_closure_id(a[1]);
@@ -5538,30 +5630,34 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     primitives_.add("auto-evolve-stop", [this](const auto&) -> EvalValue {
-        if (!auto_evolve_running_) return make_bool(false);
+        if (!auto_evolve_running_)
+            return make_bool(false);
         auto_evolve_running_ = false;
         return make_bool(true);
     });
 
-    primitives_.add("auto-evolve-running?", [this](const auto&) -> EvalValue {
-        return make_bool(auto_evolve_running_);
-    });
+    primitives_.add("auto-evolve-running?",
+                    [this](const auto&) -> EvalValue { return make_bool(auto_evolve_running_); });
 
     primitives_.add("auto-evolve-tick", [this](const auto&) -> EvalValue {
-        if (!auto_evolve_running_) return make_bool(false);
+        if (!auto_evolve_running_)
+            return make_bool(false);
         if (auto_evolve_detect_closure_ == 0 || auto_evolve_fix_closure_ == 0)
             return make_bool(false);
         ++auto_evolve_cycle_count_;
-        std::fprintf(stderr, "[DBG tick] detect=%zu fix=%zu\n",
-                     (size_t)auto_evolve_detect_closure_,
+        std::fprintf(stderr, "[DBG tick] detect=%zu fix=%zu\n", (size_t)auto_evolve_detect_closure_,
                      (size_t)auto_evolve_fix_closure_);
         auto detect_result = apply_closure(auto_evolve_detect_closure_, {});
-        if (!detect_result) { std::fprintf(stderr, "  no detect result\n"); return make_bool(true); }
+        if (!detect_result) {
+            std::fprintf(stderr, "  no detect result\n");
+            return make_bool(true);
+        }
         std::fprintf(stderr, "  detect.val=0x%lx\n", (long)(*detect_result).val);
         EvalValue current = *detect_result;
         while (is_pair(current)) {
             auto idx = as_pair_idx(current);
-            if (idx >= pairs_.size()) break;
+            if (idx >= pairs_.size())
+                break;
             auto gap = pairs_[idx].car;
             auto fix_result = apply_closure(auto_evolve_fix_closure_, {gap});
             if (fix_result) {
@@ -5663,281 +5759,326 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     };
     std::function<EvalValue(const std::string&, const std::string&)> mev = make_error_val;
 
-// (#110) mutate:query-and-replace - composes (query:where :field value)
-// predicates with replacement. Snapshots flat.size() to avoid
-// re-evaluating after set_child grows the flat.
-primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValue> a) -> EvalValue {
-    std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-    if (workspace_read_only_) return mev("read-only", "workspace is read-only");
-    if (a.empty()) return mev("bad-arg", "usage: (mutate:query-and-replace <predicates...> <template> [summary])");
-    if (!workspace_flat_ || !workspace_pool_) return mev("no-workspace", "no workspace AST loaded");
+    // (#110) mutate:query-and-replace - composes (query:where :field value)
+    // predicates with replacement. Snapshots flat.size() to avoid
+    // re-evaluating after set_child grows the flat.
+    primitives_.add(
+        "mutate:query-and-replace", [this, mev](std::span<const EvalValue> a) -> EvalValue {
+            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            if (workspace_read_only_)
+                return mev("read-only", "workspace is read-only");
+            if (a.empty())
+                return mev(
+                    "bad-arg",
+                    "usage: (mutate:query-and-replace <predicates...> <template> [summary])");
+            if (!workspace_flat_ || !workspace_pool_)
+                return mev("no-workspace", "no workspace AST loaded");
 
-    auto& flat = *workspace_flat_;
-    auto& pool = *workspace_pool_;
+            auto& flat = *workspace_flat_;
+            auto& pool = *workspace_pool_;
 
-    if (a.size() < 2 || !is_string(a.back()))
-        return mev("bad-arg", "last arg must be a template string");
+            if (a.size() < 2 || !is_string(a.back()))
+                return mev("bad-arg", "last arg must be a template string");
 
-    auto template_idx = as_string_idx(a.back());
-    if (template_idx >= string_heap_.size())
-        return mev("bad-arg", "template string index out of range");
-    std::string repl_template = string_heap_[template_idx];
+            auto template_idx = as_string_idx(a.back());
+            if (template_idx >= string_heap_.size())
+                return mev("bad-arg", "template string index out of range");
+            std::string repl_template = string_heap_[template_idx];
 
-    // The arg just before the template is optionally a summary.
-    std::size_t pred_end = a.size() - 1;
-    std::string summary = "query-and-replace";
-    if (a.size() >= 3 && is_string(a[a.size() - 2])) {
-        auto sidx = as_string_idx(a[a.size() - 2]);
-        if (sidx < string_heap_.size()) {
-            summary = string_heap_[sidx];
-            pred_end = a.size() - 2;
-        }
-    }
+            // The arg just before the template is optionally a summary.
+            std::size_t pred_end = a.size() - 1;
+            std::string summary = "query-and-replace";
+            if (a.size() >= 3 && is_string(a[a.size() - 2])) {
+                auto sidx = as_string_idx(a[a.size() - 2]);
+                if (sidx < string_heap_.size()) {
+                    summary = string_heap_[sidx];
+                    pred_end = a.size() - 2;
+                }
+            }
 
-    struct Predicate {
-        std::string field;
-        std::string value;
-    };
-    std::vector<Predicate> predicates;
-    for (std::size_t ai = 0; ai < pred_end; ++ai) {
-        if (!is_pair(a[ai]))
-            return mev("bad-arg", "each predicate must be a (query:where ...) pair");
-        auto pair_idx = as_pair_idx(a[ai]);
-        if (pair_idx >= pairs_.size())
-            return mev("bad-arg", "predicate pair index out of range");
-        auto& p = pairs_[pair_idx];
-        if (!is_keyword(p.car) || !is_string(p.cdr))
-            return mev("bad-arg", "malformed predicate");
-        auto kidx = as_keyword_idx(p.car);
-        auto sidx = as_string_idx(p.cdr);
-        if (kidx >= keyword_table_.size() || sidx >= string_heap_.size())
-            return mev("bad-arg", "predicate field/value out of range");
-        predicates.push_back({keyword_table_[kidx], string_heap_[sidx]});
-    }
-    if (predicates.empty())
-        return mev("bad-arg", "at least one predicate required");
+            struct Predicate {
+                std::string field;
+                std::string value;
+            };
+            std::vector<Predicate> predicates;
+            for (std::size_t ai = 0; ai < pred_end; ++ai) {
+                if (!is_pair(a[ai]))
+                    return mev("bad-arg", "each predicate must be a (query:where ...) pair");
+                auto pair_idx = as_pair_idx(a[ai]);
+                if (pair_idx >= pairs_.size())
+                    return mev("bad-arg", "predicate pair index out of range");
+                auto& p = pairs_[pair_idx];
+                if (!is_keyword(p.car) || !is_string(p.cdr))
+                    return mev("bad-arg", "malformed predicate");
+                auto kidx = as_keyword_idx(p.car);
+                auto sidx = as_string_idx(p.cdr);
+                if (kidx >= keyword_table_.size() || sidx >= string_heap_.size())
+                    return mev("bad-arg", "predicate field/value out of range");
+                predicates.push_back({keyword_table_[kidx], string_heap_[sidx]});
+            }
+            if (predicates.empty())
+                return mev("bad-arg", "at least one predicate required");
 
-    // Collect matches. Snapshot flat.size() so set_child during replacement
-    // (which grows flat) doesn't extend the match scan. (#110 fix: bug
-    // exposed by re-evaluating flat.size() each iteration.)
-    auto end_id = flat.size();
-    std::vector<aura::ast::NodeId> matches;
-    for (aura::ast::NodeId id = 0; id < end_id; ++id) {
-        auto v = flat.get(id);
-        bool match = true;
-        for (auto& p : predicates) {
-            if (p.field == ":node-type" || p.field == ":tag") {
-                bool found = false;
-                for (auto& m : aura::ast::kNodeMeta) {
-                    if (m.name == p.value && m.name != "<gap>") {
-                        if (v.tag == m.tag) found = true;
-                        break;
+            // Collect matches. Snapshot flat.size() so set_child during replacement
+            // (which grows flat) doesn't extend the match scan. (#110 fix: bug
+            // exposed by re-evaluating flat.size() each iteration.)
+            auto end_id = flat.size();
+            std::vector<aura::ast::NodeId> matches;
+            for (aura::ast::NodeId id = 0; id < end_id; ++id) {
+                auto v = flat.get(id);
+                bool match = true;
+                for (auto& p : predicates) {
+                    if (p.field == ":node-type" || p.field == ":tag") {
+                        bool found = false;
+                        for (auto& m : aura::ast::kNodeMeta) {
+                            if (m.name == p.value && m.name != "<gap>") {
+                                if (v.tag == m.tag)
+                                    found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            match = false;
+                            break;
+                        }
+                    } else if (p.field == ":callee") {
+                        if (v.tag != aura::ast::NodeTag::Call || v.children.empty()) {
+                            match = false;
+                            break;
+                        }
+                        auto callee = flat.get(v.child(0));
+                        if (callee.tag != aura::ast::NodeTag::Variable ||
+                            pool.resolve(callee.sym_id) != p.value) {
+                            match = false;
+                            break;
+                        }
+                    } else if (p.field == ":defined-by" || p.field == ":defines") {
+                        if (v.tag != aura::ast::NodeTag::Define) {
+                            match = false;
+                            break;
+                        }
+                        if (pool.resolve(v.sym_id) != p.value) {
+                            match = false;
+                            break;
+                        }
+                    } else if (p.field == ":has-param") {
+                        bool found_param = false;
+                        for (auto pid : v.params) {
+                            if (pool.resolve(pid) == p.value) {
+                                found_param = true;
+                                break;
+                            }
+                        }
+                        if (!found_param) {
+                            match = false;
+                            break;
+                        }
+                    } else if (p.field == ":has-child") {
+                        aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
+                        bool found_tag = false;
+                        for (auto& m : aura::ast::kNodeMeta) {
+                            if (m.name == p.value && m.name != "<gap>") {
+                                child_tag = m.tag;
+                                found_tag = true;
+                                break;
+                            }
+                        }
+                        if (!found_tag) {
+                            match = false;
+                            break;
+                        }
+                        bool has_child = false;
+                        for (auto cid : v.children) {
+                            if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
+                                has_child = true;
+                                break;
+                            }
+                        }
+                        if (!has_child) {
+                            match = false;
+                            break;
+                        }
+                    } else {
+                        return mev("unknown-field",
+                                   std::string("unknown where field: \"") + p.field + "\"");
                     }
                 }
-                if (!found) { match = false; break; }
+                if (match)
+                    matches.push_back(id);
             }
-            else if (p.field == ":callee") {
-                if (v.tag != aura::ast::NodeTag::Call || v.children.empty()) {
-                    match = false; break;
-                }
-                auto callee = flat.get(v.child(0));
-                if (callee.tag != aura::ast::NodeTag::Variable ||
-                    pool.resolve(callee.sym_id) != p.value) {
-                    match = false; break;
-                }
-            }
-            else if (p.field == ":defined-by" || p.field == ":defines") {
-                if (v.tag != aura::ast::NodeTag::Define) { match = false; break; }
-                if (pool.resolve(v.sym_id) != p.value) { match = false; break; }
-            }
-            else if (p.field == ":has-param") {
-                bool found_param = false;
-                for (auto pid : v.params) {
-                    if (pool.resolve(pid) == p.value) {
-                        found_param = true; break;
-                    }
-                }
-                if (!found_param) { match = false; break; }
-            }
-            else if (p.field == ":has-child") {
-                aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
-                bool found_tag = false;
-                for (auto& m : aura::ast::kNodeMeta) {
-                    if (m.name == p.value && m.name != "<gap>") {
-                        child_tag = m.tag; found_tag = true; break;
-                    }
-                }
-                if (!found_tag) { match = false; break; }
-                bool has_child = false;
-                for (auto cid : v.children) {
-                    if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
-                        has_child = true; break;
-                    }
-                }
-                if (!has_child) { match = false; break; }
-            }
-            else {
-                return mev("unknown-field",
-                           std::string("unknown where field: \"") + p.field + "\"");
-            }
-        }
-        if (match) matches.push_back(id);
-    }
 
-    if (matches.empty())
-        return make_bool(false);
+            if (matches.empty())
+                return make_bool(false);
 
-    // Source reconstruction
-    std::function<std::string(aura::ast::NodeId)> node_to_source;
-    node_to_source = [&](aura::ast::NodeId id) -> std::string {
-        if (id >= flat.size() || id == aura::ast::NULL_NODE) return "";
-        auto v = flat.get(id);
-        switch (v.tag) {
-            case aura::ast::NodeTag::LiteralInt: return std::to_string(v.int_value);
-            case aura::ast::NodeTag::LiteralFloat: return std::to_string(v.float_value);
-            case aura::ast::NodeTag::LiteralString:
-                return std::string("\"") + std::string(pool.resolve(v.sym_id)) + "\"";
-            case aura::ast::NodeTag::Variable: return std::string(pool.resolve(v.sym_id));
-            case aura::ast::NodeTag::Call: {
-                std::string s = "(";
-                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                    if (ci > 0) s += " ";
-                    s += node_to_source(v.child(ci));
-                }
-                return s + ")";
-            }
-            case aura::ast::NodeTag::Lambda: {
-                std::string s = "(lambda (";
-                for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
-                    if (pi > 0) s += " ";
-                    s += pool.resolve(v.params[pi]);
-                }
-                s += ")";
-                if (!v.children.empty()) s += " " + node_to_source(v.child(0));
-                return s + ")";
-            }
-            case aura::ast::NodeTag::IfExpr: {
-                std::string s = "(if";
-                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                    if (ci < 3) s += " " + node_to_source(v.child(ci));
-                }
-                return s + ")";
-            }
-            case aura::ast::NodeTag::Begin: {
-                std::string s = "(begin";
-                for (auto c : v.children) s += " " + node_to_source(c);
-                return s + ")";
-            }
-            case aura::ast::NodeTag::Define: {
-                std::string s = "(define " + std::string(pool.resolve(v.sym_id));
-                if (!v.children.empty()) {
-                    auto val_node = flat.get(v.child(0));
-                    if (val_node.tag == aura::ast::NodeTag::Lambda) {
-                        s += " (";
-                        for (std::size_t pi = 0; pi < val_node.params.size(); ++pi) {
-                            if (pi > 0) s += " ";
-                            s += pool.resolve(val_node.params[pi]);
+            // Source reconstruction
+            std::function<std::string(aura::ast::NodeId)> node_to_source;
+            node_to_source = [&](aura::ast::NodeId id) -> std::string {
+                if (id >= flat.size() || id == aura::ast::NULL_NODE)
+                    return "";
+                auto v = flat.get(id);
+                switch (v.tag) {
+                    case aura::ast::NodeTag::LiteralInt:
+                        return std::to_string(v.int_value);
+                    case aura::ast::NodeTag::LiteralFloat:
+                        return std::to_string(v.float_value);
+                    case aura::ast::NodeTag::LiteralString:
+                        return std::string("\"") + std::string(pool.resolve(v.sym_id)) + "\"";
+                    case aura::ast::NodeTag::Variable:
+                        return std::string(pool.resolve(v.sym_id));
+                    case aura::ast::NodeTag::Call: {
+                        std::string s = "(";
+                        for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                            if (ci > 0)
+                                s += " ";
+                            s += node_to_source(v.child(ci));
+                        }
+                        return s + ")";
+                    }
+                    case aura::ast::NodeTag::Lambda: {
+                        std::string s = "(lambda (";
+                        for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+                            if (pi > 0)
+                                s += " ";
+                            s += pool.resolve(v.params[pi]);
                         }
                         s += ")";
-                        if (!val_node.children.empty())
-                            s += " " + node_to_source(val_node.child(0));
-                        s += ")";
-                    } else {
-                        s += " " + node_to_source(v.child(0));
+                        if (!v.children.empty())
+                            s += " " + node_to_source(v.child(0));
+                        return s + ")";
+                    }
+                    case aura::ast::NodeTag::IfExpr: {
+                        std::string s = "(if";
+                        for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                            if (ci < 3)
+                                s += " " + node_to_source(v.child(ci));
+                        }
+                        return s + ")";
+                    }
+                    case aura::ast::NodeTag::Begin: {
+                        std::string s = "(begin";
+                        for (auto c : v.children)
+                            s += " " + node_to_source(c);
+                        return s + ")";
+                    }
+                    case aura::ast::NodeTag::Define: {
+                        std::string s = "(define " + std::string(pool.resolve(v.sym_id));
+                        if (!v.children.empty()) {
+                            auto val_node = flat.get(v.child(0));
+                            if (val_node.tag == aura::ast::NodeTag::Lambda) {
+                                s += " (";
+                                for (std::size_t pi = 0; pi < val_node.params.size(); ++pi) {
+                                    if (pi > 0)
+                                        s += " ";
+                                    s += pool.resolve(val_node.params[pi]);
+                                }
+                                s += ")";
+                                if (!val_node.children.empty())
+                                    s += " " + node_to_source(val_node.child(0));
+                                s += ")";
+                            } else {
+                                s += " " + node_to_source(v.child(0));
+                            }
+                        }
+                        return s + ")";
+                    }
+                    default:
+                        return std::string("#<node-") + std::to_string(static_cast<int>(v.tag)) +
+                               ">";
+                }
+            };
+
+            // Count "..." occurrences
+            std::size_t dot_count = 0;
+            {
+                std::size_t pos = 0;
+                while ((pos = repl_template.find("...", pos)) != std::string::npos) {
+                    ++dot_count;
+                    pos += 3;
+                }
+            }
+
+            defuse_version_.fetch_add(1, std::memory_order_acq_rel);
+            total_mutations_.fetch_add(1, std::memory_order_relaxed);
+            if (aura::messaging::g_fiber_yield_mutation_boundary)
+                aura::messaging::g_fiber_yield_mutation_boundary();
+
+            int replaced = 0;
+            for (auto match_id : matches) {
+                std::vector<std::string> capture_sources;
+                capture_sources.push_back(node_to_source(match_id));
+                auto mv = flat.get(match_id);
+                for (auto cid : mv.children) {
+                    if (cid != aura::ast::NULL_NODE)
+                        capture_sources.push_back(node_to_source(cid));
+                    if (capture_sources.size() >= dot_count)
+                        break;
+                }
+
+                std::string filled;
+                if (dot_count == 0) {
+                    filled = repl_template;
+                } else {
+                    std::size_t cap_idx = 0;
+                    std::size_t pos = 0;
+                    while (pos < repl_template.size()) {
+                        auto dot_pos = repl_template.find("...", pos);
+                        if (dot_pos == std::string::npos) {
+                            filled += repl_template.substr(pos);
+                            break;
+                        }
+                        filled += repl_template.substr(pos, dot_pos - pos);
+                        if (cap_idx < capture_sources.size()) {
+                            filled += capture_sources[cap_idx++];
+                        }
+                        pos = dot_pos + 3;
                     }
                 }
-                return s + ")";
-            }
-            default:
-                return std::string("#<node-") + std::to_string(static_cast<int>(v.tag)) + ">";
-        }
-    };
 
-    // Count "..." occurrences
-    std::size_t dot_count = 0;
-    {
-        std::size_t pos = 0;
-        while ((pos = repl_template.find("...", pos)) != std::string::npos) {
-            ++dot_count;
-            pos += 3;
-        }
-    }
+                auto repl_pr = aura::parser::parse_to_flat(filled, flat, pool);
+                if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE)
+                    continue;
 
-    defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
-    if (aura::messaging::g_fiber_yield_mutation_boundary)
-        aura::messaging::g_fiber_yield_mutation_boundary();
-
-    int replaced = 0;
-    for (auto match_id : matches) {
-        std::vector<std::string> capture_sources;
-        capture_sources.push_back(node_to_source(match_id));
-        auto mv = flat.get(match_id);
-        for (auto cid : mv.children) {
-            if (cid != aura::ast::NULL_NODE)
-                capture_sources.push_back(node_to_source(cid));
-            if (capture_sources.size() >= dot_count) break;
-        }
-
-        std::string filled;
-        if (dot_count == 0) {
-            filled = repl_template;
-        } else {
-            std::size_t cap_idx = 0;
-            std::size_t pos = 0;
-            while (pos < repl_template.size()) {
-                auto dot_pos = repl_template.find("...", pos);
-                if (dot_pos == std::string::npos) {
-                    filled += repl_template.substr(pos);
-                    break;
+                auto parent_id = flat.parent_of(match_id);
+                if (parent_id == aura::ast::NULL_NODE)
+                    continue;
+                int child_idx = -1;
+                {
+                    auto pv = flat.get(parent_id);
+                    for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                        if (pv.child(ci) == match_id) {
+                            child_idx = static_cast<int>(ci);
+                            break;
+                        }
+                    }
                 }
-                filled += repl_template.substr(pos, dot_pos - pos);
-                if (cap_idx < capture_sources.size()) {
-                    filled += capture_sources[cap_idx++];
-                }
-                pos = dot_pos + 3;
+                if (child_idx < 0)
+                    continue;
+
+                flat.set_child(parent_id, static_cast<std::uint32_t>(child_idx), repl_pr.root);
+                flat.mark_dirty_upward(repl_pr.root);
+                flat.add_mutation(repl_pr.root, "query-and-replace", "matched", "template",
+                                  summary);
+                ++replaced;
             }
-        }
 
-        auto repl_pr = aura::parser::parse_to_flat(filled, flat, pool);
-        if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE)
-            continue;
+            if (replaced == 0)
+                return make_bool(false);
 
-        auto parent_id = flat.parent_of(match_id);
-        if (parent_id == aura::ast::NULL_NODE) continue;
-        int child_idx = -1;
-        {
-            auto pv = flat.get(parent_id);
-            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-                if (pv.child(ci) == match_id) {
-                    child_idx = static_cast<int>(ci);
-                    break;
-                }
-            }
-        }
-        if (child_idx < 0) continue;
+            defuse_index_destroy(&defuse_index_);
+            defuse_affected_syms_.clear();
+            if (mark_all_defines_dirty_fn_)
+                mark_all_defines_dirty_fn_();
+            if (pre_cache_workspace_defines_fn_)
+                pre_cache_workspace_defines_fn_();
 
-        flat.set_child(parent_id, static_cast<std::uint32_t>(child_idx), repl_pr.root);
-        flat.mark_dirty_upward(repl_pr.root);
-        flat.add_mutation(repl_pr.root, "query-and-replace", "matched", "template", summary);
-        ++replaced;
-    }
-
-    if (replaced == 0)
-        return make_bool(false);
-
-    defuse_index_destroy(&defuse_index_);
-    defuse_affected_syms_.clear();
-    if (mark_all_defines_dirty_fn_) mark_all_defines_dirty_fn_();
-    if (pre_cache_workspace_defines_fn_) pre_cache_workspace_defines_fn_();
-
-    return make_bool(true);
-});
+            return make_bool(true);
+        });
 
 
     primitives_.add("set-code", [this, mev](const auto& a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
+        if (workspace_read_only_)
+            return mev("read-only", "workspace is read-only");
         // Clear any previous set-code error and eval-current cache
         last_set_code_error_kind_.clear();
         last_set_code_error_msg_.clear();
@@ -5982,7 +6123,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             std::string err;
             if (!pr.errors.empty()) {
                 for (auto& e : pr.errors) {
-                    if (!err.empty()) err += "; ";
+                    if (!err.empty())
+                        err += "; ";
                     err += e.format();
                 }
             } else if (!pr.error.empty()) {
@@ -6011,11 +6153,13 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         defuse_index_destroy(&defuse_index_);
         // Phase 2: a fresh workspace means every cached define is potentially
         // changed. Mark all dirty so the next (eval-current) re-evaluates.
-        if (mark_all_defines_dirty_fn_) mark_all_defines_dirty_fn_();
+        if (mark_all_defines_dirty_fn_)
+            mark_all_defines_dirty_fn_();
         // Pre-populate the v2 IR cache from the new workspace's defines.
         // For unchanged defines, this is a cache hit (skip lowering).
         // For new/changed defines, this lowers them once and stores the result.
-        if (pre_cache_workspace_defines_fn_) pre_cache_workspace_defines_fn_();
+        if (pre_cache_workspace_defines_fn_)
+            pre_cache_workspace_defines_fn_();
         // Issue #165 follow-up: extract MacroDef nodes from the new
         // workspace and register them in the runtime `macros_` registry.
         // Without this, subsequent eval("(m)") parses a fresh FlatAST
@@ -6046,9 +6190,11 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             // and expanded.
             for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
                 auto v = flat_ptr->get(id);
-                if (v.tag != aura::ast::NodeTag::MacroDef) continue;
+                if (v.tag != aura::ast::NodeTag::MacroDef)
+                    continue;
                 auto macro_name = std::string(pool_ptr->resolve(v.sym_id));
-                if (macro_name.empty()) continue;
+                if (macro_name.empty())
+                    continue;
                 std::vector<std::string> param_names;
                 param_names.reserve(v.params.size());
                 for (auto pid : v.params)
@@ -6059,8 +6205,13 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 // Issue #230 #2: bit 2 of int_val_ flags the
                 // `define-hygienic-macro*` (preserved-params) variant.
                 bool is_preserved = (v.int_value & 4) != 0;
-                macros_[macro_name] = MacroDef{std::move(param_names), is_dotted,
-                                                is_hygienic, is_preserved, flat_ptr, pool_ptr, body_id};
+                macros_[macro_name] = MacroDef{std::move(param_names),
+                                               is_dotted,
+                                               is_hygienic,
+                                               is_preserved,
+                                               flat_ptr,
+                                               pool_ptr,
+                                               body_id};
             }
         }
         return make_bool(true);
@@ -6071,9 +6222,11 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     primitives_.add("ir-cache-v2:dirty?", [this, mev](const auto& a) -> EvalValue {
         if (a.size() < 1 || !is_string(a[0]))
             return mev("bad-arg", "usage: (ir-cache-v2:dirty? name)");
-        if (!is_define_dirty_fn_) return make_bool(false);
+        if (!is_define_dirty_fn_)
+            return make_bool(false);
         auto name_idx = as_string_idx(a[0]);
-        if (name_idx >= string_heap_.size()) return make_bool(false);
+        if (name_idx >= string_heap_.size())
+            return make_bool(false);
         auto name = string_heap_[name_idx];
         return make_bool(is_define_dirty_fn_(name));
     });
@@ -6082,9 +6235,11 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     primitives_.add("ir-cache-v2:dependents", [this, mev](const auto& a) -> EvalValue {
         if (a.size() < 1 || !is_string(a[0]))
             return mev("bad-arg", "usage: (ir-cache-v2:dependents name)");
-        if (!get_dependents_fn_) return make_void();
+        if (!get_dependents_fn_)
+            return make_void();
         auto name_idx = as_string_idx(a[0]);
-        if (name_idx >= string_heap_.size()) return make_void();
+        if (name_idx >= string_heap_.size())
+            return make_void();
         auto name = string_heap_[name_idx];
         auto names = get_dependents_fn_(name);
         EvalValue list = make_void();
@@ -6132,8 +6287,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         std::ifstream f(path);
         if (!f)
             return make_void();
-        std::string content((std::istreambuf_iterator<char>(f)),
-                             std::istreambuf_iterator<char>());
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 
         // Fresh workspace state for each load — resetting the pool corrupts
         // existing top_ bindings that reference string indices from the old pool.
@@ -6234,7 +6388,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
 
         // Inline unparse for the chosen root (captures flat/pool by ref).
         constexpr int kMaxUnparseDepth = 256;
-        auto unparse = [&](this const auto& self, aura::ast::NodeId id, int indent, int depth = 0) -> std::string {
+        auto unparse = [&](this const auto& self, aura::ast::NodeId id, int indent,
+                           int depth = 0) -> std::string {
             if (depth > kMaxUnparseDepth)
                 return "...";
             if (id == aura::ast::NULL_NODE || id >= flat->size())
@@ -6290,8 +6445,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 case aura::ast::NodeTag::LetRec: {
                     auto kw = (v.tag == aura::ast::NodeTag::LetRec) ? std::string("letrec")
                                                                     : std::string("let");
-                    std::string s =
-                        "(" + kw + " ((" + std::string(pool->resolve(v.sym_id)) + " ";
+                    std::string s = "(" + kw + " ((" + std::string(pool->resolve(v.sym_id)) + " ";
                     if (!v.children.empty())
                         s += self(v.child(0), indent + 1, depth + 1);
                     s += "))";
@@ -6301,7 +6455,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 }
                 case aura::ast::NodeTag::Define: {
                     return "(define " + std::string(pool->resolve(v.sym_id)) + " " +
-                           (v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1)) + ")";
+                           (v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1)) +
+                           ")";
                 }
                 case aura::ast::NodeTag::IfExpr: {
                     std::string s = "(if";
@@ -6317,10 +6472,12 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 }
                 case aura::ast::NodeTag::Set: {
                     return "(set! " + std::string(pool->resolve(v.sym_id)) + " " +
-                           (v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1)) + ")";
+                           (v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1)) +
+                           ")";
                 }
                 case aura::ast::NodeTag::Quote: {
-                    return "(quote " + (v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1)) +
+                    return "(quote " +
+                           (v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1)) +
                            ")";
                 }
                 case aura::ast::NodeTag::Pair: {
@@ -6401,7 +6558,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     std::string src = get_workspace_source_fn_();
                     if (!src.empty()) {
                         auto jit_result = try_jit_fn_(src);
-                        if (jit_result) return *jit_result;
+                        if (jit_result)
+                            return *jit_result;
                         // JIT failed — fall through to tree-walker
                     }
                 }
@@ -6446,8 +6604,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 last_form = root_v.child(root_v.children.size() - 1);
             }
             if (last_form != aura::ast::NULL_NODE &&
-                !workspace_flat_->has_dirty_subtree(last_form) &&
-                last_eval_current_result_) {
+                !workspace_flat_->has_dirty_subtree(last_form) && last_eval_current_result_) {
                 return *last_eval_current_result_;
             }
         }
@@ -6498,9 +6655,12 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 } else if (arity == 2) {
                     // List+scalar for search, then plain scalars
                     // Try both (scalar list) and (list scalar) orderings
-                    arg_pats = {"42 7", "0 0", "(list 1 3 5 7 9) 5",
-                               "5 (list 1 3 5 7 9)", "(list 3 1 4 1 5) 1",
-                               "1 (list 3 1 4 1 5)"};
+                    arg_pats = {"42 7",
+                                "0 0",
+                                "(list 1 3 5 7 9) 5",
+                                "5 (list 1 3 5 7 9)",
+                                "(list 3 1 4 1 5) 1",
+                                "1 (list 3 1 4 1 5)"};
                 } else {
                     arg_pats = {"1 2 3", "0 0 0"};
                 }
@@ -6511,7 +6671,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 if (null_fd >= 0)
                     ::dup2(null_fd, STDOUT_FILENO);
                 bool auto_fixed = false;
-                std::string winning_call;  // the call that worked
+                std::string winning_call; // the call that worked
                 for (auto& args : arg_pats) {
                     std::string call_code = "(" + fn_name;
                     if (!args.empty())
@@ -6523,8 +6683,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     if (!pr.success || pr.root == aura::ast::NULL_NODE)
                         continue;
                     temp_flat.root = pr.root;
-                    auto call_expanded = aura::compiler::macro_expand_all(
-                        temp_flat, temp_pool, temp_flat.root);
+                    auto call_expanded =
+                        aura::compiler::macro_expand_all(temp_flat, temp_pool, temp_flat.root);
                     auto call_result = eval_flat(temp_flat, temp_pool, call_expanded, top_);
                     if (!call_result || is_void(*call_result) || is_closure(*call_result))
                         continue;
@@ -6536,7 +6696,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 std::fflush(stdout);
                 ::dup2(saved_stdout, STDOUT_FILENO);
                 ::close(saved_stdout);
-                if (null_fd >= 0) ::close(null_fd);
+                if (null_fd >= 0)
+                    ::close(null_fd);
                 // Return the auto-fix result silently (no display output)
                 if (auto_fixed && !winning_call.empty()) {
                     // Winners are evaluated with original stdout restored, but we
@@ -6547,8 +6708,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     auto call_pr = aura::parser::parse_to_flat(winning_call, call_flat, call_pool);
                     if (call_pr.success && call_pr.root != aura::ast::NULL_NODE) {
                         call_flat.root = call_pr.root;
-                        auto call_expanded = aura::compiler::macro_expand_all(
-                            call_flat, call_pool, call_flat.root);
+                        auto call_expanded =
+                            aura::compiler::macro_expand_all(call_flat, call_pool, call_flat.root);
                         auto call_result = eval_flat(call_flat, call_pool, call_expanded, top_);
                         if (call_result) {
                             coverage_counters_[9]++;
@@ -6667,15 +6828,16 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         }
         // Fallback: synchronous eval via the existing eval primitive
         auto eval_fn = primitives_.lookup("eval");
-        if (!eval_fn) return make_void();
+        if (!eval_fn)
+            return make_void();
         auto sidx = string_heap_.size();
         string_heap_.push_back(code);
         auto result = (*eval_fn)({make_string(sidx)});
         // Format result as string
         auto& ev = *this;
         auto& cs = ev;
-        auto formatted = aura::compiler::format_value(
-            result, ev.string_heap_, ev.pairs_, 0, &ev.primitives_, ev.keyword_table());
+        auto formatted = aura::compiler::format_value(result, ev.string_heap_, ev.pairs_, 0,
+                                                      &ev.primitives_, ev.keyword_table());
         auto ris = string_heap_.size();
         string_heap_.push_back(std::move(formatted));
         return make_string(ris);
@@ -6689,7 +6851,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                           std::to_string(flat.size()));
         auto v = flat.get(node);
         EvalValue result = make_void();
         for (std::size_t i = v.children.size(); i > 0; --i) {
@@ -6714,7 +6877,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                           std::to_string(flat.size()));
         auto stable_children = flat.children_stable(node);
         auto gen = flat.generation();
         // Build a list of (node-id . gen) pairs, in the same
@@ -6745,9 +6909,11 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                           std::to_string(flat.size()));
         auto pref = flat.parent_stable(node);
-        if (pref.id == aura::ast::NULL_NODE) return make_void();
+        if (pref.id == aura::ast::NULL_NODE)
+            return make_void();
         auto gen = flat.generation();
         // Build (parent-id . gen) pair
         auto gen_pid = pairs_.size();
@@ -6778,7 +6944,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                           std::to_string(flat.size()));
         auto v = flat.get(node);
 
         // Build result: list of (tag-id value sym-name children-count)
@@ -6832,7 +6999,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                           std::to_string(flat.size()));
         auto gen = flat.generation();
         // Build (node-id . gen) pair
         auto gen_pid = pairs_.size();
@@ -6905,7 +7073,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // Parses new code INTO the existing workspace FlatAST, then redirects the old
     // Define's value reference to the newly parsed nodes. All pre-existing mutations
     // on other nodes are preserved.
-        // Issue #213 follow-up: migrate mutate:rebind to the
+    // Issue #213 follow-up: migrate mutate:rebind to the
     // MutationBoundaryGuard. The guard handles the version
     // bump + lock + enter/exit_mutation_boundary.
     //
@@ -6935,7 +7103,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     primitives_.add("mutate:rebind", [this, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
-        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
+        if (workspace_read_only_) {
+            ok = false;
+            return mev("read-only", "workspace is read-only");
+        }
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_) {
             ok = false;
@@ -6976,10 +7147,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // ── 依赖图查询：通过 dep_caller_fn_ 获取调用者节点 ────
         // dep_caller_fn_ 在 init_pair_primitives 中注册，使用
         // DefUseIndex 的 O(k) 依赖图查询（k = 调用者数量）。
-        // 在 defuse_version_.fetch_add(1, std::memory_order_acq_rel) 之前调用，因为索引在失效前有效。
-        auto dep_callers = dep_caller_fn_
-            ? dep_caller_fn_(defuse_index_, sym)
-            : std::vector<aura::ast::NodeId>{};
+        // 在 defuse_version_.fetch_add(1, std::memory_order_acq_rel)
+        // 之前调用，因为索引在失效前有效。
+        auto dep_callers =
+            dep_caller_fn_ ? dep_caller_fn_(defuse_index_, sym) : std::vector<aura::ast::NodeId>{};
         defuse_version_.fetch_add(1, std::memory_order_acq_rel);
         total_mutations_.fetch_add(1, std::memory_order_relaxed);
 
@@ -7002,12 +7173,14 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // consistent with the rest of the rebind path.
         if (old_define == aura::ast::NULL_NODE) {
             // Parse the new code first so we know what to bind.
-            auto pr_add = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+            auto pr_add =
+                aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
             if (!pr_add.success || pr_add.root == aura::ast::NULL_NODE) {
                 std::string parse_err;
                 if (!pr_add.errors.empty()) {
                     for (auto& e : pr_add.errors) {
-                        if (!parse_err.empty()) parse_err += "; ";
+                        if (!parse_err.empty())
+                            parse_err += "; ";
                         parse_err += e.format();
                     }
                 } else if (!pr_add.error.empty()) {
@@ -7027,14 +7200,17 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 }
                 new_value = root_v.child(0);
             }
-            std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
-                                                                    : "add " + name;
+            std::string summary = (a.size() > 2 && is_string(a[2]))
+                                      ? string_heap_[as_string_idx(a[2])]
+                                      : "add " + name;
             auto new_define = flat.add_define(sym, new_value);
             flat.add_mutation(new_define, "add", name, summary, summary);
             // Mark all defines dirty so cached IR for siblings gets invalidated.
-            if (mark_all_defines_dirty_fn_) mark_all_defines_dirty_fn_();
+            if (mark_all_defines_dirty_fn_)
+                mark_all_defines_dirty_fn_();
             // Also update dep_graph_ and IR cache (lightweight + heavy hooks).
-            if (pre_cache_workspace_defines_fn_) pre_cache_workspace_defines_fn_();
+            if (pre_cache_workspace_defines_fn_)
+                pre_cache_workspace_defines_fn_();
             return make_bool(true);
         }
 
@@ -7045,7 +7221,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             std::string parse_err;
             if (!pr.errors.empty()) {
                 for (auto& e : pr.errors) {
-                    if (!parse_err.empty()) parse_err += "; ";
+                    if (!parse_err.empty())
+                        parse_err += "; ";
                     parse_err += e.format();
                 }
             } else if (!pr.error.empty()) {
@@ -7088,9 +7265,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // so we use kGeneralDirty | kConstraintDirty (not Coercion).
         for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
             if (dep_callers[ui] < flat.size())
-                flat.mark_dirty_upward(dep_callers[ui],
-                    aura::ast::FlatAST::kGeneralDirty |
-                    aura::ast::FlatAST::kConstraintDirty);
+                flat.mark_dirty_upward(dep_callers[ui], aura::ast::FlatAST::kGeneralDirty |
+                                                            aura::ast::FlatAST::kConstraintDirty);
         }
 
         // Record affected sym for incremental DefUseIndex update
@@ -7101,11 +7277,13 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // declaration on DefUseIndex (which is defined later in this
         // translation unit). When defuse_index_ is null, this is a
         // no-op — next ensure_defuse() will build from scratch.
-        if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
+        if (defuse_touch_fn_)
+            defuse_touch_fn_(defuse_index_, sym);
 
         // Phase 2: mark this define's IR cache entry dirty so the next
         // (eval-current) re-lowers it.
-        if (mark_define_dirty_fn_) mark_define_dirty_fn_(name);
+        if (mark_define_dirty_fn_)
+            mark_define_dirty_fn_(name);
 
         // ── Auto-typecheck (Issue #107 part 3.5) ────────────
         // Run the typecheck inline WITHOUT going through the
@@ -7131,8 +7309,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 tc.inject_type_sigs(sig_map, mod_src_map);
             }
             aura::diag::DiagnosticCollector local_diag;
-            tc.infer_flat(*workspace_flat_, *workspace_pool_,
-                          workspace_flat_->root, local_diag);
+            tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, local_diag);
             // Issue #116: apply deferred coercions so the
             // upcoming IR generation sees CoercionNodes.
             // (The mutate:rebind path proceeds to eval, so
@@ -7176,19 +7353,21 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             if (!opass) {
                 std::string err = "ownership validation after mutate:rebind failed:";
                 for (auto& n : onotes)
-                    err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " + n.message + ";";
+                    err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " + n.message +
+                           ";";
                 last_mutate_error_ = err;
             }
         }
 
         // ── Auto-rollback: if typecheck/ownership failed, signal Guard to restore ────
         // Issue #241: panic_checkpoint 的 restore 由 Guard dtor 处理，我们只需要设置 ok=false
-        // 当 panic_auto_rollback_ 开启且 mutation 失败。Guard dtor 会调 restore_panic_checkpoint()。
+        // 当 panic_auto_rollback_ 开启且 mutation 失败。Guard dtor 会调
+        // restore_panic_checkpoint()。
         if (!last_mutate_error_.empty() && panic_auto_rollback_) {
-            ok = false;  // signal Guard's dtor to restore the source
+            ok = false; // signal Guard's dtor to restore the source
             return mev("mutation-failed",
-                       std::string(typeid(*this).name()) + ": mutation rejected — auto-rolled back: " +
-                           last_mutate_error_);
+                       std::string(typeid(*this).name()) +
+                           ": mutation rejected — auto-rolled back: " + last_mutate_error_);
         }
         // 失败但 !panic_auto_rollback_：保持 ok=true（保留 pre-#241 行为 — silently return true）
         // Guard dtor 会 commit_panic_checkpoint()（行为变化：以前 leave alone，现在 clear）。
@@ -7211,7 +7390,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (target >= flat.size())
-            return mev("out-of-range", "node ID " + std::to_string(target) + " >= flat size " + std::to_string(flat.size()));
+            return mev("out-of-range", "node ID " + std::to_string(target) + " >= flat size " +
+                                           std::to_string(flat.size()));
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
@@ -7237,7 +7417,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (target >= flat.size())
-            return mev("out-of-range", "node ID " + std::to_string(target) + " >= flat size " + std::to_string(flat.size()));
+            return mev("out-of-range", "node ID " + std::to_string(target) + " >= flat size " +
+                                           std::to_string(flat.size()));
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
@@ -7371,34 +7552,41 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     bool found = false;
                     for (auto& m : aura::ast::kNodeMeta) {
                         if (m.name == p.value && m.name != "<gap>") {
-                            if (v.tag == m.tag) found = true;
+                            if (v.tag == m.tag)
+                                found = true;
                             break;
                         }
                     }
-                    if (!found) { match = false; break; }
-                }
-                else if (p.field == ":callee") {
+                    if (!found) {
+                        match = false;
+                        break;
+                    }
+                } else if (p.field == ":callee") {
                     // For Call nodes, match callee Variable name
                     if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
                         auto callee = flat.get(v.child(0));
                         if (callee.tag != aura::ast::NodeTag::Variable ||
                             pool.resolve(callee.sym_id) != p.value) {
-                            match = false; break;
+                            match = false;
+                            break;
                         }
                     } else {
-                        match = false; break;
+                        match = false;
+                        break;
                     }
-                }
-                else if (p.field == ":defined-by" || p.field == ":defines") {
+                } else if (p.field == ":defined-by" || p.field == ":defines") {
                     // Match Define nodes by name
                     if (v.tag == aura::ast::NodeTag::Define) {
                         auto name = pool.resolve(v.sym_id);
-                        if (name != p.value) { match = false; break; }
+                        if (name != p.value) {
+                            match = false;
+                            break;
+                        }
                     } else {
-                        match = false; break;
+                        match = false;
+                        break;
                     }
-                }
-                else if (p.field == ":has-param") {
+                } else if (p.field == ":has-param") {
                     // Check if node has a parameter with the given name
                     bool found_param = false;
                     for (auto pid : v.params) {
@@ -7407,9 +7595,11 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                             break;
                         }
                     }
-                    if (!found_param) { match = false; break; }
-                }
-                else if (p.field == ":has-child") {
+                    if (!found_param) {
+                        match = false;
+                        break;
+                    }
+                } else if (p.field == ":has-child") {
                     // Check if node has at least one child with the given NodeTag name
                     aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
                     bool found_tag = false;
@@ -7420,7 +7610,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                             break;
                         }
                     }
-                    if (!found_tag) { match = false; break; }
+                    if (!found_tag) {
+                        match = false;
+                        break;
+                    }
                     bool has_child = false;
                     for (auto cid : v.children) {
                         if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
@@ -7428,18 +7621,27 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                             break;
                         }
                     }
-                    if (!has_child) { match = false; break; }
-                }
-                else if (p.field == ":depth") {
+                    if (!has_child) {
+                        match = false;
+                        break;
+                    }
+                } else if (p.field == ":depth") {
                     // Check if node is at the given depth from root
                     int target_depth = 0;
-                    try { target_depth = std::stoi(p.value); }
-                    catch (...) { match = false; break; }
-                    if (target_depth < 0) { match = false; break; }
+                    try {
+                        target_depth = std::stoi(p.value);
+                    } catch (...) {
+                        match = false;
+                        break;
+                    }
+                    if (target_depth < 0) {
+                        match = false;
+                        break;
+                    }
                     // Starting from this node, walk up via children_of to count depth
                     int actual_depth = 0;
                     aura::ast::NodeId cur = id;
-                    while (cur != 0) {  // root is always NodeId 0
+                    while (cur != 0) { // root is always NodeId 0
                         // Find parent by scanning all nodes for one that has cur as child
                         aura::ast::NodeId parent = aura::ast::NULL_NODE;
                         for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
@@ -7450,15 +7652,19 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                                     break;
                                 }
                             }
-                            if (parent != aura::ast::NULL_NODE) break;
+                            if (parent != aura::ast::NULL_NODE)
+                                break;
                         }
-                        if (parent == aura::ast::NULL_NODE) break;
+                        if (parent == aura::ast::NULL_NODE)
+                            break;
                         cur = parent;
                         ++actual_depth;
                     }
-                    if (actual_depth != target_depth) { match = false; break; }
-                }
-                else if (p.field == ":marker") {
+                    if (actual_depth != target_depth) {
+                        match = false;
+                        break;
+                    }
+                } else if (p.field == ":marker") {
                     // Issue #244: match SyntaxMarker by name.
                     // The marker column is populated by clone_macro_body
                     // (Issue #190) and persists in workspace_flat_ across
@@ -7469,13 +7675,21 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     auto m = flat.marker(id);
                     const char* mname = nullptr;
                     switch (m) {
-                        case aura::ast::SyntaxMarker::User:           mname = "User"; break;
-                        case aura::ast::SyntaxMarker::MacroIntroduced: mname = "MacroIntroduced"; break;
-                        case aura::ast::SyntaxMarker::BoolLiteral:    mname = "BoolLiteral"; break;
+                        case aura::ast::SyntaxMarker::User:
+                            mname = "User";
+                            break;
+                        case aura::ast::SyntaxMarker::MacroIntroduced:
+                            mname = "MacroIntroduced";
+                            break;
+                        case aura::ast::SyntaxMarker::BoolLiteral:
+                            mname = "BoolLiteral";
+                            break;
                     }
-                    if (!mname || p.value != mname) { match = false; break; }
-                }
-                else {
+                    if (!mname || p.value != mname) {
+                        match = false;
+                        break;
+                    }
+                } else {
                     return mev("unknown-field",
                                std::string("unknown where field: \"") + p.field + "\"");
                 }
@@ -7545,7 +7759,9 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     primitives_.add("query:by-marker", [this, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty() || a.size() > 2 || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query:by-marker marker-name) or (query:by-marker marker-name limit-int)");
+            return mev(
+                "bad-arg",
+                "usage: (query:by-marker marker-name) or (query:by-marker marker-name limit-int)");
         if (!workspace_flat_)
             return mev("no-workspace", "no workspace AST loaded");
 
@@ -7563,9 +7779,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         } else if (marker_name == "BoolLiteral") {
             target = aura::ast::SyntaxMarker::BoolLiteral;
         } else {
-            return mev("unknown-marker",
-                       std::string("unknown marker name: \"") + marker_name +
-                       "\" (expected User / MacroIntroduced / BoolLiteral)");
+            return mev("unknown-marker", std::string("unknown marker name: \"") + marker_name +
+                                             "\" (expected User / MacroIntroduced / BoolLiteral)");
         }
 
         std::int64_t limit = -1;
@@ -7581,7 +7796,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         EvalValue result = make_void();
         std::int64_t emitted = 0;
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (limit >= 0 && emitted >= limit) break;
+            if (limit >= 0 && emitted >= limit)
+                break;
             if (flat.marker(id) == target) {
                 auto pid = pairs_.size();
                 pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
@@ -7612,11 +7828,12 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     primitives_.add("query:macro-introduced", [this, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.size() > 1)
-            return mev("bad-arg", "usage: (query:macro-introduced) or (query:macro-introduced limit-int)");
+            return mev("bad-arg",
+                       "usage: (query:macro-introduced) or (query:macro-introduced limit-int)");
         if (!workspace_flat_)
             return mev("no-workspace", "no workspace AST loaded");
 
-        std::int64_t limit = -1;  // -1 = no limit
+        std::int64_t limit = -1; // -1 = no limit
         if (a.size() == 1) {
             if (!is_int(a[0]))
                 return mev("bad-arg", "limit must be an integer");
@@ -7629,7 +7846,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         EvalValue result = make_void();
         std::int64_t emitted = 0;
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (limit >= 0 && emitted >= limit) break;
+            if (limit >= 0 && emitted >= limit)
+                break;
             if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
                 auto pid = pairs_.size();
                 pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
@@ -7657,16 +7875,20 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // If no workspace is set, returns '().
     primitives_.add("query:marker-stats", [this, mev](const auto&) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-        if (!workspace_flat_) return mev("no-workspace", "no workspace AST loaded");
+        if (!workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
 
         std::size_t user = 0, macro = 0, bool_lit = 0, total = 0;
         const auto& markers = workspace_flat_->marker_column();
         for (auto m : markers) {
             ++total;
             auto val = static_cast<int>(m);
-            if (val == 0) ++user;
-            else if (val == 1) ++macro;
-            else if (val == 2) ++bool_lit;
+            if (val == 0)
+                ++user;
+            else if (val == 1)
+                ++macro;
+            else if (val == 2)
+                ++bool_lit;
         }
         // Build a proper 4-element list: (user macro bool total).
         // Use make_pair chaining (cdr-then-prepend pattern).
@@ -7716,9 +7938,12 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     primitives_.add("query:schema-of-marker", [this, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty() || a.size() > 2 || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query:schema-of-marker marker-name) or (query:schema-of-marker marker-name limit-int)");
-        if (!workspace_flat_) return mev("no-workspace", "no workspace AST loaded");
-        if (!type_registry_) return mev("no-registry", "no type registry available");
+            return mev("bad-arg", "usage: (query:schema-of-marker marker-name) or "
+                                  "(query:schema-of-marker marker-name limit-int)");
+        if (!workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
+        if (!type_registry_)
+            return mev("no-registry", "no type registry available");
 
         auto idx = as_string_idx(a[0]);
         if (idx >= string_heap_.size())
@@ -7734,9 +7959,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         } else if (marker_name == "BoolLiteral") {
             target = aura::ast::SyntaxMarker::BoolLiteral;
         } else {
-            return mev("unknown-marker",
-                       std::string("unknown marker name: \"") + marker_name +
-                       "\" (expected User / MacroIntroduced / BoolLiteral)");
+            return mev("unknown-marker", std::string("unknown marker name: \"") + marker_name +
+                                             "\" (expected User / MacroIntroduced / BoolLiteral)");
         }
 
         std::int64_t limit = -1;
@@ -7753,15 +7977,18 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         EvalValue result = make_void();
         std::int64_t emitted = 0;
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (limit >= 0 && emitted >= limit) break;
-            if (flat.marker(id) != target) continue;
+            if (limit >= 0 && emitted >= limit)
+                break;
+            if (flat.marker(id) != target)
+                continue;
             // Issue #248: only include nodes with a non-zero
             // type_id_ (i.e., the type checker has inferred a
             // type for them). Nodes with type_id_ == 0 haven't
             // been typed yet — they're "schema-less" in the
             // sense that we don't know their expected type.
             const auto type_id_value = flat.type_id(id);
-            if (type_id_value == 0) continue;
+            if (type_id_value == 0)
+                continue;
             // Convert uint32_t to TypeId. The FlatAST stores
             // just the index; TypeId requires (index, generation).
             // The type checker uses generation=1 as a default
@@ -7773,7 +8000,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             } catch (...) {
                 type_name = "<unknown>";
             }
-            if (type_name.empty()) type_name = "<unnamed>";
+            if (type_name.empty())
+                type_name = "<unnamed>";
             // Build the pair: (NodeId . type-name)
             auto name_idx = string_heap_.size();
             string_heap_.push_back(type_name);
@@ -7888,9 +8116,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // filter.
         auto pat_root_node = pat_flat->get(pr.root);
         const std::size_t pat_child_count = pat_root_node.children.size();
-        const bool pat_root_is_wildcard =
-            pat_root_node.tag == aura::ast::NodeTag::Variable &&
-            pat_root_node.sym_id == wildcard_sym;
+        const bool pat_root_is_wildcard = pat_root_node.tag == aura::ast::NodeTag::Variable &&
+                                          pat_root_node.sym_id == wildcard_sym;
 
 
         // Walk every node in workspace and try matching at each position.
@@ -7925,11 +8152,9 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             // Index lookup: find all nodes whose (tag, arity)
             // matches the pattern's root.
             build_tag_arity_index();
-            const std::uint32_t pat_tag_val =
-                static_cast<std::uint32_t>(pat_root_node.tag);
-            const std::uint64_t pat_key =
-                (static_cast<std::uint64_t>(pat_tag_val) << 32) |
-                static_cast<std::uint64_t>(pat_child_count);
+            const std::uint32_t pat_tag_val = static_cast<std::uint32_t>(pat_root_node.tag);
+            const std::uint64_t pat_key = (static_cast<std::uint64_t>(pat_tag_val) << 32) |
+                                          static_cast<std::uint64_t>(pat_child_count);
             auto it = tag_arity_index_.find(pat_key);
             if (it == tag_arity_index_.end()) {
                 // No nodes match the pattern's (tag, arity).
@@ -7938,7 +8163,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             }
             const auto& bucket = it->second;
             for (aura::ast::NodeId id : bucket) {
-                if (id >= flat.size()) continue;
+                if (id >= flat.size())
+                    continue;
                 if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
                     continue;
                 if (match_subtree(id, pr.root)) {
@@ -7967,7 +8193,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // (mutate:set-body name-str new-body-code-str) — Replace function body by name
     // Finds (define (name params) ...) and replaces the Lambda body.
     // Parses new body INTO the workspace FlatAST so all node IDs are valid.
-        // Issue #213 follow-up: migrate mutate:set-body to the
+    // Issue #213 follow-up: migrate mutate:set-body to the
     // MutationBoundaryGuard. Same pattern as rebind: guard
     // handles version-bump + lock + planned rollback;
     // save_panic_checkpoint / restore_panic_checkpoint handle
@@ -7976,7 +8202,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     primitives_.add("mutate:set-body", [this, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
-        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
+        if (workspace_read_only_) {
+            ok = false;
+            return mev("read-only", "workspace is read-only");
+        }
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_) {
             ok = false;
@@ -7997,9 +8226,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         bool had_checkpoint = save_panic_checkpoint();
 
         // ── 依赖图查询：通过 dep_caller_fn_ 获取调用者节点 ────
-        auto dep_callers = dep_caller_fn_
-            ? dep_caller_fn_(defuse_index_, sym)
-            : std::vector<aura::ast::NodeId>{};
+        auto dep_callers =
+            dep_caller_fn_ ? dep_caller_fn_(defuse_index_, sym) : std::vector<aura::ast::NodeId>{};
         defuse_version_.fetch_add(1, std::memory_order_acq_rel);
         total_mutations_.fetch_add(1, std::memory_order_relaxed);
 
@@ -8010,13 +8238,16 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 // The Define should have one child: a Lambda
                 if (v.children.size() != 1) {
                     ok = false;
-                    return mev("arity-error", std::string("function \"") + name + "\" define has " + std::to_string(v.children.size()) + " children, expected 1");
+                    return mev("arity-error", std::string("function \"") + name + "\" define has " +
+                                                  std::to_string(v.children.size()) +
+                                                  " children, expected 1");
                 }
                 auto lambda_id = v.child(0);
                 auto lv = flat.get(lambda_id);
                 if (lv.tag != aura::ast::NodeTag::Lambda) {
                     ok = false;
-                    return mev("type-error", std::string("function \"") + name + "\" body is not a Lambda node");
+                    return mev("type-error",
+                               std::string("function \"") + name + "\" body is not a Lambda node");
                 }
 
                 // Parse new body INTO workspace flat (all IDs stay valid)
@@ -8026,7 +8257,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     std::string parse_err;
                     if (!pr.errors.empty()) {
                         for (auto& e : pr.errors) {
-                            if (!parse_err.empty()) parse_err += "; ";
+                            if (!parse_err.empty())
+                                parse_err += "; ";
                             parse_err += e.format();
                         }
                     } else if (!pr.error.empty()) {
@@ -8090,8 +8322,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
                     if (dep_callers[ui] < flat.size())
                         flat.mark_dirty_upward(dep_callers[ui],
-                            aura::ast::FlatAST::kGeneralDirty |
-                            aura::ast::FlatAST::kConstraintDirty);
+                                               aura::ast::FlatAST::kGeneralDirty |
+                                                   aura::ast::FlatAST::kConstraintDirty);
                 }
 
                 // Record affected sym for incremental DefUseIndex update
@@ -8100,7 +8332,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 // above for rationale. Co-locates staleness with the
                 // data so ensure_defuse() can skip when no syms are
                 // actually stale.
-                if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
+                if (defuse_touch_fn_)
+                    defuse_touch_fn_(defuse_index_, sym);
 
                 // ── Auto-typecheck (Issue #107 part 3.5) ────────────
                 // Run the typecheck inline WITHOUT going through the
@@ -8124,8 +8357,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         tc.inject_type_sigs(sig_map, mod_src_map);
                     }
                     aura::diag::DiagnosticCollector local_diag;
-                    tc.infer_flat(*workspace_flat_, *workspace_pool_,
-                                  workspace_flat_->root, local_diag);
+                    tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root,
+                                  local_diag);
                     // Issue #116: apply deferred coercions before eval
                     // (the set-body path proceeds to re-execute the workspace).
                     {
@@ -8154,7 +8387,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         if (dep_callers[ui] < flat.size()) {
                             auto caller_v = flat.get(dep_callers[ui]);
                             if (caller_v.sym_id != aura::ast::INVALID_SYM) {
-                                auto caller_name = std::string(workspace_pool_->resolve(caller_v.sym_id));
+                                auto caller_name =
+                                    std::string(workspace_pool_->resolve(caller_v.sym_id));
                                 if (!caller_name.empty())
                                     affected.insert(caller_name);
                             }
@@ -8166,7 +8400,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     if (!opass) {
                         std::string err = "ownership validation after mutate:set-body failed:";
                         for (auto& n : onotes)
-                            err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " + n.message + ";";
+                            err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " +
+                                   n.message + ";";
                         last_mutate_error_ = err;
                     }
                 }
@@ -8211,9 +8446,12 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
         aura::messaging::g_fiber_yield_mutation_boundary
-                ? aura::messaging::g_fiber_yield_mutation_boundary()
-                : (void)0;  // safe point before mutation
-        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
+            ? aura::messaging::g_fiber_yield_mutation_boundary()
+            : (void)0; // safe point before mutation
+        if (workspace_read_only_) {
+            ok = false;
+            return mev("read-only", "workspace is read-only");
+        }
         if (a.empty() || !is_int(a[0]) || !workspace_flat_) {
             ok = false;
             return mev("bad-arg", "usage: (mutate:remove-node node-id)");
@@ -8222,7 +8460,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto& flat = *workspace_flat_;
         if (target >= flat.size()) {
             ok = false;
-            return mev("out-of-range", "node ID " + std::to_string(target) + " >= flat size " + std::to_string(flat.size()));
+            return mev("out-of-range", "node ID " + std::to_string(target) + " >= flat size " +
+                                           std::to_string(flat.size()));
         }
 
         // Find parent and remove target from its children
@@ -8257,13 +8496,17 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
         aura::messaging::g_fiber_yield_mutation_boundary
-                ? aura::messaging::g_fiber_yield_mutation_boundary()
-                : (void)0;  // safe point before mutation
-        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
+            ? aura::messaging::g_fiber_yield_mutation_boundary()
+            : (void)0; // safe point before mutation
+        if (workspace_read_only_) {
+            ok = false;
+            return mev("read-only", "workspace is read-only");
+        }
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]) ||
             !workspace_flat_ || !workspace_pool_) {
             ok = false;
-            return mev("bad-arg", "usage: (mutate:insert-child parent-id position code-string [summary])");
+            return mev("bad-arg",
+                       "usage: (mutate:insert-child parent-id position code-string [summary])");
         }
         auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto pos = static_cast<std::uint32_t>(as_int(a[1]));
@@ -8275,7 +8518,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto& flat = *workspace_flat_;
         if (parent >= flat.size()) {
             ok = false;
-            return mev("out-of-range", "parent node ID " + std::to_string(parent) + " >= flat size " + std::to_string(flat.size()));
+            return mev("out-of-range", "parent node ID " + std::to_string(parent) +
+                                           " >= flat size " + std::to_string(flat.size()));
         }
 
         // Parse child code INTO workspace (append mode — all IDs stay valid)
@@ -8284,7 +8528,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             std::string parse_err;
             if (!pr.errors.empty()) {
                 for (auto& e : pr.errors) {
-                    if (!parse_err.empty()) parse_err += "; ";
+                    if (!parse_err.empty())
+                        parse_err += "; ";
                     parse_err += e.format();
                 }
             } else if (!pr.error.empty()) {
@@ -8323,9 +8568,12 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
         aura::messaging::g_fiber_yield_mutation_boundary
-                ? aura::messaging::g_fiber_yield_mutation_boundary()
-                : (void)0;  // safe point before mutation
-        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
+            ? aura::messaging::g_fiber_yield_mutation_boundary()
+            : (void)0; // safe point before mutation
+        if (workspace_read_only_) {
+            ok = false;
+            return mev("read-only", "workspace is read-only");
+        }
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_) {
             ok = false;
             return mev("bad-arg", "usage: (mutate:tweak-literal node-id delta [summary])");
@@ -8335,7 +8583,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto& flat = *workspace_flat_;
         if (node >= flat.size()) {
             ok = false;
-            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                           std::to_string(flat.size()));
         }
         auto v = flat.get(node);
         if (v.tag != aura::ast::NodeTag::LiteralInt) {
@@ -8344,13 +8593,13 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         }
         auto new_val = std::max<std::int64_t>(0, static_cast<std::int64_t>(v.int_value) + delta);
         auto old_val = v.int_value;
-        std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? string_heap_[as_string_idx(a[2])]
-                                  : "tweak-literal " + std::to_string(old_val) + "->" + std::to_string(new_val);
+        std::string summary =
+            (a.size() > 2 && is_string(a[2]))
+                ? string_heap_[as_string_idx(a[2])]
+                : "tweak-literal " + std::to_string(old_val) + "->" + std::to_string(new_val);
         flat.add_mutation_with_rollback(
-            node, "tweak-literal", "Int", "Int", summary,
-            aura::ast::MutationStatus::Committed, 0, static_cast<std::uint64_t>(old_val),
-            static_cast<std::uint64_t>(new_val), true);
+            node, "tweak-literal", "Int", "Int", summary, aura::ast::MutationStatus::Committed, 0,
+            static_cast<std::uint64_t>(old_val), static_cast<std::uint64_t>(new_val), true);
         flat.set_int(node, new_val);
         workspace_flat_->mark_dirty_upward(node);
         return make_int(static_cast<std::int64_t>(new_val));
@@ -8386,11 +8635,14 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
         using namespace aura::ast;
         aura::messaging::g_fiber_yield_mutation_boundary
-                ? aura::messaging::g_fiber_yield_mutation_boundary()
-                : (void)0;  // safe point before mutation
-        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||
-            !workspace_flat_ || !workspace_pool_) {
+            ? aura::messaging::g_fiber_yield_mutation_boundary()
+            : (void)0; // safe point before mutation
+        if (workspace_read_only_) {
+            ok = false;
+            return mev("read-only", "workspace is read-only");
+        }
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
+            !workspace_pool_) {
             ok = false;
             return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement)");
         }
@@ -8404,9 +8656,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
 
         auto pattern_str = string_heap_[pattern_idx];
         std::string repl_template = string_heap_[repl_idx];
-        std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? string_heap_[as_string_idx(a[2])]
-                                  : "replace-pattern";
+        std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
+                                                                : "replace-pattern";
 
         // Phase 2.5.0: pat_pool stays separate from canonical_pool.
         // Same rationale as the query:pattern site above — pattern AST
@@ -8430,7 +8681,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // code as a string (same as current-source but for any node)
         std::function<std::string(NodeId)> node_to_source;
         node_to_source = [&](NodeId id) -> std::string {
-            if (id >= flat.size() || id == NULL_NODE) return "";
+            if (id >= flat.size() || id == NULL_NODE)
+                return "";
             auto v = flat.get(id);
             switch (v.tag) {
                 case NodeTag::LiteralInt:
@@ -8444,7 +8696,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 case NodeTag::Call: {
                     std::string s = "(";
                     for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                        if (ci > 0) s += " ";
+                        if (ci > 0)
+                            s += " ";
                         s += node_to_source(v.child(ci));
                     }
                     s += ")";
@@ -8453,7 +8706,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 case NodeTag::Lambda: {
                     std::string s = "(lambda (";
                     for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
-                        if (pi > 0) s += " ";
+                        if (pi > 0)
+                            s += " ";
                         s += pat_pool->resolve(v.params[pi]);
                     }
                     s += ")";
@@ -8487,7 +8741,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         if (val_node.tag == NodeTag::Lambda) {
                             s += " (";
                             for (std::size_t pi = 0; pi < val_node.params.size(); ++pi) {
-                                if (pi > 0) s += " ";
+                                if (pi > 0)
+                                    s += " ";
                                 s += workspace_pool_->resolve(val_node.params[pi]);
                             }
                             s += ")";
@@ -8549,7 +8804,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 case NodeTag::Variable:
                 case NodeTag::LiteralString:
                     return {workspace_pool_->resolve(ws_node.sym_id) ==
-                           pat_pool->resolve(pat_node.sym_id), {}};
+                                pat_pool->resolve(pat_node.sym_id),
+                            {}};
                 case NodeTag::MacroDef:
                     return {true, {}};
                 default:
@@ -8560,8 +8816,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         auto child_result = match_capture(ws_node.child(ci), pat_node.child(ci));
                         if (!child_result.matched)
                             return {false, {}};
-                        all_captures.insert(all_captures.end(),
-                            child_result.captures.begin(), child_result.captures.end());
+                        all_captures.insert(all_captures.end(), child_result.captures.begin(),
+                                            child_result.captures.end());
                     }
                     return {true, std::move(all_captures)};
             }
@@ -8581,7 +8837,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // Count wildcards in pattern
         std::function<int(NodeId)> count_wildcards;
         count_wildcards = [&](NodeId pat_id) -> int {
-            if (pat_id >= pat_flat->size() || pat_id == NULL_NODE) return 0;
+            if (pat_id >= pat_flat->size() || pat_id == NULL_NODE)
+                return 0;
             auto pn = pat_flat->get(pat_id);
             if (pn.tag == NodeTag::Variable && pn.sym_id == wildcard_sym)
                 return 1;
@@ -8603,7 +8860,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
 
             // Find parent
             auto parent_id = flat.parent_of(match_id);
-            if (parent_id == NULL_NODE) continue;
+            if (parent_id == NULL_NODE)
+                continue;
             int child_idx = -1;
             {
                 auto pv = flat.get(parent_id);
@@ -8614,7 +8872,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     }
                 }
             }
-            if (child_idx < 0) continue;
+            if (child_idx < 0)
+                continue;
 
             // Build the replacement string by substituting captures
             std::string filled_repl;
@@ -8650,7 +8909,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         }
 
         if (replaced_count == 0)
-            return mev("pattern-error", "no replacements were applied (capture mismatch or parse failure)");
+            return mev("pattern-error",
+                       "no replacements were applied (capture mismatch or parse failure)");
 
         flat.add_mutation(0, "replace-pattern", pattern_str, repl_template, summary);
         return make_bool(true);
@@ -8682,7 +8942,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     primitives_.add("mutate:replace-subtree", [this, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
-        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
+        if (workspace_read_only_) {
+            ok = false;
+            return mev("read-only", "workspace is read-only");
+        }
         // Issue #141: lazy COW trigger (active child workspace still
         // shares parent's flat — clone before mutating).
         if (workspace_tree_) {
@@ -8698,8 +8961,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             }
         }
         using namespace aura::ast;
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
-            !workspace_flat_ || !workspace_pool_) {
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
+            !workspace_pool_) {
             ok = false;
             return mev("bad-arg", "usage: (mutate:replace-subtree node-id new-code [summary])");
         }
@@ -8722,9 +8985,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         }
 
         auto new_code = string_heap_[code_idx];
-        std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? string_heap_[as_string_idx(a[2])]
-                                  : "replace-subtree";
+        std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
+                                                                : "replace-subtree";
 
         // ── Locate parent + child_idx (the slot we're replacing) ──
         auto parent_id = flat.parent_of(target);
@@ -8755,7 +9017,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             // is large, so we use a simpler one here.
             std::function<std::string(NodeId)> src;
             src = [&](NodeId id) -> std::string {
-                if (id >= flat.size() || id == NULL_NODE) return "";
+                if (id >= flat.size() || id == NULL_NODE)
+                    return "";
                 auto n = flat.get(id);
                 switch (n.tag) {
                     case NodeTag::LiteralInt:
@@ -8769,7 +9032,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     case NodeTag::Call: {
                         std::string s = "(";
                         for (std::size_t ci = 0; ci < n.children.size(); ++ci) {
-                            if (ci > 0) s += " ";
+                            if (ci > 0)
+                                s += " ";
                             s += src(n.child(ci));
                         }
                         s += ")";
@@ -8778,7 +9042,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     case NodeTag::Lambda: {
                         std::string s = "(lambda (";
                         for (std::size_t pi = 0; pi < n.params.size(); ++pi) {
-                            if (pi > 0) s += " ";
+                            if (pi > 0)
+                                s += " ";
                             s += workspace_pool_->resolve(n.params[pi]);
                         }
                         s += ")";
@@ -8789,25 +9054,30 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     }
                     case NodeTag::IfExpr: {
                         std::string s = "(if";
-                        if (n.children.size() > 0) s += " " + src(n.child(0));
-                        if (n.children.size() > 1) s += " " + src(n.child(1));
-                        if (n.children.size() > 2) s += " " + src(n.child(2));
+                        if (n.children.size() > 0)
+                            s += " " + src(n.child(0));
+                        if (n.children.size() > 1)
+                            s += " " + src(n.child(1));
+                        if (n.children.size() > 2)
+                            s += " " + src(n.child(2));
                         return s + ")";
                     }
                     case NodeTag::Begin: {
                         std::string s = "(begin";
-                        for (auto c : n.children) s += " " + src(c);
+                        for (auto c : n.children)
+                            s += " " + src(c);
                         return s + ")";
                     }
                     case NodeTag::Define: {
-                        std::string s = "(define " +
-                                         std::string(workspace_pool_->resolve(n.sym_id));
-                        if (!n.children.empty()) s += " " + src(n.child(0));
+                        std::string s =
+                            "(define " + std::string(workspace_pool_->resolve(n.sym_id));
+                        if (!n.children.empty())
+                            s += " " + src(n.child(0));
                         return s + ")";
                     }
                     default:
-                        return std::string("#<node-") +
-                               std::to_string(static_cast<int>(n.tag)) + ">";
+                        return std::string("#<node-") + std::to_string(static_cast<int>(n.tag)) +
+                               ">";
                 }
             };
             old_source = src(target);
@@ -8834,14 +9104,17 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             std::unordered_set<SymId> new_bindings;
             std::function<void(NodeId)> collect_new_bindings;
             collect_new_bindings = [&](NodeId id) {
-                if (id >= flat.size() || id == NULL_NODE) return;
+                if (id >= flat.size() || id == NULL_NODE)
+                    return;
                 auto n = flat.get(id);
                 if (n.tag == NodeTag::Lambda) {
-                    for (auto p : n.params) new_bindings.insert(p);
+                    for (auto p : n.params)
+                        new_bindings.insert(p);
                 } else if ((n.tag == NodeTag::Let || n.tag == NodeTag::LetRec) && n.has_name()) {
                     new_bindings.insert(n.sym_id);
                 }
-                for (auto c : n.children) collect_new_bindings(c);
+                for (auto c : n.children)
+                    collect_new_bindings(c);
             };
             collect_new_bindings(pr.root);
 
@@ -8849,14 +9122,17 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             std::unordered_set<SymId> outer_bindings;
             std::function<void(NodeId)> collect_outer_bindings;
             collect_outer_bindings = [&](NodeId id) {
-                if (id >= flat.size() || id == NULL_NODE) return;
+                if (id >= flat.size() || id == NULL_NODE)
+                    return;
                 auto n = flat.get(id);
                 if (n.tag == NodeTag::Lambda) {
-                    for (auto p : n.params) outer_bindings.insert(p);
+                    for (auto p : n.params)
+                        outer_bindings.insert(p);
                 } else if ((n.tag == NodeTag::Let || n.tag == NodeTag::LetRec) && n.has_name()) {
                     outer_bindings.insert(n.sym_id);
                 }
-                for (auto c : n.children) collect_outer_bindings(c);
+                for (auto c : n.children)
+                    collect_outer_bindings(c);
             };
             // Walk every node in flat (cheap O(n) since n is the
             // workspace size, not a new traversal). Exclude the new
@@ -8864,17 +9140,21 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             std::unordered_set<NodeId> in_new_subtree;
             std::function<void(NodeId)> mark_new;
             mark_new = [&](NodeId id) {
-                if (id >= flat.size() || id == NULL_NODE) return;
+                if (id >= flat.size() || id == NULL_NODE)
+                    return;
                 in_new_subtree.insert(id);
                 auto n = flat.get(id);
-                for (auto c : n.children) mark_new(c);
+                for (auto c : n.children)
+                    mark_new(c);
             };
             mark_new(pr.root);
             for (NodeId id = 0; id < flat.size(); ++id) {
-                if (in_new_subtree.count(id)) continue;
+                if (in_new_subtree.count(id))
+                    continue;
                 auto n = flat.get(id);
                 if (n.tag == NodeTag::Lambda) {
-                    for (auto p : n.params) outer_bindings.insert(p);
+                    for (auto p : n.params)
+                        outer_bindings.insert(p);
                 } else if ((n.tag == NodeTag::Let || n.tag == NodeTag::LetRec) && n.has_name()) {
                     outer_bindings.insert(n.sym_id);
                 }
@@ -8884,32 +9164,36 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             // bound by the new subtree itself, and check if they ARE
             // bound by an outer scope.
             static const char* builtins[] = {
-                "+", "-", "*", "/", "%", "=", "<", ">", "<=", ">=",
-                "display", "newline", "print", "read",
-                "car", "cdr", "cons", "pair?", "null?", "list",
-                "eq?", "eqv?", "equal?", "not", "and", "or", "if", "cond",
-                "lambda", "define", "let", "letrec", "begin", "set!",
-                "apply", "map", "filter", "foldl", "foldr",
-                "string?", "number?", "symbol?", "procedure?",
-                "void", "make-void", "error", "assert",
-                "true", "false", "quote",
+                "+",          "-",      "*",         "/",       "%",       "=",       "<",
+                ">",          "<=",     ">=",        "display", "newline", "print",   "read",
+                "car",        "cdr",    "cons",      "pair?",   "null?",   "list",    "eq?",
+                "eqv?",       "equal?", "not",       "and",     "or",      "if",      "cond",
+                "lambda",     "define", "let",       "letrec",  "begin",   "set!",    "apply",
+                "map",        "filter", "foldl",     "foldr",   "string?", "number?", "symbol?",
+                "procedure?", "void",   "make-void", "error",   "assert",  "true",    "false",
+                "quote",
             };
             std::unordered_set<SymId> builtin_syms;
-            for (auto b : builtins) builtin_syms.insert(workspace_pool_->intern(b));
+            for (auto b : builtins)
+                builtin_syms.insert(workspace_pool_->intern(b));
 
             std::function<void(NodeId)> find_captured;
             find_captured = [&](NodeId id) {
-                if (id >= flat.size() || id == NULL_NODE) return;
+                if (id >= flat.size() || id == NULL_NODE)
+                    return;
                 auto n = flat.get(id);
                 if (n.tag == NodeTag::Variable) {
-                    if (builtin_syms.count(n.sym_id)) return;
-                    if (new_bindings.count(n.sym_id)) return;
+                    if (builtin_syms.count(n.sym_id))
+                        return;
+                    if (new_bindings.count(n.sym_id))
+                        return;
                     if (outer_bindings.count(n.sym_id)) {
                         if (std::find(captured.begin(), captured.end(), n.sym_id) == captured.end())
                             captured.push_back(n.sym_id);
                     }
                 }
-                for (auto c : n.children) find_captured(c);
+                for (auto c : n.children)
+                    find_captured(c);
             };
             find_captured(pr.root);
         }
@@ -8919,8 +9203,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         flat.mark_dirty_upward(parent_id);
 
         // ── Record mutation with subtree rollback data ───────
-        flat.add_mutation_subtree(pr.root, parent_id, child_idx, old_source,
-                                   "replace-subtree", summary);
+        flat.add_mutation_subtree(pr.root, parent_id, child_idx, old_source, "replace-subtree",
+                                  summary);
 
         // ── Return value: #t on success, or a captured-vars list
         //    so LLM callers can see what was implicitly captured.
@@ -8972,8 +9256,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // nodes anywhere) AND we have a cached result, reuse it.
         // The cache is implicitly invalidated by mutations (which
         // mark the root dirty via mark_dirty_upward).
-        if (!workspace_flat_->has_dirty_subtree(workspace_flat_->root) &&
-            last_typecheck_result_) {
+        if (!workspace_flat_->has_dirty_subtree(workspace_flat_->root) && last_typecheck_result_) {
             auto sidx = string_heap_.size();
             string_heap_.push_back(*last_typecheck_result_);
             return make_string(sidx);
@@ -9060,8 +9343,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             return make_string(ridx);
         }
         const auto& rec = log.back();
-        if (rec.target_node == aura::ast::NULL_NODE &&
-            rec.parent_id == aura::ast::NULL_NODE) {
+        if (rec.target_node == aura::ast::NULL_NODE && rec.parent_id == aura::ast::NULL_NODE) {
             // Empty record — no-op.
             auto ridx = string_heap_.size();
             string_heap_.push_back("empty mutation record");
@@ -9080,8 +9362,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // affected subtree (descendants of target_node + dirty
         // ancestors). See type_checker_impl.cpp:2901 for the
         // full algorithm.
-        std::size_t re_inferred = tc.infer_flat_partial(
-            *workspace_flat_, *workspace_pool_, rec, diag);
+        std::size_t re_inferred =
+            tc.infer_flat_partial(*workspace_flat_, *workspace_pool_, rec, diag);
         std::string out = "re-inferred: " + std::to_string(re_inferred) + "\n";
         if (!diag.diagnostics().empty()) {
             out += "diagnostics:\n";
@@ -9166,7 +9448,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 aura::ast::NodeId type_target = id;
                 if (!v.children.empty()) {
                     auto child_type = flat.type_id(v.child(0));
-                    if (child_type != 0) type_target = v.child(0);
+                    if (child_type != 0)
+                        type_target = v.child(0);
                 }
                 auto type_idx = flat.type_id(type_target);
                 if (type_idx == 0) {
@@ -9284,7 +9567,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         std::string filter = "all";
         if (!a.empty() && is_string(a[0])) {
             auto idx = as_string_idx(a[0]);
-            if (idx < string_heap_.size()) filter = string_heap_[idx];
+            if (idx < string_heap_.size())
+                filter = string_heap_[idx];
         }
 
         auto& flat = *workspace_flat_;
@@ -9299,18 +9583,24 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // annotation would be a guess. We want concrete types only.
         std::function<bool(aura::core::TypeId)> arg_or_ret_is_open;
         arg_or_ret_is_open = [&](aura::core::TypeId t) -> bool {
-            if (!t.valid()) return true;
-            if (treg.is_var(t) || t == treg.dynamic_type()) return true;
+            if (!t.valid())
+                return true;
+            if (treg.is_var(t) || t == treg.dynamic_type())
+                return true;
             if (auto* f = treg.func_of(t)) {
-                if (arg_or_ret_is_open(f->ret)) return true;
+                if (arg_or_ret_is_open(f->ret))
+                    return true;
                 for (auto a : f->args)
-                    if (arg_or_ret_is_open(a)) return true;
+                    if (arg_or_ret_is_open(a))
+                        return true;
             }
             return false;
         };
         auto is_high_conf = [&](aura::core::TypeId func_tid) -> bool {
-            if (!func_tid.valid()) return false;
-            if (arg_or_ret_is_open(func_tid)) return false;
+            if (!func_tid.valid())
+                return false;
+            if (arg_or_ret_is_open(func_tid))
+                return false;
             return true;
         };
 
@@ -9320,16 +9610,17 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
-            if (v.tag != aura::ast::NodeTag::Define) continue;
+            if (v.tag != aura::ast::NodeTag::Define)
+                continue;
             // The value is in v.children[0] (1-arg form) or the
             // cached type_id of the Define itself. Use whichever
             // is a Lambda with a cached function type.
-            aura::ast::NodeId value_id = v.children.empty()
-                ? aura::ast::NULL_NODE
-                : v.child(0);
-            if (value_id == aura::ast::NULL_NODE) continue;
+            aura::ast::NodeId value_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+            if (value_id == aura::ast::NULL_NODE)
+                continue;
             auto vv = flat.get(value_id);
-            if (vv.tag != aura::ast::NodeTag::Lambda) continue;
+            if (vv.tag != aura::ast::NodeTag::Lambda)
+                continue;
 
             // Get the function's cached type. Prefer the value's
             // cached type (more specific), fall back to the Define.
@@ -9339,13 +9630,16 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 func_tid = aura::core::TypeId{val_type_idx, 1};
             } else {
                 auto def_type_idx = flat.type_id(id);
-                if (def_type_idx != 0) func_tid = aura::core::TypeId{def_type_idx, 1};
+                if (def_type_idx != 0)
+                    func_tid = aura::core::TypeId{def_type_idx, 1};
             }
-            if (!is_high_conf(func_tid)) continue;
+            if (!is_high_conf(func_tid))
+                continue;
 
             // Get the function structure
             auto* ft = treg.func_of(func_tid);
-            if (!ft) continue;
+            if (!ft)
+                continue;
 
             // Get the function name
             std::string fname = std::string(workspace_pool_->resolve(v.sym_id));
@@ -9361,7 +9655,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     break;
                 }
             }
-            if (already_annotated) continue;
+            if (already_annotated)
+                continue;
 
             // Build the suggested signature:
             //   (define (fname [p1 : T1] [p2 : T2]) ...body)
@@ -9435,9 +9730,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     });
 
     // (panic-auto-rollback?) — Query current auto-rollback state
-    primitives_.add("panic-auto-rollback?", [this](const auto&) -> EvalValue {
-        return make_bool(panic_auto_rollback_);
-    });
+    primitives_.add("panic-auto-rollback?",
+                    [this](const auto&) -> EvalValue { return make_bool(panic_auto_rollback_); });
 
     // (panic-checkpoint) — Save current workspace as a safe checkpoint
     // Returns #t on success, #f if no workspace loaded.
@@ -9482,7 +9776,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // be in the log and would be rolled back if a later op in the
     // batch fails. Strong atomicity (hold the lock the whole time,
     // dispatch via lockless helpers) is a follow-up.
-        // Issue #213 follow-up: migrate mutate:atomic-batch to
+    // Issue #213 follow-up: migrate mutate:atomic-batch to
     // the MutationBoundaryGuard. The atomic-batch already
     // has its own rollback mechanism (rollback_since(
     // initial_log_size) on error) — this stays as-is. The
@@ -9505,16 +9799,14 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // The summary string is optional in that case.
         if (a.size() < 1) {
             guard_ok = false;
-            return mev("bad-arg",
-                "usage: (mutate:atomic-batch (list ...) \"summary\")");
+            return mev("bad-arg", "usage: (mutate:atomic-batch (list ...) \"summary\")");
         }
         // a[0] is the ops list. It can be an empty list (void)
         // or a non-empty proper list. Anything else is bad-arg.
         EvalValue op_list = a[0];
         if (!is_pair(op_list) && !is_void(op_list)) {
             guard_ok = false;
-            return mev("bad-arg",
-                "ops list must be a list (use (list) for empty)");
+            return mev("bad-arg", "ops list must be a list (use (list) for empty)");
         }
         if (!workspace_flat_) {
             guard_ok = false;
@@ -9527,18 +9819,15 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             std::vector<EvalValue> out;
             while (is_pair(list)) {
                 auto pidx = as_pair_idx(list);
-                if (pidx >= pairs_.size()) break;
+                if (pidx >= pairs_.size())
+                    break;
                 out.push_back(pairs_[pidx].car);
                 list = pairs_[pidx].cdr;
             }
             return out;
         };
-        auto pair_car = [this](EvalValue v) -> EvalValue {
-            return pairs_[as_pair_idx(v)].car;
-        };
-        auto pair_cdr = [this](EvalValue v) -> EvalValue {
-            return pairs_[as_pair_idx(v)].cdr;
-        };
+        auto pair_car = [this](EvalValue v) -> EvalValue { return pairs_[as_pair_idx(v)].car; };
+        auto pair_cdr = [this](EvalValue v) -> EvalValue { return pairs_[as_pair_idx(v)].cdr; };
         // Issue #250: begin the atomic batch. This sets
         // bump_generation_suppressed_ on the FlatAST, so all
         // per-op structural mutations (via the lockless helpers
@@ -9549,9 +9838,15 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         while (is_pair(op_list)) {
             EvalValue op = pair_car(op_list);
             op_list = pair_cdr(op_list);
-            if (!is_pair(op)) { ok = false; break; }
+            if (!is_pair(op)) {
+                ok = false;
+                break;
+            }
             EvalValue op_name_ev = pair_car(op);
-            if (!is_string(op_name_ev)) { ok = false; break; }
+            if (!is_string(op_name_ev)) {
+                ok = false;
+                break;
+            }
             std::vector<EvalValue> op_args = list_to_vec(pair_cdr(op));
             std::string op_name = string_heap_[as_string_idx(op_name_ev)];
             // Issue #236: route through the lockless helpers
@@ -9584,8 +9879,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 atomic_batch_rollbacks_++;
                 guard_ok = false;
                 return make_merr("batch-unsupported-op",
-                    ("mutate:atomic-batch does not yet support '" + op_name +
-                     "' (only :rebind / :replace-value / :tweak-literal; the others need lockless helper extraction)").c_str());
+                                 ("mutate:atomic-batch does not yet support '" + op_name +
+                                  "' (only :rebind / :replace-value / :tweak-literal; the others "
+                                  "need lockless helper extraction)")
+                                     .c_str());
             }
             if (!sub_result) {
                 ok = false;
@@ -9621,16 +9918,19 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     primitives_.add("atomic-batch:stats", [this](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -9646,15 +9946,17 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        std::size_t avg = atomic_batch_count_ > 0
-            ? atomic_batch_ops_total_ / atomic_batch_count_
-            : 0;
+        std::size_t avg =
+            atomic_batch_count_ > 0 ? atomic_batch_ops_total_ / atomic_batch_count_ : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"batch-count", make_int(static_cast<std::int64_t>(atomic_batch_count_))},
             {"ops-total", make_int(static_cast<std::int64_t>(atomic_batch_ops_total_))},
@@ -9663,7 +9965,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             // Issue #250: how many per-op generation bumps the
             // batches suppressed (lifetime total). Useful for
             // dashboards ("how much churn did batching save?").
-            {"bumps-saved-total", make_int(static_cast<std::int64_t>(atomic_batch_bumps_saved_total_))},
+            {"bumps-saved-total",
+             make_int(static_cast<std::int64_t>(atomic_batch_bumps_saved_total_))},
         };
         return build_hash(kv);
     });
@@ -9681,16 +9984,19 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // self-contained.
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -9706,7 +10012,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -9728,9 +10037,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         }
         std::uint64_t bridge = bridge_c;
         // bridge-fraction * 100 (integer percent). 0 if no calls.
-        std::int64_t bridge_pct = calls > 0
-            ? static_cast<std::int64_t>((bridge * 100) / calls)
-            : 0;
+        std::int64_t bridge_pct = calls > 0 ? static_cast<std::int64_t>((bridge * 100) / calls) : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"calls-total", make_int(static_cast<std::int64_t>(calls))},
             {"ffi-calls", make_int(static_cast<std::int64_t>(ffi_c))},
@@ -9773,16 +10080,19 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // above (same FNV-1a hash + open-addressing insert).
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -9798,7 +10108,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -9839,16 +10152,19 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // above (same FNV-1a hash + open-addressing insert).
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -9864,7 +10180,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -9876,9 +10195,9 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // workspace_flat() accessor (added in #175 so
         // service.ixx can read workspace state).
         if (auto* ws_flat = workspace_flat()) {
-            bumps   = ws_flat->bump_generation_count();
-            checks  = ws_flat->is_valid_check_count();
-            inits   = ws_flat->stable_ref_invalidations();
+            bumps = ws_flat->bump_generation_count();
+            checks = ws_flat->is_valid_check_count();
+            inits = ws_flat->stable_ref_invalidations();
             commits = ws_flat->atomic_batch_commits_v();
         }
         std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -9908,16 +10227,19 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // Re-use the build_hash pattern from above primitives.
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -9933,22 +10255,24 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        std::uint64_t children_calls = 0, parent_calls = 0,
-                      dirty_calls = 0, dirty_nodes = 0;
+        std::uint64_t children_calls = 0, parent_calls = 0, dirty_calls = 0, dirty_nodes = 0;
         // Counters live on the workspace FlatAST (set up in
         // ast.ixx). Get the FlatAST via the Evaluator's
         // workspace_flat() accessor.
         if (auto* ws_flat = workspace_flat()) {
             children_calls = ws_flat->children_call_count();
-            parent_calls   = ws_flat->parent_of_call_count();
-            dirty_calls    = ws_flat->mark_dirty_upward_call_count();
-            dirty_nodes    = ws_flat->mark_dirty_total_nodes();
+            parent_calls = ws_flat->parent_of_call_count();
+            dirty_calls = ws_flat->mark_dirty_upward_call_count();
+            dirty_nodes = ws_flat->mark_dirty_total_nodes();
         }
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"children-call-count", make_int(static_cast<std::int64_t>(children_calls))},
@@ -9989,14 +10313,16 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             // hash-ref for missing keys). 32 leaves plenty of headroom
             // and avoids the rare 5-key + cap-8 collision.
             auto* ht = FlatHashTable::create(32);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 // Issue #258: mask fp to avoid 0xFF collision
                 // with HASH_EMPTY sentinel. Without the mask,
                 // a key whose FNV-1a top byte is 0x7F would
@@ -10007,7 +10333,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 // sets the high bit so fp is in [0x80..0xFE],
                 // never 0xFF.
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -10023,7 +10350,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -10032,9 +10362,9 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         std::uint64_t hits = 0, misses = 0, stale = 0, solve_us = 0;
         if (compiler_metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
-            hits    = m->typecheck_cache_hits_total.load(std::memory_order_relaxed);
-            misses  = m->typecheck_cache_misses_total.load(std::memory_order_relaxed);
-            stale   = m->typecheck_stale_cache_total.load(std::memory_order_relaxed);
+            hits = m->typecheck_cache_hits_total.load(std::memory_order_relaxed);
+            misses = m->typecheck_cache_misses_total.load(std::memory_order_relaxed);
+            stale = m->typecheck_stale_cache_total.load(std::memory_order_relaxed);
             solve_us = m->delta_solve_time_us.load(std::memory_order_relaxed);
         }
         std::uint64_t total = hits + misses + stale;
@@ -10068,18 +10398,21 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // Re-use the build_hash pattern from above primitives.
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 // Issue #258: defensive bump if fp lands on
                 // HASH_EMPTY sentinel (FNV-1a top bits collision).
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -10095,7 +10428,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -10147,20 +10483,19 @@ EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* ce
     //    wins, walk_env_frames stops at first match).
     if (owner_ && parent_id_ != NULL_ENV_ID) {
         EvalValue* result = nullptr;
-        owner_->walk_env_frames(parent_id_,
-            [&](EnvId, const EnvFrame& f) {
-                for (auto& b : f.bindings_) {
-                    if (b.first == n) {
-                        if (is_cell(b.second)) {
-                            auto ci = as_cell_id(b.second);
-                            if (ci < cells->size())
-                                result = &(*cells)[ci];
-                        }
-                        return false;  // stop walking
+        owner_->walk_env_frames(parent_id_, [&](EnvId, const EnvFrame& f) {
+            for (auto& b : f.bindings_) {
+                if (b.first == n) {
+                    if (is_cell(b.second)) {
+                        auto ci = as_cell_id(b.second);
+                        if (ci < cells->size())
+                            result = &(*cells)[ci];
                     }
+                    return false; // stop walking
                 }
-                return true;
-            });
+            }
+            return true;
+        });
         return result;
     }
     // 3. Legacy pointer walk (preserved for unregistered Envs).
@@ -10197,17 +10532,16 @@ std::optional<std::uint64_t> Env::lookup_cell_index(const std::string& n) const 
     // 2. SoA walk via env_frames_ when registered
     if (owner_ && parent_id_ != NULL_ENV_ID) {
         std::optional<std::uint64_t> result;
-        owner_->walk_env_frames(parent_id_,
-            [&](EnvId, const EnvFrame& f) {
-                for (auto& b : f.bindings_) {
-                    if (b.first == n) {
-                        if (is_cell(b.second))
-                            result = as_cell_id(b.second);
-                        return false;
-                    }
+        owner_->walk_env_frames(parent_id_, [&](EnvId, const EnvFrame& f) {
+            for (auto& b : f.bindings_) {
+                if (b.first == n) {
+                    if (is_cell(b.second))
+                        result = as_cell_id(b.second);
+                    return false;
                 }
-                return true;
-            });
+            }
+            return true;
+        });
         return result;
     }
     // 3. Legacy pointer walk
@@ -10313,7 +10647,8 @@ struct DefUseIndex {
     // now be stale. Bumps global_version_ so is_sym_stale() returns
     // true for this sym until mark_sym_fresh() is called.
     void touch_sym(SymId s) {
-        if (s == INVALID_SYM) return;
+        if (s == INVALID_SYM)
+            return;
         stale_syms_.insert(s);
         ++global_version_;
     }
@@ -10322,46 +10657,51 @@ struct DefUseIndex {
     // regardless of |syms| (the bump is a logical "mutation epoch"
     // marker, not a per-sym counter).
     void touch_syms(const std::unordered_set<SymId>& syms) {
-        if (syms.empty()) return;
+        if (syms.empty())
+            return;
         for (auto s : syms) {
-            if (s != INVALID_SYM) stale_syms_.insert(s);
+            if (s != INVALID_SYM)
+                stale_syms_.insert(s);
         }
         ++global_version_;
     }
 
     // Check if a sym's data is stale.
-    bool is_sym_stale(SymId s) const {
-        return stale_syms_.count(s) > 0;
-    }
+    bool is_sym_stale(SymId s) const { return stale_syms_.count(s) > 0; }
 
     // Mark a sym as fresh (its callers_of_ / callee_of_ data is
     // up-to-date with the current flat).
-    void mark_sym_fresh(SymId s) {
-        stale_syms_.erase(s);
-    }
+    void mark_sym_fresh(SymId s) { stale_syms_.erase(s); }
 
     // Mark a set of syms as fresh.
     void mark_syms_fresh(const std::unordered_set<SymId>& syms) {
-        for (auto s : syms) stale_syms_.erase(s);
+        for (auto s : syms)
+            stale_syms_.erase(s);
     }
 
     // Mark all syms as fresh (called after a full build).
-    void mark_all_fresh() {
-        stale_syms_.clear();
-    }
+    void mark_all_fresh() { stale_syms_.clear(); }
 
     // Stats accessors.
     std::size_t stale_count() const { return stale_syms_.size(); }
     std::uint64_t current_version() const { return global_version_; }
 
     void destroy() {
-        scopes_.clear(); def_syms_.clear(); def_nodes_.clear();
-        refs_.clear(); uses_.clear(); sym_scopes_keys_.clear();
-        sym_scopes_vals_.clear(); sym_to_range_.clear();
-        callers_of_.clear(); callee_of_.clear();
+        scopes_.clear();
+        def_syms_.clear();
+        def_nodes_.clear();
+        refs_.clear();
+        uses_.clear();
+        sym_scopes_keys_.clear();
+        sym_scopes_vals_.clear();
+        sym_to_range_.clear();
+        callers_of_.clear();
+        callee_of_.clear();
         stale_syms_.clear();
         global_version_ = 0;
-        flat_ = nullptr; pool_ = nullptr; built_ = false;
+        flat_ = nullptr;
+        pool_ = nullptr;
+        built_ = false;
     }
 
     // ── Build from scratch ──────────────────────────────────────
@@ -10390,7 +10730,7 @@ struct DefUseIndex {
         struct Frame {
             NodeId node_id;
             std::uint32_t scope_idx;
-            std::size_t child_idx;  // which child we're processing
+            std::size_t child_idx; // which child we're processing
         };
         std::vector<Frame> stack;
         stack.push_back({flat.root, 0, 0});
@@ -10485,18 +10825,17 @@ struct DefUseIndex {
         for (NodeId sid = 0; sid < flat.size(); ++sid) {
             auto sv = flat.get(sid);
             aura::ast::SymId def_sym = aura::ast::INVALID_SYM;
-            
+
             // Check for define/let/letrec that might not be in any scope
-            if (sv.tag == NodeTag::Define || sv.tag == NodeTag::Let ||
-                sv.tag == NodeTag::LetRec) {
+            if (sv.tag == NodeTag::Define || sv.tag == NodeTag::Let || sv.tag == NodeTag::LetRec) {
                 def_sym = sv.sym_id;
             } else if (sv.tag == NodeTag::Lambda && sv.params.size() > 0) {
                 // For lambdas at top level, add all params
             }
-            
+
             if (def_sym != aura::ast::INVALID_SYM) {
                 // Find which scope this node belongs to
-                std::uint32_t found_scope = 0;  // default: root scope
+                std::uint32_t found_scope = 0; // default: root scope
                 for (std::uint32_t si = 0; si < scopes_.size(); ++si) {
                     auto& sn = scopes_[si];
                     if (sn.node == sid) {
@@ -10504,7 +10843,7 @@ struct DefUseIndex {
                         break;
                     }
                 }
-                
+
                 // Check if this sym is already def'd in this scope
                 auto& sn = scopes_[found_scope];
                 bool exists = false;
@@ -10514,7 +10853,7 @@ struct DefUseIndex {
                         break;
                     }
                 }
-                
+
                 if (!exists) {
                     // Insert def at the end of this scope's defs
                     // Need to shift: append new def, update scope's def_range
@@ -10551,7 +10890,11 @@ struct DefUseIndex {
         node_to_scope.reserve(flat.size());
 
         // Build node-to-scope mapping via DFS
-        struct Frame { NodeId nid; std::uint32_t scope_idx; std::size_t child_idx; };
+        struct Frame {
+            NodeId nid;
+            std::uint32_t scope_idx;
+            std::size_t child_idx;
+        };
         std::vector<Frame> stack;
         stack.push_back({flat.root, 0, 0});
 
@@ -10635,13 +10978,20 @@ struct DefUseIndex {
     void build_sym_index() {
         SymId max_sym = 0;
         for (auto s : def_syms_)
-            if (s != INVALID_SYM && s > max_sym) max_sym = s;
+            if (s != INVALID_SYM && s > max_sym)
+                max_sym = s;
         for (auto& r : refs_)
-            if (r.sym != INVALID_SYM && r.sym > max_sym) max_sym = r.sym;
+            if (r.sym != INVALID_SYM && r.sym > max_sym)
+                max_sym = r.sym;
 
         sym_to_range_.resize(max_sym + 1, 0);
 
-        struct Entry { SymId sym; std::uint32_t scope_idx; bool is_def; std::uint32_t local_idx; };
+        struct Entry {
+            SymId sym;
+            std::uint32_t scope_idx;
+            bool is_def;
+            std::uint32_t local_idx;
+        };
         std::unordered_map<uint32_t, std::vector<Entry>> entries_by_sym;
 
         for (std::uint32_t si = 0; si < scopes_.size(); ++si) {
@@ -10660,7 +11010,8 @@ struct DefUseIndex {
         sym_scopes_vals_.clear();
 
         for (auto& [sym, entries] : entries_by_sym) {
-            if (sym > max_sym) continue;
+            if (sym > max_sym)
+                continue;
             sym_to_range_[sym] = (sym_scopes_vals_.size() << 16) | (uint32_t)entries.size();
             for (auto& e : entries) {
                 sym_scopes_keys_.push_back(sym);
@@ -10763,15 +11114,18 @@ struct DefUseIndex {
 
     // ── Mark scope containing a node as dirty ───────────────────
     void mark_dirty(NodeId node) {
-        if (!built_ || scopes_.empty()) return;
+        if (!built_ || scopes_.empty())
+            return;
         for (auto& sn : scopes_) {
-            if (sn.tombstoned) continue;
+            if (sn.tombstoned)
+                continue;
             if (sn.node == node) {
                 mark_dirty_up(sn);
                 return;
             }
         }
-        for (auto& sn : scopes_) sn.dirty = true;
+        for (auto& sn : scopes_)
+            sn.dirty = true;
     }
 
     void mark_dirty_up(ScopeNode& sn) {
@@ -10792,7 +11146,10 @@ struct DefUseIndex {
         }
         bool any_dirty = false;
         for (auto& sn : scopes_) {
-            if (sn.dirty) { any_dirty = true; break; }
+            if (sn.dirty) {
+                any_dirty = true;
+                break;
+            }
         }
         if (!any_dirty)
             return false;
@@ -10851,7 +11208,8 @@ struct DefUseIndex {
 // because DefUseIndex is a TU-local type (defined in evaluator_impl.cpp
 // only). The void* slot + this helper is the PIMPL-shaped equivalent.
 static void defuse_index_destroy(void** slot) {
-    if (!slot || !*slot) return;
+    if (!slot || !*slot)
+        return;
     delete static_cast<DefUseIndex*>(*slot);
     *slot = nullptr;
 }
@@ -10887,17 +11245,18 @@ struct WorkspaceTree {
 
     std::size_t size() const { return nodes_.size(); }
     std::uint32_t active_idx() const { return active_idx_; }
-    WorkspaceNode* active() {
-        return active_idx_ < nodes_.size() ? &nodes_[active_idx_] : nullptr;
-    }
+    WorkspaceNode* active() { return active_idx_ < nodes_.size() ? &nodes_[active_idx_] : nullptr; }
 
     // Ensure the workspace has its own flat (COW trigger)
     // If the workspace doesn't have its own flat, clone from parent.
     bool ensure_local_flat(std::uint32_t idx) {
         auto& n = nodes_[idx];
-        if (n.is_root) return true;  // root always has own flat
-        if (n.read_only) return false;  // read-only, cannot create local copy
-        if (n.has_own_flat) return true;
+        if (n.is_root)
+            return true; // root always has own flat
+        if (n.read_only)
+            return false; // read-only, cannot create local copy
+        if (n.has_own_flat)
+            return true;
 
         // COW: clone from parent's flat
         if (n.parent_flat_) {
@@ -10908,12 +11267,11 @@ struct WorkspaceTree {
                 parent_bytes += n.parent_pool_->data_size();
             }
             if (n.parent_flat_) {
-                parent_bytes += n.parent_flat_->size() * 64;  // rough per-node
+                parent_bytes += n.parent_flat_->size() * 64; // rough per-node
             }
-            if (n.memory_budget > 0 &&
-                (n.memory_used + parent_bytes) > n.memory_budget) {
+            if (n.memory_budget > 0 && (n.memory_used + parent_bytes) > n.memory_budget) {
                 ++n.cow_refused_count;
-                return false;  // budget exceeded, COW rejected
+                return false; // budget exceeded, COW rejected
             }
             auto* new_flat = new aura::ast::FlatAST();
             auto* new_pool = new aura::ast::StringPool();
@@ -10931,9 +11289,8 @@ struct WorkspaceTree {
     }
 
     // Create a child workspace (COW: no clone until first mutate)
-    std::uint32_t create_child(const std::string& name,
-                                aura::ast::FlatAST* parent_flat,
-                                aura::ast::StringPool* parent_pool) {
+    std::uint32_t create_child(const std::string& name, aura::ast::FlatAST* parent_flat,
+                               aura::ast::StringPool* parent_pool) {
         auto idx = static_cast<std::uint32_t>(nodes_.size());
 
         WorkspaceNode node;
@@ -10945,7 +11302,7 @@ struct WorkspaceTree {
         // Store parent refs for COW; child shares parent's flat initially
         node.parent_flat_ = parent_flat;
         node.parent_pool_ = parent_pool;
-        node.flat = parent_flat;   // share parent's flat until COW
+        node.flat = parent_flat; // share parent's flat until COW
         node.pool = parent_pool;
 
         nodes_.push_back(std::move(node));
@@ -10954,7 +11311,8 @@ struct WorkspaceTree {
 
     // Delete a workspace (cannot delete root = idx 0)
     bool delete_child(std::uint32_t idx) {
-        if (idx == 0 || idx >= nodes_.size()) return false;
+        if (idx == 0 || idx >= nodes_.size())
+            return false;
         auto& n = nodes_[idx];
         if (n.has_own_flat) {
             delete n.flat;
@@ -10969,7 +11327,8 @@ struct WorkspaceTree {
 
     // Switch active workspace
     bool set_active(std::uint32_t idx) {
-        if (idx >= nodes_.size()) return false;
+        if (idx >= nodes_.size())
+            return false;
         active_idx_ = idx;
         return true;
     }
@@ -10982,8 +11341,10 @@ struct WorkspaceTree {
 
     // Check if mutation is allowed
     bool can_write(std::uint32_t idx) {
-        if (idx >= nodes_.size()) return false;
-        if (nodes_[idx].read_only) return false;
+        if (idx >= nodes_.size())
+            return false;
+        if (nodes_[idx].read_only)
+            return false;
         return true;
     }
 };
@@ -10991,7 +11352,8 @@ struct WorkspaceTree {
 // ═══════════════════════════════════════════════════════════════
 
 void Evaluator::update_shared_tree_root() {
-    if (!workspace_tree_) return;
+    if (!workspace_tree_)
+        return;
     auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
     if (wt->size() > 0) {
         // Only update the ACTIVE node's flat/pool pointer.
@@ -11013,48 +11375,52 @@ void Evaluator::update_shared_tree_root() {
 
 // ── Runtime-loaded libcurl via dlopen (avoids ld.bfd symbol issues) ──
 namespace {
-struct CurlAPI {
-    void* handle = nullptr;
-    CURL* (*easy_init)() = nullptr;
-    CURLcode (*easy_setopt)(CURL*, CURLoption, ...) = nullptr;
-    CURLcode (*easy_perform)(CURL*) = nullptr;
-    void (*easy_cleanup)(CURL*) = nullptr;
-    struct curl_slist* (*slist_append)(struct curl_slist*, const char*) = nullptr;
-    void (*slist_free_all)(struct curl_slist*) = nullptr;
+    struct CurlAPI {
+        void* handle = nullptr;
+        CURL* (*easy_init)() = nullptr;
+        CURLcode (*easy_setopt)(CURL*, CURLoption, ...) = nullptr;
+        CURLcode (*easy_perform)(CURL*) = nullptr;
+        void (*easy_cleanup)(CURL*) = nullptr;
+        struct curl_slist* (*slist_append)(struct curl_slist*, const char*) = nullptr;
+        void (*slist_free_all)(struct curl_slist*) = nullptr;
 
-    bool load() {
-        if (handle) return true;
-        handle = ::dlopen("libcurl.so.4", RTLD_LAZY | RTLD_LOCAL);
-        if (!handle) return false;
-        easy_init = (CURL*(*)())::dlsym(handle, "curl_easy_init");
-        easy_setopt = (CURLcode(*)(CURL*,CURLoption,...))::dlsym(handle, "curl_easy_setopt");
-        easy_perform = (CURLcode(*)(CURL*))::dlsym(handle, "curl_easy_perform");
-        easy_cleanup = (void(*)(CURL*))::dlsym(handle, "curl_easy_cleanup");
-        slist_append = (struct curl_slist*(*)(struct curl_slist*,const char*))::dlsym(handle, "curl_slist_append");
-        slist_free_all = (void(*)(struct curl_slist*))::dlsym(handle, "curl_slist_free_all");
-        return easy_init && easy_setopt && easy_perform && easy_cleanup
-            && slist_append && slist_free_all;
-    }
-    ~CurlAPI() { if (handle) ::dlclose(handle); }
-};
-CurlAPI& get_curl() {
-    static CurlAPI c;
-    return c;
-}
-auto& curl_writer_fn() {
-    static auto writer = [](char* ptr, size_t size, size_t nmemb, void* ud) -> size_t {
-        static_cast<std::string*>(ud)->append(ptr, size * nmemb);
-        return size * nmemb;
+        bool load() {
+            if (handle)
+                return true;
+            handle = ::dlopen("libcurl.so.4", RTLD_LAZY | RTLD_LOCAL);
+            if (!handle)
+                return false;
+            easy_init = (CURL * (*)())::dlsym(handle, "curl_easy_init");
+            easy_setopt = (CURLcode (*)(CURL*, CURLoption, ...))::dlsym(handle, "curl_easy_setopt");
+            easy_perform = (CURLcode (*)(CURL*))::dlsym(handle, "curl_easy_perform");
+            easy_cleanup = (void (*)(CURL*))::dlsym(handle, "curl_easy_cleanup");
+            slist_append = (struct curl_slist * (*)(struct curl_slist*, const char*))::dlsym(
+                handle, "curl_slist_append");
+            slist_free_all = (void (*)(struct curl_slist*))::dlsym(handle, "curl_slist_free_all");
+            return easy_init && easy_setopt && easy_perform && easy_cleanup && slist_append &&
+                   slist_free_all;
+        }
+        ~CurlAPI() {
+            if (handle)
+                ::dlclose(handle);
+        }
     };
-    return writer;
-}
-}
+    CurlAPI& get_curl() {
+        static CurlAPI c;
+        return c;
+    }
+    auto& curl_writer_fn() {
+        static auto writer = [](char* ptr, size_t size, size_t nmemb, void* ud) -> size_t {
+            static_cast<std::string*>(ud)->append(ptr, size * nmemb);
+            return size * nmemb;
+        };
+        return writer;
+    }
+} // namespace
 
 Evaluator::Evaluator() {
     // Register heap mutex for thread-safe GC (P2)
-    aura::messaging::g_heap_mutex = [this]() -> std::mutex& {
-        return heap_mutex();
-    };
+    aura::messaging::g_heap_mutex = [this]() -> std::mutex& { return heap_mutex(); };
 
     top_.set_primitives(&primitives_);
 
@@ -11067,8 +11433,7 @@ Evaluator::Evaluator() {
     // parent_id = NULL_ENV_ID. For modules_ envs, see copy_env
     // / load_module_file where they're arena-allocated.
     top_.set_owner(this);
-    top_.set_parent_id(alloc_env_frame(
-        NULL_ENV_ID /* no parent */, &primitives_));
+    top_.set_parent_id(alloc_env_frame(NULL_ENV_ID /* no parent */, &primitives_));
     primitives_.set_string_heap(&string_heap_);
     arena_group_ = std::make_unique<aura::ast::ArenaGroup>();
     init_pair_primitives();
@@ -11081,17 +11446,13 @@ Evaluator::Evaluator() {
     // callback breaks the cyclic import between
     // evaluator.ixx and ffi_primitives.ixx.
     ffi_runtime_.register_primitives(
-        [this](std::string name, PrimFn fn) {
-            primitives_.add(std::move(name), std::move(fn));
-        },
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
         &string_heap_, &opaque_heap_, &coverage_counters_);
 
     // Step 2.3 + 5.2 hygiene: wire ADT using exact same signature + coverage
     // counters as ffi_runtime_ (for consistency across extractions; modeled on FFI).
     adt_runtime_.register_primitives(
-        [this](std::string n, PrimFn f) {
-            primitives_.add(std::move(n), std::move(f));
-        },
+        [this](std::string n, PrimFn f) { primitives_.add(std::move(n), std::move(f)); },
         &string_heap_, &opaque_heap_, &coverage_counters_);
 
     build_primitive_slots();
@@ -11162,8 +11523,8 @@ Evaluator::Evaluator() {
                 headers = get_curl().slist_append(headers, "Content-Type: application/json");
                 if (a.size() >= 3 && types::is_string(a[2])) {
                     auto& auth = string_heap_[types::as_string_idx(a[2])];
-                    headers = get_curl().slist_append(headers,
-                        (std::string("Authorization: Bearer ") + auth).c_str());
+                    headers = get_curl().slist_append(
+                        headers, (std::string("Authorization: Bearer ") + auth).c_str());
                 }
 
                 std::string response;
@@ -11195,36 +11556,64 @@ Evaluator::Evaluator() {
             auto& body = string_heap_[types::as_string_idx(a[1])];
             std::string auth_hdr;
             if (a.size() >= 3 && types::is_string(a[2]))
-                auth_hdr = std::string("Authorization: Bearer ")
-                    + string_heap_[types::as_string_idx(a[2])];
+                auth_hdr = std::string("Authorization: Bearer ") +
+                           string_heap_[types::as_string_idx(a[2])];
             int in[2], out[2];
-            if (::pipe(in) < 0 || ::pipe(out) < 0) return make_void();
+            if (::pipe(in) < 0 || ::pipe(out) < 0)
+                return make_void();
             pid_t pid = ::fork();
-            if (pid < 0) { ::close(in[0]); ::close(in[1]); ::close(out[0]); ::close(out[1]); return make_void(); }
+            if (pid < 0) {
+                ::close(in[0]);
+                ::close(in[1]);
+                ::close(out[0]);
+                ::close(out[1]);
+                return make_void();
+            }
             if (pid == 0) {
-                ::close(in[1]); ::close(out[0]);
-                ::dup2(in[0], STDIN_FILENO); ::dup2(out[1], STDOUT_FILENO);
-                ::close(in[0]); ::close(out[1]);
-                const char* argv[16]{}; int i = 0;
-                argv[i++] = "curl"; argv[i++] = "-s"; argv[i++] = "-X"; argv[i++] = "POST";
-                argv[i++] = "--data-binary"; argv[i++] = "@-";
-                argv[i++] = "-H"; argv[i++] = "Content-Type: application/json";
-                if (!auth_hdr.empty()) { argv[i++] = "-H"; argv[i++] = auth_hdr.c_str(); }
-                argv[i++] = "--max-time"; argv[i++] = "30";
-                argv[i++] = "--connect-timeout"; argv[i++] = "10";
-                argv[i++] = url.c_str(); argv[i] = nullptr;
+                ::close(in[1]);
+                ::close(out[0]);
+                ::dup2(in[0], STDIN_FILENO);
+                ::dup2(out[1], STDOUT_FILENO);
+                ::close(in[0]);
+                ::close(out[1]);
+                const char* argv[16]{};
+                int i = 0;
+                argv[i++] = "curl";
+                argv[i++] = "-s";
+                argv[i++] = "-X";
+                argv[i++] = "POST";
+                argv[i++] = "--data-binary";
+                argv[i++] = "@-";
+                argv[i++] = "-H";
+                argv[i++] = "Content-Type: application/json";
+                if (!auth_hdr.empty()) {
+                    argv[i++] = "-H";
+                    argv[i++] = auth_hdr.c_str();
+                }
+                argv[i++] = "--max-time";
+                argv[i++] = "30";
+                argv[i++] = "--connect-timeout";
+                argv[i++] = "10";
+                argv[i++] = url.c_str();
+                argv[i] = nullptr;
                 ::execvp("curl", const_cast<char* const*>(argv));
                 ::_exit(1);
             }
-            ::close(in[0]); ::close(out[1]);
-            ::write(in[1], body.data(), body.size()); ::close(in[1]);
-            std::array<char, 4096> fbuf; ssize_t nr;
+            ::close(in[0]);
+            ::close(out[1]);
+            ::write(in[1], body.data(), body.size());
+            ::close(in[1]);
+            std::array<char, 4096> fbuf;
+            ssize_t nr;
             while ((nr = ::read(out[0], fbuf.data(), fbuf.size())) > 0)
                 result.append(fbuf.data(), static_cast<std::size_t>(nr));
-            ::close(out[0]); int cstat; ::waitpid(pid, &cstat, 0);
+            ::close(out[0]);
+            int cstat;
+            ::waitpid(pid, &cstat, 0);
         }
 
-        if (result.empty()) return make_void();
+        if (result.empty())
+            return make_void();
         auto sidx = string_heap_.size();
         string_heap_.push_back(std::move(result));
         return types::make_string(sidx);
@@ -11325,11 +11714,10 @@ Evaluator::Evaluator() {
         if (name_idx >= string_heap_.size() || params_idx >= string_heap_.size() ||
             ret_idx >= string_heap_.size())
             return make_bool(false);
-        declared_type_sigs_[string_heap_[name_idx]] = {
-            .type_str = string_heap_[params_idx] + "|" + string_heap_[ret_idx],
-            .module_file = "",
-            .resolved = false
-        };
+        declared_type_sigs_[string_heap_[name_idx]] = {.type_str = string_heap_[params_idx] + "|" +
+                                                                   string_heap_[ret_idx],
+                                                       .module_file = "",
+                                                       .resolved = false};
         return make_bool(true);
     });
 
@@ -11351,9 +11739,13 @@ Evaluator::Evaluator() {
 
         // 读取并解析模块文件
         std::ifstream f(path);
-        if (!f) { std::println(std::cerr, "generate-type-sigs: cannot open '{}'", path); return make_bool(false); }
+        if (!f) {
+            std::println(std::cerr, "generate-type-sigs: cannot open '{}'", path);
+            return make_bool(false);
+        }
         std::string content((std::istreambuf_iterator<char>(f)), {});
-        if (content.empty()) return make_bool(false);
+        if (content.empty())
+            return make_bool(false);
 
         aura::ast::ASTArena local_arena;
         auto alloc = local_arena.allocator();
@@ -11417,16 +11809,22 @@ Evaluator::Evaluator() {
             auto t = aura::core::TypeId{tid, 1};
             auto tag = treg.tag_of(t);
             switch (tag) {
-                case aura::core::TypeTag::INT:    return "Int";
-                case aura::core::TypeTag::BOOL:   return "Bool";
-                case aura::core::TypeTag::STRING: return "String";
-                case aura::core::TypeTag::FLOAT:  return "Float";
-                case aura::core::TypeTag::VOID:   return "Void";
+                case aura::core::TypeTag::INT:
+                    return "Int";
+                case aura::core::TypeTag::BOOL:
+                    return "Bool";
+                case aura::core::TypeTag::STRING:
+                    return "String";
+                case aura::core::TypeTag::FLOAT:
+                    return "Float";
+                case aura::core::TypeTag::VOID:
+                    return "Void";
                 case aura::core::TypeTag::FUNC: {
                     if (auto* ft = treg.func_of(t)) {
                         std::string s;
                         for (auto& a : ft->args) {
-                            if (!s.empty()) s += " ";
+                            if (!s.empty())
+                                s += " ";
                             s += type_name_for(a.index);
                         }
                         s += " -> " + type_name_for(ft->ret.index);
@@ -11434,14 +11832,16 @@ Evaluator::Evaluator() {
                     }
                     return "Any";
                 }
-                default: return "Any";
+                default:
+                    return "Any";
             }
         };
 
         std::size_t written = 0;
         for (auto& name : fn_names) {
             auto it = define_map.find(name);
-            if (it == define_map.end()) continue;
+            if (it == define_map.end())
+                continue;
             auto def_v = flat.get(it->second);
             if (!def_v.children.empty()) {
                 auto val_id = def_v.child(0);
@@ -11463,8 +11863,8 @@ Evaluator::Evaluator() {
             module_cache_.erase(cache_it);
         }
 
-        std::println(std::cerr, "generate-type-sigs: wrote {} types to '{}'",
-                     written, type_sig_path);
+        std::println(std::cerr, "generate-type-sigs: wrote {} types to '{}'", written,
+                     type_sig_path);
         return make_bool(written > 0);
     });
 
@@ -11480,15 +11880,20 @@ Evaluator::Evaluator() {
             return make_bool(false);
         auto path = resolve_module_path(string_heap_[idx]);
         if (path.empty()) {
-            std::println(std::cerr, "check-module-signature: cannot resolve '{}'", string_heap_[idx]);
+            std::println(std::cerr, "check-module-signature: cannot resolve '{}'",
+                         string_heap_[idx]);
             return make_bool(false);
         }
 
         // 读取并解析模块文件
         std::ifstream f(path);
-        if (!f) { std::println(std::cerr, "check-module-signature: cannot open '{}'", path); return make_bool(false); }
+        if (!f) {
+            std::println(std::cerr, "check-module-signature: cannot open '{}'", path);
+            return make_bool(false);
+        }
         std::string content((std::istreambuf_iterator<char>(f)), {});
-        if (content.empty()) return make_bool(false);
+        if (content.empty())
+            return make_bool(false);
 
         aura::ast::ASTArena local_arena;
         auto alloc = local_arena.allocator();
@@ -11502,7 +11907,10 @@ Evaluator::Evaluator() {
         flat.root = pr.root;
 
         // 类型推断：对每个 define 的值进行类型推断
-        struct FnInfo { std::string name; std::string inferred_type; };
+        struct FnInfo {
+            std::string name;
+            std::string inferred_type;
+        };
         std::vector<FnInfo> fn_infos;
 
         aura::core::TypeRegistry treg;
@@ -11532,7 +11940,10 @@ Evaluator::Evaluator() {
                 sig_path = sig_path.substr(0, dot) + ".aura-type";
         }
 
-        struct SigDecl { std::string name; std::string decl_type; };
+        struct SigDecl {
+            std::string name;
+            std::string decl_type;
+        };
         std::vector<SigDecl> sig_decls;
 
         struct stat st;
@@ -11542,9 +11953,11 @@ Evaluator::Evaluator() {
                 std::string line;
                 while (std::getline(tf, line)) {
                     auto colon = line.find(':');
-                    if (colon == std::string::npos) continue;
+                    if (colon == std::string::npos)
+                        continue;
                     auto arrow = line.find("->", colon);
-                    if (arrow == std::string::npos) continue;
+                    if (arrow == std::string::npos)
+                        continue;
                     auto name = line.substr(0, colon);
                     name.erase(name.find_last_not_of(" \t\r") + 1);
                     auto params_str = line.substr(colon + 1, arrow - colon - 1);
@@ -11574,9 +11987,11 @@ Evaluator::Evaluator() {
                     if (fmt.size() >= 2 && fmt.front() == '(' && fmt.back() == ')')
                         fmt = fmt.substr(1, fmt.size() - 2);
                     // 替换类型变量 __tN 为 Any（未标注类型时推断出 "__t0 -> __t0"）
-                    for (auto ci = fmt.find("__t"); ci != std::string::npos; ci = fmt.find("__t", ci)) {
+                    for (auto ci = fmt.find("__t"); ci != std::string::npos;
+                         ci = fmt.find("__t", ci)) {
                         auto end = ci + 3;
-                        while (end < fmt.size() && (std::isalnum(fmt[end]) || fmt[end] == '_')) ++end;
+                        while (end < fmt.size() && (std::isalnum(fmt[end]) || fmt[end] == '_'))
+                            ++end;
                         fmt.replace(ci, end - ci, "Any");
                         ci += 3;
                     }
@@ -11587,7 +12002,8 @@ Evaluator::Evaluator() {
                 }
             }
             if (!found) {
-                std::println(std::cerr, "  MISSING '{}' in module (declared but not defined)", sd.name);
+                std::println(std::cerr, "  MISSING '{}' in module (declared but not defined)",
+                             sd.name);
                 ++missing;
             } else if (!match) {
                 // 查找推断的类型字符串
@@ -11600,9 +12016,11 @@ Evaluator::Evaluator() {
                         // 替换类型变量 __tN 为 Any
                         std::string clean;
                         for (std::size_t ci = 0; ci < f.size(); ++ci) {
-                            if (f[ci] == '_' && ci + 3 < f.size() && f[ci+1] == '_' && f[ci+2] == 't') {
+                            if (f[ci] == '_' && ci + 3 < f.size() && f[ci + 1] == '_' &&
+                                f[ci + 2] == 't') {
                                 clean += "Any";
-                                while (ci < f.size() && (std::isalnum(f[ci]) || f[ci] == '_')) ++ci;
+                                while (ci < f.size() && (std::isalnum(f[ci]) || f[ci] == '_'))
+                                    ++ci;
                                 --ci;
                             } else {
                                 clean += f[ci];
@@ -11612,8 +12030,8 @@ Evaluator::Evaluator() {
                         break;
                     }
                 }
-                std::println(std::cerr, "  MISMATCH '{}': declared '{}', inferred '{}'",
-                             sd.name, sd.decl_type, inferred_fmt);
+                std::println(std::cerr, "  MISMATCH '{}': declared '{}', inferred '{}'", sd.name,
+                             sd.decl_type, inferred_fmt);
                 ++mismatched;
             } else {
                 ++matched;
@@ -11640,9 +12058,9 @@ Evaluator::Evaluator() {
     // 在 def-use 索引中注册依赖图查询函数，供 mutation 原语
     // (mutate:rebind / set-body) 在变更前查询调用者节点。
     // 定义在这里（DefUseIndex 完整类型已知后），绕开前向声明问题。
-    dep_caller_fn_ = [](void* idx_ptr, aura::ast::SymId sym)
-        -> std::vector<aura::ast::NodeId> {
-        if (!idx_ptr) return {};
+    dep_caller_fn_ = [](void* idx_ptr, aura::ast::SymId sym) -> std::vector<aura::ast::NodeId> {
+        if (!idx_ptr)
+            return {};
         auto* idx = static_cast<DefUseIndex*>(idx_ptr);
         auto result = idx->query_def_use(sym);
         return std::move(result.uses);
@@ -11655,7 +12073,8 @@ Evaluator::Evaluator() {
     // callback is a no-op; the next ensure_defuse() will build from
     // scratch anyway.
     defuse_touch_fn_ = [](void* idx_ptr, aura::ast::SymId sym) {
-        if (!idx_ptr) return;
+        if (!idx_ptr)
+            return;
         auto* idx = static_cast<DefUseIndex*>(idx_ptr);
         idx->touch_sym(sym);
     };
@@ -11732,107 +12151,116 @@ Evaluator::Evaluator() {
     //   → ((def-node-id ...) . (use-node-id ...))
     //   Scope-level cached def-use chain. Builds index on first call,
     //   incrementally rebuilds dirty scopes on subsequent calls.
-    primitives_.add("query:def-use", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-        // (Step 3.1 start) local merr removed; use make_merr (query cluster)
-        if (a.empty() || !is_string(a[0]))
-            return make_merr("bad-arg", "usage: (query:def-use sym-name)");
-        if (!workspace_flat_ || !workspace_pool_)
-            return make_merr("no-workspace", "no workspace AST loaded");
-        auto sym_idx = as_string_idx(a[0]);
-        if (sym_idx >= string_heap_.size())
-            return make_merr("bad-arg", "symbol name string index out of range");
-        auto target_name = string_heap_[sym_idx];
-        auto target_sym = workspace_pool_->intern(target_name);
+    primitives_.add("query:def-use",
+                    [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
+                        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+                        // (Step 3.1 start) local merr removed; use make_merr (query cluster)
+                        if (a.empty() || !is_string(a[0]))
+                            return make_merr("bad-arg", "usage: (query:def-use sym-name)");
+                        if (!workspace_flat_ || !workspace_pool_)
+                            return make_merr("no-workspace", "no workspace AST loaded");
+                        auto sym_idx = as_string_idx(a[0]);
+                        if (sym_idx >= string_heap_.size())
+                            return make_merr("bad-arg", "symbol name string index out of range");
+                        auto target_name = string_heap_[sym_idx];
+                        auto target_sym = workspace_pool_->intern(target_name);
 
-        auto idx = ensure_defuse();
-        if (!idx)
-            return make_merr("internal", "failed to build def-use index");
+                        auto idx = ensure_defuse();
+                        if (!idx)
+                            return make_merr("internal", "failed to build def-use index");
 
-        auto result = idx->query_def_use(target_sym);
-        auto def_list = nodes_to_list(result.defs);
-        auto use_list = nodes_to_list(result.uses);
+                        auto result = idx->query_def_use(target_sym);
+                        auto def_list = nodes_to_list(result.defs);
+                        auto use_list = nodes_to_list(result.uses);
 
-        auto result_pid = pairs_.size();
-        pairs_.push_back({def_list, use_list});
-        return make_pair(result_pid);
-    });
+                        auto result_pid = pairs_.size();
+                        pairs_.push_back({def_list, use_list});
+                        return make_pair(result_pid);
+                    });
 
     // (query:reaches node-id)
     //   → ((def-node-id ...) . (use-node-id ...))
     //   Cached implementation using def-use index.
-    primitives_.add("query:reaches", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-        // (Step 3.1 continuation) local merr removed; using centralized make_merr
-        if (a.empty() || !is_int(a[0]))
-            return make_merr("bad-arg", "usage: (query:reaches node-id)");
-        if (!workspace_flat_ || !workspace_pool_)
-            return make_merr("no-workspace", "no workspace AST loaded");
-        auto target = static_cast<DefUseIndex::NodeId>(as_int(a[0]));
-        auto& flat = *workspace_flat_;
-        if (target >= flat.size())
-            return make_merr("out-of-range", "node ID " + std::to_string(target) + " >= flat size " + std::to_string(flat.size()));
+    primitives_.add("query:reaches",
+                    [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
+                        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+                        // (Step 3.1 continuation) local merr removed; using centralized make_merr
+                        if (a.empty() || !is_int(a[0]))
+                            return make_merr("bad-arg", "usage: (query:reaches node-id)");
+                        if (!workspace_flat_ || !workspace_pool_)
+                            return make_merr("no-workspace", "no workspace AST loaded");
+                        auto target = static_cast<DefUseIndex::NodeId>(as_int(a[0]));
+                        auto& flat = *workspace_flat_;
+                        if (target >= flat.size())
+                            return make_merr("out-of-range", "node ID " + std::to_string(target) +
+                                                                 " >= flat size " +
+                                                                 std::to_string(flat.size()));
 
-        auto v = flat.get(target);
-        DefUseIndex::SymId defined_sym = aura::ast::INVALID_SYM;
-        switch (v.tag) {
-            case aura::ast::NodeTag::Define:
-            case aura::ast::NodeTag::Let:
-            case aura::ast::NodeTag::LetRec:
-                defined_sym = v.sym_id;
-                break;
-            default:
-                return make_merr("type-error", "node " + std::to_string(target) + " is not a definition node");
-        }
-        if (defined_sym == aura::ast::INVALID_SYM)
-            return make_merr("internal", "definition node has invalid symbol id");
+                        auto v = flat.get(target);
+                        DefUseIndex::SymId defined_sym = aura::ast::INVALID_SYM;
+                        switch (v.tag) {
+                            case aura::ast::NodeTag::Define:
+                            case aura::ast::NodeTag::Let:
+                            case aura::ast::NodeTag::LetRec:
+                                defined_sym = v.sym_id;
+                                break;
+                            default:
+                                return make_merr("type-error", "node " + std::to_string(target) +
+                                                                   " is not a definition node");
+                        }
+                        if (defined_sym == aura::ast::INVALID_SYM)
+                            return make_merr("internal", "definition node has invalid symbol id");
 
-        auto idx = ensure_defuse();
-        if (!idx)
-            return make_merr("internal", "failed to build def-use index");
+                        auto idx = ensure_defuse();
+                        if (!idx)
+                            return make_merr("internal", "failed to build def-use index");
 
-        auto result = idx->query_def_use(defined_sym);
-        auto def_list = nodes_to_list(result.defs);
-        auto use_list = nodes_to_list(result.uses);
+                        auto result = idx->query_def_use(defined_sym);
+                        auto def_list = nodes_to_list(result.defs);
+                        auto use_list = nodes_to_list(result.uses);
 
-        auto result_pid = pairs_.size();
-        pairs_.push_back({def_list, use_list});
-        return make_pair(result_pid);
-    });
+                        auto result_pid = pairs_.size();
+                        pairs_.push_back({def_list, use_list});
+                        return make_pair(result_pid);
+                    });
 
     // (query:effects "sym-name")
     //   → ((def-node-id ...) . (use-node-id ...) . (caller-node-id ...))
     //   Cached defs + uses, linear scan for callers.
-    primitives_.add("query:effects", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-        // (Step 3.1) local merr removed; using make_merr
-        if (a.empty() || !is_string(a[0]))
-            return make_merr("bad-arg", "usage: (query:effects sym-name)");
-        if (!workspace_flat_ || !workspace_pool_)
-            return make_merr("no-workspace", "no workspace AST loaded");
-        auto sym_idx = as_string_idx(a[0]);
-        if (sym_idx >= string_heap_.size())
-            return make_merr("bad-arg", "symbol name string index out of range");
-        auto target_name = string_heap_[sym_idx];
-        auto target_sym = workspace_pool_->intern(target_name);
-        auto& flat = *workspace_flat_;
+    primitives_.add("query:effects",
+                    [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
+                        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+                        // (Step 3.1) local merr removed; using make_merr
+                        if (a.empty() || !is_string(a[0]))
+                            return make_merr("bad-arg", "usage: (query:effects sym-name)");
+                        if (!workspace_flat_ || !workspace_pool_)
+                            return make_merr("no-workspace", "no workspace AST loaded");
+                        auto sym_idx = as_string_idx(a[0]);
+                        if (sym_idx >= string_heap_.size())
+                            return make_merr("bad-arg", "symbol name string index out of range");
+                        auto target_name = string_heap_[sym_idx];
+                        auto target_sym = workspace_pool_->intern(target_name);
+                        auto& flat = *workspace_flat_;
 
-        auto idx = ensure_defuse();
-        if (!idx)
-            return make_merr("internal", "failed to build def-use index");
+                        auto idx = ensure_defuse();
+                        if (!idx)
+                            return make_merr("internal", "failed to build def-use index");
 
-        auto duo = idx->query_def_use(target_sym);
-        auto callers = idx->query_callers(target_sym, flat);
+                        auto duo = idx->query_def_use(target_sym);
+                        auto callers = idx->query_callers(target_sym, flat);
 
-        auto def_list = nodes_to_list(duo.defs);
-        auto use_list = nodes_to_list(duo.uses);
-        auto caller_list = nodes_to_list(callers);
+                        auto def_list = nodes_to_list(duo.defs);
+                        auto use_list = nodes_to_list(duo.uses);
+                        auto caller_list = nodes_to_list(callers);
 
-        auto c1 = pairs_.size(); pairs_.push_back({caller_list, make_void()});
-        auto c2 = pairs_.size(); pairs_.push_back({use_list, make_pair(c1)});
-        auto c3 = pairs_.size(); pairs_.push_back({def_list, make_pair(c2)});
-        return make_pair(c3);
-    });
+                        auto c1 = pairs_.size();
+                        pairs_.push_back({caller_list, make_void()});
+                        auto c2 = pairs_.size();
+                        pairs_.push_back({use_list, make_pair(c1)});
+                        auto c3 = pairs_.size();
+                        pairs_.push_back({def_list, make_pair(c2)});
+                        return make_pair(c3);
+                    });
 
     // (query:build-index)
     //   → #t  Explicitly rebuild all def-use and call-graph indexes.
@@ -11854,50 +12282,51 @@ Evaluator::Evaluator() {
     // (query:index-stats)
     //   → ((callers . N) (def-syms . N) (refs . N) (rebuilds . N) (scopes . N) (nodes . N))
     //   Statistics about the def-use and call-graph indexes.
-    primitives_.add("query:index-stats", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-        // (Step 3.1) local merr removed; make_merr
-        auto idx = ensure_defuse();
-        if (!idx)
-            return make_merr("internal", "failed to build def-use index");
-        auto& flat = *workspace_flat_;
+    primitives_.add("query:index-stats",
+                    [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
+                        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+                        // (Step 3.1) local merr removed; make_merr
+                        auto idx = ensure_defuse();
+                        if (!idx)
+                            return make_merr("internal", "failed to build def-use index");
+                        auto& flat = *workspace_flat_;
 
-        // Build: ((k1 . v1) (k2 . v2) ...) as a proper Aura list.
-        // Use correct pattern: forward ref → push data → use ref.
-        // Do NOT use the ref inside the data being pushed (would self-reference).
-        auto make_kv = [&](std::string_view k, std::int64_t v) -> types::EvalValue {
-            auto kv_ref = make_pair(pairs_.size());
-            auto k_sym = string_heap_.size();
-            string_heap_.push_back(std::string(k));
-            types::EvalValue car = make_string(k_sym);
-            types::EvalValue cdr = make_int(v);
-            pairs_.push_back(Pair{car, cdr});
-            return kv_ref;
-        };
+                        // Build: ((k1 . v1) (k2 . v2) ...) as a proper Aura list.
+                        // Use correct pattern: forward ref → push data → use ref.
+                        // Do NOT use the ref inside the data being pushed (would self-reference).
+                        auto make_kv = [&](std::string_view k, std::int64_t v) -> types::EvalValue {
+                            auto kv_ref = make_pair(pairs_.size());
+                            auto k_sym = string_heap_.size();
+                            string_heap_.push_back(std::string(k));
+                            types::EvalValue car = make_string(k_sym);
+                            types::EvalValue cdr = make_int(v);
+                            pairs_.push_back(Pair{car, cdr});
+                            return kv_ref;
+                        };
 
-        // Build list in reverse: each new pair's cdr points to previous stats
-        auto stats = make_void();
-        auto push_kv = [&](std::string_view k, std::int64_t v) {
-            auto kv_ref = make_kv(k, v);
-            auto new_ref = make_pair(pairs_.size());
-            pairs_.push_back(Pair{kv_ref, stats});
-            stats = new_ref;
-        };
-        push_kv("nodes", flat.size());
-        push_kv("scopes", idx->scopes_.size());
-        push_kv("def-syms", idx->def_syms_.size());
-        push_kv("refs", idx->refs_.size());
-        push_kv("callers", idx->callers_of_.size());
-        push_kv("rebuilds", (std::int64_t)defuse_rebuild_count_);
-        // (#107 part 5) Per-sym version stats. stale-syms is the
-        // number of syms whose callers_of_/callee_of_ data may be
-        // out-of-date since the last refresh. defuse-version is the
-        // monotonic counter bumped on each touch_sym() call.
-        // stale-syms = 0 means the index is fully consistent.
-        push_kv("stale-syms", (std::int64_t)idx->stale_count());
-        push_kv("defuse-version", (std::int64_t)idx->current_version());
-        return stats;
-    });
+                        // Build list in reverse: each new pair's cdr points to previous stats
+                        auto stats = make_void();
+                        auto push_kv = [&](std::string_view k, std::int64_t v) {
+                            auto kv_ref = make_kv(k, v);
+                            auto new_ref = make_pair(pairs_.size());
+                            pairs_.push_back(Pair{kv_ref, stats});
+                            stats = new_ref;
+                        };
+                        push_kv("nodes", flat.size());
+                        push_kv("scopes", idx->scopes_.size());
+                        push_kv("def-syms", idx->def_syms_.size());
+                        push_kv("refs", idx->refs_.size());
+                        push_kv("callers", idx->callers_of_.size());
+                        push_kv("rebuilds", (std::int64_t)defuse_rebuild_count_);
+                        // (#107 part 5) Per-sym version stats. stale-syms is the
+                        // number of syms whose callers_of_/callee_of_ data may be
+                        // out-of-date since the last refresh. defuse-version is the
+                        // monotonic counter bumped on each touch_sym() call.
+                        // stale-syms = 0 means the index is fully consistent.
+                        push_kv("stale-syms", (std::int64_t)idx->stale_count());
+                        push_kv("defuse-version", (std::int64_t)idx->current_version());
+                        return stats;
+                    });
 
     // ═══════════════════════════════════════════════════════════════
     // P10: AST Snapshot / Restore / Diff
@@ -11905,8 +12334,7 @@ Evaluator::Evaluator() {
 
     // Helper: line-based LCS diff (Myers-like, simplified)
     // Returns list of (tag . line) entries
-    auto line_diff = [this](const std::string& old_text,
-                            const std::string& new_text) -> EvalValue {
+    auto line_diff = [this](const std::string& old_text, const std::string& new_text) -> EvalValue {
         // Split into lines
         auto split_lines = [](const std::string& s) -> std::vector<std::string> {
             std::vector<std::string> lines;
@@ -11945,9 +12373,10 @@ Evaluator::Evaluator() {
         }
 
         // Backtrack to produce diff
-        std::vector<std::tuple<char, std::string>> diff_entries;  // '=', '-', '+'
+        std::vector<std::tuple<char, std::string>> diff_entries; // '=', '-', '+'
         int i = m, j = n;
-        auto saved_prev = prev; (void)saved_prev;
+        auto saved_prev = prev;
+        (void)saved_prev;
         // We need the full table for backtracking. Build it.
         std::vector<std::vector<int>> table(m + 1, std::vector<int>(n + 1, 0));
         for (int i2 = 1; i2 <= m; ++i2) {
@@ -11962,7 +12391,8 @@ Evaluator::Evaluator() {
         while (i > 0 || j > 0) {
             if (i > 0 && j > 0 && a[i - 1] == b[j - 1]) {
                 diff_entries.push_back({'=', a[i - 1]});
-                --i; --j;
+                --i;
+                --j;
             } else if (j > 0 && (i == 0 || table[i][j - 1] >= table[i - 1][j])) {
                 diff_entries.push_back({'+', b[j - 1]});
                 --j;
@@ -11978,13 +12408,18 @@ Evaluator::Evaluator() {
         for (auto it = diff_entries.rbegin(); it != diff_entries.rend(); ++it) {
             auto [tag, line] = *it;
             std::string kw_str = ":same";
-            if (tag == '-') kw_str = ":removed";
-            else if (tag == '+') kw_str = ":added";
+            if (tag == '-')
+                kw_str = ":removed";
+            else if (tag == '+')
+                kw_str = ":added";
 
             // Lookup or create keyword
             auto kw_idx = keyword_table_.size();
             for (std::size_t ki = 0; ki < keyword_table_.size(); ++ki) {
-                if (keyword_table_[ki] == kw_str) { kw_idx = ki; break; }
+                if (keyword_table_[ki] == kw_str) {
+                    kw_idx = ki;
+                    break;
+                }
             }
             if (kw_idx == keyword_table_.size())
                 keyword_table_.push_back(kw_str);
@@ -12063,82 +12498,86 @@ Evaluator::Evaluator() {
         return make_int(static_cast<std::int64_t>(id));
     });
 
-// ── Issue #107 part 3: AST versioning protocol primitive ──────────
-// (ast:version) — return a snapshot of the AST's current versioning
-// state under the workspace_mtx_ (shared lock).
-//
-// The protocol surface returned is:
-//   (defuse-version . (dirty-define-name ...) . (all-define-name ...))
-//   e.g.   (5 . ("f" "g") . ("f" "g" "h"))
-//
-// defuse-version is a monotonic counter incremented by every
-// mutate:* primitive. Caches (DefUseIndex, IR cache v2, JIT
-// symbol table) use it to detect staleness: a cache entry
-// recorded under version N is invalid once version > N.
-//
-// dirty-define-name is the list of top-level defines whose IR
-// cache entry is currently marked dirty (i.e., needs re-lower
-// on next eval-current :jit).
-//
-// all-define-name is the list of all top-level defines in the
-// workspace. The LLM can diff against the previous call's
-// list to detect new / removed defines.
-//
-// This primitive is the LLM-facing surface for the
-// incremental-cache invalidation protocol. A concurrent
-// mutate that mutates between defuse-version read and
-// dirty-list read would be racy in a non-locked
-// implementation; the shared_lock makes the read atomic.
-primitives_.add("ast:version", [this](const auto&) -> EvalValue {
-    std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-    if (!workspace_flat_ || !workspace_pool_)
-        return make_void();
+    // ── Issue #107 part 3: AST versioning protocol primitive ──────────
+    // (ast:version) — return a snapshot of the AST's current versioning
+    // state under the workspace_mtx_ (shared lock).
+    //
+    // The protocol surface returned is:
+    //   (defuse-version . (dirty-define-name ...) . (all-define-name ...))
+    //   e.g.   (5 . ("f" "g") . ("f" "g" "h"))
+    //
+    // defuse-version is a monotonic counter incremented by every
+    // mutate:* primitive. Caches (DefUseIndex, IR cache v2, JIT
+    // symbol table) use it to detect staleness: a cache entry
+    // recorded under version N is invalid once version > N.
+    //
+    // dirty-define-name is the list of top-level defines whose IR
+    // cache entry is currently marked dirty (i.e., needs re-lower
+    // on next eval-current :jit).
+    //
+    // all-define-name is the list of all top-level defines in the
+    // workspace. The LLM can diff against the previous call's
+    // list to detect new / removed defines.
+    //
+    // This primitive is the LLM-facing surface for the
+    // incremental-cache invalidation protocol. A concurrent
+    // mutate that mutates between defuse-version read and
+    // dirty-list read would be racy in a non-locked
+    // implementation; the shared_lock makes the read atomic.
+    primitives_.add("ast:version", [this](const auto&) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        if (!workspace_flat_ || !workspace_pool_)
+            return make_void();
 
-    // Walk the workspace's top-level defines, collecting
-    // names + dirty state. The walk is O(N) in the workspace
-    // size; acceptable for occasional LLM version queries.
-    std::vector<std::string> all_names;
-    std::vector<std::string> dirty_names;
-    auto& flat = *workspace_flat_;
-    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-        auto v = flat.get(id);
-        if (v.tag != aura::ast::NodeTag::Define) continue;
-        auto name_str = std::string(workspace_pool_->resolve(v.sym_id));
-        if (name_str.empty()) continue;
-        all_names.push_back(name_str);
-        if (is_define_dirty_fn_ && is_define_dirty_fn_(name_str))
-            dirty_names.push_back(name_str);
-    }
-
-    // Build the result list:
-    //   (defuse-version . (dirty ...) . (all ...))
-    auto& ev = *this;
-    (void)ev;
-    auto str_idx = [&](const std::string& s) -> EvalValue {
-        auto idx = string_heap_.size();
-        string_heap_.push_back(s);
-        return make_string(idx);
-    };
-    // Build (all ...) and (dirty ...) lists as nested pairs.
-    auto list_of = [&](const std::vector<std::string>& v) -> EvalValue {
-        EvalValue r = make_void();
-        for (auto it = v.rbegin(); it != v.rend(); ++it) {
-            auto pid = pairs_.size();
-            pairs_.push_back({str_idx(*it), r});
-            r = make_pair(pid);
+        // Walk the workspace's top-level defines, collecting
+        // names + dirty state. The walk is O(N) in the workspace
+        // size; acceptable for occasional LLM version queries.
+        std::vector<std::string> all_names;
+        std::vector<std::string> dirty_names;
+        auto& flat = *workspace_flat_;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag != aura::ast::NodeTag::Define)
+                continue;
+            auto name_str = std::string(workspace_pool_->resolve(v.sym_id));
+            if (name_str.empty())
+                continue;
+            all_names.push_back(name_str);
+            if (is_define_dirty_fn_ && is_define_dirty_fn_(name_str))
+                dirty_names.push_back(name_str);
         }
-        return r;
-    };
-    auto dirty_list = list_of(dirty_names);
-    auto all_list = list_of(all_names);
-    // Pack: (defuse-version . (dirty ...) . (all ...))
-    auto v_pid = pairs_.size();
-    pairs_.push_back({make_int(static_cast<std::int64_t>(defuse_version_.load(std::memory_order_relaxed))), dirty_list});
-    auto v_pair = make_pair(v_pid);
-    auto final_pid = pairs_.size();
-    pairs_.push_back({v_pair, all_list});
-    return make_pair(final_pid);
-});
+
+        // Build the result list:
+        //   (defuse-version . (dirty ...) . (all ...))
+        auto& ev = *this;
+        (void)ev;
+        auto str_idx = [&](const std::string& s) -> EvalValue {
+            auto idx = string_heap_.size();
+            string_heap_.push_back(s);
+            return make_string(idx);
+        };
+        // Build (all ...) and (dirty ...) lists as nested pairs.
+        auto list_of = [&](const std::vector<std::string>& v) -> EvalValue {
+            EvalValue r = make_void();
+            for (auto it = v.rbegin(); it != v.rend(); ++it) {
+                auto pid = pairs_.size();
+                pairs_.push_back({str_idx(*it), r});
+                r = make_pair(pid);
+            }
+            return r;
+        };
+        auto dirty_list = list_of(dirty_names);
+        auto all_list = list_of(all_names);
+        // Pack: (defuse-version . (dirty ...) . (all ...))
+        auto v_pid = pairs_.size();
+        pairs_.push_back(
+            {make_int(static_cast<std::int64_t>(defuse_version_.load(std::memory_order_relaxed))),
+             dirty_list});
+        auto v_pair = make_pair(v_pid);
+        auto final_pid = pairs_.size();
+        pairs_.push_back({v_pair, all_list});
+        return make_pair(final_pid);
+    });
 
     // (ast:defs)
     //   → ((name . node-id) ...)  top-level (define ...) entries.
@@ -12162,15 +12601,16 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         // produce the same order as the flat.
         for (std::int64_t id = (std::int64_t)flat.size() - 1; id >= 0; --id) {
             auto v = flat.get(static_cast<aura::ast::NodeId>(id));
-            if (v.tag != aura::ast::NodeTag::Define) continue;
+            if (v.tag != aura::ast::NodeTag::Define)
+                continue;
             auto name_str = std::string(workspace_pool_->resolve(v.sym_id));
-            if (name_str.empty()) continue;
+            if (name_str.empty())
+                continue;
             auto name_idx = string_heap_.size();
             string_heap_.push_back(name_str);
             // (name . id) pair
             auto entry_pair = pairs_.size();
-            pairs_.push_back({make_string(name_idx),
-                              make_int(static_cast<std::int64_t>(id))});
+            pairs_.push_back({make_string(name_idx), make_int(static_cast<std::int64_t>(id))});
             // cons onto result
             auto cons_pair = pairs_.size();
             pairs_.push_back({make_pair(entry_pair), result});
@@ -12202,9 +12642,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         EvalValue result = make_void();
         for (int i = (int)snapshot_sources_.size() - 1; i >= 0; --i) {
             auto name_idx = string_heap_.size();
-            string_heap_.push_back(snapshot_names_[i].empty()
-                                       ? std::format("snapshot-{}", i)
-                                       : snapshot_names_[i]);
+            string_heap_.push_back(snapshot_names_[i].empty() ? std::format("snapshot-{}", i)
+                                                              : snapshot_names_[i]);
             // Pair: (id . name)
             auto entry_pair = pairs_.size();
             pairs_.push_back({make_int(i), make_string(name_idx)});
@@ -12251,12 +12690,11 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         bool did_direct = false;
         {
             std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-            if (workspace_read_only_) return make_bool(false);
-            if (id < snapshot_flats_.size() &&
-                snapshot_flats_[id].has_flat &&
-                snapshot_flats_[id].flat &&
-                snapshot_flats_[id].pool &&
-                workspace_flat_ && workspace_pool_) {
+            if (workspace_read_only_)
+                return make_bool(false);
+            if (id < snapshot_flats_.size() && snapshot_flats_[id].has_flat &&
+                snapshot_flats_[id].flat && snapshot_flats_[id].pool && workspace_flat_ &&
+                workspace_pool_) {
                 try {
                     *workspace_flat_ = *snapshot_flats_[id].flat;
                     *workspace_pool_ = *snapshot_flats_[id].pool;
@@ -12265,8 +12703,10 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                     // (ASAN fix #107 leak) delete the old index.
                     defuse_index_destroy(&defuse_index_);
                     defuse_affected_syms_.clear();
-                    if (mark_all_defines_dirty_fn_) mark_all_defines_dirty_fn_();
-                    if (pre_cache_workspace_defines_fn_) pre_cache_workspace_defines_fn_();
+                    if (mark_all_defines_dirty_fn_)
+                        mark_all_defines_dirty_fn_();
+                    if (pre_cache_workspace_defines_fn_)
+                        pre_cache_workspace_defines_fn_();
                     did_direct = true;
                 } catch (...) {
                     // Fall through to source-based restore
@@ -12274,7 +12714,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                 }
             }
         }
-        if (did_direct) return make_bool(true);
+        if (did_direct)
+            return make_bool(true);
 
         // Source-based fallback (existing behavior). Holds its own
         // unique_lock inside set-code; we must not be holding ours
@@ -12411,29 +12852,75 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         for (aura::ast::NodeId id = 0; id < total_nodes; ++id) {
             auto v = flat.get(id);
             switch (v.tag) {
-                case aura::ast::NodeTag::LiteralInt:    type_counts["LiteralInt"]++; break;
-                case aura::ast::NodeTag::LiteralFloat:  type_counts["LiteralFloat"]++; break;
-                case aura::ast::NodeTag::LiteralString: type_counts["LiteralString"]++; break;
-                case aura::ast::NodeTag::Variable:      type_counts["Variable"]++; break;
-                case aura::ast::NodeTag::Call:          type_counts["Call"]++; break;
-                case aura::ast::NodeTag::IfExpr:        type_counts["IfExpr"]++; break;
-                case aura::ast::NodeTag::Lambda:        type_counts["Lambda"]++; break;
-                case aura::ast::NodeTag::Let:           type_counts["Let"]++; break;
-                case aura::ast::NodeTag::LetRec:        type_counts["LetRec"]++; break;
-                case aura::ast::NodeTag::Define:        type_counts["Define"]++; break;
-                case aura::ast::NodeTag::Begin:         type_counts["Begin"]++; break;
-                case aura::ast::NodeTag::Set:           type_counts["Set"]++; break;
-                case aura::ast::NodeTag::Quote:         type_counts["Quote"]++; break;
-                case aura::ast::NodeTag::Pair:          type_counts["Pair"]++; break;
-                case aura::ast::NodeTag::Export:        type_counts["Export"]++; break;
-                case aura::ast::NodeTag::TypeAnnotation: type_counts["TypeAnnotation"]++; break;
-                case aura::ast::NodeTag::Coercion:      type_counts["Coercion"]++; break;
-                case aura::ast::NodeTag::Linear:        type_counts["Linear"]++; break;
-                case aura::ast::NodeTag::Move:          type_counts["Move"]++; break;
-                case aura::ast::NodeTag::Borrow:        type_counts["Borrow"]++; break;
-                case aura::ast::NodeTag::MutBorrow:     type_counts["MutBorrow"]++; break;
-                case aura::ast::NodeTag::Drop:          type_counts["Drop"]++; break;
-                default:                                type_counts["Other"]++; break;
+                case aura::ast::NodeTag::LiteralInt:
+                    type_counts["LiteralInt"]++;
+                    break;
+                case aura::ast::NodeTag::LiteralFloat:
+                    type_counts["LiteralFloat"]++;
+                    break;
+                case aura::ast::NodeTag::LiteralString:
+                    type_counts["LiteralString"]++;
+                    break;
+                case aura::ast::NodeTag::Variable:
+                    type_counts["Variable"]++;
+                    break;
+                case aura::ast::NodeTag::Call:
+                    type_counts["Call"]++;
+                    break;
+                case aura::ast::NodeTag::IfExpr:
+                    type_counts["IfExpr"]++;
+                    break;
+                case aura::ast::NodeTag::Lambda:
+                    type_counts["Lambda"]++;
+                    break;
+                case aura::ast::NodeTag::Let:
+                    type_counts["Let"]++;
+                    break;
+                case aura::ast::NodeTag::LetRec:
+                    type_counts["LetRec"]++;
+                    break;
+                case aura::ast::NodeTag::Define:
+                    type_counts["Define"]++;
+                    break;
+                case aura::ast::NodeTag::Begin:
+                    type_counts["Begin"]++;
+                    break;
+                case aura::ast::NodeTag::Set:
+                    type_counts["Set"]++;
+                    break;
+                case aura::ast::NodeTag::Quote:
+                    type_counts["Quote"]++;
+                    break;
+                case aura::ast::NodeTag::Pair:
+                    type_counts["Pair"]++;
+                    break;
+                case aura::ast::NodeTag::Export:
+                    type_counts["Export"]++;
+                    break;
+                case aura::ast::NodeTag::TypeAnnotation:
+                    type_counts["TypeAnnotation"]++;
+                    break;
+                case aura::ast::NodeTag::Coercion:
+                    type_counts["Coercion"]++;
+                    break;
+                case aura::ast::NodeTag::Linear:
+                    type_counts["Linear"]++;
+                    break;
+                case aura::ast::NodeTag::Move:
+                    type_counts["Move"]++;
+                    break;
+                case aura::ast::NodeTag::Borrow:
+                    type_counts["Borrow"]++;
+                    break;
+                case aura::ast::NodeTag::MutBorrow:
+                    type_counts["MutBorrow"]++;
+                    break;
+                case aura::ast::NodeTag::Drop:
+                    type_counts["Drop"]++;
+                    break;
+                default:
+                    type_counts["Other"]++;
+                    break;
             }
         }
 
@@ -12472,7 +12959,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             auto name_idx = string_heap_.size();
             string_heap_.push_back(it->first);
             auto entry_pair = pairs_.size();
-            pairs_.push_back({make_string(name_idx), make_int(static_cast<std::int64_t>(it->second))});
+            pairs_.push_back(
+                {make_string(name_idx), make_int(static_cast<std::int64_t>(it->second))});
             auto cons_pair = pairs_.size();
             pairs_.push_back({make_pair(entry_pair), by_tag_list});
             by_tag_list = make_pair(cons_pair);
@@ -12526,10 +13014,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         std::unordered_set<std::string> ownership_bindings;
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
-            if ((v.tag == aura::ast::NodeTag::Move ||
-                 v.tag == aura::ast::NodeTag::Borrow ||
-                 v.tag == aura::ast::NodeTag::MutBorrow ||
-                 v.tag == aura::ast::NodeTag::Drop) &&
+            if ((v.tag == aura::ast::NodeTag::Move || v.tag == aura::ast::NodeTag::Borrow ||
+                 v.tag == aura::ast::NodeTag::MutBorrow || v.tag == aura::ast::NodeTag::Drop) &&
                 !v.children.empty()) {
                 auto inner_v = flat.get(v.child(0));
                 if (inner_v.tag == aura::ast::NodeTag::Variable) {
@@ -12562,8 +13048,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         }
 
         std::vector<aura::compiler::OwnershipNote> notes;
-        bool pass = aura::compiler::OwnershipEnv::validate_ownership(
-            flat, pool, flat.root, ownership_bindings, notes);
+        bool pass = aura::compiler::OwnershipEnv::validate_ownership(flat, pool, flat.root,
+                                                                     ownership_bindings, notes);
 
         // Build result alist
         // ((:pass true/false) (:notes ((:node N :message M :kind K) ...)))
@@ -12734,33 +13220,38 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   Parses and inserts multiple child expressions at the given position.
     //   code-strings can be multiple arguments (variadic).
     // Issue #213 Cycle 2: migrate mutate:splice to use the
-// MutationBoundaryGuard. The primitive mutates children_
-// (SoA column not in rollback switch), so the rollback
-// path is "bump version + invalidate defuse_index_".
-primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalValue {
-    bool ok = true;
-    aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
-    // (Step 0.3) local merr removed; centralized make_merr
-    if (workspace_read_only_) { ok = false; return make_merr("read-only", "workspace is read-only"); }
-    if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) ||
-        !workspace_flat_ || !workspace_pool_) {
-        ok = false;
-        return make_merr("bad-arg", "usage: (mutate:splice parent-id position code-strings... [summary])");
-    }
-    auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
-    auto pos = static_cast<std::uint32_t>(as_int(a[1]));
-    auto& flat = *workspace_flat_;
-    if (parent >= flat.size()) {
-        ok = false;
-        return make_merr("out-of-range", "parent node ID " + std::to_string(parent) + " >= flat size " + std::to_string(flat.size()));
-    }
+    // MutationBoundaryGuard. The primitive mutates children_
+    // (SoA column not in rollback switch), so the rollback
+    // path is "bump version + invalidate defuse_index_".
+    primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalValue {
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
+        // (Step 0.3) local merr removed; centralized make_merr
+        if (workspace_read_only_) {
+            ok = false;
+            return make_merr("read-only", "workspace is read-only");
+        }
+        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_ ||
+            !workspace_pool_) {
+            ok = false;
+            return make_merr("bad-arg",
+                             "usage: (mutate:splice parent-id position code-strings... [summary])");
+        }
+        auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto pos = static_cast<std::uint32_t>(as_int(a[1]));
+        auto& flat = *workspace_flat_;
+        if (parent >= flat.size()) {
+            ok = false;
+            return make_merr("out-of-range", "parent node ID " + std::to_string(parent) +
+                                                 " >= flat size " + std::to_string(flat.size()));
+        }
 
         // Collect all code strings (variadic) before the optional summary
         std::vector<EvalValue> code_args;
         for (std::size_t i = 2; i < a.size(); ++i) {
             // If the last arg is a string and it's the 4th+ arg, it might be summary
             if (i == a.size() - 1 && i >= 3 && is_string(a[i]))
-                continue;  // handled as summary below
+                continue; // handled as summary below
             if (is_string(a[i]))
                 code_args.push_back(a[i]);
         }
@@ -12793,8 +13284,8 @@ primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalVal
 
             flat.insert_child(parent, insert_pos, pr.root);
 
-            flat.add_mutation(parent, "splice", std::to_string(insert_pos),
-                              string_heap_[cidx], summary);
+            flat.add_mutation(parent, "splice", std::to_string(insert_pos), string_heap_[cidx],
+                              summary);
             workspace_flat_->mark_dirty_upward(parent);
 
             auto pid = pairs_.size();
@@ -12809,7 +13300,8 @@ primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalVal
             auto cur = result_list;
             while (is_pair(cur)) {
                 auto idx = as_pair_idx(cur);
-                if (idx >= pairs_.size()) break;
+                if (idx >= pairs_.size())
+                    break;
                 auto ridx = pairs_.size();
                 pairs_.push_back({pairs_[idx].car, reversed});
                 reversed = make_pair(ridx);
@@ -12830,30 +13322,34 @@ primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalVal
     //     (mutate:wrap 3 "(let ((x _)) x)" "bind x")
     //       → wraps in let binding
     // Issue #213 Cycle 2: migrate mutate:wrap to use the
-// MutationBoundaryGuard. Mutates children_ (SoA column
-// not in rollback switch), so the rollback path is
-// "bump version + invalidate defuse_index_".
-primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue {
-    bool ok = true;
-    aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
-    // local merr removed; now centralized make_merr (phase complete)
-    if (workspace_read_only_) { ok = false; return make_merr("read-only", "workspace is read-only"); }
-    if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
-        !workspace_flat_ || !workspace_pool_) {
-        ok = false;
-        return make_merr("bad-arg", "usage: (mutate:wrap node-id wrapper-template [summary])");
-    }
-    auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-    auto tmpl_idx = as_string_idx(a[1]);
-    if (tmpl_idx >= string_heap_.size()) {
-        ok = false;
-        return make_merr("bad-arg", "template string index out of range");
-    }
-    auto& flat = *workspace_flat_;
-    if (node >= flat.size()) {
-        ok = false;
-        return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
-    }
+    // MutationBoundaryGuard. Mutates children_ (SoA column
+    // not in rollback switch), so the rollback path is
+    // "bump version + invalidate defuse_index_".
+    primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue {
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
+        // local merr removed; now centralized make_merr (phase complete)
+        if (workspace_read_only_) {
+            ok = false;
+            return make_merr("read-only", "workspace is read-only");
+        }
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
+            !workspace_pool_) {
+            ok = false;
+            return make_merr("bad-arg", "usage: (mutate:wrap node-id wrapper-template [summary])");
+        }
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto tmpl_idx = as_string_idx(a[1]);
+        if (tmpl_idx >= string_heap_.size()) {
+            ok = false;
+            return make_merr("bad-arg", "template string index out of range");
+        }
+        auto& flat = *workspace_flat_;
+        if (node >= flat.size()) {
+            ok = false;
+            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                                 std::to_string(flat.size()));
+        }
 
         std::string summary = (a.size() > 2 && is_string(a[2]))
                                   ? string_heap_[as_string_idx(a[2])]
@@ -12873,12 +13369,14 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                     break;
                 }
             }
-            if (parent_of_target != aura::ast::NULL_NODE) break;
+            if (parent_of_target != aura::ast::NULL_NODE)
+                break;
         }
 
         if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0) {
             ok = false;
-            return make_merr("no-parent", "node " + std::to_string(node) + " has no parent in the AST");
+            return make_merr("no-parent",
+                             "node " + std::to_string(node) + " has no parent in the AST");
         }
 
         // Replace `_` in the template with a unique variable
@@ -12895,7 +13393,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             std::string parse_err;
             if (!pr.errors.empty()) {
                 for (auto& e : pr.errors) {
-                    if (!parse_err.empty()) parse_err += "; ";
+                    if (!parse_err.empty())
+                        parse_err += "; ";
                     parse_err += e.format();
                 }
             } else if (!pr.error.empty()) {
@@ -12926,16 +13425,17 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                             break;
                         }
                     }
-                    if (sentinel_parent != aura::ast::NULL_NODE) break;
+                    if (sentinel_parent != aura::ast::NULL_NODE)
+                        break;
                 }
                 break;
             }
         }
 
-        if (sentinel_id == aura::ast::NULL_NODE ||
-            sentinel_parent == aura::ast::NULL_NODE ||
+        if (sentinel_id == aura::ast::NULL_NODE || sentinel_parent == aura::ast::NULL_NODE ||
             sentinel_child_idx < 0)
-            return make_merr("internal", "sentinel placeholder not found in parsed wrapper template");
+            return make_merr("internal",
+                             "sentinel placeholder not found in parsed wrapper template");
 
         // Replace the sentinel variable in the wrapper with the target node
         flat.set_child(sentinel_parent, static_cast<std::uint32_t>(sentinel_child_idx), node);
@@ -12961,11 +13461,15 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
         // local merr removed; now centralized make_merr (phase complete)
-        if (workspace_read_only_) { ok = false; return make_merr("read-only", "workspace is read-only"); }
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
-            !workspace_flat_ || !workspace_pool_) {
+        if (workspace_read_only_) {
             ok = false;
-            return make_merr("bad-arg", "usage: (mutate:refactor/extract node-id new-name [summary])");
+            return make_merr("read-only", "workspace is read-only");
+        }
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
+            !workspace_pool_) {
+            ok = false;
+            return make_merr("bad-arg",
+                             "usage: (mutate:refactor/extract node-id new-name [summary])");
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto name_idx = as_string_idx(a[1]);
@@ -12976,13 +13480,13 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto& flat = *workspace_flat_;
         if (node >= flat.size()) {
             ok = false;
-            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                                 std::to_string(flat.size()));
         }
 
         auto new_name = string_heap_[name_idx];
-        std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? string_heap_[as_string_idx(a[2])]
-                                  : "extract " + new_name;
+        std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
+                                                                : "extract " + new_name;
 
         // Get the source code of the target node (for parsing)
         auto src_fn = primitives_.lookup("current-source");
@@ -13025,12 +13529,14 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                     break;
                 }
             }
-            if (parent_of_target != aura::ast::NULL_NODE) break;
+            if (parent_of_target != aura::ast::NULL_NODE)
+                break;
         }
 
         if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0) {
             ok = false;
-            return make_merr("no-parent", "node " + std::to_string(node) + " has no parent in the AST");
+            return make_merr("no-parent",
+                             "node " + std::to_string(node) + " has no parent in the AST");
         }
 
         // Create the new function definition string
@@ -13044,7 +13550,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             std::string parse_err;
             if (!pr.errors.empty()) {
                 for (auto& e : pr.errors) {
-                    if (!parse_err.empty()) parse_err += "; ";
+                    if (!parse_err.empty())
+                        parse_err += "; ";
                     parse_err += e.format();
                 }
             } else if (!pr.error.empty()) {
@@ -13070,7 +13577,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             flat.set_child(lambda_id, 0, node);
             // Remove the extracted node from its original parent
             flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent),
-                          pr.root);  // replace with the define's call: (new-name x)
+                           pr.root); // replace with the define's call: (new-name x)
         }
 
         auto new_fn_sym = workspace_pool_->intern(new_name);
@@ -13079,7 +13586,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // Return (define-node-id . call-to-restore)
         auto result_pid = pairs_.size();
         pairs_.push_back({make_int(static_cast<std::int64_t>(pr.root)),
-                         make_int(static_cast<std::int64_t>(parent_of_target))});
+                          make_int(static_cast<std::int64_t>(parent_of_target))});
         return make_pair(result_pid);
     });
 
@@ -13091,7 +13598,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // Given a Call node where func is a Variable, find the Define node
     // it refers to and return the Define's body. Returns NULL_NODE if not found.
     auto resolve_call_target = [&](const aura::ast::FlatAST& flat, aura::ast::NodeId call_id,
-                                   aura::ast::FlatAST* override_flat = nullptr) -> aura::ast::NodeId {
+                                   aura::ast::FlatAST* override_flat =
+                                       nullptr) -> aura::ast::NodeId {
         using namespace aura::ast;
         auto& f = override_flat ? *override_flat : flat;
         auto cv = f.get(call_id);
@@ -13117,7 +13625,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // Returns a list of SymIds for variables used but not defined within the subtree.
     // Scoped bindings (lambda params, let, letrec) are excluded.
     auto collect_free_vars = [&](const aura::ast::FlatAST& flat, aura::ast::NodeId root_id,
-                                  aura::ast::StringPool& pool) -> std::vector<aura::ast::SymId> {
+                                 aura::ast::StringPool& pool) -> std::vector<aura::ast::SymId> {
         using namespace aura::ast;
         std::vector<SymId> free_vars;
         std::unordered_set<SymId> bound_vars;
@@ -13184,7 +13692,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                         if (v.tag == NodeTag::Variable) {
                             if (bound_vars.find(v.sym_id) == bound_vars.end()) {
                                 // Not bound — check if already in free_vars
-                                if (std::find(free_vars.begin(), free_vars.end(), v.sym_id) == free_vars.end())
+                                if (std::find(free_vars.begin(), free_vars.end(), v.sym_id) ==
+                                    free_vars.end())
                                     free_vars.push_back(v.sym_id);
                             }
                         }
@@ -13217,8 +13726,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             ok = false;
             return make_merr("read-only", "workspace is read-only");
         }
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||
-            !workspace_flat_ || !workspace_pool_) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
+            !workspace_pool_) {
             ok = false;
             return make_merr("bad-arg", "usage: (mutate:rename-symbol old-name new-name)");
         }
@@ -13245,8 +13754,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 // Only rename Variable, Define, DefineType, DefineModule, Let, LetRec, Set
                 if (tag == NodeTag::Variable || tag == NodeTag::Define ||
                     tag == NodeTag::DefineType || tag == NodeTag::DefineModule ||
-                    tag == NodeTag::Let || tag == NodeTag::LetRec ||
-                    tag == NodeTag::Set || tag == NodeTag::MacroDef) {
+                    tag == NodeTag::Let || tag == NodeTag::LetRec || tag == NodeTag::Set ||
+                    tag == NodeTag::MacroDef) {
                     flat.sym_id(id) = new_sym;
                     count++;
                 }
@@ -13264,7 +13773,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
         if (count == 0) {
             ok = false;
-            return make_merr("not-found", std::string("symbol \"") + old_name + "\" not found in AST");
+            return make_merr("not-found",
+                             std::string("symbol \"") + old_name + "\" not found in AST");
         }
 
         flat.add_mutation(0, "rename-symbol", old_name, new_name, summary);
@@ -13291,8 +13801,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             ok = false;
             return make_merr("read-only", "workspace is read-only");
         }
-        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
-            !workspace_flat_) {
+        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !workspace_flat_) {
             ok = false;
             return make_merr("bad-arg", "usage: (mutate:move-node node parent pos)");
         }
@@ -13301,8 +13810,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto new_pos = static_cast<std::uint32_t>(as_int(a[2]));
         auto& flat = *workspace_flat_;
 
-        if (node >= flat.size() || new_parent >= flat.size() ||
-            node == NULL_NODE || new_parent == NULL_NODE) {
+        if (node >= flat.size() || new_parent >= flat.size() || node == NULL_NODE ||
+            new_parent == NULL_NODE) {
             ok = false;
             return make_merr("out-of-range", "node or parent ID out of range");
         }
@@ -13321,7 +13830,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                     return make_merr("cycle", "new parent is a descendant of moved node");
                 }
                 auto next = flat.parent_of(p);
-                if (next == p) break;
+                if (next == p)
+                    break;
                 p = next;
             }
         }
@@ -13356,8 +13866,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // Insert at new parent
         flat.insert_child(new_parent, new_pos, node);
 
-        flat.add_mutation(node, "move-node", std::to_string(cur_parent),
-                          std::to_string(new_parent), summary);
+        flat.add_mutation(node, "move-node", std::to_string(cur_parent), std::to_string(new_parent),
+                          summary);
         return make_bool(true);
     });
 
@@ -13367,116 +13877,118 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     //   Extracts a subtree into a new top-level function definition.
     //   Analyzes free variables in the subtree and makes them parameters.
     //   Replaces the original node with a call to the new function.
-    primitives_.add("mutate:extract-function", [this, collect_free_vars](const auto& a) -> EvalValue {
-        using namespace aura::ast;
-        // last local merr definition removed; all calls use centralized make_merr
-        defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
-        if (workspace_read_only_)
-            return make_merr("read-only", "workspace is read-only");
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
-            !workspace_flat_ || !workspace_pool_)
-            return make_merr("bad-arg", "usage: (mutate:extract-function node-id name)");
-        auto node = static_cast<NodeId>(as_int(a[0]));
-        auto name_idx = as_string_idx(a[1]);
-        if (name_idx >= string_heap_.size())
-            return make_merr("bad-arg", "name string index out of range");
-        auto& flat = *workspace_flat_;
-        if (node >= flat.size())
-            return make_merr("out-of-range", std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+    primitives_.add(
+        "mutate:extract-function", [this, collect_free_vars](const auto& a) -> EvalValue {
+            using namespace aura::ast;
+            // last local merr definition removed; all calls use centralized make_merr
+            defuse_version_.fetch_add(1, std::memory_order_acq_rel);
+            total_mutations_.fetch_add(1, std::memory_order_relaxed);
+            if (workspace_read_only_)
+                return make_merr("read-only", "workspace is read-only");
+            if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
+                !workspace_pool_)
+                return make_merr("bad-arg", "usage: (mutate:extract-function node-id name)");
+            auto node = static_cast<NodeId>(as_int(a[0]));
+            auto name_idx = as_string_idx(a[1]);
+            if (name_idx >= string_heap_.size())
+                return make_merr("bad-arg", "name string index out of range");
+            auto& flat = *workspace_flat_;
+            if (node >= flat.size())
+                return make_merr("out-of-range", std::to_string(node) + " >= flat size " +
+                                                     std::to_string(flat.size()));
 
-        auto new_name = string_heap_[name_idx];
-        std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? string_heap_[as_string_idx(a[2])]
-                                  : "extract " + new_name;
+            auto new_name = string_heap_[name_idx];
+            std::string summary = (a.size() > 2 && is_string(a[2]))
+                                      ? string_heap_[as_string_idx(a[2])]
+                                      : "extract " + new_name;
 
-        // Find parent of target node using parent_ vector
-        auto parent_of_target = flat.parent_of(node);
-        if (parent_of_target == NULL_NODE)
-            return make_merr("no-parent", "extracted node has no parent");
+            // Find parent of target node using parent_ vector
+            auto parent_of_target = flat.parent_of(node);
+            if (parent_of_target == NULL_NODE)
+                return make_merr("no-parent", "extracted node has no parent");
 
-        // Find child index in parent
-        int child_idx_in_parent = -1;
-        auto pv = flat.get(parent_of_target);
-        for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-            if (pv.child(ci) == node) {
-                child_idx_in_parent = static_cast<int>(ci);
-                break;
+            // Find child index in parent
+            int child_idx_in_parent = -1;
+            auto pv = flat.get(parent_of_target);
+            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                if (pv.child(ci) == node) {
+                    child_idx_in_parent = static_cast<int>(ci);
+                    break;
+                }
             }
-        }
-        if (child_idx_in_parent < 0)
-            return make_merr("inconsistency", "node not found in parent's children list");
+            if (child_idx_in_parent < 0)
+                return make_merr("inconsistency", "node not found in parent's children list");
 
-        // Collect free variables in the extracted subtree
-        // Filter out common built-in symbols
-        auto raw_free_vars = collect_free_vars(flat, node, *workspace_pool_);
-        std::vector<SymId> free_vars;
-        {
-            static const char* builtins[] = {
-                "+", "-", "*", "/", "%", "=", "<", ">", "<=", ">=",
-                "display", "newline", "print", "read",
-                "car", "cdr", "cons", "pair?", "null?", "list",
-                "eq?", "eqv?", "equal?", "not", "and", "or", "if", "cond",
-                "lambda", "define", "let", "letrec", "begin", "set!",
-                "apply", "map", "filter", "foldl", "foldr",
-                "string?", "number?", "symbol?", "procedure?",
-                "void", "make-void", "error", "assert",
-            };
-            std::unordered_set<SymId> builtin_syms;
-            for (auto b : builtins)
-                builtin_syms.insert(workspace_pool_->intern(b));
-            for (auto fv : raw_free_vars) {
-                if (builtin_syms.find(fv) == builtin_syms.end())
-                    free_vars.push_back(fv);
+            // Collect free variables in the extracted subtree
+            // Filter out common built-in symbols
+            auto raw_free_vars = collect_free_vars(flat, node, *workspace_pool_);
+            std::vector<SymId> free_vars;
+            {
+                static const char* builtins[] = {
+                    "+",          "-",      "*",         "/",       "%",       "=",       "<",
+                    ">",          "<=",     ">=",        "display", "newline", "print",   "read",
+                    "car",        "cdr",    "cons",      "pair?",   "null?",   "list",    "eq?",
+                    "eqv?",       "equal?", "not",       "and",     "or",      "if",      "cond",
+                    "lambda",     "define", "let",       "letrec",  "begin",   "set!",    "apply",
+                    "map",        "filter", "foldl",     "foldr",   "string?", "number?", "symbol?",
+                    "procedure?", "void",   "make-void", "error",   "assert",
+                };
+                std::unordered_set<SymId> builtin_syms;
+                for (auto b : builtins)
+                    builtin_syms.insert(workspace_pool_->intern(b));
+                for (auto fv : raw_free_vars) {
+                    if (builtin_syms.find(fv) == builtin_syms.end())
+                        free_vars.push_back(fv);
+                }
             }
-        }
 
-        // Step 1: Create lambda with free vars as params, body = extracted node
-        auto lambda_id = flat.add_lambda(free_vars, node);
+            // Step 1: Create lambda with free vars as params, body = extracted node
+            auto lambda_id = flat.add_lambda(free_vars, node);
 
-        // Step 2: Create (define new-name lambda)
-        auto new_sym = workspace_pool_->intern(new_name);
-        auto define_id = flat.add_define(new_sym, lambda_id);
-        flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
-        flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
+            // Step 2: Create (define new-name lambda)
+            auto new_sym = workspace_pool_->intern(new_name);
+            auto define_id = flat.add_define(new_sym, lambda_id);
+            flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
+            flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
 
-        // Step 3: Create call site (new-name free-var-1 ...)
-        auto var_id = flat.add_variable(new_sym);
-        flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
-        std::vector<NodeId> call_args;
-        call_args.reserve(free_vars.size());
-        for (auto fv : free_vars) {
-            auto arg_var = flat.add_variable(fv);
-            call_args.push_back(arg_var);
-        }
-        auto call_id = flat.add_call(var_id, call_args);
-        flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
+            // Step 3: Create call site (new-name free-var-1 ...)
+            auto var_id = flat.add_variable(new_sym);
+            flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
+            std::vector<NodeId> call_args;
+            call_args.reserve(free_vars.size());
+            for (auto fv : free_vars) {
+                auto arg_var = flat.add_variable(fv);
+                call_args.push_back(arg_var);
+            }
+            auto call_id = flat.add_call(var_id, call_args);
+            flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
 
-        // Step 5: Replace original node slot with the call
-        flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent), call_id);
+            // Step 5: Replace original node slot with the call
+            flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent),
+                           call_id);
 
-        // Step 6: Insert new define as a child of the workspace root
-        // Insert at position 0 (before other defs) to avoid forward-reference issues
-        auto ws_root = flat.root;
-        if (ws_root != NULL_NODE && ws_root < flat.size()) {
-            flat.insert_child(ws_root, 0, define_id);
-        }
+            // Step 6: Insert new define as a child of the workspace root
+            // Insert at position 0 (before other defs) to avoid forward-reference issues
+            auto ws_root = flat.root;
+            if (ws_root != NULL_NODE && ws_root < flat.size()) {
+                flat.insert_child(ws_root, 0, define_id);
+            }
 
-        workspace_flat_->mark_dirty_upward(define_id);
-        if (ws_root != aura::ast::NULL_NODE)
-            workspace_flat_->mark_dirty_upward(ws_root);
+            workspace_flat_->mark_dirty_upward(define_id);
+            if (ws_root != aura::ast::NULL_NODE)
+                workspace_flat_->mark_dirty_upward(ws_root);
 
-        flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
+            flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
 
-        // Return (define-node-id . call-node-id)
-        auto result_pid = pairs_.size();
-        {
-            auto car_val = make_int(static_cast<std::int64_t>(define_id));
-            auto cdr_val = make_int(static_cast<std::int64_t>(call_id));
-            pairs_.push_back(Pair{car_val, cdr_val});
-        }
-        return make_pair(result_pid);
-    });
+            // Return (define-node-id . call-node-id)
+            auto result_pid = pairs_.size();
+            {
+                auto car_val = make_int(static_cast<std::int64_t>(define_id));
+                auto cdr_val = make_int(static_cast<std::int64_t>(call_id));
+                pairs_.push_back(Pair{car_val, cdr_val});
+            }
+            return make_pair(result_pid);
+        });
 
     // ── mutate:inline-call ──────────────────────────────────────
     // (mutate:inline-call call-node-id "summary")
@@ -13504,7 +14016,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
         auto cv = flat.get(call_id);
         if (cv.tag != NodeTag::Call || cv.children.empty())
-            return make_merr("type-error", "node " + std::to_string(call_id) + " is not a call node");
+            return make_merr("type-error",
+                             "node " + std::to_string(call_id) + " is not a call node");
 
         std::string summary = (a.size() > 1 && is_string(a[1]))
                                   ? string_heap_[as_string_idx(a[1])]
@@ -13515,7 +14028,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto fv = flat.get(func_node);
 
         // Find the function body and formal params
-        NodeId func_body_node = NULL_NODE;     // the lambda node
+        NodeId func_body_node = NULL_NODE; // the lambda node
         std::vector<SymId> formal_params;
         bool is_closure_call = false;
 
@@ -13639,10 +14152,12 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                         new_id = flat.add_raw_node(v.tag);
                         break;
                     case NodeTag::Let:
-                        new_id = flat.add_let(aura::ast::INVALID_SYM, aura::ast::NULL_NODE, aura::ast::NULL_NODE);
+                        new_id = flat.add_let(aura::ast::INVALID_SYM, aura::ast::NULL_NODE,
+                                              aura::ast::NULL_NODE);
                         break;
                     case NodeTag::LetRec:
-                        new_id = flat.add_letrec(aura::ast::INVALID_SYM, aura::ast::NULL_NODE, aura::ast::NULL_NODE);
+                        new_id = flat.add_letrec(aura::ast::INVALID_SYM, aura::ast::NULL_NODE,
+                                                 aura::ast::NULL_NODE);
                         break;
                     default:
                         new_id = flat.add_raw_node(v.tag);
@@ -13671,9 +14186,13 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             // Skip if this was a param substitution (reused arg node)
             bool is_reused_arg = false;
             for (auto arg : actual_args) {
-                if (arg == new_id) { is_reused_arg = true; break; }
+                if (arg == new_id) {
+                    is_reused_arg = true;
+                    break;
+                }
             }
-            if (is_reused_arg) continue;
+            if (is_reused_arg)
+                continue;
 
             auto old_v = flat.get(static_cast<NodeId>(old_nid));
             // For Lambda, copy params
@@ -13681,7 +14200,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 // Lambda params: set body child, then copy params
                 if (!old_v.children.empty()) {
                     auto old_child = old_v.child(0);
-                    if (old_child < old_to_new.size() && old_to_new[old_child] != aura::ast::NULL_NODE)
+                    if (old_child < old_to_new.size() &&
+                        old_to_new[old_child] != aura::ast::NULL_NODE)
                         flat.set_child(new_id, 0, old_to_new[old_child]);
                 }
                 continue;
@@ -13691,8 +14211,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             for (std::size_t ci = 0; ci < old_v.children.size(); ++ci) {
                 auto old_child = old_v.child(ci);
                 if (old_child != aura::ast::NULL_NODE) {
-                    if (old_child < old_to_new.size() && old_to_new[old_child] != aura::ast::NULL_NODE) {
-                        flat.set_child(new_id, static_cast<std::uint32_t>(ci), old_to_new[old_child]);
+                    if (old_child < old_to_new.size() &&
+                        old_to_new[old_child] != aura::ast::NULL_NODE) {
+                        flat.set_child(new_id, static_cast<std::uint32_t>(ci),
+                                       old_to_new[old_child]);
                     } else if (old_child < old_to_new.size()) {
                         // Child was a param substitution — use actual arg
                         // Check if old_child is a param
@@ -13700,7 +14222,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                         if (old_cv.tag == NodeTag::Variable) {
                             for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
                                 if (formal_params[pi] == old_cv.sym_id) {
-                                    flat.set_child(new_id, static_cast<std::uint32_t>(ci), actual_args[pi]);
+                                    flat.set_child(new_id, static_cast<std::uint32_t>(ci),
+                                                   actual_args[pi]);
                                     break;
                                 }
                             }
@@ -13722,7 +14245,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     });
 
     // ═══════════════════════════════════════════════════════════════
-        // ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
     // P13: Workspace Layering (P1 — COW + read-only lock)
     // ═══════════════════════════════════════════════════════════════
 
@@ -13732,8 +14255,11 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         if (!workspace_tree_) {
             auto* wtt = new WorkspaceTree();
             WorkspaceNode root;
-            root.name = "root"; root.is_root = true; root.has_own_flat = true;
-            root.flat = workspace_flat_; root.pool = workspace_pool_;
+            root.name = "root";
+            root.is_root = true;
+            root.has_own_flat = true;
+            root.flat = workspace_flat_;
+            root.pool = workspace_pool_;
             wtt->nodes_.push_back(std::move(root));
             workspace_tree_ = wtt;
         }
@@ -13746,7 +14272,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         std::string name;
         if (a.size() >= 1 && is_string(a[0]))
             name = string_heap_[as_string_idx(a[0])];
-        if (name.empty()) name = "ws-" + std::to_string(wt->size());
+        if (name.empty())
+            name = "ws-" + std::to_string(wt->size());
         auto id = wt->create_child(name, workspace_flat_, workspace_pool_);
         return make_int(static_cast<std::int64_t>(id));
     });
@@ -13766,7 +14293,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             // Issue #141 AC: COW must be lazy (zero-cost until first mutate).
             // Don't trigger ensure_local_flat on switch — let mutate:* do it.
             ws = wt->active();
-            if (ws) { workspace_flat_ = ws->flat; workspace_pool_ = ws->pool; }
+            if (ws) {
+                workspace_flat_ = ws->flat;
+                workspace_pool_ = ws->pool;
+            }
         }
         workspace_read_only_ = ws ? ws->read_only : false;
         // (ASAN fix #107 leak) delete the old index.
@@ -13776,14 +14306,16 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
     // (workspace:current) → id
     primitives_.add("workspace:current", [this](const auto&) -> EvalValue {
-        if (!workspace_tree_) return make_int(0);
+        if (!workspace_tree_)
+            return make_int(0);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
         return make_int(static_cast<std::int64_t>(wt->active_idx()));
     });
 
     // (workspace:list) → ((id name [flags]) ...)
     primitives_.add("workspace:list", [this](const auto&) -> EvalValue {
-        if (!workspace_tree_) return make_void();
+        if (!workspace_tree_)
+            return make_void();
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
         EvalValue result = make_void();
         for (int i = static_cast<int>(wt->size()) - 1; i >= 0; --i) {
@@ -13805,62 +14337,77 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // Issue #97 Action 3: per-workspace memory primitives
     // (workspace:memory-used) → bytes used by current workspace
     primitives_.add("workspace:memory-used", [this](const auto&) -> EvalValue {
-        if (!workspace_tree_) return make_int(0);
+        if (!workspace_tree_)
+            return make_int(0);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
         auto* n = wt->active();
-        if (!n) return make_int(0);
+        if (!n)
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(n->memory_used));
     });
 
     // (workspace:memory-limit) → current limit (or -1 if unlimited)
     primitives_.add("workspace:memory-limit", [this](const auto&) -> EvalValue {
-        if (!workspace_tree_) return make_int(-1);
+        if (!workspace_tree_)
+            return make_int(-1);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
         auto* n = wt->active();
-        if (!n) return make_int(-1);
-        if (n->memory_budget == 0) return make_int(-1);
+        if (!n)
+            return make_int(-1);
+        if (n->memory_budget == 0)
+            return make_int(-1);
         return make_int(static_cast<std::int64_t>(n->memory_budget));
     });
 
     // (workspace:set-memory-limit bytes) → #t/#f. 0 = unlimited.
-    primitives_.add("workspace:set-memory-limit", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
-            return make_bool(false);
-        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
-        auto* n = wt->active();
-        if (!n) return make_bool(false);
-        auto bytes = as_int(a[0]);
-        if (bytes < 0) return make_bool(false);
-        n->memory_budget = static_cast<std::size_t>(bytes);
-        return make_bool(true);
-    });
+    primitives_.add("workspace:set-memory-limit",
+                    [this](std::span<const EvalValue> a) -> EvalValue {
+                        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
+                            return make_bool(false);
+                        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+                        auto* n = wt->active();
+                        if (!n)
+                            return make_bool(false);
+                        auto bytes = as_int(a[0]);
+                        if (bytes < 0)
+                            return make_bool(false);
+                        n->memory_budget = static_cast<std::size_t>(bytes);
+                        return make_bool(true);
+                    });
 
     // (workspace:cow-refused-count) → COW refusals for this workspace
     primitives_.add("workspace:cow-refused-count", [this](const auto&) -> EvalValue {
-        if (!workspace_tree_) return make_int(0);
+        if (!workspace_tree_)
+            return make_int(0);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
         auto* n = wt->active();
-        if (!n) return make_int(0);
+        if (!n)
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(n->cow_refused_count));
     });
 
-    primitives_.add("workspace:set-memory-limit", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
-            return make_bool(false);
-        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
-        auto* n = wt->active();
-        if (!n) return make_bool(false);
-        auto bytes = as_int(a[0]);
-        if (bytes < 0) return make_bool(false);
-        n->memory_budget = static_cast<std::size_t>(bytes);
-        return make_bool(true);
-    });
+    primitives_.add("workspace:set-memory-limit",
+                    [this](std::span<const EvalValue> a) -> EvalValue {
+                        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
+                            return make_bool(false);
+                        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+                        auto* n = wt->active();
+                        if (!n)
+                            return make_bool(false);
+                        auto bytes = as_int(a[0]);
+                        if (bytes < 0)
+                            return make_bool(false);
+                        n->memory_budget = static_cast<std::size_t>(bytes);
+                        return make_bool(true);
+                    });
 
     primitives_.add("workspace:cow-refused-count", [this](const auto&) -> EvalValue {
-        if (!workspace_tree_) return make_int(0);
+        if (!workspace_tree_)
+            return make_int(0);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
         auto* n = wt->active();
-        if (!n) return make_int(0);
+        if (!n)
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(n->cow_refused_count));
     });
 
@@ -13919,7 +14466,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // (workspace:can-write? [id])
     //   → #t if workspace allows mutations
     primitives_.add("workspace:can-write?", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (!workspace_tree_) return make_bool(true);
+        if (!workspace_tree_)
+            return make_bool(true);
         auto* __tw2 = static_cast<WorkspaceTree*>(workspace_tree_);
         std::uint32_t idx = __tw2->active_idx();
         if (a.size() >= 1 && is_int(a[0]))
@@ -13936,9 +14484,11 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // Helper: get a workspace's source code by ID
     auto get_ws_source = [this](std::uint32_t ws_id) -> std::string {
         auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
-        if (!tree || ws_id >= tree->size()) return "";
+        if (!tree || ws_id >= tree->size())
+            return "";
         auto& ws = tree->nodes_[ws_id];
-        if (!ws.flat || !ws.pool) return "";
+        if (!ws.flat || !ws.pool)
+            return "";
         // Switch to this workspace temporarily to get source
         auto saved_flat = workspace_flat_;
         auto saved_pool = workspace_pool_;
@@ -13983,7 +14533,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
         // Get source from the target workspace
         auto source = get_ws_source(src_id);
-        if (source.empty()) return make_bool(false);
+        if (source.empty())
+            return make_bool(false);
 
         // Phase 2.5.0: tmp_pool stays separate from canonical_pool.
         // Source is parsed fresh for a one-off conflict-detection walk
@@ -14016,7 +14567,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // Use mutate:rebind which takes source code as a string
         // The rebind function signature is: (mutate:rebind name code-string summary)
         // We need (define name code) as a string for the function body
-        
+
         // Simplified P0: re-parse the whole source into current workspace flat,
         // find the define node, and set up for rebind
         auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
@@ -14026,7 +14577,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         if (current_idx > 0) {
             tree->ensure_local_flat(current_idx);
             auto* ws = tree->active();
-            if (ws) { workspace_flat_ = ws->flat; workspace_pool_ = ws->pool; }
+            if (ws) {
+                workspace_flat_ = ws->flat;
+                workspace_pool_ = ws->pool;
+            }
         }
 
         // Use mutate:rebind to replace the function
@@ -14039,10 +14593,12 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             string_heap_.push_back(code);
             auto si = string_heap_.size();
             string_heap_.push_back(sym_name);
-            auto result = (*rebind_fn)({make_string(si), make_string(ci), make_string(sym_idx + 1 < string_heap_.size() ? sym_idx : si)});
+            auto result =
+                (*rebind_fn)({make_string(si), make_string(ci),
+                              make_string(sym_idx + 1 < string_heap_.size() ? sym_idx : si)});
             if (is_bool(result) && as_bool(result)) {
                 defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
+                total_mutations_.fetch_add(1, std::memory_order_relaxed);
                 return make_bool(true);
             }
         }
@@ -14055,8 +14611,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             workspace_flat_->root = saved_root;
             return make_bool(false);
         }
-        workspace_flat_->root = saved_root;  // Keep original root
-        
+        workspace_flat_->root = saved_root; // Keep original root
+
         // Now use mutate:rebind with the parsed body
         // Find the parsed define in current workspace and rebind
         auto current_sym = workspace_pool_->intern(sym_name);
@@ -14065,16 +14621,16 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             auto v = workspace_flat_->get(id);
             if (v.tag == aura::ast::NodeTag::Define && v.sym_id == current_sym) {
                 if (id > saved_root || (id == saved_root && new_def == aura::ast::NULL_NODE))
-                    new_def = id;  // find the one that was just parsed (highest ID)
+                    new_def = id; // find the one that was just parsed (highest ID)
             }
         }
-        
+
         if (new_def != aura::ast::NULL_NODE) {
             defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
+            total_mutations_.fetch_add(1, std::memory_order_relaxed);
             return make_bool(true);
         }
-        return make_bool(true);  // Parsed into workspace flat
+        return make_bool(true); // Parsed into workspace flat
     });
 
     // (workspace:discard id)
@@ -14089,8 +14645,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             return make_bool(false);
         auto& ws = tree->nodes_[idx];
         if (!ws.has_own_flat)
-            return make_bool(true);  // already in parent state
-        
+            return make_bool(true); // already in parent state
+
         if (ws.parent_flat_) {
             delete ws.flat;
             delete ws.pool;
@@ -14099,7 +14655,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             ws.has_own_flat = false;
             ws.generation = 0;
             defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
+            total_mutations_.fetch_add(1, std::memory_order_relaxed);
             // If we just discarded the active workspace, sync pointers
             if (idx == tree->active_idx()) {
                 workspace_flat_ = ws.flat;
@@ -14126,7 +14682,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
         // Get child's source
         auto child_source = get_ws_source(child_idx);
-        if (child_source.empty()) return make_bool(false);
+        if (child_source.empty())
+            return make_bool(false);
 
         // Parent is root (0)
         auto& parent = tree->nodes_[0];
@@ -14198,7 +14755,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         std::string result = "(";
         bool first = true;
         for (auto& nm : child_names) {
-            if (!first) result += " ";
+            if (!first)
+                result += " ";
             result += "(\"" + nm + "\" . \"merged\")";
             first = false;
         }
@@ -14226,21 +14784,22 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // grow the workspace pool with names that have no semantic
     // value to the long-lived workspace.
     // Helper: extract define names from a source string
-    auto extract_defines = [this](const std::string& src)
-        -> std::unordered_set<std::string> {
+    auto extract_defines = [this](const std::string& src) -> std::unordered_set<std::string> {
         std::unordered_set<std::string> names;
-        if (src.empty()) return names;
+        if (src.empty())
+            return names;
         aura::ast::StringPool tmp_pool;
         aura::ast::FlatAST tmp_flat;
         auto pr = aura::parser::parse_to_flat(src, tmp_flat, tmp_pool);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) return names;
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return names;
         tmp_flat.root = pr.root;
         for (aura::ast::NodeId id = 0; id < tmp_flat.size(); ++id) {
             auto v = tmp_flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Define &&
-                v.sym_id != aura::ast::INVALID_SYM) {
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
                 auto nm = tmp_pool.resolve(v.sym_id);
-                if (!nm.empty()) names.insert(std::string(nm));
+                if (!nm.empty())
+                    names.insert(std::string(nm));
             }
         }
         return names;
@@ -14251,49 +14810,54 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     //   Returns an unordered list of strings, or () if no conflicts.
     //   Dry run - does NOT modify either workspace.
     primitives_.add("workspace:conflicts-with",
-                     [this, get_ws_source, extract_defines](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !workspace_tree_) return make_void();
-        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
-        auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
-        if (child_idx == 0 || child_idx >= tree->size()) return make_void();
-        auto child_source = get_ws_source(child_idx);
-        if (child_source.empty()) return make_void();
-        auto& parent = tree->nodes_[0];
-        if (parent.read_only) return make_void();
-        workspace_flat_ = parent.flat;
-        workspace_pool_ = parent.pool;
-        tree->set_active(0);
-        auto src_fn = primitives_.lookup("current-source");
-        std::string parent_source;
-        if (src_fn) {
-            // Issue #135: pass :workspace so we read the parent
-            // workspace's saved flat, not the per-eval current flat.
-            std::uint64_t ws_kw = keyword_table_.size();
-            keyword_table_.push_back(":workspace");
-            auto src = (*src_fn)({types::make_keyword(ws_kw)});
-            if (is_string(src)) {
-                auto sidx = as_string_idx(src);
-                if (sidx < string_heap_.size())
-                    parent_source = string_heap_[sidx];
-            }
-        }
-        auto parent_names = extract_defines(parent_source);
-        auto child_names = extract_defines(child_source);
-        std::vector<std::string> conflicts;
-        for (auto& n : child_names) {
-            if (parent_names.count(n)) conflicts.push_back(n);
-        }
-        std::sort(conflicts.begin(), conflicts.end());
-        EvalValue result = make_void();
-        for (auto it = conflicts.rbegin(); it != conflicts.rend(); ++it) {
-            auto sidx = string_heap_.size();
-            string_heap_.push_back(*it);
-            auto pidx = pairs_.size();
-            pairs_.push_back({make_string(sidx), result});
-            result = make_pair(pidx);
-        }
-        return result;
-    });
+                    [this, get_ws_source, extract_defines](const auto& a) -> EvalValue {
+                        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
+                            return make_void();
+                        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+                        auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
+                        if (child_idx == 0 || child_idx >= tree->size())
+                            return make_void();
+                        auto child_source = get_ws_source(child_idx);
+                        if (child_source.empty())
+                            return make_void();
+                        auto& parent = tree->nodes_[0];
+                        if (parent.read_only)
+                            return make_void();
+                        workspace_flat_ = parent.flat;
+                        workspace_pool_ = parent.pool;
+                        tree->set_active(0);
+                        auto src_fn = primitives_.lookup("current-source");
+                        std::string parent_source;
+                        if (src_fn) {
+                            // Issue #135: pass :workspace so we read the parent
+                            // workspace's saved flat, not the per-eval current flat.
+                            std::uint64_t ws_kw = keyword_table_.size();
+                            keyword_table_.push_back(":workspace");
+                            auto src = (*src_fn)({types::make_keyword(ws_kw)});
+                            if (is_string(src)) {
+                                auto sidx = as_string_idx(src);
+                                if (sidx < string_heap_.size())
+                                    parent_source = string_heap_[sidx];
+                            }
+                        }
+                        auto parent_names = extract_defines(parent_source);
+                        auto child_names = extract_defines(child_source);
+                        std::vector<std::string> conflicts;
+                        for (auto& n : child_names) {
+                            if (parent_names.count(n))
+                                conflicts.push_back(n);
+                        }
+                        std::sort(conflicts.begin(), conflicts.end());
+                        EvalValue result = make_void();
+                        for (auto it = conflicts.rbegin(); it != conflicts.rend(); ++it) {
+                            auto sidx = string_heap_.size();
+                            string_heap_.push_back(*it);
+                            auto pidx = pairs_.size();
+                            pairs_.push_back({make_string(sidx), result});
+                            result = make_pair(pidx);
+                        }
+                        return result;
+                    });
 
     // (workspace:merge-3way base-id ours-id theirs-id [strategy: ...]) -> #t
     //   Source-level 3-way merge. The merged source combines all 3.
@@ -14312,16 +14876,20 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         std::string strategy = "ours";
         if (a.size() >= 4 && is_string(a[3])) {
             auto sidx = as_string_idx(a[3]);
-            if (sidx < string_heap_.size()) strategy = string_heap_[sidx];
+            if (sidx < string_heap_.size())
+                strategy = string_heap_[sidx];
         }
         auto base_source = get_ws_source(base_id);
         auto ours_source = get_ws_source(ours_id);
         auto theirs_source = get_ws_source(theirs_id);
         std::string merged;
-        if (!base_source.empty()) merged += base_source;
+        if (!base_source.empty())
+            merged += base_source;
         auto append_ws = [&merged](const std::string& s) {
-            if (s.empty()) return;
-            if (!merged.empty() && merged.back() != '\n') merged += '\n';
+            if (s.empty())
+                return;
+            if (!merged.empty() && merged.back() != '\n')
+                merged += '\n';
             merged += s;
         };
         if (strategy == "theirs") {
@@ -14331,7 +14899,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             append_ws(ours_source);
             append_ws(theirs_source);
         }
-        if (tree->nodes_[base_id].read_only) return make_bool(false);
+        if (tree->nodes_[base_id].read_only)
+            return make_bool(false);
         tree->set_active(base_id);
         workspace_flat_ = tree->nodes_[base_id].flat;
         workspace_pool_ = tree->nodes_[base_id].pool;
@@ -14343,7 +14912,6 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         }
         return make_bool(false);
     });
-
 
 
     // ═══════════════════════════════════════════════════════════════
@@ -14361,7 +14929,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         if (a.size() < 2 || !is_string(a[0]))
             return make_bool(false);
         auto& bridge = aura::messaging::g_messaging_bridge;
-        if (!bridge.send) return make_bool(false);
+        if (!bridge.send)
+            return make_bool(false);
         auto target = string_heap_[as_string_idx(a[0])];
         // If message is already a string, send directly (backward compat, efficient).
         // Otherwise, JSON-encode it.
@@ -14377,7 +14946,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                     msg = string_heap_[as_string_idx(result)];
             }
         }
-        if (msg.empty()) return make_bool(false);
+        if (msg.empty())
+            return make_bool(false);
         return make_bool(bridge.send(target, msg));
     });
 
@@ -14388,7 +14958,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         if (a.empty())
             return make_int(0);
         auto& bridge = aura::messaging::g_messaging_bridge;
-        if (!bridge.send) return make_int(0);
+        if (!bridge.send)
+            return make_int(0);
         std::string msg;
         if (is_string(a[0])) {
             msg = string_heap_[as_string_idx(a[0])];
@@ -14400,7 +14971,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                     msg = string_heap_[as_string_idx(result)];
             }
         }
-        if (msg.empty()) return make_int(0);
+        if (msg.empty())
+            return make_int(0);
 
         // Enumerate sessions and send to each
         int sent = 0;
@@ -14457,7 +15029,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         if (!svc || !aura::messaging::g_session_id)
             return make_string(0);
         auto id = aura::messaging::g_session_id(svc);
-        if (id.empty()) id = "(unknown)";
+        if (id.empty())
+            id = "(unknown)";
         auto idx = string_heap_.size();
         string_heap_.push_back(id);
         return make_string(idx);
@@ -14466,14 +15039,17 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // (reply msg) → #t on success (sends to last message's sender)
     // Supports non-string values via JSON encoding.
     primitives_.add("reply", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty()) return make_bool(false);
+        if (a.empty())
+            return make_bool(false);
         auto svc = aura::messaging::g_current_compiler_service;
         if (!svc || !aura::messaging::g_mailbox_last_sender)
             return make_bool(false);
         auto target = aura::messaging::g_mailbox_last_sender(svc);
-        if (target.empty()) return make_bool(false);
+        if (target.empty())
+            return make_bool(false);
         auto& bridge = aura::messaging::g_messaging_bridge;
-        if (!bridge.send) return make_bool(false);
+        if (!bridge.send)
+            return make_bool(false);
         std::string msg;
         if (is_string(a[0])) {
             msg = string_heap_[as_string_idx(a[0])];
@@ -14485,7 +15061,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                     msg = string_heap_[as_string_idx(result)];
             }
         }
-        if (msg.empty()) return make_bool(false);
+        if (msg.empty())
+            return make_bool(false);
         return make_bool(bridge.send(target, msg));
     });
 
@@ -14502,8 +15079,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto svc = aura::messaging::g_current_compiler_service;
         if (!svc || !aura::messaging::g_mailbox_count)
             return make_int(0);
-        return make_int(static_cast<std::int64_t>(
-            aura::messaging::g_mailbox_count(svc)));
+        return make_int(static_cast<std::int64_t>(aura::messaging::g_mailbox_count(svc)));
     });
 
     // Shared result map for fiber:spawn ↔ fiber:join communication.
@@ -14625,7 +15201,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto& name = string_heap_[as_string_idx(a[0])];
         if (name.empty())
             return make_merr("bad-arg", "agent name must not be empty");
-        
+
         // Try serve-mode first (full session isolation)
         if (aura::messaging::g_session_create && *aura::messaging::g_session_create) {
             if ((*aura::messaging::g_session_create)(name)) {
@@ -14633,9 +15209,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 string_heap_.push_back(name);
                 return make_string(sidx);
             }
-            return make_merr("create-failed", std::string("could not create session \"") + name + "\"");
+            return make_merr("create-failed",
+                             std::string("could not create session \"") + name + "\"");
         }
-        
+
         // Stdin/pipe mode: lightweight in-process agent via Aura-level *agents* registry
         // The Aura-level agent:spawn wraps this C++ primitive and falls back to
         // the *agents* registry when g_session_create is unavailable.
@@ -14701,16 +15278,17 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             //    the IO thread's epoll resumes the joiner.
             // 4. After wakeup, unregister from joiner_map and
             //    fetch the result.
-            auto* target = static_cast<aura::serve::Fiber*>(
-                aura::messaging::g_fiber_lookup(fid));
+            auto* target = static_cast<aura::serve::Fiber*>(aura::messaging::g_fiber_lookup(fid));
             if (!target) {
                 // Target fiber not found. Fall through to the
                 // stdin-style result-fetch path: if a result
                 // exists, return it; otherwise return void.
                 std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
                 auto it = s_fiber_results.find(fid);
-                if (it == s_fiber_results.end()) return make_void();
-                if (!it->second.ready) return make_void();
+                if (it == s_fiber_results.end())
+                    return make_void();
+                if (!it->second.ready)
+                    return make_void();
             } else if (!target->is_done()) {
                 // Target is alive. Register the joiner and
                 // yield. We need to schedule the unregister for
@@ -14724,9 +15302,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 // but that's invasive. The thread_local works
                 // because the joiner fiber is single-threaded.)
                 if (aura::serve::g_scheduler &&
-                    aura::serve::g_scheduler->add_joiner(
-                        static_cast<std::uint64_t>(fid),
-                        aura::serve::g_current_fiber)) {
+                    aura::serve::g_scheduler->add_joiner(static_cast<std::uint64_t>(fid),
+                                                         aura::serve::g_current_fiber)) {
                     joiner_target_id = static_cast<std::uint64_t>(fid);
                     // Yield with BlockingIO so the scheduler
                     // doesn't steal this fiber while we wait.
@@ -14735,8 +15312,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                     // already wrote to our eventfd. The
                     // IO thread's epoll resumed us. The
                     // result is now in s_fiber_results.
-                    aura::serve::g_scheduler->remove_joiner(
-                        joiner_target_id, aura::serve::g_current_fiber);
+                    aura::serve::g_scheduler->remove_joiner(joiner_target_id,
+                                                            aura::serve::g_current_fiber);
                 }
                 // (If add_joiner failed — e.g. target was
                 // destroyed between the lookup and the add —
@@ -14773,20 +15350,17 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             // path (cv needs a notify_all + epoll cycle vs the
             // eventfd + epoll cycle), but ZERO CPU burn during
             // the wait, and no version inconsistency.
-            std::println(std::cerr,
-                "[fiber:join] WARN: serve-async mode without g_fiber_lookup; "
-                "degrading to cv-based blocking. This is a misconfiguration "
-                "in production; check the fiber scheduler hook installation.");
+            std::println(std::cerr, "[fiber:join] WARN: serve-async mode without g_fiber_lookup; "
+                                    "degrading to cv-based blocking. This is a misconfiguration "
+                                    "in production; check the fiber scheduler hook installation.");
             std::unique_lock<std::mutex> lock(s_fiber_results_mtx_);
-            s_fiber_results_cv_.wait_for(
-                lock, std::chrono::seconds(200), is_ready);
+            s_fiber_results_cv_.wait_for(lock, std::chrono::seconds(200), is_ready);
         } else {
             // Stdin mode: real blocking wait on the cv. 200s
             // ceiling via wait_for (returns false on timeout,
             // true on notify).
             std::unique_lock<std::mutex> lock(s_fiber_results_mtx_);
-            s_fiber_results_cv_.wait_for(
-                lock, std::chrono::seconds(200), is_ready);
+            s_fiber_results_cv_.wait_for(lock, std::chrono::seconds(200), is_ready);
         }
 
         // Result is ready (or timed out). Fetch and return.
@@ -14794,9 +15368,9 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         {
             std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
             auto it = s_fiber_results.find(fid);
-            if (it == s_fiber_results.end()) return make_void();
-            if (!it->second.ready || !it->second.value ||
-                !it->second.value->has_value()) {
+            if (it == s_fiber_results.end())
+                return make_void();
+            if (!it->second.ready || !it->second.value || !it->second.value->has_value()) {
                 s_fiber_results.erase(it);
                 return make_void();
             }
@@ -14828,16 +15402,15 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // the already-done target). For fast-path joins, there's
         // no wait, so no re-validation needed.
         auto dv_now = defuse_version_.load(std::memory_order_acquire);
-        if (defuse_version_at_wait_ != dv_now &&
-            defuse_version_at_wait_ != 0) {
+        if (defuse_version_at_wait_ != dv_now && defuse_version_at_wait_ != 0) {
             std::println(std::cerr,
-                "[fiber:join] WARN: workspace mutated during join "
-                "(defuse_version {} -> {}). The joiner resumed after "
-                "concurrent mutate:* primitives. Result is still valid; "
-                "re-validate callers if they depend on workspace state.",
-                defuse_version_at_wait_, dv_now);
+                         "[fiber:join] WARN: workspace mutated during join "
+                         "(defuse_version {} -> {}). The joiner resumed after "
+                         "concurrent mutate:* primitives. Result is still valid; "
+                         "re-validate callers if they depend on workspace state.",
+                         defuse_version_at_wait_, dv_now);
         }
-        defuse_version_at_wait_ = 0;  // reset for next join
+        defuse_version_at_wait_ = 0; // reset for next join
 
         return std::move(**result_ptr);
     });
@@ -14896,7 +15469,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto wid = static_cast<int>(as_int(a[0]));
-        if (wid < 0) return make_bool(false);
+        if (wid < 0)
+            return make_bool(false);
         if (aura::messaging::g_fiber_set_affinity) {
             aura::messaging::g_fiber_set_affinity(wid);
             return make_bool(true);
@@ -14927,9 +15501,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // Serve/fiber mode: use g_thread_pool_enqueue callback
         if (aura::messaging::g_thread_pool_enqueue) {
             auto result_ptr = std::make_shared<std::optional<EvalValue>>();
-            aura::messaging::g_thread_pool_enqueue([this, cid, result_ptr]() {
-                *result_ptr = apply_closure(cid, {});
-            }, -1);
+            aura::messaging::g_thread_pool_enqueue(
+                [this, cid, result_ptr]() { *result_ptr = apply_closure(cid, {}); }, -1);
             if (aura::messaging::g_fiber_block) {
                 aura::messaging::g_fiber_block();
             }
@@ -14938,9 +15511,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             return make_void();
         }
         // Stdin mode: use std::async
-        auto future = std::async(std::launch::async, [this, cid]() {
-            return apply_closure(cid, {});
-        });
+        auto future =
+            std::async(std::launch::async, [this, cid]() { return apply_closure(cid, {}); });
         auto result = future.get();
         if (result)
             return *result;
@@ -14958,7 +15530,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         std::size_t buf = 0;
         if (!a.empty() && is_int(a[0])) {
             auto v = as_int(a[0]);
-            if (v < 0) return make_bool(false);
+            if (v < 0)
+                return make_bool(false);
             buf = static_cast<std::size_t>(v);
         }
         auto ch = std::make_shared<Evaluator::Channel>();
@@ -14985,7 +15558,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         ch.cv.wait(ul, [&]() {
             return ch.closed || ch.buffer_size == 0 || ch.queue.size() < ch.buffer_size;
         });
-        if (ch.closed) return make_bool(false);
+        if (ch.closed)
+            return make_bool(false);
         ch.queue.push_back(msg);
         ul.unlock();
         ch.cv.notify_one();
@@ -15005,7 +15579,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto& ch = *channels_[ch_id];
         std::unique_lock ul(ch.mtx);
         ch.cv.wait(ul, [&]() { return ch.closed || !ch.queue.empty(); });
-        if (ch.queue.empty()) return make_string(0);
+        if (ch.queue.empty())
+            return make_string(0);
         auto msg = ch.queue.front();
         ch.queue.pop_front();
         ul.unlock();
@@ -15026,7 +15601,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             return make_string(0);
         auto& ch = *channels_[ch_id];
         std::lock_guard ul(ch.mtx);
-        if (ch.queue.empty()) return make_string(0);
+        if (ch.queue.empty())
+            return make_string(0);
         auto msg = ch.queue.front();
         ch.queue.pop_front();
         auto idx = string_heap_.size();
@@ -15074,52 +15650,53 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // ═══════════════════════════════════════════════════════════════
 
     // Template storage
-    static std::vector<std::pair<std::string, std::string>> g_template_patterns;  // (name, pattern)
-    static std::vector<std::vector<std::string>> g_template_params;  // params per template
+    static std::vector<std::pair<std::string, std::string>> g_template_patterns; // (name, pattern)
+    static std::vector<std::vector<std::string>> g_template_params; // params per template
 
     // (synthesize:register-template name pattern param-names...)
-    primitives_.add("synthesize:register-template", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]))
-            return make_bool(false);
-        auto name_idx = as_string_idx(a[0]);
-        auto pat_idx = as_string_idx(a[1]);
-        if (name_idx >= string_heap_.size() || pat_idx >= string_heap_.size())
-            return make_bool(false);
+    primitives_.add("synthesize:register-template",
+                    [this](std::span<const EvalValue> a) -> EvalValue {
+                        if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]))
+                            return make_bool(false);
+                        auto name_idx = as_string_idx(a[0]);
+                        auto pat_idx = as_string_idx(a[1]);
+                        if (name_idx >= string_heap_.size() || pat_idx >= string_heap_.size())
+                            return make_bool(false);
 
-        std::string name = string_heap_[name_idx];
-        std::string pattern = string_heap_[pat_idx];
-        std::vector<std::string> params;
-        for (std::size_t i = 2; i < a.size(); ++i) {
-            if (is_string(a[i])) {
-                auto pidx = as_string_idx(a[i]);
-                if (pidx < string_heap_.size())
-                    params.push_back(string_heap_[pidx]);
-            }
-        }
+                        std::string name = string_heap_[name_idx];
+                        std::string pattern = string_heap_[pat_idx];
+                        std::vector<std::string> params;
+                        for (std::size_t i = 2; i < a.size(); ++i) {
+                            if (is_string(a[i])) {
+                                auto pidx = as_string_idx(a[i]);
+                                if (pidx < string_heap_.size())
+                                    params.push_back(string_heap_[pidx]);
+                            }
+                        }
 
-        // Replace or append
-        bool found = false;
-        for (auto& t : g_template_patterns) {
-            if (t.first == name) {
-                t.second = pattern;
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            g_template_patterns.push_back({name, pattern});
-            g_template_params.push_back(params);
-        } else {
-            // Find the params index
-            for (std::size_t i = 0; i < g_template_patterns.size(); ++i) {
-                if (g_template_patterns[i].first == name) {
-                    g_template_params[i] = params;
-                    break;
-                }
-            }
-        }
-        return make_bool(true);
-    });
+                        // Replace or append
+                        bool found = false;
+                        for (auto& t : g_template_patterns) {
+                            if (t.first == name) {
+                                t.second = pattern;
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            g_template_patterns.push_back({name, pattern});
+                            g_template_params.push_back(params);
+                        } else {
+                            // Find the params index
+                            for (std::size_t i = 0; i < g_template_patterns.size(); ++i) {
+                                if (g_template_patterns[i].first == name) {
+                                    g_template_params[i] = params;
+                                    break;
+                                }
+                            }
+                        }
+                        return make_bool(true);
+                    });
 
     // (synthesize:fill template-name arg-values...)
     primitives_.add("synthesize:fill", [this](std::span<const EvalValue> a) -> EvalValue {
@@ -15133,9 +15710,13 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // Find template
         int ti = -1;
         for (std::size_t i = 0; i < g_template_patterns.size(); ++i) {
-            if (g_template_patterns[i].first == name) { ti = static_cast<int>(i); break; }
+            if (g_template_patterns[i].first == name) {
+                ti = static_cast<int>(i);
+                break;
+            }
         }
-        if (ti < 0) return make_bool(false);
+        if (ti < 0)
+            return make_bool(false);
 
         // Build substitution map
         std::unordered_map<std::string, std::string> subst;
@@ -15179,7 +15760,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto code_idx = string_heap_.size();
         string_heap_.push_back(filled);
         auto sc_fn = primitives_.lookup("set-code");
-        if (!sc_fn) return make_void();
+        if (!sc_fn)
+            return make_void();
         auto result = (*sc_fn)({make_string(code_idx)});
         // Return the source or true
         if (is_bool(result))
@@ -15201,8 +15783,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     });
 
     // ═══════════════════════════════════════════════════════════════
-        // ═══════════════════════════════════════════════════════════════
-        // ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
     // P16: Synthesize LLM Strategy — synthesize:define
     // ═══════════════════════════════════════════════════════════════
 
@@ -15225,31 +15807,33 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
         // Parse keyword arguments
         for (std::size_t i = 2; i + 1 < a.size(); i += 2) {
-            if (!is_string(a[i])) continue;
+            if (!is_string(a[i]))
+                continue;
             auto k_idx = as_string_idx(a[i]);
-            if (k_idx >= string_heap_.size()) continue;
+            if (k_idx >= string_heap_.size())
+                continue;
             std::string key = string_heap_[k_idx];
 
-            if (key == ":prompt" && is_string(a[i+1])) {
-                auto pidx = as_string_idx(a[i+1]);
+            if (key == ":prompt" && is_string(a[i + 1])) {
+                auto pidx = as_string_idx(a[i + 1]);
                 if (pidx < string_heap_.size())
                     prompt_text = string_heap_[pidx];
-            } else if (key == ":model" && is_string(a[i+1])) {
-                auto midx = as_string_idx(a[i+1]);
+            } else if (key == ":model" && is_string(a[i + 1])) {
+                auto midx = as_string_idx(a[i + 1]);
                 if (midx < string_heap_.size())
                     model = string_heap_[midx];
-            } else if (key == ":examples" && is_string(a[i+1])) {
-                auto eidx = as_string_idx(a[i+1]);
+            } else if (key == ":examples" && is_string(a[i + 1])) {
+                auto eidx = as_string_idx(a[i + 1]);
                 if (eidx < string_heap_.size())
                     examples_text = string_heap_[eidx];
-            } else if (key == ":max-attempts" && is_int(a[i+1])) {
-                max_attempts = static_cast<int>(as_int(a[i+1]));
+            } else if (key == ":max-attempts" && is_int(a[i + 1])) {
+                max_attempts = static_cast<int>(as_int(a[i + 1]));
             }
         }
 
         // Build prompt: construct a simple instruction string
-        std::string instruction = "Define a function named " + name
-            + " in Aura Lisp with signature: " + sig + ".\n";
+        std::string instruction =
+            "Define a function named " + name + " in Aura Lisp with signature: " + sig + ".\n";
         if (!prompt_text.empty())
             instruction += "Task: " + prompt_text + ".\n";
         if (!examples_text.empty())
@@ -15273,7 +15857,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
         // Get http-post primitive
         auto http_fn = primitives_.lookup("http-post");
-        if (!http_fn) return make_void();
+        if (!http_fn)
+            return make_void();
 
         // Get API URL
         std::string api_url = "https://api.deepseek.com/v1/chat/completions";
@@ -15296,7 +15881,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             body += "{\n";
             body += "  \"model\": \"" + model + "\",\n";
             body += "  \"messages\": [\n";
-            body += "    {\"role\": \"system\", \"content\": \"You are Aura Lisp. Return ONLY valid Aura code. No markdown.\"},\n";
+            body += "    {\"role\": \"system\", \"content\": \"You are Aura Lisp. Return ONLY "
+                    "valid Aura code. No markdown.\"},\n";
             body += "    {\"role\": \"user\", \"content\": \"" + instruction;
             if (!last_error.empty())
                 body += " Previous attempt error: " + last_error + ". Fix it.";
@@ -15312,27 +15898,36 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             string_heap_.push_back(api_key);
 
             auto resp = (*http_fn)({make_string(ui2), make_string(bi), make_string(ki)});
-            if (!is_string(resp)) continue;
+            if (!is_string(resp))
+                continue;
             auto ri = as_string_idx(resp);
-            if (ri >= string_heap_.size()) continue;
+            if (ri >= string_heap_.size())
+                continue;
             auto& response = string_heap_[ri];
 
             // Extract code from JSON response
             std::string code;
             auto cp = response.find("content");
-            if (cp == std::string::npos) continue;
+            if (cp == std::string::npos)
+                continue;
             auto cq = response.find('"', cp + 9);
-            if (cq == std::string::npos) continue;
+            if (cq == std::string::npos)
+                continue;
             cq++;
             bool esc = false;
             for (; cq < response.size(); ++cq) {
                 char c = response[cq];
                 if (esc) {
-                    if (c == 'n') code += '\n';
-                    else if (c == 't') code += '\t';
-                    else if (c == '"') code += '"';
-                    else if (c == '\\') code += '\\';
-                    else code += c;
+                    if (c == 'n')
+                        code += '\n';
+                    else if (c == 't')
+                        code += '\t';
+                    else if (c == '"')
+                        code += '"';
+                    else if (c == '\\')
+                        code += '\\';
+                    else
+                        code += c;
                     esc = false;
                 } else if (c == '\\') {
                     esc = true;
@@ -15343,13 +15938,15 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 }
             }
 
-            if (code.empty()) continue;
+            if (code.empty())
+                continue;
 
             // Try set-code
             auto ci = string_heap_.size();
             string_heap_.push_back(code);
             auto sc_fn = primitives_.lookup("set-code");
-            if (!sc_fn) continue;
+            if (!sc_fn)
+                continue;
             auto sc_r = (*sc_fn)({make_string(ci)});
             if (!is_bool(sc_r) || !as_bool(sc_r)) {
                 last_error = "syntax error";
@@ -15370,7 +15967,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
             // Success
             defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
+            total_mutations_.fetch_add(1, std::memory_order_relaxed);
             auto src_fn = primitives_.lookup("current-source");
             if (src_fn) {
                 auto src = (*src_fn)({});
@@ -15403,28 +16000,33 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         int pop_size = 8;
         int generations = 3;
         double mutation_rate = 0.3;
-        std::string fitness_expr;  // optional user-provided fitness expr
+        std::string fitness_expr; // optional user-provided fitness expr
 
         for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-            if (!is_string(a[i])) continue;
+            if (!is_string(a[i]))
+                continue;
             auto k_idx = as_string_idx(a[i]);
-            if (k_idx >= string_heap_.size()) continue;
+            if (k_idx >= string_heap_.size())
+                continue;
             std::string key = string_heap_[k_idx];
-            if (key == ":population" && is_int(a[i+1]))
-                pop_size = static_cast<int>(as_int(a[i+1]));
-            else if (key == ":generations" && is_int(a[i+1]))
-                generations = static_cast<int>(as_int(a[i+1]));
-            else if (key == ":mutation-rate" && is_float(a[i+1]))
-                mutation_rate = as_float(a[i+1]);
-            else if ((key == ":fitness" || key == ":benchmark") && is_string(a[i+1])) {
-                auto fi = as_string_idx(a[i+1]);
+            if (key == ":population" && is_int(a[i + 1]))
+                pop_size = static_cast<int>(as_int(a[i + 1]));
+            else if (key == ":generations" && is_int(a[i + 1]))
+                generations = static_cast<int>(as_int(a[i + 1]));
+            else if (key == ":mutation-rate" && is_float(a[i + 1]))
+                mutation_rate = as_float(a[i + 1]);
+            else if ((key == ":fitness" || key == ":benchmark") && is_string(a[i + 1])) {
+                auto fi = as_string_idx(a[i + 1]);
                 if (fi < string_heap_.size())
                     fitness_expr = string_heap_[fi];
             }
         }
-        if (pop_size < 2) pop_size = 2;
-        if (pop_size > 50) pop_size = 50;
-        if (generations < 1) generations = 1;
+        if (pop_size < 2)
+            pop_size = 2;
+        if (pop_size > 50)
+            pop_size = 50;
+        if (generations < 1)
+            generations = 1;
 
         // Get baseline source — use :workspace to read the user's set-code'd
         // script (the function to optimize), NOT the per-eval source (which
@@ -15432,21 +16034,27 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // mutations to recursive-call this primitive → stack overflow).
         // Same root cause as colony-no-fns (commit 6d88544).
         auto src_fn = primitives_.lookup("current-source");
-        if (!src_fn) return make_void();
+        if (!src_fn)
+            return make_void();
         // Intern :workspace keyword (lookup or add to keyword_table_).
         std::uint64_t ws_kw = 0;
         bool ws_found = false;
         for (; ws_kw < keyword_table_.size(); ++ws_kw) {
-            if (keyword_table_[ws_kw] == ":workspace") { ws_found = true; break; }
+            if (keyword_table_[ws_kw] == ":workspace") {
+                ws_found = true;
+                break;
+            }
         }
         if (!ws_found) {
             ws_kw = keyword_table_.size();
             keyword_table_.push_back(":workspace");
         }
         auto cs_result = (*src_fn)({types::make_keyword(ws_kw)});
-        if (!is_string(cs_result)) return make_void();
+        if (!is_string(cs_result))
+            return make_void();
         auto cs_idx = as_string_idx(cs_result);
-        if (cs_idx >= string_heap_.size()) return make_void();
+        if (cs_idx >= string_heap_.size())
+            return make_void();
         std::string baseline = string_heap_[cs_idx];
 
         // Fitness: generate synthetic test inputs and eval the function
@@ -15468,8 +16076,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 auto eval_fn = primitives_.lookup("eval");
                 if (eval_fn) {
                     auto r = (*eval_fn)({make_string(sv)});
-                    if (is_float(r)) return as_float(r);
-                    if (is_int(r)) return static_cast<double>(as_int(r));
+                    if (is_float(r))
+                        return as_float(r);
+                    if (is_int(r))
+                        return static_cast<double>(as_int(r));
                 }
                 return 0.0;
             }
@@ -15494,11 +16104,13 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                         if (param_start != std::string::npos) {
                             auto close_pos = src.find(')', param_start);
                             if (close_pos != std::string::npos) {
-                                auto params = src.substr(param_start + 1, close_pos - param_start - 1);
+                                auto params =
+                                    src.substr(param_start + 1, close_pos - param_start - 1);
                                 if (!params.empty()) {
                                     arg_count = 1;
                                     for (auto c : params) {
-                                        if (c == ' ') ++arg_count;
+                                        if (c == ' ')
+                                            ++arg_count;
                                     }
                                 }
                             }
@@ -15536,14 +16148,14 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 try_probe("(" + fn_name + ")");
             } else if (arg_count == 1) {
                 for (auto v : probe_ints) {
-                    if (total_tests >= 4) break;
+                    if (total_tests >= 4)
+                        break;
                     try_probe("(" + fn_name + " " + std::to_string(v) + ")");
                 }
             } else if (arg_count == 2) {
                 for (int i = 0; i < 4 && i + 1 < 4; ++i) {
-                    try_probe("(" + fn_name + " " +
-                              std::to_string(probe_ints[i]) + " " +
-                              std::to_string(probe_ints[i+1]) + ")");
+                    try_probe("(" + fn_name + " " + std::to_string(probe_ints[i]) + " " +
+                              std::to_string(probe_ints[i + 1]) + ")");
                 }
             } else {
                 std::string call_src = "(" + fn_name;
@@ -15554,9 +16166,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             }
 
             // Score: correctness dominates (up to 1000), then small length bonus
-            double correctness = total_tests > 0
-                ? (1000.0 * static_cast<double>(successes) / static_cast<double>(total_tests))
-                : 0.0;
+            double correctness =
+                total_tests > 0
+                    ? (1000.0 * static_cast<double>(successes) / static_cast<double>(total_tests))
+                    : 0.0;
             double length_bonus = 1.0 / static_cast<double>(src.size() + 1);
             return correctness + length_bonus;
         };
@@ -15586,14 +16199,18 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                     }
                     // Numeric mutation
                     auto npos = variant.find_first_of("0123456789");
-                    if (npos == std::string::npos) break;
+                    if (npos == std::string::npos)
+                        break;
                     auto nend = variant.find_first_not_of("0123456789", npos);
-                    if (nend == std::string::npos) nend = variant.size();
+                    if (nend == std::string::npos)
+                        nend = variant.size();
                     std::string old_n = variant.substr(npos, nend - npos);
-                    if (old_n.empty()) continue;
+                    if (old_n.empty())
+                        continue;
                     int val = std::stoi(old_n);
                     val += (std::rand() % 21) - 10;
-                    if (val < 0) val = 0;
+                    if (val < 0)
+                        val = 0;
                     variant.replace(npos, nend - npos, std::to_string(val));
                 }
 
@@ -15606,8 +16223,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                         auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
                         // Create a temporary workspace, set-code the variant,
                         // find a LiteralInt node, replace it with one from other
-                        auto ws_id = tree->create_child("xover",
-                            workspace_flat_, workspace_pool_);
+                        auto ws_id = tree->create_child("xover", workspace_flat_, workspace_pool_);
                         if (ws_id > 0) {
                             tree->ensure_local_flat(ws_id);
                             auto& ws = tree->nodes_[ws_id];
@@ -15627,25 +16243,30 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                                     for (aura::ast::NodeId nid = 0;
                                          nid < (workspace_flat_ ? workspace_flat_->size() : 0);
                                          ++nid) {
-                                        if (std::rand() % 5 != 0) continue;  // 20% chance per node
+                                        if (std::rand() % 5 != 0)
+                                            continue; // 20% chance per node
                                         auto v = workspace_flat_->get(nid);
                                         if (v.tag == aura::ast::NodeTag::LiteralInt) {
                                             // Extract a random int from "other"
                                             auto nums = other;
                                             auto npos = nums.find_first_of("0123456789");
                                             if (npos != std::string::npos) {
-                                                auto nend = nums.find_first_not_of("0123456789", npos);
-                                                if (nend == std::string::npos) nend = nums.size();
-                                                int new_val = std::stoi(nums.substr(npos, nend - npos));
+                                                auto nend =
+                                                    nums.find_first_not_of("0123456789", npos);
+                                                if (nend == std::string::npos)
+                                                    nend = nums.size();
+                                                int new_val =
+                                                    std::stoi(nums.substr(npos, nend - npos));
                                                 if (new_val >= 0) {
-                                                    auto rv_fn = primitives_.lookup("mutate:replace-value");
+                                                    auto rv_fn =
+                                                        primitives_.lookup("mutate:replace-value");
                                                     if (rv_fn) {
                                                         (*rv_fn)({make_int(nid), make_int(new_val),
-                                                                 make_string(vi)});
+                                                                  make_string(vi)});
                                                     }
                                                 }
                                             }
-                                            break;  // Mutate one node
+                                            break; // Mutate one node
                                         }
                                     }
 
@@ -15653,31 +16274,34 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                                     if (true) {
                                         auto tc_r = run_typecheck_no_lock_bool();
                                         if (tc_r) {
-                                                // Successful crossover: get the new source
-                                                // (use :workspace to read user's set-code'd script,
-                                                // not the per-eval source = the surrounding call)
-                                                auto src_fn = primitives_.lookup("current-source");
-                                                if (src_fn) {
-                                                    std::uint64_t ws_kw = 0;
-                                                    bool ws_found = false;
-                                                    for (; ws_kw < keyword_table_.size(); ++ws_kw) {
-                                                        if (keyword_table_[ws_kw] == ":workspace") { ws_found = true; break; }
+                                            // Successful crossover: get the new source
+                                            // (use :workspace to read user's set-code'd script,
+                                            // not the per-eval source = the surrounding call)
+                                            auto src_fn = primitives_.lookup("current-source");
+                                            if (src_fn) {
+                                                std::uint64_t ws_kw = 0;
+                                                bool ws_found = false;
+                                                for (; ws_kw < keyword_table_.size(); ++ws_kw) {
+                                                    if (keyword_table_[ws_kw] == ":workspace") {
+                                                        ws_found = true;
+                                                        break;
                                                     }
-                                                    if (!ws_found) {
-                                                        ws_kw = keyword_table_.size();
-                                                        keyword_table_.push_back(":workspace");
-                                                    }
-                                                    auto src = (*src_fn)({types::make_keyword(ws_kw)});
-                                                    if (is_string(src)) {
-                                                        auto si = as_string_idx(src);
-                                                        if (si < string_heap_.size())
-                                                            variant = string_heap_[si];
-                                                    }
+                                                }
+                                                if (!ws_found) {
+                                                    ws_kw = keyword_table_.size();
+                                                    keyword_table_.push_back(":workspace");
+                                                }
+                                                auto src = (*src_fn)({types::make_keyword(ws_kw)});
+                                                if (is_string(src)) {
+                                                    auto si = as_string_idx(src);
+                                                    if (si < string_heap_.size())
+                                                        variant = string_heap_[si];
                                                 }
                                             }
                                         }
                                     }
                                 }
+                            }
 
                             workspace_flat_ = saved_f;
                             workspace_pool_ = saved_p;
@@ -15690,16 +16314,16 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                         if (b1 != std::string::npos && b2 != std::string::npos) {
                             auto e1 = variant.find(')', b1);
                             auto e2 = other.find(')', b2);
-                            if (e1 != std::string::npos && e2 != std::string::npos
-                                && e1 > b1 && e2 > b2) {
+                            if (e1 != std::string::npos && e2 != std::string::npos && e1 > b1 &&
+                                e2 > b2) {
                                 auto body1_end = variant.find_last_of(')');
                                 auto body2_end = other.find_last_of(')');
                                 if (body1_end > b1 && body2_end > b2) {
                                     std::string body1 = variant.substr(b1, body1_end - b1 + 1);
                                     std::string body2 = other.substr(b2, body2_end - b2 + 1);
                                     if (body1 != body2) {
-                                        variant = variant.substr(0, b1) + body2
-                                            + variant.substr(body1_end + 1);
+                                        variant = variant.substr(0, b1) + body2 +
+                                                  variant.substr(body1_end + 1);
                                     }
                                 }
                             }
@@ -15707,20 +16331,22 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                     }
                 }
 
-                if (variant == best_code) continue;
+                if (variant == best_code)
+                    continue;
 
                 // Evaluate in a child workspace (isolation)
                 // Use workspace tree if available, otherwise fall back to set-code
                 bool evaluated = false;
                 double f = 0.0;
                 auto sc_fn = primitives_.lookup("set-code");
-                if (!sc_fn) continue;
+                if (!sc_fn)
+                    continue;
 
                 if (workspace_tree_) {
                     // Use child workspace for isolation
                     auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
-                    auto ws_id = tree->create_child("evolve-variant",
-                                                     workspace_flat_, workspace_pool_);
+                    auto ws_id =
+                        tree->create_child("evolve-variant", workspace_flat_, workspace_pool_);
                     // Switch to child and try the variant
                     if (ws_id > 0) {
                         tree->ensure_local_flat(ws_id);
@@ -15756,13 +16382,15 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                     auto vi = string_heap_.size();
                     string_heap_.push_back(variant);
                     auto sc_r = (*sc_fn)({make_string(vi)});
-                    if (!is_bool(sc_r) || !as_bool(sc_r)) continue;
+                    if (!is_bool(sc_r) || !as_bool(sc_r))
+                        continue;
 
                     // Issue #107 part 4: inline typecheck (no lock).
                     // Going through the primitive would re-enter
                     // workspace_mtx_ and deadlock.
                     bool valid = run_typecheck_no_lock_bool();
-                    if (!valid) continue;
+                    if (!valid)
+                        continue;
                     f = compute_fitness(variant);
                     // Restore
                     auto bi = string_heap_.size();
@@ -15786,7 +16414,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto bi = string_heap_.size();
         string_heap_.push_back(best_code);
         auto sc_fn = primitives_.lookup("set-code");
-        if (sc_fn) (*sc_fn)({make_string(bi)});
+        if (sc_fn)
+            (*sc_fn)({make_string(bi)});
         defuse_version_.fetch_add(1, std::memory_order_acq_rel);
         total_mutations_.fetch_add(1, std::memory_order_relaxed);
         // (ASAN fix #107 leak) delete the old index.
@@ -15804,7 +16433,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         return make_pair(p1);
     });
 
-// ── intend — 纯循环管理器 — 纯循环管理器 ────────────────────────────────
+    // ── intend — 纯循环管理器 — 纯循环管理器 ────────────────────────────────
     // (intend goal generator-fn verifier-fn [fixer-fn] [max-attempts])
     //
     // 不管理 LLM 调用、不构建 prompt、不做 JSON 解析。
@@ -15821,10 +16450,14 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         in_task_context_ = saved_depth + 1;
         auto restore = [&] { in_task_context_ = saved_depth; };
 
-        if (a.size() < 3)
-            { restore(); return make_void(); }
-        if (!types::is_string(a[0]) || !types::is_closure(a[1]) || !types::is_closure(a[2]))
-            { restore(); return make_void(); }
+        if (a.size() < 3) {
+            restore();
+            return make_void();
+        }
+        if (!types::is_string(a[0]) || !types::is_closure(a[1]) || !types::is_closure(a[2])) {
+            restore();
+            return make_void();
+        }
 
         auto goal = string_heap_[types::as_string_idx(a[0])];
         auto gen_cid = types::as_closure_id(a[1]); // generator
@@ -15860,9 +16493,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 auto kidx = types::as_keyword_idx(a[i]);
                 if (kidx < keyword_table_.size())
                     k = keyword_table_[kidx];
-            } else continue;
-            if (k == ":strategy" && types::is_string(a[i+1])) {
-                strategy_name = string_heap_[types::as_string_idx(a[i+1])];
+            } else
+                continue;
+            if (k == ":strategy" && types::is_string(a[i + 1])) {
+                strategy_name = string_heap_[types::as_string_idx(a[i + 1])];
                 // Look up the strategy's max_attempts (overrides int arg)
                 for (auto& s : strategies_) {
                     if (s.name == strategy_name) {
@@ -16063,8 +16697,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     primitives_.add("workspace-state", [this](const auto&) -> EvalValue {
         if (!workspace_flat_ || !workspace_pool_) {
             auto sidx = string_heap_.size();
-            string_heap_.push_back(
-                std::string("WORKSPACE-ERROR: no workspace AST loaded"));
+            string_heap_.push_back(std::string("WORKSPACE-ERROR: no workspace AST loaded"));
             return types::make_string(sidx);
         }
         auto& flat = *workspace_flat_;
@@ -16075,27 +16708,25 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         std::size_t define_count = 0;
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Define &&
-                v.sym_id != aura::ast::INVALID_SYM) {
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
                 out += "DEFINE: " + std::string(pool.resolve(v.sym_id)) + "\n";
                 ++define_count;
             }
         }
-        if (define_count == 0) out += "(no defines)\n";
+        if (define_count == 0)
+            out += "(no defines)\n";
         // Recent mutations: last 10 timeline entries
         out += "MUTATIONS (last 10):\n";
         if (timeline_.empty()) {
             out += "  (none)\n";
         } else {
-            std::size_t start = timeline_.size() > 10
-                                    ? timeline_.size() - 10 : 0;
+            std::size_t start = timeline_.size() > 10 ? timeline_.size() - 10 : 0;
             for (std::size_t i = start; i < timeline_.size(); ++i)
                 out += "  " + std::to_string(i) + ":" + timeline_[i] + "\n";
         }
         // Prepend a one-line summary header so the LLM has an
         // easy parse target: "WORKSPACE: <n> defines".
-        out = "WORKSPACE: " + std::to_string(define_count) + " defines\n"
-              + out;
+        out = "WORKSPACE: " + std::to_string(define_count) + " defines\n" + out;
         auto sidx = string_heap_.size();
         string_heap_.push_back(std::move(out));
         return types::make_string(sidx);
@@ -16222,16 +16853,18 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             } else {
                 continue;
             }
-            if (k == ":max-attempts" && types::is_int(a[i+1])) {
-                int v = static_cast<int>(types::as_int(a[i+1]));
-                if (v >= 1 && v <= 20) new_max = v;
-            } else if (k == ":temperature" && (types::is_int(a[i+1]) || types::is_float(a[i+1]))) {
-                double v = types::is_float(a[i+1])
-                    ? types::as_float(a[i+1])
-                    : static_cast<double>(types::as_int(a[i+1]));
-                if (v >= 0.0 && v <= 1.0) new_temp = v;
-            } else if (k == ":sys-prompt-template" && types::is_string(a[i+1])) {
-                new_spt = string_heap_[types::as_string_idx(a[i+1])];
+            if (k == ":max-attempts" && types::is_int(a[i + 1])) {
+                int v = static_cast<int>(types::as_int(a[i + 1]));
+                if (v >= 1 && v <= 20)
+                    new_max = v;
+            } else if (k == ":temperature" &&
+                       (types::is_int(a[i + 1]) || types::is_float(a[i + 1]))) {
+                double v = types::is_float(a[i + 1]) ? types::as_float(a[i + 1])
+                                                     : static_cast<double>(types::as_int(a[i + 1]));
+                if (v >= 0.0 && v <= 1.0)
+                    new_temp = v;
+            } else if (k == ":sys-prompt-template" && types::is_string(a[i + 1])) {
+                new_spt = string_heap_[types::as_string_idx(a[i + 1])];
             }
         }
         for (auto& s : strategies_) {
@@ -16269,7 +16902,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto name = string_heap_[types::as_string_idx(a[0])];
         auto field = string_heap_[types::as_string_idx(a[1])];
         for (auto& s : strategies_) {
-            if (s.name != name) continue;
+            if (s.name != name)
+                continue;
             if (field == "body") {
                 auto sid = string_heap_.size();
                 string_heap_.push_back(s.body);
@@ -16305,23 +16939,24 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto field = string_heap_[types::as_string_idx(a[1])];
         auto name = string_heap_[types::as_string_idx(a[0])];
         for (auto& s : strategies_) {
-            if (s.name != name) continue;
+            if (s.name != name)
+                continue;
             if (field == "body" && types::is_string(a[2])) {
                 s.body = string_heap_[types::as_string_idx(a[2])];
                 return make_bool(true);
             }
             if (field == "max-attempts" && types::is_int(a[2])) {
                 int v = static_cast<int>(types::as_int(a[2]));
-                if (v < 1 || v > 20) return make_bool(false);
+                if (v < 1 || v > 20)
+                    return make_bool(false);
                 s.max_attempts = v;
                 return make_bool(true);
             }
-            if (field == "temperature" &&
-                (types::is_int(a[2]) || types::is_float(a[2]))) {
-                double v = types::is_float(a[2])
-                    ? types::as_float(a[2])
-                    : static_cast<double>(types::as_int(a[2]));
-                if (v < 0.0 || v > 1.0) return make_bool(false);
+            if (field == "temperature" && (types::is_int(a[2]) || types::is_float(a[2]))) {
+                double v = types::is_float(a[2]) ? types::as_float(a[2])
+                                                 : static_cast<double>(types::as_int(a[2]));
+                if (v < 0.0 || v > 1.0)
+                    return make_bool(false);
                 s.temperature = v;
                 return make_bool(true);
             }
@@ -16388,9 +17023,13 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // Find the source strategy
         const StrategyDef* src = nullptr;
         for (auto& s : strategies_) {
-            if (s.name == name) { src = &s; break; }
+            if (s.name == name) {
+                src = &s;
+                break;
+            }
         }
-        if (!src) return make_void();
+        if (!src)
+            return make_void();
 
         // Get analytics: either passed as 2nd arg, or call
         // intend-analytics ourselves on this strategy.
@@ -16412,25 +17051,30 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // Format: #(analytics total-runs:N success-rate:X avg-attempts:Y
         //          total-llm-calls:N avg-duration-ms:N top-errors:( k:n ...)
         //          by-task:( ... ))
-        auto find_after = [](const std::string& s, const std::string& key)
-            -> std::string {
+        auto find_after = [](const std::string& s, const std::string& key) -> std::string {
             auto p = s.find(key);
-            if (p == std::string::npos) return {};
+            if (p == std::string::npos)
+                return {};
             p += key.size();
             // skip ':' and spaces
-            while (p < s.size() && (s[p] == ':' || s[p] == ' ')) ++p;
+            while (p < s.size() && (s[p] == ':' || s[p] == ' '))
+                ++p;
             auto end = p;
-            while (end < s.size() && s[end] != ' ' && s[end] != ')') ++end;
+            while (end < s.size() && s[end] != ' ' && s[end] != ')')
+                ++end;
             return s.substr(p, end - p);
         };
         double success_rate = 0.0;
         double avg_attempts = 0.0;
         try {
             auto sr = find_after(analytics, "success-rate");
-            if (!sr.empty()) success_rate = std::stod(sr);
+            if (!sr.empty())
+                success_rate = std::stod(sr);
             auto aa = find_after(analytics, "avg-attempts");
-            if (!aa.empty()) avg_attempts = std::stod(aa);
-        } catch (...) { /* malformed → keep defaults */ }
+            if (!aa.empty())
+                avg_attempts = std::stod(aa);
+        } catch (...) { /* malformed → keep defaults */
+        }
 
         // Parse top-errors: walk "(k1:n1 k2:n2 ...)" inside top-errors:(...)
         std::map<std::string, int> top_errors;
@@ -16442,16 +17086,22 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 std::size_t i = 0;
                 while (i < te.size()) {
                     // find pattern "k:n"
-                    while (i < te.size() && (te[i] == ' ' || te[i] == '(')) ++i;
+                    while (i < te.size() && (te[i] == ' ' || te[i] == '('))
+                        ++i;
                     auto kstart = i;
-                    while (i < te.size() && te[i] != ':') ++i;
-                    if (i >= te.size()) break;
+                    while (i < te.size() && te[i] != ':')
+                        ++i;
+                    if (i >= te.size())
+                        break;
                     auto k = te.substr(kstart, i - kstart);
                     ++i; // skip ':'
                     auto nstart = i;
-                    while (i < te.size() && te[i] != ' ' && te[i] != ')') ++i;
-                    try { top_errors[k] = std::stoi(te.substr(nstart, i - nstart)); }
-                    catch (...) {}
+                    while (i < te.size() && te[i] != ' ' && te[i] != ')')
+                        ++i;
+                    try {
+                        top_errors[k] = std::stoi(te.substr(nstart, i - nstart));
+                    } catch (...) {
+                    }
                 }
             }
         }
@@ -16470,16 +17120,15 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         if (success_rate < 0.5 && avg_attempts >= static_cast<double>(src->max_attempts)) {
             int bumped = std::min(20, src->max_attempts + 2);
             evolved.max_attempts = bumped;
-            reason = "success-rate " + std::to_string(success_rate).substr(0,4)
-                   + " < 0.5 with avg-attempts=" + std::to_string((int)avg_attempts)
-                   + " = max-attempts; bumped " + std::to_string(src->max_attempts)
-                   + " → " + std::to_string(bumped);
+            reason = "success-rate " + std::to_string(success_rate).substr(0, 4) +
+                     " < 0.5 with avg-attempts=" + std::to_string((int)avg_attempts) +
+                     " = max-attempts; bumped " + std::to_string(src->max_attempts) + " → " +
+                     std::to_string(bumped);
         } else if (success_rate > 0.9 && avg_attempts < 1.5) {
             int lowered = std::max(1, src->max_attempts - 1);
             evolved.max_attempts = lowered;
-            reason = "success-rate > 0.9 with avg-attempts < 1.5; lowered "
-                   + std::to_string(src->max_attempts) + " → "
-                   + std::to_string(lowered);
+            reason = "success-rate > 0.9 with avg-attempts < 1.5; lowered " +
+                     std::to_string(src->max_attempts) + " → " + std::to_string(lowered);
         }
 
         // Add sys-prompt-template hints based on top errors
@@ -16487,33 +17136,33 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             auto it = top_errors.find(key);
             if (it != top_errors.end() && it->second >= 2) {
                 evolved.sys_prompt_template += hint;
-                if (!reason.empty()) reason += "; ";
+                if (!reason.empty())
+                    reason += "; ";
                 reason += "appended hint for " + key;
             }
         };
-        append_hint("unbound-variable",
-                    "\nDo NOT use undefined variables.");
-        append_hint("type-mismatch",
-                    "\nUse (check x : Type) before operations.");
-        append_hint("div-zero",
-                    "\nGuard division with (if (= d 0) ...).");
-        append_hint("syntax-error",
-                    "\nCheck parentheses carefully.");
+        append_hint("unbound-variable", "\nDo NOT use undefined variables.");
+        append_hint("type-mismatch", "\nUse (check x : Type) before operations.");
+        append_hint("div-zero", "\nGuard division with (if (= d 0) ...).");
+        append_hint("syntax-error", "\nCheck parentheses carefully.");
 
         if (reason.empty())
             reason = "no heuristics matched; clone unchanged";
 
-        timeline_.push_back("evolve:" + evolved.name + " from " + src->name
-                          + " (" + reason + ")");
+        timeline_.push_back("evolve:" + evolved.name + " from " + src->name + " (" + reason + ")");
 
         // Insert into strategies_ (avoid name collision: bump suffix)
         std::string final_name = evolved.name;
-        for (int bump = 2; ; ++bump) {
+        for (int bump = 2;; ++bump) {
             bool taken = false;
             for (auto& s : strategies_) {
-                if (s.name == final_name) { taken = true; break; }
+                if (s.name == final_name) {
+                    taken = true;
+                    break;
+                }
             }
-            if (!taken) break;
+            if (!taken)
+                break;
             final_name = evolved.name + "-" + std::to_string(bump);
         }
         evolved.name = final_name;
@@ -16639,7 +17288,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             pairs_.shrink_to_fit();
             error_values_.clear();
             error_values_.shrink_to_fit();
-            for (auto* fht : g_hash_tables) FlatHashTable::destroy(fht);
+            for (auto* fht : g_hash_tables)
+                FlatHashTable::destroy(fht);
             g_hash_tables.clear();
             g_hash_tables.shrink_to_fit();
             vector_heap_.clear();
@@ -16667,10 +17317,11 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // owner_arena == temp_arena_) are erased, their arena memory freed O(1).
     // Module functions and while-loop closures (in persistent arena) survive.
     primitives_.add("gc-temp", [this](const auto&) -> EvalValue {
-        if (!temp_arena_) return types::make_bool(false);
+        if (!temp_arena_)
+            return types::make_bool(false);
 
         // Erase closures in temp arena
-        for (auto it = closures_.begin(); it != closures_.end(); ) {
+        for (auto it = closures_.begin(); it != closures_.end();) {
             if (it->second.owner_arena == temp_arena_)
                 it = closures_.erase(it);
             else
@@ -16691,7 +17342,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // vector_heap_, opaque_heap_ are safe to clear here.
         error_values_.clear();
         error_values_.shrink_to_fit();
-        for (auto* fht : g_hash_tables) FlatHashTable::destroy(fht);
+        for (auto* fht : g_hash_tables)
+            FlatHashTable::destroy(fht);
         g_hash_tables.clear();
         g_hash_tables.shrink_to_fit();
         vector_heap_.clear();
@@ -16706,13 +17358,14 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     primitives_.add("gc-stats", [this](const auto&) -> EvalValue {
         std::uint64_t root_count = 0;
         for (auto& [id, _] : closures_) {
-            if (id < gc_safe_closure_id_) ++root_count;
+            if (id < gc_safe_closure_id_)
+                ++root_count;
         }
-        auto result = std::format(
-            "string:{}/pairs:{}/cells:{}/err:{}/hash:{}/vec:{}/opq:{}/cls:{}/root:{}",
-            string_heap_.size(), pairs_.size(), cells_.size(),
-            error_values_.size(), g_hash_tables.size(), vector_heap_.size(),
-            opaque_heap_.size(), closures_.size(), root_count);
+        auto result =
+            std::format("string:{}/pairs:{}/cells:{}/err:{}/hash:{}/vec:{}/opq:{}/cls:{}/root:{}",
+                        string_heap_.size(), pairs_.size(), cells_.size(), error_values_.size(),
+                        g_hash_tables.size(), vector_heap_.size(), opaque_heap_.size(),
+                        closures_.size(), root_count);
         auto sidx = string_heap_.size();
         string_heap_.push_back(result);
         return types::make_string(sidx);
@@ -16749,21 +17402,25 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         kv.push_back({"size", make_int(static_cast<std::int64_t>(treg.size()))});
         kv.push_back({"generation", make_int(static_cast<std::int64_t>(treg.generation()))});
         kv.push_back({"predefined-count", make_int(static_cast<std::int64_t>(
-            aura::core::TypeRegistry::kPredefinedCount))});
-        kv.push_back({"user-types", make_int(static_cast<std::int64_t>(
-            treg.size() - aura::core::TypeRegistry::kPredefinedCount))});
+                                              aura::core::TypeRegistry::kPredefinedCount))});
+        kv.push_back(
+            {"user-types", make_int(static_cast<std::int64_t>(
+                               treg.size() - aura::core::TypeRegistry::kPredefinedCount))});
         // Build a hash with the 4 keys.
         auto* ht = FlatHashTable::create(8);
-        if (!ht) return make_void();
+        if (!ht)
+            return make_void();
         auto meta = ht->metadata();
         auto keys = ht->keys();
         auto vals = ht->values();
         auto cap = ht->capacity;
         for (auto& [k, v] : kv) {
             std::uint64_t h = 0xcbf29ce484222325ull;
-            for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            for (char c : k)
+                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+            if (fp == 0xFF)
+                fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
             auto kidx = string_heap_.size();
             string_heap_.push_back(k);
             EvalValue key_ev = make_string(kidx);
@@ -16808,15 +17465,18 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // the number of bytes reclaimed. Use (arena:compact-all) to
     // compact every per-module arena above the configured threshold.
     primitives_.add("arena:compact", [this](const auto&) -> EvalValue {
-        if (!arena_) return make_int(0);
+        if (!arena_)
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(arena_->compact()));
     });
     primitives_.add("arena:compact-all", [this](const auto&) -> EvalValue {
-        if (!arena_group_) return make_int(0);
+        if (!arena_group_)
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(arena_group_->auto_compact()));
     });
     primitives_.add("arena:shrink-to-fit", [this](const auto&) -> EvalValue {
-        if (!arena_) return make_void();
+        if (!arena_)
+            return make_void();
         arena_->shrink_to_fit();
         return make_void();
     });
@@ -16824,14 +17484,16 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // fragmentation ratio at which (arena:compact-all) triggers a
     // compact. pct is 0-95 (clamped). 50 = default.
     primitives_.add("arena:set-compact-threshold", [this](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !arena_group_) return make_void();
+        if (a.empty() || !is_int(a[0]) || !arena_group_)
+            return make_void();
         arena_group_->set_compact_threshold(static_cast<double>(as_int(a[0])) / 100.0);
         return make_void();
     });
     // (arena:estimate) — Issue #187: bytes that could be reclaimed
     // by a (arena:compact). Cheap O(1) check, no side effects.
     primitives_.add("arena:estimate", [this](const auto&) -> EvalValue {
-        if (!arena_) return make_int(0);
+        if (!arena_)
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(arena_->compact_estimate()));
     });
     // (arena:stats-json) — Issue #187: JSON snapshot of all managed
@@ -16844,14 +17506,13 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         } else if (arena_) {
             // Single-arena fallback: emit a one-entry JSON manually.
             auto s = arena_->stats();
-            out = std::format(
-                "{{\"arenas\":[{{\"name\":\"main\",\"used\":{},\"capacity\":{},"
-                "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
-                "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
-                "\"fragmentation_ratio\":{:.3f}}}],\"compact_threshold\":0.5}}",
-                s.used, s.capacity, s.peak_used, s.allocation_count,
-                s.compaction_count, s.last_compaction_saved,
-                s.total_compaction_saved, s.fragmentation_ratio());
+            out = std::format("{{\"arenas\":[{{\"name\":\"main\",\"used\":{},\"capacity\":{},"
+                              "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
+                              "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
+                              "\"fragmentation_ratio\":{:.3f}}}],\"compact_threshold\":0.5}}",
+                              s.used, s.capacity, s.peak_used, s.allocation_count,
+                              s.compaction_count, s.last_compaction_saved, s.total_compaction_saved,
+                              s.fragmentation_ratio());
         } else {
             out = "{\"arenas\":[]}";
         }
@@ -16887,16 +17548,19 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -16912,7 +17576,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -16937,8 +17604,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     //   0x08 = ownership, 0x10 = coercion. Returns 0 for clean nodes
     //   or out-of-range ids.
     primitives_.add("dirty:reasons", [this](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0])) return make_int(0);
-        if (!workspace_flat_) return make_int(0);
+        if (a.empty() || !is_int(a[0]))
+            return make_int(0);
+        if (!workspace_flat_)
+            return make_int(0);
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         return make_int(static_cast<std::int64_t>(workspace_flat_->dirty_reasons(id)));
     });
@@ -16948,31 +17617,41 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     //   (total is the number of dirty nodes, not the sum of bits).
     // Built inline using the same hash-build pattern as gc-arena-info.
     primitives_.add("dirty:counts", [this](const auto&) -> EvalValue {
-        if (!workspace_flat_) return make_void();
+        if (!workspace_flat_)
+            return make_void();
         std::size_t gen = 0, con = 0, occ = 0, own = 0, coe = 0, total = 0;
         const auto& dirty = workspace_flat_->dirty_column();
         for (std::size_t i = 0; i < dirty.size(); ++i) {
             auto b = dirty[i];
-            if (b == 0) continue;
+            if (b == 0)
+                continue;
             ++total;
-            if (b & 0x01) ++gen;
-            if (b & 0x02) ++con;
-            if (b & 0x04) ++occ;
-            if (b & 0x08) ++own;
-            if (b & 0x10) ++coe;
+            if (b & 0x01)
+                ++gen;
+            if (b & 0x02)
+                ++con;
+            if (b & 0x04)
+                ++occ;
+            if (b & 0x08)
+                ++own;
+            if (b & 0x10)
+                ++coe;
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -16988,7 +17667,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -17010,7 +17692,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // candidates the issue body tracks. Returns 0 if no hook
     // is installed (e.g. unit-test Evaluator without a JIT).
     primitives_.add("jit:intrinsic-count", [this](const auto&) -> EvalValue {
-        if (!get_intrinsic_count_fn_) return make_int(0);
+        if (!get_intrinsic_count_fn_)
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(get_intrinsic_count_fn_()));
     });
     // (jit:deopt-fn? fn-name threshold) — Issue #193: returns
@@ -17020,20 +17703,24 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // should pass a non-zero threshold (e.g. 10) to avoid
     // thrashing on transient bugs during initial JIT warmup.
     primitives_.add("jit:deopt-fn?", [this](const auto& a) -> EvalValue {
-        if (a.empty() || !is_string(a[0])) return make_bool(false);
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
         auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size()) return make_bool(false);
+        if (idx >= string_heap_.size())
+            return make_bool(false);
         std::uint64_t threshold = 0;
         if (a.size() >= 2 && is_int(a[1])) {
             auto t = as_int(a[1]);
-            if (t < 0) t = 0;
+            if (t < 0)
+                t = 0;
             threshold = static_cast<std::uint64_t>(t);
         }
         // The intrinsic_count check would need a separate hook
         // for the per-function unhandled count. For now, we
         // look up via the AuraJIT if it's installed. If the
         // hook isn't installed, default to false (never deopt).
-        if (!get_jit_unhandled_count_fn_) return make_bool(false);
+        if (!get_jit_unhandled_count_fn_)
+            return make_bool(false);
         auto count = get_jit_unhandled_count_fn_(string_heap_[idx].c_str());
         return make_bool(count > threshold);
     });
@@ -17042,7 +17729,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // to a top-level define that has been compiled at least
     // once. Returns 0 if no hook is installed.
     primitives_.add("compile:cache-size", [this](const auto&) -> EvalValue {
-        if (!get_incremental_stats_fn_) return make_int(0);
+        if (!get_incremental_stats_fn_)
+            return make_int(0);
         auto packed = get_incremental_stats_fn_();
         return make_int(static_cast<std::int64_t>(packed >> 48));
     });
@@ -17051,7 +17739,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // means the cached IR is stale and needs re-lower on next
     // access. Returns 0 if no hook is installed.
     primitives_.add("compile:dirty-count", [this](const auto&) -> EvalValue {
-        if (!get_incremental_stats_fn_) return make_int(0);
+        if (!get_incremental_stats_fn_)
+            return make_int(0);
         auto packed = get_incremental_stats_fn_();
         return make_int(static_cast<std::int64_t>((packed >> 32) & 0xFFFF));
     });
@@ -17060,7 +17749,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // entries that haven't seen the current epoch are stale.
     // Returns 0 if no hook is installed.
     primitives_.add("compile:epoch", [this](const auto&) -> EvalValue {
-        if (!get_incremental_stats_fn_) return make_int(0);
+        if (!get_incremental_stats_fn_)
+            return make_int(0);
         auto packed = get_incremental_stats_fn_();
         return make_int(static_cast<std::int64_t>((packed >> 16) & 0xFFFF));
     });
@@ -17070,7 +17760,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // to invalidate the source via invalidate_function BFS.
     // Returns 0 if no hook is installed.
     primitives_.add("compile:dep-edges", [this](const auto&) -> EvalValue {
-        if (!get_incremental_stats_fn_) return make_int(0);
+        if (!get_incremental_stats_fn_)
+            return make_int(0);
         auto packed = get_incremental_stats_fn_();
         return make_int(static_cast<std::int64_t>(packed & 0xFFFF));
     });
@@ -17081,58 +17772,60 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // an EDSL agent can measure "did the previous mutation
     // actually re-lower anything?" by reading this primitive
     // before and after a mutation cycle.
-    primitives_.add("compile:block-dirty-count",
-        [this](const auto& a) -> EvalValue {
-            if (a.empty() || !is_string(a[0])) return make_int(0);
-            auto idx = as_string_idx(a[0]);
-            if (idx >= string_heap_.size()) return make_int(0);
-            if (!get_dirty_block_count_fn_) return make_int(0);
-            return make_int(static_cast<std::int64_t>(
-                get_dirty_block_count_fn_(string_heap_[idx].c_str())));
-        });
+    primitives_.add("compile:block-dirty-count", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_int(0);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return make_int(0);
+        if (!get_dirty_block_count_fn_)
+            return make_int(0);
+        return make_int(
+            static_cast<std::int64_t>(get_dirty_block_count_fn_(string_heap_[idx].c_str())));
+    });
     // (compile:func-block-dirty-count name func-idx) —
     // Issue #196: dirty block count for a specific function
     // in the named define's IR cache entry. Returns 0 if
     // no hook, the entry doesn't exist, or func-idx is
     // out of range.
-    primitives_.add("compile:func-block-dirty-count",
-        [this](const auto& a) -> EvalValue {
-            if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1])) {
-                return make_int(0);
-            }
-            auto idx = as_string_idx(a[0]);
-            if (idx >= string_heap_.size()) return make_int(0);
-            auto fidx = as_int(a[1]);
-            if (fidx < 0) return make_int(0);
-            if (!get_func_dirty_block_count_fn_) return make_int(0);
-            return make_int(static_cast<std::int64_t>(
-                get_func_dirty_block_count_fn_(
-                    string_heap_[idx].c_str(),
-                    static_cast<std::size_t>(fidx))));
-        });
+    primitives_.add("compile:func-block-dirty-count", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1])) {
+            return make_int(0);
+        }
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return make_int(0);
+        auto fidx = as_int(a[1]);
+        if (fidx < 0)
+            return make_int(0);
+        if (!get_func_dirty_block_count_fn_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(get_func_dirty_block_count_fn_(
+            string_heap_[idx].c_str(), static_cast<std::size_t>(fidx))));
+    });
     // (compile:block-dirty? name func-idx block-idx) —
     // Issue #196: returns #t if the specific (function,
     // block) is dirty in the named define's IR cache entry.
     // Returns #f otherwise. Use case: fine-grained
     // "did THIS block change?" query for the smarter
     // re-lower (Phase 5 follow-up).
-    primitives_.add("compile:block-dirty?",
-        [this](const auto& a) -> EvalValue {
-            if (a.size() < 3 || !is_string(a[0]) ||
-                !is_int(a[1]) || !is_int(a[2])) {
-                return make_bool(false);
-            }
-            auto idx = as_string_idx(a[0]);
-            if (idx >= string_heap_.size()) return make_bool(false);
-            auto fidx = as_int(a[1]);
-            auto bidx = as_int(a[2]);
-            if (fidx < 0 || bidx < 0) return make_bool(false);
-            if (!is_block_dirty_fn_) return make_bool(false);
-            return make_bool(is_block_dirty_fn_(
-                string_heap_[idx].c_str(),
-                static_cast<std::size_t>(fidx),
-                static_cast<std::uint32_t>(bidx)));
-        });
+    primitives_.add("compile:block-dirty?", [this](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
+            return make_bool(false);
+        }
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return make_bool(false);
+        auto fidx = as_int(a[1]);
+        auto bidx = as_int(a[2]);
+        if (fidx < 0 || bidx < 0)
+            return make_bool(false);
+        if (!is_block_dirty_fn_)
+            return make_bool(false);
+        return make_bool(is_block_dirty_fn_(string_heap_[idx].c_str(),
+                                            static_cast<std::size_t>(fidx),
+                                            static_cast<std::uint32_t>(bidx)));
+    });
     // (compile:mark-block-dirty! name func-idx block-idx) —
     // Issue #196: fine-grained mark a single (function, block)
     // dirty in the named define's IR cache entry. Returns
@@ -17140,46 +17833,46 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // hook is not installed. Use case: the smarter
     // re-lower (Phase 5 follow-up) marks only the affected
     // blocks rather than the whole entry.
-    primitives_.add("compile:mark-block-dirty!",
-        [this](const auto& a) -> EvalValue {
-            if (a.size() < 3 || !is_string(a[0]) ||
-                !is_int(a[1]) || !is_int(a[2])) {
-                return make_bool(false);
-            }
-            auto idx = as_string_idx(a[0]);
-            if (idx >= string_heap_.size()) return make_bool(false);
-            auto fidx = as_int(a[1]);
-            auto bidx = as_int(a[2]);
-            if (fidx < 0 || bidx < 0) return make_bool(false);
-            if (!mark_block_dirty_fn_) return make_bool(false);
-            return make_bool(mark_block_dirty_fn_(
-                string_heap_[idx].c_str(),
-                static_cast<std::size_t>(fidx),
-                static_cast<std::uint32_t>(bidx)));
-        });
+    primitives_.add("compile:mark-block-dirty!", [this](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
+            return make_bool(false);
+        }
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return make_bool(false);
+        auto fidx = as_int(a[1]);
+        auto bidx = as_int(a[2]);
+        if (fidx < 0 || bidx < 0)
+            return make_bool(false);
+        if (!mark_block_dirty_fn_)
+            return make_bool(false);
+        return make_bool(mark_block_dirty_fn_(string_heap_[idx].c_str(),
+                                              static_cast<std::size_t>(fidx),
+                                              static_cast<std::uint32_t>(bidx)));
+    });
     // (compile:clear-block-dirty! name func-idx block-idx) —
     // Issue #196: clear a single (function, block) dirty bit
     // in the named define's IR cache entry. Returns #t on
     // success, #f if the entry doesn't exist or the hook is
     // not installed. Use case: the smarter re-lower clears
     // the dirty bit after re-lowering a block.
-    primitives_.add("compile:clear-block-dirty!",
-        [this](const auto& a) -> EvalValue {
-            if (a.size() < 3 || !is_string(a[0]) ||
-                !is_int(a[1]) || !is_int(a[2])) {
-                return make_bool(false);
-            }
-            auto idx = as_string_idx(a[0]);
-            if (idx >= string_heap_.size()) return make_bool(false);
-            auto fidx = as_int(a[1]);
-            auto bidx = as_int(a[2]);
-            if (fidx < 0 || bidx < 0) return make_bool(false);
-            if (!clear_block_dirty_fn_) return make_bool(false);
-            return make_bool(clear_block_dirty_fn_(
-                string_heap_[idx].c_str(),
-                static_cast<std::size_t>(fidx),
-                static_cast<std::uint32_t>(bidx)));
-        });
+    primitives_.add("compile:clear-block-dirty!", [this](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
+            return make_bool(false);
+        }
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return make_bool(false);
+        auto fidx = as_int(a[1]);
+        auto bidx = as_int(a[2]);
+        if (fidx < 0 || bidx < 0)
+            return make_bool(false);
+        if (!clear_block_dirty_fn_)
+            return make_bool(false);
+        return make_bool(clear_block_dirty_fn_(string_heap_[idx].c_str(),
+                                               static_cast<std::size_t>(fidx),
+                                               static_cast<std::uint32_t>(bidx)));
+    });
 
     // Issue #240: (compile:mark-narrowing-dirty! node-id
     // [set-or-clear]) — Set or clear the per-node
@@ -17198,17 +17891,18 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     //
     // Returns #t on success, #f if the hook is not installed
     // or the node-id is out of range.
-    primitives_.add("compile:mark-narrowing-dirty!",
-        [this](const auto& a) -> EvalValue {
-            if (a.empty() || !is_int(a[0])) return make_bool(false);
-            if (!set_occurrence_dirty_fn_) return make_bool(false);
-            auto node_id = static_cast<std::uint32_t>(as_int(a[0]));
-            bool set = true;
-            if (a.size() >= 2 && is_bool(a[1])) {
-                set = as_bool(a[1]);
-            }
-            return make_bool(set_occurrence_dirty_fn_(node_id, set));
-        });
+    primitives_.add("compile:mark-narrowing-dirty!", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        if (!set_occurrence_dirty_fn_)
+            return make_bool(false);
+        auto node_id = static_cast<std::uint32_t>(as_int(a[0]));
+        bool set = true;
+        if (a.size() >= 2 && is_bool(a[1])) {
+            set = as_bool(a[1]);
+        }
+        return make_bool(set_occurrence_dirty_fn_(node_id, set));
+    });
 
     // Issue #240: (compile:narrowing-dirty? node-id) — query
     // whether a workspace FlatAST node has the kOccurrenceDirty
@@ -17219,30 +17913,31 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // is not installed or the node-id is out of range).
     //
     // This is the read-only counterpart to mark-narrowing-dirty!.
-    primitives_.add("compile:narrowing-dirty?",
-        [this](const auto& a) -> EvalValue {
-            if (a.empty() || !is_int(a[0])) return make_bool(false);
-            auto node_id = static_cast<std::uint32_t>(as_int(a[0]));
-            // The hook is dual-purpose: set with true queries the
-            // state. We pass false (clear) but capture the
-            // pre-clear state via... actually let's just expose
-            // the query via a separate path. For simplicity, we
-            // reuse the hook and call it with set=true after
-            // capturing a probe.
-            if (!set_occurrence_dirty_fn_) return make_bool(false);
-            // The hook's contract: it returns the prior state
-            // when called with set=true. We use that to peek
-            // without modifying state. After the peek we call
-            // it with the prior value (true if already dirty,
-            // false otherwise) to restore the original state.
-            bool prior = set_occurrence_dirty_fn_(node_id, true);
-            // Restore: if prior was true (was already dirty),
-            // set again (no-op since the bit is still set);
-            // if prior was false (was not dirty), clear (which
-            // undoes the set we just did).
-            set_occurrence_dirty_fn_(node_id, prior);
-            return make_bool(prior);
-        });
+    primitives_.add("compile:narrowing-dirty?", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto node_id = static_cast<std::uint32_t>(as_int(a[0]));
+        // The hook is dual-purpose: set with true queries the
+        // state. We pass false (clear) but capture the
+        // pre-clear state via... actually let's just expose
+        // the query via a separate path. For simplicity, we
+        // reuse the hook and call it with set=true after
+        // capturing a probe.
+        if (!set_occurrence_dirty_fn_)
+            return make_bool(false);
+        // The hook's contract: it returns the prior state
+        // when called with set=true. We use that to peek
+        // without modifying state. After the peek we call
+        // it with the prior value (true if already dirty,
+        // false otherwise) to restore the original state.
+        bool prior = set_occurrence_dirty_fn_(node_id, true);
+        // Restore: if prior was true (was already dirty),
+        // set again (no-op since the bit is still set);
+        // if prior was false (was not dirty), clear (which
+        // undoes the set we just did).
+        set_occurrence_dirty_fn_(node_id, prior);
+        return make_bool(prior);
+    });
     // (compile:inline-pass-stats) — Issue #197: returns
     // a hash with the inliner's lifetime counters:
     //   :inlined          — process-wide total of the
@@ -17255,56 +17950,61 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // The counters are static and process-wide, so the
     // primitive surfaces the cumulative inlining work
     // done by all InlinePass runs since process start.
-    primitives_.add("compile:inline-pass-stats",
-        [this](const auto&) -> EvalValue {
-            std::int64_t inlined = 0;
-            std::int64_t branch_aware = 0;
-            if (get_inline_stats_fn_) {
-                std::uint64_t packed = get_inline_stats_fn_();
-                inlined = static_cast<std::int64_t>(packed & 0xFFFFFFFF);
-                branch_aware = static_cast<std::int64_t>(packed >> 32);
-            }
-            std::int64_t total = inlined + branch_aware;
-            auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
-                if (!ht) return make_void();
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = 0xcbf29ce484222325ull;
-                    for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
-                    auto kidx = string_heap_.size();
-                    string_heap_.push_back(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
+    primitives_.add("compile:inline-pass-stats", [this](const auto&) -> EvalValue {
+        std::int64_t inlined = 0;
+        std::int64_t branch_aware = 0;
+        if (get_inline_stats_fn_) {
+            std::uint64_t packed = get_inline_stats_fn_();
+            inlined = static_cast<std::int64_t>(packed & 0xFFFFFFFF);
+            branch_aware = static_cast<std::int64_t>(packed >> 32);
+        }
+        std::int64_t total = inlined + branch_aware;
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
-                    if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
-            };
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"inlined", make_int(inlined)},
-                {"branch-aware", make_int(branch_aware)},
-                {"total", make_int(total)},
-            };
-            return build_hash(kv);
-        });
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"inlined", make_int(inlined)},
+            {"branch-aware", make_int(branch_aware)},
+            {"total", make_int(total)},
+        };
+        return build_hash(kv);
+    });
 
     // (jit:exception-depth) — Issue #195: current fiber's
     // exception stack depth. Reads from the per-fiber ExStack
@@ -17317,8 +18017,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // fiber ids that have exception state. Used for
     // observability of the per-fiber ExStack map size.
     primitives_.add("jit:exception-fibers", [this](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(
-            aura_exception_fiber_count()));
+        return make_int(static_cast<std::int64_t>(aura_exception_fiber_count()));
     });
     // (jit:exception-fibers-clear) — Issue #195: clear all
     // per-fiber exception state. Returns void. Used by the
@@ -17348,16 +18047,19 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     primitives_.add("concurrency:stats", [this](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -17373,7 +18075,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -17399,7 +18104,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // captured. #f if a mutation has happened (and AST/cells/pairs
     // may be stale).
     primitives_.add("concurrency:version-current?", [this](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0])) return make_bool(false);
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
         auto snap = static_cast<std::uint64_t>(as_int(a[0]));
         return make_bool(is_version_current(snap));
     });
@@ -17410,10 +18116,13 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // nodes") and for diagnostic output ("why did mutate:rebind
     // refuse to edit this node?").
     primitives_.add("syntax-marker", [this](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0])) return make_int(0);
-        if (!workspace_flat_) return make_int(0);
+        if (a.empty() || !is_int(a[0]))
+            return make_int(0);
+        if (!workspace_flat_)
+            return make_int(0);
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        if (id >= workspace_flat_->size()) return make_int(0);
+        if (id >= workspace_flat_->size())
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(workspace_flat_->marker(id)));
     });
     // (ast:stable-ref node-id) — Issue #191: capture a StableNodeRef
@@ -17423,8 +18132,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // to safely hold a reference to a node across multiple
     // mutation / query calls.
     primitives_.add("ast:stable-ref", [this](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0])) return make_void();
-        if (!workspace_flat_) return make_void();
+        if (a.empty() || !is_int(a[0]))
+            return make_void();
+        if (!workspace_flat_)
+            return make_void();
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto ref = workspace_flat_->make_ref(id);
         // Pack as (id . gen) pair
@@ -17446,11 +18157,11 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     primitives_.add("ast:ref-valid?", [this](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
             return make_bool(false);
-        if (!workspace_flat_) return make_bool(false);
+        if (!workspace_flat_)
+            return make_bool(false);
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto gen = static_cast<std::uint16_t>(as_int(a[1]));
-        return make_bool(workspace_flat_->is_valid(
-            aura::ast::FlatAST::StableNodeRef{id, gen}));
+        return make_bool(workspace_flat_->is_valid(aura::ast::FlatAST::StableNodeRef{id, gen}));
     });
     // (ast:ref-get id gen) — Issue #191: safely get a node
     // from a stable reference. Returns the node as a value if
@@ -17465,30 +18176,61 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     primitives_.add("ast:ref-get", [this](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
             return make_void();
-        if (!workspace_flat_) return make_void();
+        if (!workspace_flat_)
+            return make_void();
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto gen = static_cast<std::uint16_t>(as_int(a[1]));
-        auto opt = workspace_flat_->get_safe(
-            aura::ast::FlatAST::StableNodeRef{id, gen});
-        if (!opt) return make_void();
+        auto opt = workspace_flat_->get_safe(aura::ast::FlatAST::StableNodeRef{id, gen});
+        if (!opt)
+            return make_void();
         // Return the tag name as a string for observability
         std::string tag_name = "?";
         switch (opt->tag) {
-            case aura::ast::NodeTag::LiteralInt: tag_name = "LiteralInt"; break;
-            case aura::ast::NodeTag::LiteralFloat: tag_name = "LiteralFloat"; break;
-            case aura::ast::NodeTag::LiteralString: tag_name = "LiteralString"; break;
-            case aura::ast::NodeTag::Variable: tag_name = "Variable"; break;
-            case aura::ast::NodeTag::Call: tag_name = "Call"; break;
-            case aura::ast::NodeTag::IfExpr: tag_name = "IfExpr"; break;
-            case aura::ast::NodeTag::Lambda: tag_name = "Lambda"; break;
-            case aura::ast::NodeTag::Let: tag_name = "Let"; break;
-            case aura::ast::NodeTag::LetRec: tag_name = "LetRec"; break;
-            case aura::ast::NodeTag::Define: tag_name = "Define"; break;
-            case aura::ast::NodeTag::Begin: tag_name = "Begin"; break;
-            case aura::ast::NodeTag::Set: tag_name = "Set"; break;
-            case aura::ast::NodeTag::Quote: tag_name = "Quote"; break;
-            case aura::ast::NodeTag::MacroDef: tag_name = "MacroDef"; break;
-            default: tag_name = "Node"; break;
+            case aura::ast::NodeTag::LiteralInt:
+                tag_name = "LiteralInt";
+                break;
+            case aura::ast::NodeTag::LiteralFloat:
+                tag_name = "LiteralFloat";
+                break;
+            case aura::ast::NodeTag::LiteralString:
+                tag_name = "LiteralString";
+                break;
+            case aura::ast::NodeTag::Variable:
+                tag_name = "Variable";
+                break;
+            case aura::ast::NodeTag::Call:
+                tag_name = "Call";
+                break;
+            case aura::ast::NodeTag::IfExpr:
+                tag_name = "IfExpr";
+                break;
+            case aura::ast::NodeTag::Lambda:
+                tag_name = "Lambda";
+                break;
+            case aura::ast::NodeTag::Let:
+                tag_name = "Let";
+                break;
+            case aura::ast::NodeTag::LetRec:
+                tag_name = "LetRec";
+                break;
+            case aura::ast::NodeTag::Define:
+                tag_name = "Define";
+                break;
+            case aura::ast::NodeTag::Begin:
+                tag_name = "Begin";
+                break;
+            case aura::ast::NodeTag::Set:
+                tag_name = "Set";
+                break;
+            case aura::ast::NodeTag::Quote:
+                tag_name = "Quote";
+                break;
+            case aura::ast::NodeTag::MacroDef:
+                tag_name = "MacroDef";
+                break;
+            default:
+                tag_name = "Node";
+                break;
         }
         std::string s = std::string("<node:") + tag_name + " id=" + std::to_string(id) + ">";
         std::size_t sidx = string_heap_.size();
@@ -17500,7 +18242,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // mutation has happened (compare the returned value to
     // a previously-captured one).
     primitives_.add("ast:generation", [this](const auto&) -> EvalValue {
-        if (!workspace_flat_) return make_int(0);
+        if (!workspace_flat_)
+            return make_int(0);
         return make_int(static_cast<std::int64_t>(workspace_flat_->generation()));
     });
 
@@ -17511,28 +18254,35 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     // workspace is macro-introduced code?") and for asserting
     // hygiene invariants in tests.
     primitives_.add("syntax-marker-counts", [this](const auto&) -> EvalValue {
-        if (!workspace_flat_) return make_void();
+        if (!workspace_flat_)
+            return make_void();
         std::size_t user = 0, macro = 0, bool_lit = 0, total = 0;
         const auto& markers = workspace_flat_->marker_column();
         for (std::size_t i = 0; i < markers.size(); ++i) {
             ++total;
             auto m = static_cast<int>(markers[i]);
-            if (m == 0) ++user;
-            else if (m == 1) ++macro;
-            else if (m == 2) ++bool_lit;
+            if (m == 0)
+                ++user;
+            else if (m == 1)
+                ++macro;
+            else if (m == 2)
+                ++bool_lit;
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -17548,7 +18298,10 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                         break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -17569,8 +18322,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     primitives_.add("gc-arena-stats", [this](const auto&) -> EvalValue {
         std::string out;
         auto fmt_arena = [&](const char* label, std::size_t used, std::size_t cap) {
-            auto s = std::format("{}{}:{:.1f}MB/{:.1f}MB", out.empty() ? "" : ";",
-                                 label, used / 1048576.0, cap / 1048576.0);
+            auto s = std::format("{}{}:{:.1f}MB/{:.1f}MB", out.empty() ? "" : ";", label,
+                                 used / 1048576.0, cap / 1048576.0);
             out += s;
         };
         if (arena_) {
@@ -17604,7 +18357,12 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     //   All numeric values are in megabytes (MB). Pct values are integers 0-100.
     primitives_.add("gc-arena-info", [this](const auto&) -> EvalValue {
         // Snapshot arena state. Each entry: (short_name, used-MB, cap-MB, pct).
-        struct Snap { std::string name; double used; double cap; int pct; };
+        struct Snap {
+            std::string name;
+            double used;
+            double cap;
+            int pct;
+        };
         std::vector<Snap> snaps;
         double total_used = 0.0, total_cap = 0.0;
         if (arena_) {
@@ -17618,7 +18376,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         if (arena_group_) {
             for (auto& [full_name, stats] : arena_group_->module_stats()) {
                 auto slash = full_name.rfind('/');
-                auto short_name = slash == std::string::npos ? full_name : full_name.substr(slash + 1);
+                auto short_name =
+                    slash == std::string::npos ? full_name : full_name.substr(slash + 1);
                 double u = stats.used / 1048576.0;
                 double c = stats.capacity / 1048576.0;
                 snaps.push_back({short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
@@ -17632,7 +18391,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // pattern. Capacity 8 is enough for the 5-field hashes below.
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -17640,9 +18400,11 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             for (auto& [k, v] : kv) {
                 // Hash the key with FNV-1a (matches user-level (hash ...) behavior).
                 std::uint64_t h = 0xcbf29ce484222325ull;
-                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
                 // Intern the key as a String EvalValue.
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
@@ -17723,7 +18485,12 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     //   bytes, then name (lexicographic) for determinism.
     primitives_.add("memory-pressure", [this](const auto&) -> EvalValue {
         // Snapshot arena state.
-        struct Snap { std::string name; double used; double cap; int pct; };
+        struct Snap {
+            std::string name;
+            double used;
+            double cap;
+            int pct;
+        };
         std::vector<Snap> snaps;
         double total_used = 0.0, total_cap = 0.0;
         if (arena_) {
@@ -17737,7 +18504,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         if (arena_group_) {
             for (auto& [full_name, stats] : arena_group_->module_stats()) {
                 auto slash = full_name.rfind('/');
-                auto short_name = slash == std::string::npos ? full_name : full_name.substr(slash + 1);
+                auto short_name =
+                    slash == std::string::npos ? full_name : full_name.substr(slash + 1);
                 double u = stats.used / 1048576.0;
                 double c = stats.capacity / 1048576.0;
                 snaps.push_back({short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
@@ -17749,17 +18517,19 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
         // Determine level from overall used-pct.
         const char* level = "low";
-        if (overall >= 95)      level = "critical";
-        else if (overall >= 80) level = "high";
-        else if (overall >= 60) level = "medium";
+        if (overall >= 95)
+            level = "critical";
+        else if (overall >= 80)
+            level = "high";
+        else if (overall >= 60)
+            level = "medium";
 
         // Find top-arena (highest used-pct, then largest used, then name asc).
         std::string top_name;
         int top_pct = 0;
         double top_used = 0.0;
         for (auto& s : snaps) {
-            if (s.pct > top_pct ||
-                (s.pct == top_pct && s.used > top_used) ||
+            if (s.pct > top_pct || (s.pct == top_pct && s.used > top_used) ||
                 (s.pct == top_pct && s.used == top_used && s.name < top_name)) {
                 top_name = s.name;
                 top_pct = s.pct;
@@ -17787,7 +18557,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // Build the result hash. Inline Swiss-table construction (same
         // shape as gc-arena-info's build_hash, 8-slot capacity).
         auto* ht = FlatHashTable::create(8);
-        if (!ht) return make_void();
+        if (!ht)
+            return make_void();
         auto meta = ht->metadata();
         auto keys = ht->keys();
         auto vals = ht->values();
@@ -17796,9 +18567,11 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         // String values are interned in string_heap_ first.
         auto hput = [&](const std::string& k, const EvalValue& v) -> bool {
             std::uint64_t h = 0xcbf29ce484222325ull;
-            for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            for (char c : k)
+                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+            if (fp == 0xFF)
+                fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
             auto kidx = string_heap_.size();
             string_heap_.push_back(k);
             EvalValue key_ev = make_string(kidx);
@@ -17826,13 +18599,13 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         vector_heap_.push_back(std::move(suggestions));
 
         bool ok = true;
-        ok = ok && hput("level",          make_string(level_idx));
-        ok = ok && hput("used-pct",       make_int(overall));
-        ok = ok && hput("total-used",     make_float(total_used));
+        ok = ok && hput("level", make_string(level_idx));
+        ok = ok && hput("used-pct", make_int(overall));
+        ok = ok && hput("total-used", make_float(total_used));
         ok = ok && hput("total-capacity", make_float(total_cap));
-        ok = ok && hput("top-arena",      make_string(top_name_idx));
-        ok = ok && hput("top-pct",        make_int(top_pct));
-        ok = ok && hput("suggestions",    make_vector(sugg_vidx));
+        ok = ok && hput("top-arena", make_string(top_name_idx));
+        ok = ok && hput("top-pct", make_int(top_pct));
+        ok = ok && hput("suggestions", make_vector(sugg_vidx));
         if (!ok) {
             FlatHashTable::destroy(ht);
             return make_void();
@@ -17869,12 +18642,12 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 // back to a string and compare to the target.
                 auto hget = [&](const std::string& k) -> EvalValue {
                     for (std::uint64_t i = 0; i < ht->capacity; ++i) {
-                        if (ht->metadata()[i] == 0xFF) continue;
+                        if (ht->metadata()[i] == 0xFF)
+                            continue;
                         EvalValue kev(ht->keys()[i]);
                         if (is_string(kev)) {
                             auto kidx = as_string_idx(kev);
-                            if (kidx < string_heap_.size() &&
-                                string_heap_[kidx] == k) {
+                            if (kidx < string_heap_.size() && string_heap_[kidx] == k) {
                                 return EvalValue(ht->values()[i]);
                             }
                         }
@@ -17883,18 +18656,28 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 };
                 auto try_int = [&](const std::string& k, int& out) {
                     auto v = hget(k);
-                    if (is_int(v)) { out = static_cast<int>(as_int(v)); return true; }
+                    if (is_int(v)) {
+                        out = static_cast<int>(as_int(v));
+                        return true;
+                    }
                     return false;
                 };
                 auto try_bool = [&](const std::string& k, bool& out) {
                     auto v = hget(k);
-                    if (is_bool(v)) { out = as_bool(v); return true; }
+                    if (is_bool(v)) {
+                        out = as_bool(v);
+                        return true;
+                    }
                     return false;
                 };
-                int v_i = 0; bool v_b = false;
-                if (try_bool("auto-gc", v_b))        memory_policy_.auto_gc = v_b;
-                if (try_int("warn-pct", v_i))        memory_policy_.warn_pct = v_i;
-                if (try_int("critical-pct", v_i))    memory_policy_.critical_pct = v_i;
+                int v_i = 0;
+                bool v_b = false;
+                if (try_bool("auto-gc", v_b))
+                    memory_policy_.auto_gc = v_b;
+                if (try_int("warn-pct", v_i))
+                    memory_policy_.warn_pct = v_i;
+                if (try_int("critical-pct", v_i))
+                    memory_policy_.critical_pct = v_i;
                 if (try_int("sample-every", v_i)) {
                     memory_policy_.sample_every = static_cast<std::size_t>(v_i);
                 }
@@ -17917,16 +18700,16 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
     });
 
     // (get-memory-policy) — Return the current policy as a hash.
-    primitives_.add("get-memory-policy", [this](const auto&) -> EvalValue {
-        return build_policy_hash(memory_policy_);
-    });
+    primitives_.add("get-memory-policy",
+                    [this](const auto&) -> EvalValue { return build_policy_hash(memory_policy_); });
 
     // ── Capability primitives (with-capability / capability? / check-capability) ──
 
     primitives_.add("with-capability", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {
             auto es = string_heap_.size();
-            string_heap_.push_back("with-capability: first argument must be a string or list of strings");
+            string_heap_.push_back(
+                "with-capability: first argument must be a string or list of strings");
             auto ev = error_values_.size();
             error_values_.push_back(make_string(es));
             return make_error(ev);
@@ -17970,7 +18753,9 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             auto cid = types::as_closure_id(body);
             auto it = closures_.find(cid);
             if (it != closures_.end() && it->second.body_id != ast::NULL_NODE)
-                result = eval_flat(*workspace_flat_, *workspace_pool_, it->second.body_id, top_env()).value_or(make_void());
+                result =
+                    eval_flat(*workspace_flat_, *workspace_pool_, it->second.body_id, top_env())
+                        .value_or(make_void());
         } else {
             result = body;
         }
@@ -17980,9 +18765,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         return result;
     });
 
-    primitives_.add("capability?", [](const auto& a) -> EvalValue {
-        return types::make_bool(false);
-    });
+    primitives_.add("capability?",
+                    [](const auto& a) -> EvalValue { return types::make_bool(false); });
 
     primitives_.add("check-capability", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {
@@ -18014,12 +18798,16 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             for (auto& cap : layer) {
                 bool dup = false;
                 for (auto& c : caps)
-                    if (c == cap) { dup = true; break; }
-                if (!dup) caps.push_back(cap);
+                    if (c == cap) {
+                        dup = true;
+                        break;
+                    }
+                if (!dup)
+                    caps.push_back(cap);
             }
         }
         // Build list from BACK to FRONT (append to head)
-        EvalValue result = make_void();  // '()
+        EvalValue result = make_void(); // '()
         for (int i = static_cast<int>(caps.size()) - 1; i >= 0; --i) {
             auto sidx = string_heap_.size();
             string_heap_.push_back(caps[i]);
@@ -18201,7 +18989,8 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // can find top_'s bindings (which is where the require primitive
     // injects the required module's exports).
     EnvId top_id = top_.parent_id();
-    if (top_id == NULL_ENV_ID) top_id = 0;  // top_ is at index 0
+    if (top_id == NULL_ENV_ID)
+        top_id = 0; // top_ is at index 0
     EnvId mod_id = alloc_env_frame_from_env(*mod_env, top_id);
     const_cast<Env*>(mod_env)->set_parent_id(mod_id);
 
@@ -18258,9 +19047,11 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
                 // 格式: "name: param1 param2 -> rettype"
                 // 例如 "add: Int Int -> Int"
                 auto colon = line.find(':');
-                if (colon == std::string::npos) continue;
+                if (colon == std::string::npos)
+                    continue;
                 auto arrow = line.find("->", colon);
-                if (arrow == std::string::npos) continue;
+                if (arrow == std::string::npos)
+                    continue;
                 auto name = line.substr(0, colon);
                 name.erase(name.find_last_not_of(" \t\r") + 1);
                 auto params_str = line.substr(colon + 1, arrow - colon - 1);
@@ -18270,11 +19061,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
                 ret_str.erase(0, ret_str.find_first_not_of(" \t\r"));
                 ret_str.erase(ret_str.find_last_not_of(" \t\r\n") + 1);
                 if (!name.empty() && !ret_str.empty()) {
-                    declared_type_sigs_[name] = {
-                        .type_str = params_str + "|" + ret_str,
-                        .module_file = resolved,
-                        .resolved = false
-                    };
+                    declared_type_sigs_[name] = {.type_str = params_str + "|" + ret_str,
+                                                 .module_file = resolved,
+                                                 .resolved = false};
                 }
             }
         }
@@ -18300,16 +19089,14 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
             auto cit = closures_.find(cid);
             if (cit != closures_.end() && !cit->second.params.empty()) {
                 for (std::size_t pi = 0; pi < cit->second.params.size(); ++pi) {
-                    if (pi > 0) param_str += " ";
+                    if (pi > 0)
+                        param_str += " ";
                     param_str += "Any";
                 }
                 param_str += " ";
             }
             declared_type_sigs_[fname] = {
-                .type_str = param_str + "|Any",
-                .module_file = resolved,
-                .resolved = false
-            };
+                .type_str = param_str + "|Any", .module_file = resolved, .resolved = false};
         }
     }
 
@@ -18397,23 +19184,27 @@ Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
 // from std::function-captured primitives without dangling.
 EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
     std::vector<std::pair<std::string, EvalValue>> kv;
-    kv.push_back({"auto-gc",              make_bool(p.auto_gc)});
-    kv.push_back({"warn-pct",             make_int(p.warn_pct)});
-    kv.push_back({"critical-pct",         make_int(p.critical_pct)});
-    kv.push_back({"sample-every",         make_int(static_cast<std::int64_t>(p.sample_every))});
-    kv.push_back({"cooldown-evals",      make_int(static_cast<std::int64_t>(p.cooldown_evals))});
-    kv.push_back({"recent-gc-temp-window", make_int(static_cast<std::int64_t>(p.recent_gc_temp_window))});
+    kv.push_back({"auto-gc", make_bool(p.auto_gc)});
+    kv.push_back({"warn-pct", make_int(p.warn_pct)});
+    kv.push_back({"critical-pct", make_int(p.critical_pct)});
+    kv.push_back({"sample-every", make_int(static_cast<std::int64_t>(p.sample_every))});
+    kv.push_back({"cooldown-evals", make_int(static_cast<std::int64_t>(p.cooldown_evals))});
+    kv.push_back(
+        {"recent-gc-temp-window", make_int(static_cast<std::int64_t>(p.recent_gc_temp_window))});
     auto* ht = FlatHashTable::create(8);
-    if (!ht) return make_void();
+    if (!ht)
+        return make_void();
     auto meta = ht->metadata();
     auto keys = ht->keys();
     auto vals = ht->values();
     auto cap = ht->capacity;
     for (auto& [k, v] : kv) {
         std::uint64_t h = 0xcbf29ce484222325ull;
-        for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+        for (char c : k)
+            h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
         auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+        if (fp == 0xFF)
+            fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
         auto kidx = string_heap_.size();
         string_heap_.push_back(k);
         EvalValue key_ev = make_string(kidx);
@@ -18442,8 +19233,7 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
 // eval_in(ast::Expr*) removed — all evaluation uses eval_flat(FlatAST&) now
 
 // apply_closure — looks up closures_, foreign functions, or IR bridge
-std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
-                                                  std::span<const EvalValue> args) {
+std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #252: closure dual-path observability. Bump the
     // total counter on every call. The path-specific counters
     // (ffi / tw / bridge / ir) are bumped in each branch.
@@ -18474,10 +19264,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
             // the function pointer below) stays in this function
             // because it depends on the per-FFI function pointer
             // from ffi_runtime_.
-            std::span<const std::string> string_heap_view(
-                string_heap_.data(), string_heap_.size());
-            std::span<void* const> opaque_heap_view(
-                opaque_heap_.data(), opaque_heap_.size());
+            std::span<const std::string> string_heap_view(string_heap_.data(), string_heap_.size());
+            std::span<void* const> opaque_heap_view(opaque_heap_.data(), opaque_heap_.size());
             auto marshalled = aura::compiler::pure::ffi_marshal_args_pure(
                 args, arg_types, string_heap_view, opaque_heap_view);
             const auto& i6 = marshalled.i_vals;
@@ -18561,12 +19349,13 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
         // Issue #145: set the pool so bind_symid can mirror
         // lambda params into the string-keyed bindings_ array
         // (so body code's lookup(name) still finds them).
-        if (cl_copy.pool) ne.set_pool(cl_copy.pool);
+        if (cl_copy.pool)
+            ne.set_pool(cl_copy.pool);
         if (cl_copy.dotted) {
             // Dotted rest param: bind named params, collect rest into list
             std::size_t named_count = cl_copy.params.size() - 1;
             for (std::size_t i = 0; i < named_count && i < args.size(); ++i)
-                ne.bind_symid(cl_copy.params[i], args[i]);  // Issue #145: SymId
+                ne.bind_symid(cl_copy.params[i], args[i]); // Issue #145: SymId
             // Collect remaining args into a pair list for the rest param
             types::EvalValue rest = make_void();
             for (std::size_t i = args.size(); i > named_count; --i) {
@@ -18577,7 +19366,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
             ne.bind_symid(cl_copy.params.back(), rest);
         } else {
             for (std::size_t i = 0; i < cl_copy.params.size() && i < args.size(); ++i)
-                ne.bind_symid(cl_copy.params[i], args[i]);  // Issue #145: SymId
+                ne.bind_symid(cl_copy.params[i], args[i]); // Issue #145: SymId
         }
         if (cl_copy.flat) {
             // Issue #223: check if the closure's bridge is stale
@@ -18767,8 +19556,10 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             auto bname = std::string(pool.resolve(v.sym_id));
             auto bni = string_heap_.size();
             string_heap_.push_back(bname);
-            auto bv = val_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, val_id) : make_void();
-            auto body = body_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, body_id) : make_void();
+            auto bv =
+                val_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, val_id) : make_void();
+            auto body =
+                body_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, body_id) : make_void();
             // Build: (cons name val) → bindings pair
             auto bp = pairs_.size();
             pairs_.push_back({make_string(bni), bv});
@@ -19318,7 +20109,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 EnvId cap_id = alloc_env_frame_from_env(env);
                 {
                     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
-                    closures_[cid] = Closure{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
+                    closures_[cid] =
+                        Closure{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
                 }
                 // Store param SymIds directly (Issue #145: SoA migration).
                 // Interning already happened at the lambda creation site
@@ -19418,7 +20210,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto* copied_env = copy_env(env, target);
                         Closure cl;
                         for (auto ps : param_syms) {
-                            cl.params.push_back(ps);  // Issue #145: SymId, not string
+                            cl.params.push_back(ps); // Issue #145: SymId, not string
                         }
                         cl.name = fn_str;
                         cl.flat = flat;
@@ -19574,14 +20366,15 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             Env tail_env(&env);
             tail_env.set_primitives(&primitives_);
 
-            if (md.pool) tail_env.set_pool(md.pool);
+            if (md.pool)
+                tail_env.set_pool(md.pool);
             for (std::size_t i = 0; i < md.params.size() && i < cargs.size(); ++i) {
                 tail_env.bind(md.params[i], std::move(cargs[i]));
             }
             // Evaluate macro body (quasiquote-expanded template)
             // → produces data (a list).
-            auto template_result = eval_flat(*md.flat, md.pool ? *md.pool : *current_pool_,
-                                              md.body_id, tail_env);
+            auto template_result =
+                eval_flat(*md.flat, md.pool ? *md.pool : *current_pool_, md.body_id, tail_env);
             if (!template_result)
                 return template_result;
             // Re-evaluate the data as code. The recursive call
@@ -19624,9 +20417,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     // Create tail env and apply
                     Env tail_env = materialize_call_env(cl);
                     tail_env.set_primitives(&primitives_);
-        
+
                     // Issue #145: set the pool so bind_symid can mirror
-                    if (cl.pool) tail_env.set_pool(cl.pool);
+                    if (cl.pool)
+                        tail_env.set_pool(cl.pool);
                     for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
                         tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
                     if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
@@ -19667,7 +20461,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             tail_env.set_primitives(&primitives_);
 
             // Issue #145: set the pool so bind_symid can mirror
-            if (cl.pool) tail_env.set_pool(cl.pool);
+            if (cl.pool)
+                tail_env.set_pool(cl.pool);
             for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
                 tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
             if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
@@ -19816,19 +20611,17 @@ static bool coerce_value(types::EvalValue& val, aura::core::TypeTag from, aura::
 // to extract those internals.
 EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalValue> a) {
     if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::ArityMismatch,
-            "batch :rebind requires name and code (string args)"});
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
+                                   "batch :rebind requires name and code (string args)"});
     if (!workspace_flat_ || !workspace_pool_)
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError,
-            "batch :rebind: no workspace loaded"});
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :rebind: no workspace loaded"});
     auto name_idx = as_string_idx(a[0]);
     auto code_idx = as_string_idx(a[1]);
     if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size())
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError,
-            "batch :rebind: string index out of range"});
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :rebind: string index out of range"});
     auto& flat = *workspace_flat_;
     auto name = string_heap_[name_idx];
     auto sym = canonical_pool()->intern(name);
@@ -19843,39 +20636,34 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     if (old_define == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ArityMismatch,
-            "batch :rebind: no existing Define for '" + name + "' (new-binding path not yet supported; use standalone mutate:rebind)"});
+            "batch :rebind: no existing Define for '" + name +
+                "' (new-binding path not yet supported; use standalone mutate:rebind)"});
     auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::ParseError,
-            "batch :rebind: parse failed for new code"});
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
+                                                      "batch :rebind: parse failed for new code"});
     aura::ast::NodeId new_value = pr.root;
     auto root_v = flat.get(pr.root);
     if (root_v.tag == aura::ast::NodeTag::Define) {
         if (root_v.children.empty())
             return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError,
-                "batch :rebind: define form has no body"});
+                aura::diag::ErrorKind::ParseError, "batch :rebind: define form has no body"});
         new_value = root_v.child(0);
     }
-    std::string summary = (a.size() > 2 && is_string(a[2]))
-                              ? string_heap_[as_string_idx(a[2])]
-                              : "batch rebind " + name;
+    std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
+                                                            : "batch rebind " + name;
     auto old_v = flat.get(old_define);
     auto old_value_node = old_v.children.empty() ? aura::ast::NULL_NODE : old_v.child(0);
     auto mid = flat.add_mutation_with_rollback(
-        old_define, "batch-rebind",
-        std::string("Define:") + name, std::string("Define:") + name,
-        summary, aura::ast::MutationStatus::Committed,
-        0, static_cast<std::uint64_t>(old_value_node),
-        static_cast<std::uint64_t>(new_value), true);
+        old_define, "batch-rebind", std::string("Define:") + name, std::string("Define:") + name,
+        summary, aura::ast::MutationStatus::Committed, 0,
+        static_cast<std::uint64_t>(old_value_node), static_cast<std::uint64_t>(new_value), true);
     flat.set_child(old_define, 0, new_value);
     flat.mark_dirty_upward(old_define);
     return make_int(static_cast<std::int64_t>(mid));
 }
 
-EvalResult Evaluator::eval_flat_apply_mutate_replace_value(
-    std::span<const types::EvalValue> a) {
+EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types::EvalValue> a) {
     // TODO #236 follow-up: extract the inner logic from
     // mutate:replace-value (LiteralInt / LiteralFloat /
     // LiteralString / sym_id field updates) so it can run
@@ -19887,8 +20675,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(
         "batch :replace-value not yet supported (use standalone mutate:replace-value)"});
 }
 
-EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(
-    std::span<const types::EvalValue> a) {
+EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types::EvalValue> a) {
     (void)a;
     return std::unexpected(aura::diag::Diagnostic{
         aura::diag::ErrorKind::InternalError,
@@ -19912,20 +20699,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         // Recursion depth guard: friendly error vs segfault
         // MAX_C_STACK_DEPTH must be low enough to fit in the C++ call stack (~550 frames)
         // ── Recursion depth guard (thread_local) ────────────────────────
-// #109 (P0): the depth counter must be PER THREAD, not per Evaluator.
-// Fiber fallback (std::thread + [this] capture) shares an Evaluator
-// across N OS threads; if each thread increments a shared counter, a
-// modest amount of parallel work trips the MAX_C_STACK_DEPTH=2000 guard
-// even though no single thread is deeply nested. This is what made
-// `tests/suite/concurrent.aura` T7-T10 (orch:parallel 5-way, nested
-// spawn+join) flaky: in one run they'd see the shared counter spike
-// past 2000 and bail with "recursion depth exceeded".
-//
-// The shared eval_depth_ member is still used below for auto-gc-temp
-// sampling and auto-gc cooldown, where "global eval activity" is the
-// intended signal (one thread's deep call can still be enough work
-// to warrant a periodic gc-temp). The two are now decoupled.
-static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
+        // #109 (P0): the depth counter must be PER THREAD, not per Evaluator.
+        // Fiber fallback (std::thread + [this] capture) shares an Evaluator
+        // across N OS threads; if each thread increments a shared counter, a
+        // modest amount of parallel work trips the MAX_C_STACK_DEPTH=2000 guard
+        // even though no single thread is deeply nested. This is what made
+        // `tests/suite/concurrent.aura` T7-T10 (orch:parallel 5-way, nested
+        // spawn+join) flaky: in one run they'd see the shared counter spike
+        // past 2000 and bail with "recursion depth exceeded".
+        //
+        // The shared eval_depth_ member is still used below for auto-gc-temp
+        // sampling and auto-gc cooldown, where "global eval activity" is the
+        // intended signal (one thread's deep call can still be enough work
+        // to warrant a periodic gc-temp). The two are now decoupled.
+        static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
         thread_local std::size_t t_c_stack_depth = 0;
         struct DepthGuard {
             std::size_t& d;
@@ -19944,7 +20731,12 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
             sample_counter_ = 0;
             // Snapshot arena state. Inline rather than refactoring into
             // a shared helper to avoid std::function capture-lifetime issues.
-            struct Snap { std::string name; double used; double cap; int pct; };
+            struct Snap {
+                std::string name;
+                double used;
+                double cap;
+                int pct;
+            };
             std::vector<Snap> snaps;
             double total_used = 0.0, total_cap = 0.0;
             if (arena_) {
@@ -19958,43 +20750,46 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
             if (arena_group_) {
                 for (auto& [full_name, stats] : arena_group_->module_stats()) {
                     auto slash = full_name.rfind('/');
-                    auto short_name = slash == std::string::npos ? full_name : full_name.substr(slash + 1);
+                    auto short_name =
+                        slash == std::string::npos ? full_name : full_name.substr(slash + 1);
                     double u = stats.used / 1048576.0;
                     double c = stats.capacity / 1048576.0;
-                    snaps.push_back({short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
+                    snaps.push_back(
+                        {short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
                     total_used += u;
                     total_cap += c;
                 }
             }
             int overall = total_cap > 0 ? static_cast<int>(total_used / total_cap * 100.0) : 0;
             std::string level = "low";
-            if (overall >= 95)      level = "critical";
-            else if (overall >= 80) level = "high";
-            else if (overall >= 60) level = "medium";
+            if (overall >= 95)
+                level = "critical";
+            else if (overall >= 80)
+                level = "high";
+            else if (overall >= 60)
+                level = "medium";
 
             // Log warning on level transitions (avoid spam — only log when
             // the level string changes from the last warned one).
-            if (level != last_warn_level_ &&
-                (level == "high" || level == "critical")) {
-                std::println(std::cerr,
-                             "[memory-pressure] WARNING: level={} overall-pct={} total-used={:.1f}MB",
-                             level, overall, total_used);
+            if (level != last_warn_level_ && (level == "high" || level == "critical")) {
+                std::println(
+                    std::cerr,
+                    "[memory-pressure] WARNING: level={} overall-pct={} total-used={:.1f}MB", level,
+                    overall, total_used);
                 last_warn_level_ = level;
             } else if (level == "low" || level == "medium") {
                 last_warn_level_ = level;
             }
 
             // Auto-gc: only at critical AND policy enabled AND cooldown elapsed.
-            if (memory_policy_.auto_gc &&
-                level == "critical" &&
+            if (memory_policy_.auto_gc && level == "critical" &&
                 eval_depth_ - last_auto_gc_eval_depth_ > memory_policy_.cooldown_evals) {
                 // Find top arena (highest used-pct, then largest used, then name asc).
                 std::string top_name;
                 int top_pct = 0;
                 double top_used = 0.0;
                 for (auto& s : snaps) {
-                    if (s.pct > top_pct ||
-                        (s.pct == top_pct && s.used > top_used) ||
+                    if (s.pct > top_pct || (s.pct == top_pct && s.used > top_used) ||
                         (s.pct == top_pct && s.used == top_used && s.name < top_name)) {
                         top_name = s.name;
                         top_pct = s.pct;
@@ -20028,8 +20823,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
             if (v.tag != aura::ast::NodeTag::LiteralInt &&
                 v.tag != aura::ast::NodeTag::LiteralFloat &&
                 v.tag != aura::ast::NodeTag::LiteralString &&
-                v.tag != aura::ast::NodeTag::Variable &&
-                !f->is_dirty(current_id)) {
+                v.tag != aura::ast::NodeTag::Variable && !f->is_dirty(current_id)) {
                 auto cached = f->get_cached_value(current_id);
                 if (cached != aura::ast::FlatAST::kNotCached) {
                     return EvalResult(EvalValue(cached));
@@ -20115,8 +20909,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     // Issue #79: source location from the offending node so the
                     // error report includes line:col instead of just node[id:N].
                     Diagnostic d(ErrorKind::UnboundVariable, std::move(var_name),
-                                 aura::diag::SourceLocation{v.line, v.col, 0},
-                                 current_id);
+                                 aura::diag::SourceLocation{v.line, v.col, 0}, current_id);
                     if (!best.empty())
                         d.with_suggestion("did you mean '" + best + "'?");
                     return std::unexpected(std::move(d));
@@ -20143,7 +20936,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         }
                         tail_env.emplace(&eval_env);
                         tail_env->set_primitives(&primitives_);
-            
+
                         for (std::size_t i = 0; i < iargs.size(); ++i) {
                             tail_env->bind(std::string(p->resolve(pspan[i])), std::move(iargs[i]));
                         }
@@ -20196,16 +20989,13 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                     return make_void();
                                 }
                                 // Bind macro args as data in tail_env
-                                std::size_t regular_count =
-                                    md.params.size();
+                                std::size_t regular_count = md.params.size();
                                 tail_env.emplace(&eval_env);
                                 tail_env->set_primitives(&primitives_);
                                 for (std::size_t i = 0;
-                                     i < regular_count && i + 1 < v.children.size();
-                                     ++i) {
-                                    tail_env->bind(
-                                        md.params[i],
-                                        ast_to_data(*f, *p, v.child(i + 1)));
+                                     i < regular_count && i + 1 < v.children.size(); ++i) {
+                                    tail_env->bind(md.params[i],
+                                                   ast_to_data(*f, *p, v.child(i + 1)));
                                 }
                                 // Issue #334: use md.pool if set (the
                                 // macro was defined in a different
@@ -20215,13 +21005,10 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 // alignment doesn't matter for the
                                 // Variable case (it just needs a valid
                                 // pool to resolve symids into strings).
-                                auto* mb_pool =
-                                    md.pool ? md.pool : p;
-                                auto* mb_flat =
-                                    md.pool ? md.flat : f;
-                                auto template_result = eval_flat(
-                                    *mb_flat, *mb_pool,
-                                    md.body_id, *tail_env);
+                                auto* mb_pool = md.pool ? md.pool : p;
+                                auto* mb_flat = md.pool ? md.flat : f;
+                                auto template_result =
+                                    eval_flat(*mb_flat, *mb_pool, md.body_id, *tail_env);
                                 if (!template_result)
                                     return template_result;
                                 // Issue #334 (Cycle 1): convert the
@@ -20242,8 +21029,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 // resulting lambda body has proper
                                 // Variable refs that look up in the
                                 // lambda's call env at call time.
-                                auto ast_root = data_to_flat(
-                                    *template_result, *f, *p, /*depth=*/0);
+                                auto ast_root = data_to_flat(*template_result, *f, *p, /*depth=*/0);
                                 if (ast_root == aura::ast::NULL_NODE)
                                     return std::unexpected(aura::diag::Diagnostic{
                                         aura::diag::ErrorKind::InternalError,
@@ -20268,8 +21054,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 // materialization of v.children into a
                                 // vector (one alloc per macro call) keeps
                                 // the call site short.
-                                std::vector<aura::ast::NodeId> call_args(
-                                    v.children.begin(), v.children.end());
+                                std::vector<aura::ast::NodeId> call_args(v.children.begin(),
+                                                                         v.children.end());
                                 auto subst = aura::compiler::pure::compute_macro_subst_pure(
                                     md.params, call_args, /*dotted=*/false);
                                 // Clone the macro body with substitution +
@@ -20281,10 +21067,11 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 // template-introduced bindings.
                                 std::unordered_map<std::string, std::string> rename_map;
                                 auto* src_pool = md.pool ? md.pool : p;
-                                auto expanded = clone_macro_body(*f, *p, *md.flat, *src_pool,
-                                                                 md.body_id, &subst, &rename_map,
-                                                                 /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
-                                if (expanded == aura::ast::NULL_NODE) return make_void();
+                                auto expanded = clone_macro_body(
+                                    *f, *p, *md.flat, *src_pool, md.body_id, &subst, &rename_map,
+                                    /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
+                                if (expanded == aura::ast::NULL_NODE)
+                                    return make_void();
                                 // Issue #230 #2 follow-up: undo the Quote-wrap
                                 // on set! targets. Same rationale as the
                                 // lambda case in eval_data_as_code — the
@@ -20304,9 +21091,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 // a depth limit (10) to prevent infinite loops
                                 // (e.g., macro X calls macro X).
                                 expanded = expand_inner_macros(f, p, expanded,
-                                                              /*depth=*/0,
-                                                              /*max_depth=*/10,
-                                                              macros_);
+                                                               /*depth=*/0,
+                                                               /*max_depth=*/10, macros_);
                                 // Evaluate the cloned + inner-expanded
                                 // body. eval_flat returns a runtime
                                 // value (a list for cons-chain qq
@@ -20321,11 +21107,10 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 // and is what enables macro
                                 // composition in the hygienic
                                 // case (Issue #158).
-                                auto hygienic_result =
-                                    eval_flat(*f, *p, expanded, eval_env);
-                                if (!hygienic_result) return hygienic_result;
-                                return eval_data_as_code(*hygienic_result,
-                                                          eval_env, f, p);
+                                auto hygienic_result = eval_flat(*f, *p, expanded, eval_env);
+                                if (!hygienic_result)
+                                    return hygienic_result;
+                                return eval_data_as_code(*hygienic_result, eval_env, f, p);
                             }
 
                             // Convert AST args to data (NOT evaluate — macros receive syntax)
@@ -20334,7 +21119,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 is_rest ? md.params.size() - 1 : md.params.size();
                             tail_env.emplace(&eval_env);
                             tail_env->set_primitives(&primitives_);
-                
+
 
                             for (std::size_t i = 0; i < regular_count && i + 1 < v.children.size();
                                  ++i) {
@@ -20418,8 +21203,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 if (prefix.empty()) {
                                     import_expr = std::string("(import \"") + mod_path + "\")";
                                 } else {
-                                    import_expr =
-                                        std::string("(import \"") + mod_path + "\" \"" + prefix + "\")";
+                                    import_expr = std::string("(import \"") + mod_path + "\" \"" +
+                                                  prefix + "\")";
                                 }
 
                                 // Use temp_arena_ so (gc-temp) reclaims the
@@ -20429,15 +21214,16 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 auto* iflat = temp_arena_->create<aura::ast::FlatAST>(alloc);
                                 auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
                                 if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-                                    return std::unexpected(
-                                        Diagnostic{ErrorKind::ParseError, "require: internal error"});
+                                    return std::unexpected(Diagnostic{ErrorKind::ParseError,
+                                                                      "require: internal error"});
                                 }
                                 iflat->root = pr.root;
                                 // Pre-expand macros so import primitive is recognized
                                 auto expanded_root =
                                     aura::compiler::macro_expand_all(*iflat, *ipool, iflat->root);
                                 last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
-                                if (!last) return last;
+                                if (!last)
+                                    return last;
                             }
                             return last;
                         }
@@ -20488,7 +21274,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                             if (v.children.size() >= 2) {
                                 auto first_id = v.child(1);
                                 auto first_v = f->get(first_id);
-                                if (first_v.tag == ast::NodeTag::Call && first_v.children.size() >= 1)
+                                if (first_v.tag == ast::NodeTag::Call &&
+                                    first_v.children.size() >= 1)
                                     body_start = 2;
                             }
                             tl_arena_push(&g_tl_arena);
@@ -20505,13 +21292,15 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                     auto* slot = g_pair_slots[idx];
                                     auto arena_end = g_tl_arena.base + g_tl_arena.offset;
                                     auto ptr = (uint8_t*)slot;
-                                    if (g_tl_arena.base && ptr >= g_tl_arena.base && ptr < arena_end) {
+                                    if (g_tl_arena.base && ptr >= g_tl_arena.base &&
+                                        ptr < arena_end) {
                                         auto* new_slot = (PairSlot*)std::malloc(sizeof(PairSlot));
                                         new_slot->car = slot->car;
                                         new_slot->cdr = slot->cdr;
                                         auto new_id = static_cast<int64_t>(g_pair_slots.size());
                                         g_pair_slots.push_back(new_slot);
-                                        *last_result = types::make_pair(static_cast<std::uint64_t>(new_id));
+                                        *last_result =
+                                            types::make_pair(static_cast<std::uint64_t>(new_id));
                                     }
                                 }
                             }
@@ -20523,7 +21312,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                             EvalResult last = make_void();
                             for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
                                 last = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!last) return last;
+                                if (!last)
+                                    return last;
                             }
                             return last;
                         }
@@ -20532,7 +21322,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                             EvalResult last = make_void();
                             for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
                                 last = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!last) return last;
+                                if (!last)
+                                    return last;
                             }
                             return last;
                         }
@@ -20564,7 +21355,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                             // Create child env with %cap:name bindings
                             tail_env.emplace(&eval_env);
                             tail_env->set_primitives(&primitives_);
-                
+
                             for (auto& cap : caps)
                                 tail_env->bind("%cap:" + cap, make_bool(true));
                             // Push to capability_stack_ for capability-stack readout
@@ -20584,7 +21375,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         // check-capability: (check-capability "Name") — look up %cap:Name binding
                         if (cname == "check-capability" && v.children.size() >= 2) {
                             auto arg_result = eval_flat(*f, *p, v.child(1), eval_env);
-                            if (!arg_result) return arg_result;
+                            if (!arg_result)
+                                return arg_result;
                             std::string cap_name;
                             if (is_string(*arg_result)) {
                                 auto sidx = as_string_idx(*arg_result);
@@ -20595,7 +21387,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                             return val.has_value() ? make_bool(true) : make_bool(false);
                         }
 
-                        // while: (while cond body) — evaluate condition, if true evaluate body, repeat
+                        // while: (while cond body) — evaluate condition, if true evaluate body,
+                        // repeat
                         if (cname == "while" && v.children.size() >= 3) {
                             // Check if args are Lambda nodes (EDSL while with closures)
                             // In that case, fall through to primitive dispatch instead
@@ -20605,10 +21398,13 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 c2_node.tag != aura::ast::NodeTag::Lambda) {
                                 while (true) {
                                     auto cond_result = eval_flat(*f, *p, v.child(1), eval_env);
-                                    if (!cond_result) return cond_result;
-                                    if (!is_truthy(*cond_result)) break;
+                                    if (!cond_result)
+                                        return cond_result;
+                                    if (!is_truthy(*cond_result))
+                                        break;
                                     auto body_result = eval_flat(*f, *p, v.child(2), eval_env);
-                                    if (!body_result) return body_result;
+                                    if (!body_result)
+                                        return body_result;
                                 }
                                 return make_void();
                             }
@@ -20648,7 +21444,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                         // Bind error value to var and evaluate handler
                                         Env catch_env(&eval_env);
                                         catch_env.set_primitives(&primitives_);
-                                        // P0: no cells_ on Env; deref uses central cells_ or owner walk
+                                        // P0: no cells_ on Env; deref uses central cells_ or owner
+                                        // walk
                                         if (!var_name.empty() && result) {
                                             catch_env.bind(var_name, *result);
                                         }
@@ -20667,22 +21464,24 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         if (cname == "and" && v.children.size() >= 2) {
                             for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
                                 auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!ar) return ar;
+                                if (!ar)
+                                    return ar;
                                 if (!is_truthy(*ar))
-                                    return *ar;  // short-circuit: return falsy value
+                                    return *ar; // short-circuit: return falsy value
                                 if (ci + 1 == v.children.size())
-                                    return *ar;  // last arg: return its value
+                                    return *ar; // last arg: return its value
                             }
                             return make_int(1); // (and) with no args → #t
                         }
                         if (cname == "or" && v.children.size() >= 2) {
                             for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
                                 auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!ar) return ar;
+                                if (!ar)
+                                    return ar;
                                 if (is_truthy(*ar))
-                                    return *ar;  // short-circuit: return first truthy value
+                                    return *ar; // short-circuit: return first truthy value
                                 if (ci + 1 == v.children.size())
-                                    return *ar;  // last arg: return last value (falsy)
+                                    return *ar; // last arg: return last value (falsy)
                             }
                             return make_int(0); // (or) with no args → #f
                         }
@@ -20708,7 +21507,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                     return ar;
                                 // Propagate error values through normal eval
                                 // Note: is_string check prevents accidental collision
-                                // where make_string(idx) with odd idx matches is_ref/RefError encoding
+                                // where make_string(idx) with odd idx matches is_ref/RefError
+                                // encoding
                                 if (is_error(*ar) && !is_string(*ar))
                                     return ar;
                                 args.push_back(*ar);
@@ -20776,9 +21576,10 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         }
                         tail_env = materialize_call_env(cl);
                         tail_env->set_primitives(&primitives_);
-            
+
                         // Issue #145: set the pool so bind_symid can mirror
-                        if (cl.pool) tail_env->set_pool(cl.pool);
+                        if (cl.pool)
+                            tail_env->set_pool(cl.pool);
                         for (std::size_t i = 0; i < cargs.size(); ++i) {
                             tail_env->bind_symid(cl.params[i], std::move(cargs[i]));
                         }
@@ -20837,8 +21638,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
                                     auto arg_v = f->get(v.child(ai));
                                     std::string pname = (ai - 1 < param_names.size())
-                                        ? param_names[ai - 1]
-                                        : (":T" + std::to_string(ai - 1));
+                                                            ? param_names[ai - 1]
+                                                            : (":T" + std::to_string(ai - 1));
                                     if (arg_v.tag == aura::ast::NodeTag::Variable) {
                                         // 类型参数：存为字符串（类型名）
                                         auto type_name = std::string(p->resolve(arg_v.sym_id));
@@ -20848,7 +21649,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                     } else {
                                         // 值参数：正常 eval
                                         auto ar = eval_flat(*f, *p, v.child(ai), eval_env);
-                                        if (!ar) return ar;
+                                        if (!ar)
+                                            return ar;
                                         mod_env.bind(pname, *ar);
                                     }
                                 }
@@ -20861,22 +21663,29 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                     for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
                                         auto arg_v = f->get(v.child(ai));
                                         std::string pname = (ai - 1 < param_names.size())
-                                            ? param_names[ai - 1] : "";
+                                                                ? param_names[ai - 1]
+                                                                : "";
                                         // Check if this param is a cap param
                                         bool is_cap_param = false;
                                         for (auto& cp : tpl_it->second.cap_param_names) {
-                                            if (cp == pname) { is_cap_param = true; break; }
+                                            if (cp == pname) {
+                                                is_cap_param = true;
+                                                break;
+                                            }
                                         }
                                         if (is_cap_param) {
                                             if (arg_v.tag == aura::ast::NodeTag::Variable) {
-                                                provided_caps_str = std::string(p->resolve(arg_v.sym_id));
-                                            } else if (arg_v.tag == aura::ast::NodeTag::LiteralString) {
+                                                provided_caps_str =
+                                                    std::string(p->resolve(arg_v.sym_id));
+                                            } else if (arg_v.tag ==
+                                                       aura::ast::NodeTag::LiteralString) {
                                                 provided_caps_str = "";
                                             }
                                         }
                                     }
                                     // Check if provided caps satisfy requirements
-                                    // Simple string matching: "FileReadWrite" contains "FileRead" and "FileWrite"
+                                    // Simple string matching: "FileReadWrite" contains "FileRead"
+                                    // and "FileWrite"
                                     std::vector<std::string> missing;
                                     for (auto& req : tpl_it->second.cap_require) {
                                         bool found = false;
@@ -20889,9 +21698,11 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                             missing.push_back(req);
                                     }
                                     if (!missing.empty()) {
-                                        std::string err = "functor " + tpl_name + ": missing capabilities: ";
+                                        std::string err =
+                                            "functor " + tpl_name + ": missing capabilities: ";
                                         for (std::size_t mi = 0; mi < missing.size(); ++mi) {
-                                            if (mi > 0) err += ", ";
+                                            if (mi > 0)
+                                                err += ", ";
                                             err += missing[mi];
                                         }
                                         auto es = string_heap_.size();
@@ -20906,25 +21717,31 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 EvalResult last = make_void();
                                 auto& body_src = tpl_it->second.body_source;
                                 if (!body_src.empty()) {
-                                    // Parse body as a begin block so all expressions become children
+                                    // Parse body as a begin block so all expressions become
+                                    // children
                                     std::string wrapped = "(begin " + body_src + ")";
                                     aura::ast::ASTArena body_arena;
                                     auto body_alloc = body_arena.allocator();
                                     aura::ast::StringPool body_pool(body_alloc);
                                     aura::ast::FlatAST body_flat(body_alloc);
-                                    auto body_pr = aura::parser::parse_to_flat(wrapped, body_flat, body_pool);
+                                    auto body_pr =
+                                        aura::parser::parse_to_flat(wrapped, body_flat, body_pool);
                                     if (body_pr.success && body_pr.root != aura::ast::NULL_NODE) {
                                         body_flat.root = body_pr.root;
                                         auto body_v = body_flat.get(body_flat.root);
                                         if (body_v.tag == aura::ast::NodeTag::Begin) {
                                             for (auto nid : body_v.children) {
-                                                auto br = eval_flat(body_flat, body_pool, nid, mod_env);
-                                                if (!br) return br;
+                                                auto br =
+                                                    eval_flat(body_flat, body_pool, nid, mod_env);
+                                                if (!br)
+                                                    return br;
                                                 last = *br;
                                             }
                                         } else {
-                                            auto br = eval_flat(body_flat, body_pool, body_flat.root, mod_env);
-                                            if (!br) return br;
+                                            auto br = eval_flat(body_flat, body_pool,
+                                                                body_flat.root, mod_env);
+                                            if (!br)
+                                                return br;
                                             last = *br;
                                         }
                                     }
@@ -20938,19 +21755,24 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                     auto scan_alloc = scan_arena.allocator();
                                     aura::ast::StringPool scan_pool(scan_alloc);
                                     aura::ast::FlatAST scan_flat(scan_alloc);
-                                    auto scan_pr = aura::parser::parse_to_flat(scan_wrapped, scan_flat, scan_pool);
+                                    auto scan_pr = aura::parser::parse_to_flat(
+                                        scan_wrapped, scan_flat, scan_pool);
                                     if (scan_pr.success && scan_pr.root != aura::ast::NULL_NODE) {
                                         scan_flat.root = scan_pr.root;
                                         auto scan_v = scan_flat.get(scan_flat.root);
-                                        auto scan_children = (scan_v.tag == aura::ast::NodeTag::Begin)
-                                            ? scan_v.children : std::span<const aura::ast::NodeId>(&scan_flat.root, 1);
+                                        auto scan_children =
+                                            (scan_v.tag == aura::ast::NodeTag::Begin)
+                                                ? scan_v.children
+                                                : std::span<const aura::ast::NodeId>(
+                                                      &scan_flat.root, 1);
                                         for (auto nid : scan_children) {
                                             auto nv = scan_flat.get(nid);
                                             if (nv.tag == aura::ast::NodeTag::Export) {
                                                 for (auto eid : nv.children) {
                                                     auto ev = scan_flat.get(eid);
                                                     if (ev.tag == aura::ast::NodeTag::Variable)
-                                                        export_names.push_back(std::string(scan_pool.resolve(ev.sym_id)));
+                                                        export_names.push_back(std::string(
+                                                            scan_pool.resolve(ev.sym_id)));
                                                 }
                                             }
                                         }
@@ -20958,7 +21780,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 }
                                 if (!export_names.empty()) {
                                     // 对实例化后的 body 做类型推断，生成实际签名
-                                    // Parse body source, type-check via TypeChecker, register signatures
+                                    // Parse body source, type-check via TypeChecker, register
+                                    // signatures
                                     aura::core::TypeRegistry tc_reg;
                                     aura::compiler::TypeChecker functor_tc(tc_reg);
                                     aura::diag::DiagnosticCollector tc_diag;
@@ -20968,7 +21791,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                     auto tc_alloc = tc_arena.allocator();
                                     aura::ast::StringPool tc_pool(tc_alloc);
                                     aura::ast::FlatAST tc_flat(tc_alloc);
-                                    auto tc_pr = aura::parser::parse_to_flat(tc_wrapped, tc_flat, tc_pool);
+                                    auto tc_pr =
+                                        aura::parser::parse_to_flat(tc_wrapped, tc_flat, tc_pool);
                                     aura::ast::NodeId tc_root = tc_pr.root;
                                     if (tc_pr.success && tc_root != aura::ast::NULL_NODE) {
                                         tc_flat.root = tc_root;
@@ -20978,13 +21802,15 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                         // Scan body for export functions and extract their types
                                         for (auto& en : export_names) {
                                             std::string sig_key = cache_key + "/" + en;
-                                            if (declared_type_sigs_.find(sig_key) != declared_type_sigs_.end())
+                                            if (declared_type_sigs_.find(sig_key) !=
+                                                declared_type_sigs_.end())
                                                 continue;
 
                                             // Find the Define node for this export
                                             bool found = false;
                                             std::string type_str = "Any|Any";
-                                            for (aura::ast::NodeId nid = 0; nid < tc_flat.size(); ++nid) {
+                                            for (aura::ast::NodeId nid = 0; nid < tc_flat.size();
+                                                 ++nid) {
                                                 auto nv = tc_flat.get(nid);
                                                 if (nv.tag == aura::ast::NodeTag::Define &&
                                                     nv.sym_id != aura::ast::INVALID_SYM &&
@@ -20997,10 +21823,12 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                                         // Format as type signature
                                                         auto fmt = tc_reg.format_type(val_type);
                                                         if (!fmt.empty()) {
-                                                            // Convert from '->' to '|' format for declared_type_sigs_
+                                                            // Convert from '->' to '|' format for
+                                                            // declared_type_sigs_
                                                             auto pipe_pos = fmt.find(" -> ");
                                                             if (pipe_pos != std::string::npos) {
-                                                                auto params = fmt.substr(0, pipe_pos);
+                                                                auto params =
+                                                                    fmt.substr(0, pipe_pos);
                                                                 auto ret = fmt.substr(pipe_pos + 4);
                                                                 type_str = params + "|" + ret;
                                                             } else {
@@ -21016,19 +21844,19 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                             declared_type_sigs_[sig_key] = {
                                                 .type_str = type_str,
                                                 .module_file = "%functor:" + tpl_name,
-                                                .resolved = found
-                                            };
+                                                .resolved = found};
                                         }
                                     } else {
-                                        // Fallback: Any|Any (shouldn't happen since body was parsed earlier)
+                                        // Fallback: Any|Any (shouldn't happen since body was parsed
+                                        // earlier)
                                         for (auto& en : export_names) {
                                             std::string sig_key = cache_key + "/" + en;
-                                            if (declared_type_sigs_.find(sig_key) == declared_type_sigs_.end()) {
+                                            if (declared_type_sigs_.find(sig_key) ==
+                                                declared_type_sigs_.end()) {
                                                 declared_type_sigs_[sig_key] = {
                                                     .type_str = "Any|Any",
                                                     .module_file = "%functor:" + tpl_name,
-                                                    .resolved = false
-                                                };
+                                                    .resolved = false};
                                             }
                                         }
                                     }
@@ -21072,12 +21900,16 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     auto callee_name = std::string(p->resolve(callee.sym_id));
                     // Build diagnostic with appropriate suggestion (no self-move)
                     std::string suggestion;
-                    if (callee_name.size() > 3 && callee_name.substr(callee_name.size() - 3) == "-fn")
-                        suggestion = "if using c-func: (c-func -1 \"" + callee_name.substr(0, callee_name.size() - 3) + "\" \"(String) -> Int\")";
+                    if (callee_name.size() > 3 &&
+                        callee_name.substr(callee_name.size() - 3) == "-fn")
+                        suggestion = "if using c-func: (c-func -1 \"" +
+                                     callee_name.substr(0, callee_name.size() - 3) +
+                                     "\" \"(String) -> Int\")";
                     else
                         suggestion = "did you forget to define '" + callee_name + "'?";
-                    return std::unexpected(Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name}
-                        .with_suggestion(std::move(suggestion)));
+                    return std::unexpected(
+                        Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name}
+                            .with_suggestion(std::move(suggestion)));
                 }
                 case aura::ast::NodeTag::IfExpr: {
                     if (v.children.size() < 2)
@@ -21115,11 +21947,13 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     auto* target = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
                     auto cid = next_id();
                     auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-                    // P0: legacy env pointer removed. Register captured env in SoA for this closure.
+                    // P0: legacy env pointer removed. Register captured env in SoA for this
+                    // closure.
                     EnvId cap_id = alloc_env_frame_from_env(*current_env);
                     {
                         std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
-                        closures_[cid] = Closure{"", std::move(params), f, p, body_id, cap_id, dotted, target};
+                        closures_[cid] =
+                            Closure{"", std::move(params), f, p, body_id, cap_id, dotted, target};
                     }
                     // Do NOT cache closure values — the closure captures the current env and a
                     // cached closure would reuse the same env on subsequent evaluations (wrong
@@ -21203,7 +22037,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                             if (minfo && !minfo->has_wildcard &&
                                 (!minfo->used_constructors.empty() ||
                                  !minfo->candidate_constructors.empty())) {
-                                auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+                                auto& treg =
+                                    *static_cast<aura::core::TypeRegistry*>(type_registry_);
                                 // Find the target ADT by scanning for the first used_ctor
                                 // or candidate_ctor (bare-id patterns).
                                 const std::vector<std::string>* target_ctors = nullptr;
@@ -21211,9 +22046,11 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 auto find_adt_for = [&](aura::ast::SymId sid) -> bool {
                                     auto cname = std::string(p->resolve(sid));
                                     for (std::size_t ti = 0; ti < treg.size(); ++ti) {
-                                        auto tid = aura::core::TypeId{static_cast<std::uint32_t>(ti), 1};
+                                        auto tid =
+                                            aura::core::TypeId{static_cast<std::uint32_t>(ti), 1};
                                         auto* c = treg.get_adt_constructors(tid);
-                                        if (!c) continue;
+                                        if (!c)
+                                            continue;
                                         if (std::find(c->begin(), c->end(), cname) != c->end()) {
                                             target_ctors = c;
                                             target_tid = tid;
@@ -21223,11 +22060,13 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                     return false;
                                 };
                                 for (auto sid : minfo->used_constructors) {
-                                    if (find_adt_for(sid)) break;
+                                    if (find_adt_for(sid))
+                                        break;
                                 }
                                 if (!target_ctors) {
                                     for (auto sid : minfo->candidate_constructors) {
-                                        if (find_adt_for(sid)) break;
+                                        if (find_adt_for(sid))
+                                            break;
                                     }
                                 }
                                 if (target_ctors) {
@@ -21246,7 +22085,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                     for (auto& expected_ctor : *target_ctors) {
                                         if (std::find(used_eff.begin(), used_eff.end(),
                                                       expected_ctor) == used_eff.end()) {
-                                            std::println(std::cerr,
+                                            std::println(
+                                                std::cerr,
                                                 "match warning: unhandled constructor '{}' in {}",
                                                 expected_ctor, treg.name_of(target_tid));
                                         }
@@ -21332,18 +22172,19 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                             me.bind(ctor_name, make_pair(cid));
                         } else {
                             // Multi-arg constructor: register as primitive
-                            primitives_.add(ctor_name, [this, tag_str](const auto& args) -> EvalValue {
-                            types::EvalValue rest = make_void();
-                            for (auto it = args.rbegin(); it != args.rend(); ++it) {
-                                auto pid = static_cast<std::uint64_t>(pairs_.size());
-                                pairs_.push_back({*it, rest});
-                                rest = make_pair(pid);
-                            }
-                            auto pid = static_cast<std::uint64_t>(pairs_.size());
-                            pairs_.push_back({tag_str, rest});
-                            return make_pair(pid);
-                        });
-                        }  // end else (multi-arg)
+                            primitives_.add(
+                                ctor_name, [this, tag_str](const auto& args) -> EvalValue {
+                                    types::EvalValue rest = make_void();
+                                    for (auto it = args.rbegin(); it != args.rend(); ++it) {
+                                        auto pid = static_cast<std::uint64_t>(pairs_.size());
+                                        pairs_.push_back({*it, rest});
+                                        rest = make_pair(pid);
+                                    }
+                                    auto pid = static_cast<std::uint64_t>(pairs_.size());
+                                    pairs_.push_back({tag_str, rest});
+                                    return make_pair(pid);
+                                });
+                        } // end else (multi-arg)
                     }
                     return EvalResult(make_void());
                 }
@@ -21399,7 +22240,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         return EvalResult(make_void());
                     for (std::size_t i = 0; i < count; ++i) {
                         auto cid = v.child(i);
-                        if (cid == aura::ast::NULL_NODE) continue;
+                        if (cid == aura::ast::NULL_NODE)
+                            continue;
                         auto child_node = f->get(cid);
                         if (child_node.tag == aura::ast::NodeTag::Define) {
                             define_count++;
@@ -21425,7 +22267,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         define_count = 0;
                         for (std::size_t ci = 0; ci < count; ++ci) {
                             auto cid = v.child(ci);
-                            if (cid == aura::ast::NULL_NODE) continue;
+                            if (cid == aura::ast::NULL_NODE)
+                                continue;
                             auto child_node = f->get(cid);
                             if (child_node.tag == aura::ast::NodeTag::Define) {
                                 define_count++;
@@ -21461,7 +22304,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         // Phase 3: evaluate remaining (non-define) expressions
                         for (std::size_t i = 0; i < count - 1; ++i) {
                             auto cid = v.child(i);
-                            if (cid == aura::ast::NULL_NODE) continue;
+                            if (cid == aura::ast::NULL_NODE)
+                                continue;
                             auto child_node = f->get(cid);
                             if (child_node.tag == aura::ast::NodeTag::Define)
                                 continue;
@@ -21477,7 +22321,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     // Single define (or no defines) — sequential evaluation
                     for (std::size_t i = 0; i < count - 1; ++i) {
                         auto cid = v.child(i);
-                        if (cid == aura::ast::NULL_NODE) continue;
+                        if (cid == aura::ast::NULL_NODE)
+                            continue;
                         auto r = eval_flat(*f, *p, cid, eval_env);
                         if (!r)
                             return r;
@@ -21504,8 +22349,10 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     // Extract type parameter names from AST params metadata
                     // (type params = all params minus cap params)
                     auto num_cap_params = f->cap_require_count(v.id);
-                    std::size_t num_type_params = (num_cap_params > 0 && v.params.size() >= num_cap_params)
-                        ? v.params.size() - num_cap_params : v.params.size();
+                    std::size_t num_type_params =
+                        (num_cap_params > 0 && v.params.size() >= num_cap_params)
+                            ? v.params.size() - num_cap_params
+                            : v.params.size();
                     for (std::size_t i = 0; i < num_type_params; ++i) {
                         auto pid = f->param_at(v.id, i);
                         mt.type_param_names.push_back(std::string(p->resolve(pid)));
@@ -21522,21 +22369,28 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     // Build a node-to-source serializer using the current FlatAST
                     std::function<std::string(aura::ast::NodeId)> node_source;
                     node_source = [&](aura::ast::NodeId nid) -> std::string {
-                        if (nid >= f->size() || nid == aura::ast::NULL_NODE) return "";
+                        if (nid >= f->size() || nid == aura::ast::NULL_NODE)
+                            return "";
                         auto nv = f->get(nid);
                         switch (nv.tag) {
-                            case aura::ast::NodeTag::LiteralInt: return std::to_string(nv.int_value);
-                            case aura::ast::NodeTag::LiteralFloat: return std::to_string(nv.float_value);
-                            case aura::ast::NodeTag::LiteralString: return "\"" + std::string(p->resolve(nv.sym_id)) + "\"";
-                            case aura::ast::NodeTag::Variable: return std::string(p->resolve(nv.sym_id));
+                            case aura::ast::NodeTag::LiteralInt:
+                                return std::to_string(nv.int_value);
+                            case aura::ast::NodeTag::LiteralFloat:
+                                return std::to_string(nv.float_value);
+                            case aura::ast::NodeTag::LiteralString:
+                                return "\"" + std::string(p->resolve(nv.sym_id)) + "\"";
+                            case aura::ast::NodeTag::Variable:
+                                return std::string(p->resolve(nv.sym_id));
                             case aura::ast::NodeTag::Quote: {
-                                if (nv.children.empty()) return "'()";
+                                if (nv.children.empty())
+                                    return "'()";
                                 return "'" + node_source(nv.child(0));
                             }
                             case aura::ast::NodeTag::Lambda: {
                                 std::string s = "(lambda (";
                                 for (std::size_t pi = 0; pi < nv.params.size(); ++pi) {
-                                    if (pi > 0) s += " ";
+                                    if (pi > 0)
+                                        s += " ";
                                     s += std::string(p->resolve(nv.params[pi]));
                                 }
                                 s += ")";
@@ -21577,12 +22431,14 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                             case aura::ast::NodeTag::Call: {
                                 std::string s = "(";
                                 for (std::size_t ci = 0; ci < nv.children.size(); ++ci) {
-                                    if (ci > 0) s += " ";
+                                    if (ci > 0)
+                                        s += " ";
                                     s += node_source(nv.child(ci));
                                 }
                                 return s + ")";
                             }
-                            default: return "()";
+                            default:
+                                return "()";
                         }
                     };
 
@@ -21591,7 +22447,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     for (auto cid : v.children) {
                         auto sexpr = node_source(cid);
                         if (!sexpr.empty()) {
-                            if (!body_src.empty()) body_src += "\n";
+                            if (!body_src.empty())
+                                body_src += "\n";
                             body_src += sexpr;
                         }
                     }
@@ -21605,21 +22462,28 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                             auto callee_node = f->get(cv.child(0));
                             if (callee_node.tag == aura::ast::NodeTag::Variable ||
                                 callee_node.tag == aura::ast::NodeTag::Quote) {
-                                aura::ast::SymId sym = (callee_node.tag == aura::ast::NodeTag::Variable)
-                                    ? callee_node.sym_id : aura::ast::INVALID_SYM;
+                                aura::ast::SymId sym =
+                                    (callee_node.tag == aura::ast::NodeTag::Variable)
+                                        ? callee_node.sym_id
+                                        : aura::ast::INVALID_SYM;
                                 std::string_view callee_name = (sym != aura::ast::INVALID_SYM)
-                                    ? p->resolve(sym) : std::string_view();
+                                                                   ? p->resolve(sym)
+                                                                   : std::string_view();
                                 // Check for :require or require keyword
                                 if (callee_name == ":require" || callee_name == ":require-all") {
                                     // Extract required capability names from remaining children
                                     for (std::size_t ai = 1; ai < cv.children.size(); ++ai) {
                                         auto arg_node = f->get(cv.child(ai));
                                         if (arg_node.tag == aura::ast::NodeTag::Variable) {
-                                            auto cap_name = std::string(p->resolve(arg_node.sym_id));
+                                            auto cap_name =
+                                                std::string(p->resolve(arg_node.sym_id));
                                             // Skip duplicates
                                             bool dup = false;
                                             for (auto& r : mt.cap_require) {
-                                                if (r == cap_name) { dup = true; break; }
+                                                if (r == cap_name) {
+                                                    dup = true;
+                                                    break;
+                                                }
                                             }
                                             if (!dup)
                                                 mt.cap_require.push_back(cap_name);
@@ -21703,17 +22567,14 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         auto best = closest_match(name, candidates);
                         // Issue #79: source location from the offending node.
                         Diagnostic d(ErrorKind::UnboundVariable, "set!: " + std::string(name),
-                                     aura::diag::SourceLocation{v.line, v.col, 0},
-                                     current_id);
+                                     aura::diag::SourceLocation{v.line, v.col, 0}, current_id);
                         if (!best.empty())
                             d.with_suggestion("did you mean '" + best + "'?");
                         return std::unexpected(std::move(d));
                     }
-                    return std::unexpected(Diagnostic{
-                        ErrorKind::UnboundVariable,
-                        "set!: " + std::string(name),
-                        aura::diag::SourceLocation{v.line, v.col, 0},
-                        current_id});
+                    return std::unexpected(
+                        Diagnostic{ErrorKind::UnboundVariable, "set!: " + std::string(name),
+                                   aura::diag::SourceLocation{v.line, v.col, 0}, current_id});
                 }
                 case aura::ast::NodeTag::Quote: {
                     if (v.children.empty())
@@ -21732,7 +22593,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         auto var_name = p->resolve(static_cast<aura::ast::SymId>(v.int_value));
                         if (!var_name.empty()) {
                             auto& me = const_cast<Env&>(eval_env);
-    
+
                             auto ci = cells_.size();
                             cells_.push_back(*child_result);
                             me.bind(std::string(var_name), make_cell(ci));
@@ -21818,8 +22679,13 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     // Issue #230 #2: bit 2 of int_val_ flags the
                     // `define-hygienic-macro*` (preserved-params) variant.
                     bool is_preserved = (v.int_value & 4) != 0;
-                    macros_[std::string(name)] = MacroDef{std::move(param_names), is_dotted,
-                                                         is_hygienic, is_preserved, f, p, body_id};
+                    macros_[std::string(name)] = MacroDef{std::move(param_names),
+                                                          is_dotted,
+                                                          is_hygienic,
+                                                          is_preserved,
+                                                          f,
+                                                          p,
+                                                          body_id};
                     return EvalResult(make_void());
                 }
                 case aura::ast::NodeTag::Linear:
@@ -21842,7 +22708,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
         return std::unexpected(Diagnostic{ErrorKind::InternalError, "out of memory"});
     } catch (const std::out_of_range& e) {
         return std::unexpected(Diagnostic{ErrorKind::InternalError,
-            std::format("argument out of range: {}", e.what())});
+                                          std::format("argument out of range: {}", e.what())});
     } catch (const std::bad_variant_access& e) {
         return std::unexpected(Diagnostic{
             ErrorKind::TypeError,
@@ -21858,13 +22724,11 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
 // name_map: when non-null, enables hygienic renaming — template-introduced
 // binding positions (let, lambda, define) auto-gensym to avoid capture.
 // References to gensym'd names are updated via the name_map.
-static aura::ast::NodeId
-clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
-                 aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
-                 aura::ast::NodeId body_id,
-                 const std::unordered_map<std::string, aura::ast::NodeId>* subst,
-                 std::unordered_map<std::string, std::string>* name_map,
-                 aura::ast::SyntaxMarker cloned_marker) {
+static aura::ast::NodeId clone_macro_body(
+    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
+    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+    const std::unordered_map<std::string, aura::ast::NodeId>* subst,
+    std::unordered_map<std::string, std::string>* name_map, aura::ast::SyntaxMarker cloned_marker) {
     using namespace aura::ast;
     if (body_id == NULL_NODE || body_id >= source.size())
         return NULL_NODE;
@@ -22000,17 +22864,19 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
     // let binding is processed (which is what gensym's `tmp`).
     if (name_map) {
         std::function<void(NodeId)> pre_scan = [&](NodeId nid) {
-            if (nid == NULL_NODE || nid >= source.size()) return;
+            if (nid == NULL_NODE || nid >= source.size())
+                return;
             auto nv = source.get(nid);
             // If this node is a binding position, gensym its name
             // (into the name_map) but don't generate any target node.
-            if (nv.tag == NodeTag::Let || nv.tag == NodeTag::LetRec ||
-                nv.tag == NodeTag::Define) {
+            if (nv.tag == NodeTag::Let || nv.tag == NodeTag::LetRec || nv.tag == NodeTag::Define) {
                 rename_binding_pre(nv.sym_id);
             } else if (nv.tag == NodeTag::Lambda) {
-                for (auto pid : nv.params) rename_binding_pre(pid);
+                for (auto pid : nv.params)
+                    rename_binding_pre(pid);
             }
-            for (auto c : nv.children) pre_scan(c);
+            for (auto c : nv.children)
+                pre_scan(c);
         };
         pre_scan(body_id);
     }
@@ -22152,24 +23018,32 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
 // a known macro symbol. It walks the rest of the cons chain to
 // extract the args, then returns a new Call to the macro with
 // those args. Returns NULL_NODE if the pattern doesn't match.
-static aura::ast::NodeId unwrap_cons_chain_to_call(
-    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
-    const std::unordered_map<std::string, MacroDef>& macros) {
+static aura::ast::NodeId
+unwrap_cons_chain_to_call(aura::ast::FlatAST* flat, aura::ast::StringPool* pool,
+                          aura::ast::NodeId root,
+                          const std::unordered_map<std::string, MacroDef>& macros) {
     using namespace aura::ast;
-    if (root == NULL_NODE) return NULL_NODE;
+    if (root == NULL_NODE)
+        return NULL_NODE;
     auto v = flat->get(root);
-    if (v.tag != NodeTag::Call || v.children.size() != 3) return NULL_NODE;
+    if (v.tag != NodeTag::Call || v.children.size() != 3)
+        return NULL_NODE;
     auto callee_v = flat->get(v.child(0));
-    if (callee_v.tag != NodeTag::Variable) return NULL_NODE;
+    if (callee_v.tag != NodeTag::Variable)
+        return NULL_NODE;
     auto callee_name = std::string(pool->resolve(callee_v.sym_id));
-    if (callee_name != "cons") return NULL_NODE;
+    if (callee_name != "cons")
+        return NULL_NODE;
     // First arg must be (quote <known-macro-sym>)
     auto arg0_v = flat->get(v.child(1));
-    if (arg0_v.tag != NodeTag::Quote || arg0_v.children.empty()) return NULL_NODE;
+    if (arg0_v.tag != NodeTag::Quote || arg0_v.children.empty())
+        return NULL_NODE;
     auto quoted_v = flat->get(arg0_v.child(0));
-    if (quoted_v.tag != NodeTag::Variable) return NULL_NODE;
+    if (quoted_v.tag != NodeTag::Variable)
+        return NULL_NODE;
     auto quoted_name = std::string(pool->resolve(quoted_v.sym_id));
-    if (macros.find(quoted_name) == macros.end()) return NULL_NODE;
+    if (macros.find(quoted_name) == macros.end())
+        return NULL_NODE;
     // Walk the cdr chain (v.child(2)) to collect arg NodeIds.
     // Each step: cdr is (cons <arg> <rest>) or (quote ()).
     std::vector<NodeId> args;
@@ -22199,12 +23073,13 @@ static aura::ast::NodeId unwrap_cons_chain_to_call(
     return flat->add_call(macro_var, args);
 }
 
-static aura::ast::NodeId expand_inner_macros(
-    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
-    int depth, int max_depth,
-    const std::unordered_map<std::string, MacroDef>& macros) {
+static aura::ast::NodeId
+expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
+                    int depth, int max_depth,
+                    const std::unordered_map<std::string, MacroDef>& macros) {
     using namespace aura::ast;
-    if (root == NULL_NODE || depth >= max_depth) return root;
+    if (root == NULL_NODE || depth >= max_depth)
+        return root;
     // Issue #158: unwrap qq-built cons chains whose head is a
     // known macro. Without this, `(bar ,x)` inside a macro body
     // stays as `(cons (quote bar) ...)` after expand_qq, and the
@@ -22243,10 +23118,9 @@ static aura::ast::NodeId expand_inner_macros(
                 // (one alloc per macro call) for the pure helper's
                 // vector-typed call_args parameter.
                 const auto& md = it->second;
-                std::vector<aura::ast::NodeId> call_args(
-                    v.children.begin(), v.children.end());
-                auto subst = aura::compiler::pure::compute_macro_subst_pure(
-                    md.params, call_args, md.dotted);
+                std::vector<aura::ast::NodeId> call_args(v.children.begin(), v.children.end());
+                auto subst =
+                    aura::compiler::pure::compute_macro_subst_pure(md.params, call_args, md.dotted);
                 if (md.dotted) {
                     // Rest params on inner macros: not yet supported
                     // (same limitation as the main hygienic path).
@@ -22257,9 +23131,10 @@ static aura::ast::NodeId expand_inner_macros(
                 // `flat` / `pool` pointers as the source.
                 std::unordered_map<std::string, std::string> rename_map;
                 auto* src_pool = md.pool ? md.pool : pool;
-                auto cloned = clone_macro_body(*flat, *pool, *md.flat, *src_pool,
-                                                md.body_id, &subst, &rename_map);
-                if (cloned == NULL_NODE) return root;
+                auto cloned = clone_macro_body(*flat, *pool, *md.flat, *src_pool, md.body_id,
+                                               &subst, &rename_map);
+                if (cloned == NULL_NODE)
+                    return root;
                 // Recursively expand inner macros in the cloned body
                 cloned = expand_inner_macros(flat, pool, cloned, depth + 1, max_depth, macros);
                 // Rewrite the parent's child to use the cloned body
@@ -22304,7 +23179,7 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             NodeId body_id;
             bool dotted;
             bool hygienic;  // Issue #120
-            bool preserved;  // Issue #230 #2
+            bool preserved; // Issue #230 #2
         };
         std::unordered_map<std::string, MD> local_macros;
         bool has_macro_def = false;
@@ -22323,7 +23198,8 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                 bool is_dotted = (v.int_value & 1) != 0;
                 bool is_hygienic = (v.int_value & 2) != 0;
                 bool is_preserved = (v.int_value & 4) != 0;
-                local_macros[macro_name] = MD{&flat, &pool, std::move(params), body_id, is_dotted, is_hygienic, is_preserved};
+                local_macros[macro_name] = MD{&flat,     &pool,       std::move(params), body_id,
+                                              is_dotted, is_hygienic, is_preserved};
             }
         }
 
@@ -22348,8 +23224,8 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                         // it requires FlatAST mutation (allocating a
                         // pair-list) — that's stateful, not pure.
                         auto& md = it->second;
-                        std::vector<aura::ast::NodeId> call_args(
-                            v.children.begin(), v.children.end());
+                        std::vector<aura::ast::NodeId> call_args(v.children.begin(),
+                                                                 v.children.end());
                         auto subst = aura::compiler::pure::compute_macro_subst_pure(
                             md.params, call_args, md.dotted);
                         // Rest param: collect remaining args as a quoted list.
@@ -22393,9 +23269,9 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                         }
                         // Clone macro body with substitution
                         std::unordered_map<std::string, std::string> rename_map;
-                        auto expanded = clone_macro_body(flat, pool, *md.src_flat, *md.src_pool,
-                                                         md.body_id, &subst, &rename_map,
-                                                         /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
+                        auto expanded = clone_macro_body(
+                            flat, pool, *md.src_flat, *md.src_pool, md.body_id, &subst, &rename_map,
+                            /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
                         if (expanded != NULL_NODE) {
                             if (id == root)
                                 new_root = expanded;
@@ -22436,7 +23312,8 @@ void* Evaluator::create_workspace_tree() {
 }
 
 void Evaluator::destroy_workspace_tree(void* wt) {
-    if (!wt) return;
+    if (!wt)
+        return;
     auto* tree = static_cast<WorkspaceTree*>(wt);
     // Delete owned flats (child workspaces that had COW triggered)
     for (auto& node : tree->nodes_) {
@@ -22454,13 +23331,17 @@ void Evaluator::destroy_workspace_tree(void* wt) {
 // mutation doesn't pollute the parent. No-op for root, already-
 // cloned, or read-only workspaces (those return false).
 bool Evaluator::trigger_lazy_cow(void* wt) {
-    if (!wt) return true;  // no tree yet, nothing to clone
+    if (!wt)
+        return true; // no tree yet, nothing to clone
     auto* tree = static_cast<WorkspaceTree*>(wt);
     auto idx = tree->active_idx();
-    if (idx == 0 || idx >= tree->size()) return true;  // root, nothing to do
+    if (idx == 0 || idx >= tree->size())
+        return true; // root, nothing to do
     auto& node = tree->nodes_[idx];
-    if (node.has_own_flat) return true;  // already cloned
-    if (node.read_only) return false;    // can't clone read-only
+    if (node.has_own_flat)
+        return true; // already cloned
+    if (node.read_only)
+        return false; // can't clone read-only
     return tree->ensure_local_flat(idx);
 }
 
@@ -22468,12 +23349,16 @@ bool Evaluator::trigger_lazy_cow(void* wt) {
 // been reallocated. Call this to refresh the pointers without
 // exposing the WorkspaceTree type to callers defined before the type.
 bool Evaluator::refresh_active_flat_pool(void* wt, void** out_flat, void** out_pool) {
-    if (!wt) return false;
+    if (!wt)
+        return false;
     auto* tree = static_cast<WorkspaceTree*>(wt);
     auto* node = tree->active();
-    if (!node) return false;
-    if (out_flat) *out_flat = node->flat;
-    if (out_pool) *out_pool = node->pool;
+    if (!node)
+        return false;
+    if (out_flat)
+        *out_flat = node->flat;
+    if (out_pool)
+        *out_pool = node->pool;
     return true;
 }
 
@@ -22528,12 +23413,10 @@ bool Evaluator::restore_panic_checkpoint() {
         if (new_string_heap_size <= string_heap_.size()) {
             string_heap_.resize(new_string_heap_size);
         }
-        if (panic_safe_cells_size_ > 0 &&
-            panic_safe_cells_size_ <= cells_.size()) {
+        if (panic_safe_cells_size_ > 0 && panic_safe_cells_size_ <= cells_.size()) {
             cells_.resize(panic_safe_cells_size_);
         }
-        if (panic_safe_pairs_size_ > 0 &&
-            panic_safe_pairs_size_ <= pairs_.size()) {
+        if (panic_safe_pairs_size_ > 0 && panic_safe_pairs_size_ <= pairs_.size()) {
             pairs_.resize(panic_safe_pairs_size_);
         }
         // Clear checkpoint after successful restore
@@ -22606,8 +23489,7 @@ std::string Evaluator::run_typecheck_no_lock() {
         tc.inject_type_sigs(sig_map, mod_src_map);
     }
     aura::diag::DiagnosticCollector diag;
-    auto result = tc.infer_flat(*workspace_flat_, *workspace_pool_,
-                                 workspace_flat_->root, diag);
+    auto result = tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, diag);
     workspace_flat_->clear_all_dirty();
     std::string out = "type: " + treg.format_type(result) + "\n";
     auto all_diags = diag.diagnostics();
@@ -22630,7 +23512,8 @@ bool Evaluator::run_typecheck_no_lock_bool() {
     // (compute_fitness), which then `eval`s the workspace. The
     // workspace must be lowering-ready, so we apply the deferred
     // CoercionMap before returning.
-    if (!workspace_flat_ || !workspace_pool_) return true;
+    if (!workspace_flat_ || !workspace_pool_)
+        return true;
     if (!type_registry_) {
         type_registry_ = new aura::core::TypeRegistry();
     }
@@ -22647,8 +23530,7 @@ bool Evaluator::run_typecheck_no_lock_bool() {
         tc.inject_type_sigs(sig_map, mod_src_map);
     }
     aura::diag::DiagnosticCollector diag;
-    tc.infer_flat(*workspace_flat_, *workspace_pool_,
-                  workspace_flat_->root, diag);
+    tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, diag);
     // Issue #116: apply deferred coercions — the caller (fuzzer
     // loop) will then `eval` the workspace via compute_fitness,
     // which needs CoercionNodes present for the IR generator.
@@ -22763,7 +23645,8 @@ void* Evaluator::compact_sweep(void* sweep_buffers) {
     // test). Cast is safe because both the message-bridge caller
     // and the direct test pass a real GCSweepBuffers.
     auto* marks = static_cast<aura::serve::GCSweepBuffers*>(sweep_buffers);
-    if (!marks) return nullptr;
+    if (!marks)
+        return nullptr;
 
     std::lock_guard<std::mutex> lock(heap_mutex());
     // The result is allocated on the heap (via new) so its
@@ -22793,7 +23676,7 @@ void* Evaluator::compact_sweep(void* sweep_buffers) {
     //    significant memory.
     if (marks->closure_marks) {
         std::size_t before = closures_.size();
-        for (auto it = closures_.begin(); it != closures_.end(); ) {
+        for (auto it = closures_.begin(); it != closures_.end();) {
             int64_t id = static_cast<int64_t>(it->first);
             if (!marks->closure_marks->test(id)) {
                 it = closures_.erase(it);
@@ -22878,17 +23761,16 @@ void Evaluator::yield_mutation_boundary() {
 // function is safe to call on any mutation record —
 // bails on malformed input (NULL_NODE, out-of-range,
 // empty macros_ registry).
-std::size_t Evaluator::post_mutation_macro_reexpand(
-    aura::ast::FlatAST& flat,
-    aura::ast::StringPool& pool,
-    const aura::ast::MutationRecord& rec) {
+std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
+                                                    aura::ast::StringPool& pool,
+                                                    const aura::ast::MutationRecord& rec) {
     using namespace aura::ast;
 
     std::size_t re_expanded = 0;
     if (rec.target_node == NULL_NODE && rec.parent_id == NULL_NODE)
         return 0;
     if (macros_.empty())
-        return 0;  // no macros registered, nothing to do
+        return 0; // no macros registered, nothing to do
 
     // Collect affected node IDs: descendants of target_node
     // + parent_id + dirty-upward chain. This is a conservative
@@ -22898,7 +23780,8 @@ std::size_t Evaluator::post_mutation_macro_reexpand(
     // in effect, just reuses the same gensym).
     std::vector<NodeId> affected;
     auto add_subtree = [&](NodeId root_id) {
-        if (root_id == NULL_NODE || root_id >= flat.size()) return;
+        if (root_id == NULL_NODE || root_id >= flat.size())
+            return;
         affected.push_back(root_id);
         // BFS for descendants
         std::vector<NodeId> frontier{root_id};
@@ -22935,19 +23818,24 @@ std::size_t Evaluator::post_mutation_macro_reexpand(
     // Walk the affected set, find Call nodes whose callee is
     // a registered macro, and re-expand them.
     for (auto id : affected) {
-        if (id == NULL_NODE || id >= flat.size()) continue;
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
         auto v = flat.get(id);
-        if (v.tag != NodeTag::Call || v.children.empty()) continue;
+        if (v.tag != NodeTag::Call || v.children.empty())
+            continue;
 
         auto callee_id = v.child(0);
-        if (callee_id == NULL_NODE || callee_id >= flat.size()) continue;
+        if (callee_id == NULL_NODE || callee_id >= flat.size())
+            continue;
         auto callee_v = flat.get(callee_id);
-        if (!callee_v.has_name()) continue;
+        if (!callee_v.has_name())
+            continue;
         auto callee_name = pool.resolve(callee_v.sym_id);
 
         // Is the callee a registered macro?
         auto macro_it = macros_.find(std::string(callee_name));
-        if (macro_it == macros_.end()) continue;
+        if (macro_it == macros_.end())
+            continue;
 
         const auto& md = macro_it->second;
 
@@ -22992,10 +23880,11 @@ std::size_t Evaluator::post_mutation_macro_reexpand(
         // redundant — clone_macro_body handles it.)
         auto* src_pool = md.pool ? md.pool : &pool;
         auto* src_flat = md.flat ? md.flat : &flat;
-        auto expanded = clone_macro_body(flat, pool, *src_flat, *src_pool,
-                                         md.body_id, &subst_map, &rename_map,
-                                         /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
-        if (expanded == NULL_NODE) continue;
+        auto expanded =
+            clone_macro_body(flat, pool, *src_flat, *src_pool, md.body_id, &subst_map, &rename_map,
+                             /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
+        if (expanded == NULL_NODE)
+            continue;
 
         // Recursively expand any nested macro calls in the
         // cloned body. Bounded by depth=10 to prevent infinite

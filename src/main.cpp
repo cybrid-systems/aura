@@ -3,7 +3,7 @@
 #include "compiler/runtime_shared.h"
 #include "compiler/observability_snapshot.h"
 #include "compiler/observability_metrics.h"
-#include "compiler/observability_logger.h"  // for snapshot_to_json
+#include "compiler/observability_logger.h" // for snapshot_to_json
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -37,10 +37,10 @@ import aura.repl;
 extern "C" char* aura_inspect_ir_json(const void* mod, std::size_t* out_size);
 extern "C" bool aura_emit_object_file(const void* mod, const char* path);
 extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
-                                     const void* functions, unsigned int num_functions);
+                                      const void* functions, unsigned int num_functions);
 
-#include <cstdlib>  // atexit
-extern "C" void aura_reset_runtime();  // Issue #137: cleanup at exit
+#include <cstdlib>                    // atexit
+extern "C" void aura_reset_runtime(); // Issue #137: cleanup at exit
 extern "C" void aura_set_prim_registration(const char* c_code);
 extern "C" void aura_set_string_pool(const char** strings, unsigned int count);
 // Issue #243: defuse_version_ setter/getter so the AOT
@@ -61,7 +61,6 @@ extern "C" std::uint64_t aura_deopt_count();
 extern "C" void aura_counters_reset();
 
 
-
 // JSON pretty-printer (no external dependencies, safe for module TU)
 static std::string prettify_json(const std::string& compact) {
     std::string out;
@@ -72,22 +71,41 @@ static std::string prettify_json(const std::string& compact) {
 
     for (std::size_t i = 0; i < compact.size(); ++i) {
         char c = compact[i];
-        if (escaped) { escaped = false; out += c; continue; }
-        if (c == '\\') { out += c; escaped = true; continue; }
-        if (c == '"') { in_string = !in_string; out += c; continue; }
-        if (in_string) { out += c; continue; }
+        if (escaped) {
+            escaped = false;
+            out += c;
+            continue;
+        }
+        if (c == '\\') {
+            out += c;
+            escaped = true;
+            continue;
+        }
+        if (c == '"') {
+            in_string = !in_string;
+            out += c;
+            continue;
+        }
+        if (in_string) {
+            out += c;
+            continue;
+        }
 
         if (c == '{' || c == '[') {
-            out += c; out += '\n';
+            out += c;
+            out += '\n';
             ++indent;
             out.append(static_cast<std::size_t>(indent * 2), ' ');
         } else if (c == '}' || c == ']') {
             out += '\n';
-            --indent; if (indent < 0) indent = 0;
+            --indent;
+            if (indent < 0)
+                indent = 0;
             out.append(static_cast<std::size_t>(indent * 2), ' ');
             out += c;
         } else if (c == ',') {
-            out += c; out += '\n';
+            out += c;
+            out += '\n';
             out.append(static_cast<std::size_t>(indent * 2), ' ');
         } else if (c == ':') {
             out += ": ";
@@ -126,27 +144,33 @@ static std::string json_escape(std::string_view s) {
 // Issue #147: stringify InvariantStatus enum for JSON output.
 static std::string invariant_status_to_string(aura::ast::InvariantStatus st) {
     switch (st) {
-        case aura::ast::InvariantStatus::Ok:         return "Ok";
-        case aura::ast::InvariantStatus::Warnings:   return "Warnings";
-        case aura::ast::InvariantStatus::Violations: return "Violations";
+        case aura::ast::InvariantStatus::Ok:
+            return "Ok";
+        case aura::ast::InvariantStatus::Warnings:
+            return "Warnings";
+        case aura::ast::InvariantStatus::Violations:
+            return "Violations";
         case aura::ast::InvariantStatus::NotChecked:
-        default:                                      return "NotChecked";
+        default:
+            return "NotChecked";
     }
 }
 
 // Issue #147: serialize the diagnostics vector as a JSON array. Each
 // entry is {"node":N,"kind":"...","message":"..."}. Returns "[]" when
 // the vector is empty so callers can always concat the result.
-static std::string invariant_diagnostics_to_json(
-    const std::vector<aura::compiler::OwnershipNote>& notes) {
-    if (notes.empty()) return "[]";
+static std::string
+invariant_diagnostics_to_json(const std::vector<aura::compiler::OwnershipNote>& notes) {
+    if (notes.empty())
+        return "[]";
     std::string out = "[";
     bool first = true;
     for (auto& n : notes) {
-        if (!first) out += ",";
+        if (!first)
+            out += ",";
         first = false;
-        out += std::format(R"({{"node":{},"kind":"{}","message":"{}"}})",
-                           n.node, json_escape(n.kind), json_escape(n.message));
+        out += std::format(R"({{"node":{},"kind":"{}","message":"{}"}})", n.node,
+                           json_escape(n.kind), json_escape(n.message));
     }
     out += "]";
     return out;
@@ -155,16 +179,17 @@ static std::string invariant_diagnostics_to_json(
 // Issue #147: print a typed-mutate JSON response with invariant
 // diagnostics. Used by both --serve and --serve-async handlers so
 // the protocol stays in sync.
-static void print_typed_mutate_response(
-    const aura::compiler::CompilerService::MutationResult& r) {
+static void print_typed_mutate_response(const aura::compiler::CompilerService::MutationResult& r) {
     auto ist = invariant_status_to_string(r.invariant_status);
     auto diags = invariant_diagnostics_to_json(r.invariant_diagnostics);
     if (r.success) {
-        std::println(R"({{"status":"ok","mutation_id":{},"invariant_status":"{}","invariant_diagnostics":{}}})",
-                     r.mutation_id, ist, diags);
+        std::println(
+            R"({{"status":"ok","mutation_id":{},"invariant_status":"{}","invariant_diagnostics":{}}})",
+            r.mutation_id, ist, diags);
     } else {
-        std::println(R"({{"status":"error","msg":"{}","invariant_status":"{}","invariant_diagnostics":{}}})",
-                     json_escape(r.error.empty() ? "mutation failed" : r.error), ist, diags);
+        std::println(
+            R"({{"status":"error","msg":"{}","invariant_status":"{}","invariant_diagnostics":{}}})",
+            json_escape(r.error.empty() ? "mutation failed" : r.error), ist, diags);
     }
 }
 
@@ -307,7 +332,7 @@ int main(int argc, char* argv[]) {
     // before backtrace() can capture frames, yielding only the header
     // line and "Backtrace:" with zero frame data.
 #if defined(__linux__) && !defined(__APPLE__)
-    static char alt_stack[65536];  // 64K alt stack (SIGSTKSZ is system-dependent)
+    static char alt_stack[65536]; // 64K alt stack (SIGSTKSZ is system-dependent)
     // Note: alt_stack must outlive the process; static-storage is fine.
     {
         stack_t ss{};
@@ -321,11 +346,11 @@ int main(int argc, char* argv[]) {
 
     static auto crash_handler = +[](int sig, siginfo_t* info, void* ucontext) {
         // Use raw write(2) — stdio may be in undefined state.
-        const char* name =
-            sig == SIGSEGV ? "SIGSEGV" :
-            sig == SIGABRT ? "SIGABRT" :
-            sig == SIGBUS  ? "SIGBUS"  :
-            sig == SIGFPE  ? "SIGFPE"  : "SIGNAL";
+        const char* name = sig == SIGSEGV   ? "SIGSEGV"
+                           : sig == SIGABRT ? "SIGABRT"
+                           : sig == SIGBUS  ? "SIGBUS"
+                           : sig == SIGFPE  ? "SIGFPE"
+                                            : "SIGNAL";
         // 1) Read the faulting instruction pointer directly from the kernel-
         //    provided ucontext. This is the most useful single piece of
         //    info: `addr2line -e aura -f -C <IP>` gives function + line.
@@ -355,15 +380,17 @@ int main(int argc, char* argv[]) {
         char hdr[512];
         int n = 0;
         if (info) {
-            n = std::snprintf(hdr, sizeof(hdr),
-                "\n=== AURA CRASH: %s (signal %d) si_addr=%p si_code=%d ip=%p sp=%p ===\n",
-                name, sig, info->si_addr, info->si_code, ip, sp);
+            n = std::snprintf(
+                hdr, sizeof(hdr),
+                "\n=== AURA CRASH: %s (signal %d) si_addr=%p si_code=%d ip=%p sp=%p ===\n", name,
+                sig, info->si_addr, info->si_code, ip, sp);
         } else {
             n = std::snprintf(hdr, sizeof(hdr),
-                "\n=== AURA CRASH: %s (signal %d) ip=%p sp=%p ===\n",
-                name, sig, ip, sp);
+                              "\n=== AURA CRASH: %s (signal %d) ip=%p sp=%p ===\n", name, sig, ip,
+                              sp);
         }
-        if (n > 0) (void)!::write(2, hdr, n);
+        if (n > 0)
+            (void)!::write(2, hdr, n);
 
         // 3) Symbol-resolve the faulting IP (and si_addr) with dladdr.
         //    dladdr is async-signal-safe (POSIX) and works on the alt stack.
@@ -374,17 +401,18 @@ int main(int argc, char* argv[]) {
             char line[512];
             int ln;
             if (::dladdr(ip, &dlinfo) && dlinfo.dli_sname) {
-                std::ptrdiff_t off = static_cast<char*>(ip) -
-                                     static_cast<const char*>(dlinfo.dli_saddr);
-                ln = std::snprintf(line, sizeof(line),
-                    "Faulting IP: %s+%td in %s\n",
-                    dlinfo.dli_sname, off,
-                    dlinfo.dli_fname ? dlinfo.dli_fname : "?");
+                std::ptrdiff_t off =
+                    static_cast<char*>(ip) - static_cast<const char*>(dlinfo.dli_saddr);
+                ln =
+                    std::snprintf(line, sizeof(line), "Faulting IP: %s+%td in %s\n",
+                                  dlinfo.dli_sname, off, dlinfo.dli_fname ? dlinfo.dli_fname : "?");
             } else {
                 ln = std::snprintf(line, sizeof(line),
-                    "Faulting IP: %p (no symbol; -rdynamic missing or stripped)\n", ip);
+                                   "Faulting IP: %p (no symbol; -rdynamic missing or stripped)\n",
+                                   ip);
             }
-            if (ln > 0) (void)!::write(2, line, ln);
+            if (ln > 0)
+                (void)!::write(2, line, ln);
         }
         if (info && info->si_addr) {
             Dl_info dlinfo;
@@ -392,17 +420,19 @@ int main(int argc, char* argv[]) {
             int ln;
             void* bad = info->si_addr;
             if (::dladdr(bad, &dlinfo) && dlinfo.dli_sname) {
-                std::ptrdiff_t off = static_cast<char*>(bad) -
-                                     static_cast<const char*>(dlinfo.dli_saddr);
-                ln = std::snprintf(line, sizeof(line),
-                    "si_addr in: %s+%td in %s\n",
-                    dlinfo.dli_sname, off,
-                    dlinfo.dli_fname ? dlinfo.dli_fname : "?");
+                std::ptrdiff_t off =
+                    static_cast<char*>(bad) - static_cast<const char*>(dlinfo.dli_saddr);
+                ln =
+                    std::snprintf(line, sizeof(line), "si_addr in: %s+%td in %s\n",
+                                  dlinfo.dli_sname, off, dlinfo.dli_fname ? dlinfo.dli_fname : "?");
             } else {
-                ln = std::snprintf(line, sizeof(line),
-                    "si_addr %p is outside any loaded module (use-after-free or uninit ptr?)\n", bad);
+                ln = std::snprintf(
+                    line, sizeof(line),
+                    "si_addr %p is outside any loaded module (use-after-free or uninit ptr?)\n",
+                    bad);
             }
-            if (ln > 0) (void)!::write(2, line, ln);
+            if (ln > 0)
+                (void)!::write(2, line, ln);
         }
         (void)!::write(2, "Resolve with: addr2line -e aura -f -C <ip> <si_addr>\n", 56);
         (void)!::write(2, "=== END CRASH ===\n", 18);
@@ -417,11 +447,11 @@ int main(int argc, char* argv[]) {
     struct sigaction sa{};
     sa.sa_sigaction = crash_handler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;  // SA_ONSTACK → use alt stack
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK; // SA_ONSTACK → use alt stack
     ::sigaction(SIGSEGV, &sa, nullptr);
     ::sigaction(SIGABRT, &sa, nullptr);
-    ::sigaction(SIGBUS,  &sa, nullptr);
-    ::sigaction(SIGFPE,  &sa, nullptr);
+    ::sigaction(SIGBUS, &sa, nullptr);
+    ::sigaction(SIGFPE, &sa, nullptr);
 #endif
 
     // ── Parse common flags ───────────────────────────────
@@ -446,7 +476,7 @@ int main(int argc, char* argv[]) {
             std::string_view a(argv[i]);
             if (a == "--worker-threads" && i + 1 < argc) {
                 num_workers = std::atoi(argv[i + 1]);
-                return i;  // return index of --worker-threads
+                return i; // return index of --worker-threads
             }
             if (a.starts_with("--worker-threads=")) {
                 num_workers = std::atoi(a.data() + 17);
@@ -461,7 +491,10 @@ int main(int argc, char* argv[]) {
         int remove_count = (std::string_view(argv[wt_idx]) == "--worker-threads") ? 2 : 1;
         int new_argc = 1;
         for (int i = 1; i < argc; ++i) {
-            if (i == wt_idx) { i += remove_count - 1; continue; }
+            if (i == wt_idx) {
+                i += remove_count - 1;
+                continue;
+            }
             argv[new_argc + 1] = argv[i];
             ++new_argc;
         }
@@ -488,7 +521,8 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < N; ++i) {
             sched.spawn([&completed]() {
                 volatile int sum = 0;
-                for (int j = 0; j < 50000; ++j) sum += j;
+                for (int j = 0; j < 50000; ++j)
+                    sum += j;
                 completed.fetch_add(1);
             });
         }
@@ -498,7 +532,8 @@ int main(int argc, char* argv[]) {
             sched.spawn([&completed]() {
                 for (int k = 0; k < 3; ++k) {
                     volatile int sum = 0;
-                    for (int j = 0; j < 10000; ++j) sum += j;
+                    for (int j = 0; j < 10000; ++j)
+                        sum += j;
                     aura::serve::Fiber::yield();
                 }
                 completed.fetch_add(1);
@@ -565,7 +600,8 @@ int main(int argc, char* argv[]) {
                         std::println("{{\"status\":\"ok\",\"sessions\":[");
                         bool first = true;
                         for (auto& [sn, _] : sessions) {
-                            if (!first) std::println(",");
+                            if (!first)
+                                std::println(",");
                             first = false;
                             std::print("  \"{}\"", json_escape(sn));
                         }
@@ -576,7 +612,8 @@ int main(int argc, char* argv[]) {
                     if (action == "delete") {
                         auto name_it = cmd.find("name");
                         if (name_it == cmd.end() || name_it->second == "default") {
-                            std::println("{{\"status\":\"error\",\"msg\":\"cannot delete default session\"}}");
+                            std::println("{{\"status\":\"error\",\"msg\":\"cannot delete default "
+                                         "session\"}}");
                             continue;
                         }
                         auto& sname = name_it->second;
@@ -584,7 +621,8 @@ int main(int argc, char* argv[]) {
                             if (active_session == sname) {
                                 active_session = "default";
                             }
-                            std::println("{{\"status\":\"deleted\",\"session\":\"{}\"}}", json_escape(sname));
+                            std::println("{{\"status\":\"deleted\",\"session\":\"{}\"}}",
+                                         json_escape(sname));
                         } else {
                             std::println("{{\"status\":\"error\",\"msg\":\"session not found\"}}");
                         }
@@ -605,9 +643,11 @@ int main(int argc, char* argv[]) {
                         aura::compiler::CompilerService::register_session(real_name, &it->second);
                     }
                     if (created)
-                        std::println("{{\"status\":\"created\",\"session\":\"{}\"}}", json_escape(real_name));
+                        std::println("{{\"status\":\"created\",\"session\":\"{}\"}}",
+                                     json_escape(real_name));
                     else
-                        std::println("{{\"status\":\"ok\",\"session\":\"{}\"}}", json_escape(real_name));
+                        std::println("{{\"status\":\"ok\",\"session\":\"{}\"}}",
+                                     json_escape(real_name));
                     active_session = real_name;
                     continue;
                 }
@@ -772,8 +812,7 @@ int main(int argc, char* argv[]) {
                                        e.mutation_id, e.timestamp_ms, e.target_node,
                                        json_escape(e.operator_name), json_escape(e.old_type),
                                        json_escape(e.new_type), json_escape(e.summary),
-                                       json_escape(e.status),
-                                       json_escape(e.invariant_status));
+                                       json_escape(e.status), json_escape(e.invariant_status));
                         }
                         std::println("]}}");
                     }
@@ -792,18 +831,17 @@ int main(int argc, char* argv[]) {
                 if (type == "jit:metrics") {
                     auto reset_it = cmd.find("reset");
                     bool do_reset = (reset_it != cmd.end() &&
-                                    (reset_it->second == "true" || reset_it->second == "1"));
+                                     (reset_it->second == "true" || reset_it->second == "1"));
                     auto bypass = aura_bypass_count();
                     auto fastpath = aura_unchecked_fastpath_count();
                     auto deopt = aura_deopt_count();
                     if (do_reset) {
                         aura_counters_reset();
                     }
-                    std::println(
-                        "{{\"status\":\"ok\",\"metrics\":{{\"bypass_count\":{},"
-                        "\"unchecked_fastpath_count\":{},\"deopt_count\":{}}},"
-                        "\"reset\":{}}}",
-                        bypass, fastpath, deopt, do_reset ? "true" : "false");
+                    std::println("{{\"status\":\"ok\",\"metrics\":{{\"bypass_count\":{},"
+                                 "\"unchecked_fastpath_count\":{},\"deopt_count\":{}}},"
+                                 "\"reset\":{}}}",
+                                 bypass, fastpath, deopt, do_reset ? "true" : "false");
                     continue;
                 }
 
@@ -865,29 +903,33 @@ int main(int argc, char* argv[]) {
                         int timeout_sec = 30;
                         auto timeout_it = cmd.find("timeout");
                         if (timeout_it != cmd.end()) {
-                            try { timeout_sec = std::stoi(timeout_it->second); }
-                            catch (...) {}
+                            try {
+                                timeout_sec = std::stoi(timeout_it->second);
+                            } catch (...) {
+                            }
                         }
-                        auto future = std::async(std::launch::async, [&]() {
-                            return cs.exec_with_cache(code);
-                        });
+                        auto future = std::async(std::launch::async,
+                                                 [&]() { return cs.exec_with_cache(code); });
                         auto status = future.wait_for(std::chrono::seconds(timeout_sec));
                         if (status == std::future_status::timeout) {
-                            std::println("{{\"status\":\"timeout\",\"msg\":\"exec timed out ({}s)\"}}",
-                                         timeout_sec);
+                            std::println(
+                                "{{\"status\":\"timeout\",\"msg\":\"exec timed out ({}s)\"}}",
+                                timeout_sec);
                         } else {
                             auto result = future.get();
                             if (result) {
                                 try {
                                     auto& v = *result;
                                     if (is_closure(v)) {
-                                        std::println("{{\"status\":\"closure\",\"value\":\"#<procedure>\"}}");
+                                        std::println("{{\"status\":\"closure\",\"value\":\"#<"
+                                                     "procedure>\"}}");
                                     } else {
                                         std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
                                                      json_escape(fmt_val(v, cs)));
                                     }
                                 } catch (const std::bad_alloc&) {
-                                    std::println("{{\"status\":\"error\",\"msg\":\"out of memory\"}}");
+                                    std::println(
+                                        "{{\"status\":\"error\",\"msg\":\"out of memory\"}}");
                                 }
                             } else {
                                 auto& d = result.error();
@@ -948,18 +990,19 @@ int main(int argc, char* argv[]) {
                         }
                     } else if (type == "query") {
                         // Eval code and return result (like exec, but simpler)
-                        auto future = std::async(std::launch::async, [&]() {
-                            return cs.exec_with_cache(code);
-                        });
+                        auto future = std::async(std::launch::async,
+                                                 [&]() { return cs.exec_with_cache(code); });
                         auto status = future.wait_for(std::chrono::seconds(30));
                         if (status == std::future_status::timeout) {
-                            std::println("{{\"status\":\"timeout\",\"msg\":\"query timed out (30s)\"}}");
+                            std::println(
+                                "{{\"status\":\"timeout\",\"msg\":\"query timed out (30s)\"}}");
                         } else {
                             auto result = future.get();
                             if (result) {
                                 auto& v = *result;
                                 if (is_closure(v)) {
-                                    std::println("{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
+                                    std::println(
+                                        "{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
                                 } else {
                                     std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
                                                  json_escape(fmt_val(v, cs)));
@@ -1026,8 +1069,7 @@ int main(int argc, char* argv[]) {
                                            e.mutation_id, e.timestamp_ms, e.target_node,
                                            json_escape(e.operator_name), json_escape(e.old_type),
                                            json_escape(e.new_type), json_escape(e.summary),
-                                           json_escape(e.status),
-                                           json_escape(e.invariant_status));
+                                           json_escape(e.status), json_escape(e.invariant_status));
                             }
                             std::println("]}}");
                         }
@@ -1228,8 +1270,8 @@ int main(int argc, char* argv[]) {
                     auto tid = flat.type_id(nid);
                     if (tid > 0 && tid < treg.size()) {
                         auto ttype = aura::core::TypeId{tid, 1};
-                        std::println("  node[{}]: {} (type_id={})", nid,
-                                     treg.format_type(ttype), tid);
+                        std::println("  node[{}]: {} (type_id={})", nid, treg.format_type(ttype),
+                                     tid);
                     }
                 }
                 if (!diag.diagnostics().empty()) {
@@ -1374,7 +1416,7 @@ int main(int argc, char* argv[]) {
         auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
         aura::compiler::Primitives prims;
         aura::compiler::IRContext ctx(prims);
-                        aura::compiler::IRInterpreter interp(mod, ctx);
+        aura::compiler::IRInterpreter interp(mod, ctx);
         auto eval = interp.execute();
         if (eval)
             std::println("result: {}", aura::compiler::types::format_value(*eval));
@@ -1512,7 +1554,8 @@ int main(int argc, char* argv[]) {
         cf.run(ir_mod);
 
         // Write cache with IR
-        if (!aura::compiler::cache::write_cache(argv[2], flat, pool, pr.root, 0, &ir_mod, nullptr)) {
+        if (!aura::compiler::cache::write_cache(argv[2], flat, pool, pr.root, 0, &ir_mod,
+                                                nullptr)) {
             std::println(std::cerr, "error: cannot write cache file {}", argv[2]);
             return 1;
         }
@@ -1529,7 +1572,7 @@ int main(int argc, char* argv[]) {
         }
         if (!is_void(*result))
             if (!is_void(*result))
-            std::println("{}", fmt_val(*result, cs));
+                std::println("{}", fmt_val(*result, cs));
         return 0;
     }
 
@@ -1566,7 +1609,8 @@ int main(int argc, char* argv[]) {
             std::size_t start = 0;
             while (start < sig.size()) {
                 auto end = sig.find('\n', start);
-                if (end == std::string_view::npos) end = sig.size();
+                if (end == std::string_view::npos)
+                    end = sig.size();
                 std::println("  {}", sig.substr(start, end - start));
                 start = end + 1;
             }
@@ -1766,7 +1810,8 @@ int main(int argc, char* argv[]) {
             if (argv[2][0] == '(') {
                 // Inline mode: ./aura --emit-binary '(+ 1 2)' myapp
                 input = argv[2];
-                argc -= 1; argv += 1;  // shift so argv[2] = myapp
+                argc -= 1;
+                argv += 1; // shift so argv[2] = myapp
                 out_path = argv[2];
             } else {
                 // File mode: ./aura --emit-binary lib.aura main.aura out
@@ -1777,7 +1822,7 @@ int main(int argc, char* argv[]) {
                         return 1;
                     }
                     input += std::string((std::istreambuf_iterator<char>(f)),
-                                          std::istreambuf_iterator<char>());
+                                         std::istreambuf_iterator<char>());
                     input += '\n';
                 }
                 out_path = argv[argc - 1];
@@ -1812,14 +1857,21 @@ int main(int argc, char* argv[]) {
                 while (i < s.size()) {
                     char c = s[i];
                     if (in_str) {
-                        if (c == '\\' && i + 1 < s.size()) { i += 2; continue; }
-                        if (c == '"') in_str = false;
+                        if (c == '\\' && i + 1 < s.size()) {
+                            i += 2;
+                            continue;
+                        }
+                        if (c == '"')
+                            in_str = false;
                     } else {
-                        if (c == '"') in_str = true;
-                        else if (c == '(') depth++;
+                        if (c == '"')
+                            in_str = true;
+                        else if (c == '(')
+                            depth++;
                         else if (c == ')') {
                             depth--;
-                            if (depth == 0) return i + 1;
+                            if (depth == 0)
+                                return i + 1;
                         }
                     }
                     i++;
@@ -1830,9 +1882,11 @@ int main(int argc, char* argv[]) {
             // Strip (export ...) — finds the first '(' matching its ')'.
             auto strip_export = [&](std::string& s) {
                 auto p = s.find("(export");
-                if (p == std::string::npos) return;
+                if (p == std::string::npos)
+                    return;
                 auto end = find_matching_close(s, p);
-                if (end == std::string::npos) return;
+                if (end == std::string::npos)
+                    return;
                 s.erase(p, end - p);
             };
 
@@ -1849,7 +1903,8 @@ int main(int argc, char* argv[]) {
             std::set<std::string> visited;
             std::function<std::string(const std::string&)> inline_module;
             inline_module = [&](const std::string& path) -> std::string {
-                if (visited.count(path)) return "";
+                if (visited.count(path))
+                    return "";
                 visited.insert(path);
                 std::ifstream mf(path);
                 if (!mf) {
@@ -1857,24 +1912,27 @@ int main(int argc, char* argv[]) {
                     return "";
                 }
                 std::string src((std::istreambuf_iterator<char>(mf)),
-                                 std::istreambuf_iterator<char>());
+                                std::istreambuf_iterator<char>());
                 strip_export(src);
                 std::string out;
                 std::size_t pos = 0;
                 while (pos < src.size()) {
                     // Skip whitespace and comments at the top level
                     while (pos < src.size() &&
-                           (src[pos] == ' ' || src[pos] == '\n' ||
-                            src[pos] == '\t' || src[pos] == '\r' ||
-                            src[pos] == ';')) {
+                           (src[pos] == ' ' || src[pos] == '\n' || src[pos] == '\t' ||
+                            src[pos] == '\r' || src[pos] == ';')) {
                         if (src[pos] == ';') {
                             // line comment
-                            while (pos < src.size() && src[pos] != '\n') pos++;
-                        } else pos++;
+                            while (pos < src.size() && src[pos] != '\n')
+                                pos++;
+                        } else
+                            pos++;
                     }
                     if (pos >= src.size() || src[pos] != '(') {
-                        if (pos < src.size()) out += src[pos++];
-                        else break;
+                        if (pos < src.size())
+                            out += src[pos++];
+                        else
+                            break;
                         continue;
                     }
                     std::size_t form_start = pos;
@@ -1888,17 +1946,15 @@ int main(int argc, char* argv[]) {
                     std::string head;
                     std::size_t h = form_start + 1;
                     while (h < form_end &&
-                           (src[h] == ' ' || src[h] == '\n' ||
-                            src[h] == '\t' || src[h] == '\r'))
+                           (src[h] == ' ' || src[h] == '\n' || src[h] == '\t' || src[h] == '\r'))
                         h++;
-                    while (h < form_end && src[h] != ' ' && src[h] != '\n' &&
-                           src[h] != '\t' && src[h] != '\r' && src[h] != ')')
+                    while (h < form_end && src[h] != ' ' && src[h] != '\n' && src[h] != '\t' &&
+                           src[h] != '\r' && src[h] != ')')
                         head += src[h++];
                     if (head == "require" || head == "import" || head == "use") {
                         // Extract first arg (a symbol or string)
-                        while (h < form_end &&
-                               (src[h] == ' ' || src[h] == '\n' ||
-                                src[h] == '\t' || src[h] == '\r'))
+                        while (h < form_end && (src[h] == ' ' || src[h] == '\n' || src[h] == '\t' ||
+                                                src[h] == '\r'))
                             h++;
                         std::string arg;
                         bool in_str = false;
@@ -1906,12 +1962,13 @@ int main(int argc, char* argv[]) {
                             char c = src[h];
                             if (in_str) {
                                 arg += c;
-                                if (c == '"') in_str = false;
+                                if (c == '"')
+                                    in_str = false;
                             } else if (c == '"') {
                                 arg += c;
                                 in_str = true;
-                            } else if (c == ' ' || c == '\n' || c == '\t' ||
-                                       c == '\r' || c == ')') {
+                            } else if (c == ' ' || c == '\n' || c == '\t' || c == '\r' ||
+                                       c == ')') {
                                 break;
                             } else {
                                 arg += c;
@@ -1950,8 +2007,10 @@ int main(int argc, char* argv[]) {
                     resolved += input.substr(pos);
                     break;
                 }
-                if (has_imp && (!has_req || imp < req)) found = imp;
-                else found = req;
+                if (has_imp && (!has_req || imp < req))
+                    found = imp;
+                else
+                    found = req;
                 resolved += input.substr(pos, found - pos);
                 auto quote_start = input.find('"', found);
                 auto quote_end = input.find('"', quote_start + 1);
@@ -2000,7 +2059,7 @@ int main(int argc, char* argv[]) {
         std::size_t num_fns = mod->functions.size();
         std::vector<std::vector<std::vector<aura::jit::FlatInstruction>>> instr_pool;
         std::vector<std::vector<aura::jit::FlatBlock>> block_pool;
-        std::deque<std::string> name_pool;  // deque: stable pointers on push_back
+        std::deque<std::string> name_pool; // deque: stable pointers on push_back
         std::vector<aura::jit::FlatFunction> flat_fn_array;
         flat_fn_array.reserve(num_fns);
         instr_pool.reserve(num_fns);
@@ -2020,24 +2079,19 @@ int main(int argc, char* argv[]) {
             for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
                 auto& block = ir_fn.blocks[bi];
                 for (auto& inst : block.instructions) {
-                    instrs[bi].push_back({static_cast<std::uint32_t>(inst.opcode),
-                                          {inst.operands[0], inst.operands[1],
-                                           inst.operands[2], inst.operands[3]}});
+                    instrs[bi].push_back(
+                        {static_cast<std::uint32_t>(inst.opcode),
+                         {inst.operands[0], inst.operands[1], inst.operands[2], inst.operands[3]}});
                 }
                 blocks[bi] = {block.id, instrs[bi].data(),
                               static_cast<std::uint32_t>(instrs[bi].size())};
             }
 
-            flat_fn_array.push_back({
-                name_pool.back().c_str(),
-                ir_fn.entry_block,
-                ir_fn.local_count,
-                ir_fn.arg_count,
-                blocks.data(),
-                static_cast<std::uint32_t>(blocks.size()),
-                nullptr,  // func_id_map not used for AOT
-                0
-            });
+            flat_fn_array.push_back({name_pool.back().c_str(), ir_fn.entry_block, ir_fn.local_count,
+                                     ir_fn.arg_count, blocks.data(),
+                                     static_cast<std::uint32_t>(blocks.size()),
+                                     nullptr, // func_id_map not used for AOT
+                                     0});
         }
 
         // ── Step 3: Generate primitive dispatch C code ───────────
@@ -2066,16 +2120,19 @@ int main(int argc, char* argv[]) {
             // Generate one wrapper function for each known primitive
             for (std::size_t s = 0; s < prims.slot_count(); ++s) {
                 auto n = prims.name_for_slot(s);
-                if (n.empty()) continue;
+                if (n.empty())
+                    continue;
                 code += "static int64_t prim_" + std::to_string(s) + "(int64_t* a, int32_t c) {\n";
                 if (n == "+")
                     code += "    int64_t r=0; for(int i=0;i<c;i++) r+=a[i]; return r;\n";
                 else if (n == "-")
-                    code += "    if(c<1)return 0; if(c==1)return -a[0]; int64_t r=a[0]; for(int i=1;i<c;i++) r-=a[i]; return r;\n";
+                    code += "    if(c<1)return 0; if(c==1)return -a[0]; int64_t r=a[0]; for(int "
+                            "i=1;i<c;i++) r-=a[i]; return r;\n";
                 else if (n == "*")
                     code += "    int64_t r=1; for(int i=0;i<c;i++) r*=a[i]; return r;\n";
                 else if (n == "/")
-                    code += "    if(c<1)return 1; int64_t r=a[0]; for(int i=1;i<c;i++){if(a[i]==0){r=0;break;}r/=a[i];} return r;\n";
+                    code += "    if(c<1)return 1; int64_t r=a[0]; for(int "
+                            "i=1;i<c;i++){if(a[i]==0){r=0;break;}r/=a[i];} return r;\n";
                 else if (n == "=" || n == "eq?" || n == "eqv?" || n == "equal?")
                     code += "    for(int i=0;i<c-1;i++) if(a[i]!=a[i+1]) return 0; return 1;\n";
                 else if (n == "<")
@@ -2089,27 +2146,30 @@ int main(int argc, char* argv[]) {
                 else if (n == "not")
                     code += "    return (c<1||a[0]==3||a[0]==11)?7:3;\n";
                 else if (n == "append") {
-                    code += "    if(c<1)return 0; int64_t lst1=c>0?a[0]:0; int64_t lst2=c>1?a[1]:0;\n";
+                    code +=
+                        "    if(c<1)return 0; int64_t lst1=c>0?a[0]:0; int64_t lst2=c>1?a[1]:0;\n";
                     code += "    int64_t rev[1024]; int revc=0;\n";
-                    code += "    while((lst1<0||(lst1&3)==1)&&revc<1024){rev[revc++]=aura_pair_car(lst1); lst1=aura_pair_cdr(lst1);}\n";
+                    code += "    "
+                            "while((lst1<0||(lst1&3)==1)&&revc<1024){rev[revc++]=aura_pair_car("
+                            "lst1); lst1=aura_pair_cdr(lst1);}\n";
                     code += "    int64_t r=lst2;\n";
                     code += "    for(int i=revc-1;i>=0;i--) r=aura_alloc_pair(rev[i],r);\n";
                     code += "    return r;\n";
-                }
-                else if (n == "member") {
+                } else if (n == "member") {
                     code += "    int64_t key=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
-                    code += "    while(lst<0||(lst&3)==1){if(aura_pair_car(lst)==key)return lst; lst=aura_pair_cdr(lst);}\n";
+                    code += "    while(lst<0||(lst&3)==1){if(aura_pair_car(lst)==key)return lst; "
+                            "lst=aura_pair_cdr(lst);}\n";
                     code += "    return 0;\n";
-                }
-                else if (n == "map") {
+                } else if (n == "map") {
                     code += "    int64_t fn=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
                     code += "    int64_t rev[1024]; int revc=0;\n";
                     code += "    int64_t args[8];\n";
-                    code += "    while((lst<0||(lst&3)==1)&&revc<1024){args[0]=aura_pair_car(lst); rev[revc++]=aura_closure_call(fn,args,1); lst=aura_pair_cdr(lst);}\n";
-                    code += "    int64_t r=0; for(int i=revc-1;i>=0;i--) r=aura_alloc_pair(rev[i],r);\n";
+                    code += "    while((lst<0||(lst&3)==1)&&revc<1024){args[0]=aura_pair_car(lst); "
+                            "rev[revc++]=aura_closure_call(fn,args,1); lst=aura_pair_cdr(lst);}\n";
+                    code += "    int64_t r=0; for(int i=revc-1;i>=0;i--) "
+                            "r=aura_alloc_pair(rev[i],r);\n";
                     code += "    return r;\n";
-                }
-                else if (n == "null?")
+                } else if (n == "null?")
                     code += "    return (c>=1&&(a[0]==11||a[0]==0))?1:0;\n";
                 else if (n == "pair?")
                     // Issue #106 sub-task 4 (audit): the previous
@@ -2133,44 +2193,46 @@ int main(int argc, char* argv[]) {
                     code += "    int64_t v=c>0?a[0]:0; int64_t n=0;\n";
                     code += "    while((v<0||(v&3)==1)&&n<9999){n++;v=aura_pair_cdr(v);}\n";
                     code += "    return n;\n";
-                }
-                else if (n == "list-ref") {
+                } else if (n == "list-ref") {
                     code += "    int64_t v=c>0?a[0]:0; int64_t i=c>1?a[1]:0;\n";
                     code += "    while(i>0&&(v<0||(v&3)==1)){v=aura_pair_cdr(v);i--;}\n";
                     code += "    if(i==0&&(v<0||(v&3)==1))return aura_pair_car(v); return 0;\n";
-                }
-                else if (n == "reverse") {
+                } else if (n == "reverse") {
                     code += "    int64_t v=c>0?a[0]:0; int64_t r=0;\n";
-                    code += "    while(v<0||(v&3)==1){r=aura_alloc_pair(aura_pair_car(v),r);v=aura_pair_cdr(v);}\n";
+                    code += "    "
+                            "while(v<0||(v&3)==1){r=aura_alloc_pair(aura_pair_car(v),r);v=aura_"
+                            "pair_cdr(v);}\n";
                     code += "    return r;\n";
-                }
-                else if (n == "list") {
+                } else if (n == "list") {
                     code += "    int64_t r=0;\n";
                     code += "    for(int i=c-1;i>=0;i--) r=aura_alloc_pair(a[i],r);\n";
                     code += "    return r;\n";
-                }
-                else if (n == "display") {
+                } else if (n == "display") {
                     code += "    if(c>0)aura_display_int(a[0]); fflush(stdout);\n";
                     code += "    return (c>0)?a[0]:0;\n";
-                }
-                else if (n == "filter") {
+                } else if (n == "filter") {
                     code += "    int64_t pred=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
                     code += "    int64_t rev[1024]; int revc=0;\n";
                     code += "    int64_t args[8];\n";
-                    code += "    while((lst<0||(lst&3)==1)&&revc<1024){int64_t v=aura_pair_car(lst); args[0]=v; if(aura_closure_call(pred,args,1)!=0)rev[revc++]=v; lst=aura_pair_cdr(lst);}\n";
-                    code += "    int64_t r=0; for(int i=revc-1;i>=0;i--) r=aura_alloc_pair(rev[i],r);\n";
+                    code +=
+                        "    while((lst<0||(lst&3)==1)&&revc<1024){int64_t v=aura_pair_car(lst); "
+                        "args[0]=v; if(aura_closure_call(pred,args,1)!=0)rev[revc++]=v; "
+                        "lst=aura_pair_cdr(lst);}\n";
+                    code += "    int64_t r=0; for(int i=revc-1;i>=0;i--) "
+                            "r=aura_alloc_pair(rev[i],r);\n";
                     code += "    return r;\n";
-                }
-                else if (n == "foldl") {
-                    code += "    int64_t fn=c>0?a[0]:0; int64_t acc=c>1?a[1]:0; int64_t lst=c>2?a[2]:0;\n";
+                } else if (n == "foldl") {
+                    code += "    int64_t fn=c>0?a[0]:0; int64_t acc=c>1?a[1]:0; int64_t "
+                            "lst=c>2?a[2]:0;\n";
                     code += "    int64_t args[8];\n";
-                    code += "    while(lst<0||(lst&3)==1){args[0]=acc; args[1]=aura_pair_car(lst); acc=aura_closure_call(fn,args,2); lst=aura_pair_cdr(lst);}\n";
+                    code += "    while(lst<0||(lst&3)==1){args[0]=acc; args[1]=aura_pair_car(lst); "
+                            "acc=aura_closure_call(fn,args,2); lst=aura_pair_cdr(lst);}\n";
                     code += "    return acc;\n";
-                }
-                else {
+                } else {
                     // Unknown primitives (e.g. ADT constructors): build pair chain with tag string
                     code += "    int64_t r=0; for(int i=c-1;i>=0;i--) r=aura_alloc_pair(a[i],r);\n";
-                    code += "    r=aura_alloc_pair(MAKE_STRING_SENTINEL(" + std::to_string(s) + "),r); return r;\n";
+                    code += "    r=aura_alloc_pair(MAKE_STRING_SENTINEL(" + std::to_string(s) +
+                            "),r); return r;\n";
                 }
                 code += "}\n\n";
             }
@@ -2180,7 +2242,8 @@ int main(int argc, char* argv[]) {
             for (std::size_t s = 0; s < prims.slot_count(); ++s) {
                 auto n = prims.name_for_slot(s);
                 if (!n.empty()) {
-                    code += "  aura_register_primitive_fn(" + std::to_string(s) + ",(int64_t)prim_" + std::to_string(s) + ");\n";
+                    code += "  aura_register_primitive_fn(" + std::to_string(s) +
+                            ",(int64_t)prim_" + std::to_string(s) + ");\n";
                 }
             }
             code += "}\n";
@@ -2206,10 +2269,9 @@ int main(int argc, char* argv[]) {
         aura_set_aot_defuse_version(cs.evaluator().defuse_version_for_test());
 
         // ── Step 4: Compile via LLVM AOT pipeline ────────────────
-        bool compiled = aura_emit_native_file(
-            input.c_str(), out_path.c_str(),
-            (const void*)flat_fn_array.data(),
-            static_cast<unsigned int>(flat_fn_array.size()));
+        bool compiled = aura_emit_native_file(input.c_str(), out_path.c_str(),
+                                              (const void*)flat_fn_array.data(),
+                                              static_cast<unsigned int>(flat_fn_array.size()));
         // Issue #62 Iter 1: AOT counters
         if (compiled) {
             cs.metrics().aot_emits.fetch_add(1, std::memory_order_relaxed);
@@ -2242,12 +2304,12 @@ int main(int argc, char* argv[]) {
             // Bail out loudly with the LLVM/bridge stderr above.
             if (!flat_fn_array.empty()) {
                 std::println(stderr,
-                    "AOT: failed to emit native binary for {} function(s). "
-                    "See AOT: errors above. Common causes: x86_64 PIE/PIC "
-                    "mismatch, missing lib/runtime.c, LLVM internal error. "
-                    "Not falling back to shell wrapper (--emit-binary "
-                    "contract is a real ELF executable).",
-                    flat_fn_array.size());
+                             "AOT: failed to emit native binary for {} function(s). "
+                             "See AOT: errors above. Common causes: x86_64 PIE/PIC "
+                             "mismatch, missing lib/runtime.c, LLVM internal error. "
+                             "Not falling back to shell wrapper (--emit-binary "
+                             "contract is a real ELF executable).",
+                             flat_fn_array.size());
                 return 1;
             }
 
@@ -2265,8 +2327,7 @@ int main(int argc, char* argv[]) {
             {
                 std::ofstream sf(out_path);
                 if (!sf) {
-                    std::println(stderr, "[#237] ERROR: cannot open {} for write (rc=1)",
-                                 out_path);
+                    std::println(stderr, "[#237] ERROR: cannot open {} for write (rc=1)", out_path);
                     return 1;
                 }
                 sf << "#!/bin/bash\n";
@@ -2277,10 +2338,11 @@ int main(int argc, char* argv[]) {
                     return 1;
                 }
             }
-            std::filesystem::permissions(out_path,
-                std::filesystem::perms::owner_all |
-                std::filesystem::perms::group_read | std::filesystem::perms::group_exec |
-                std::filesystem::perms::others_read | std::filesystem::perms::others_exec);
+            std::filesystem::permissions(out_path, std::filesystem::perms::owner_all |
+                                                       std::filesystem::perms::group_read |
+                                                       std::filesystem::perms::group_exec |
+                                                       std::filesystem::perms::others_read |
+                                                       std::filesystem::perms::others_exec);
             // Save source for --load
             {
                 std::ofstream sf(out_path + ".tmp.aura");
@@ -2453,8 +2515,7 @@ int main(int argc, char* argv[]) {
             return e && (e[0] == '1' || e[0] == 't' || e[0] == 'T');
         }();
         if (!enabled) {
-            std::println(stderr,
-                "evo-explain: disabled (set AURA_OBS=1 to enable)");
+            std::println(stderr, "evo-explain: disabled (set AURA_OBS=1 to enable)");
             return 0;
         }
         aura::compiler::CompilerService cs;
@@ -2642,7 +2703,7 @@ int main(int argc, char* argv[]) {
     aura::messaging::g_session_exists = nullptr;
     aura::messaging::g_reset_arena = nullptr;
     aura::messaging::g_http_post_async = nullptr;
-    aura::messaging::g_fiber_spawn = {};  // std::function
+    aura::messaging::g_fiber_spawn = {}; // std::function
     aura::messaging::g_fiber_yield = nullptr;
     aura::messaging::g_fiber_block = nullptr;
     aura::messaging::g_session_create = nullptr;

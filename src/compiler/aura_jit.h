@@ -25,16 +25,16 @@ struct FlatInstruction {
 
 // Issue #60 Iter 3: shape encoding constants. Must match the
 // shape_map byte values in set_shape_map (service.ixx). 0=Dynamic.
-constexpr uint32_t SHAPE_INT     = 1;
-constexpr uint32_t SHAPE_FLOAT   = 2;
-constexpr uint32_t SHAPE_BOOL    = 3;
-constexpr uint32_t SHAPE_STRING  = 4;
-constexpr uint32_t SHAPE_VOID    = 5;
-constexpr uint32_t SHAPE_PAIR    = 10;
-constexpr uint32_t SHAPE_VECTOR  = 11;
-constexpr uint32_t SHAPE_HASH_    = 12;
+constexpr uint32_t SHAPE_INT = 1;
+constexpr uint32_t SHAPE_FLOAT = 2;
+constexpr uint32_t SHAPE_BOOL = 3;
+constexpr uint32_t SHAPE_STRING = 4;
+constexpr uint32_t SHAPE_VOID = 5;
+constexpr uint32_t SHAPE_PAIR = 10;
+constexpr uint32_t SHAPE_VECTOR = 11;
+constexpr uint32_t SHAPE_HASH_ = 12;
 constexpr uint32_t SHAPE_CLOSURE = 13;
-constexpr uint32_t SHAPE_REF     = 14;
+constexpr uint32_t SHAPE_REF = 14;
 
 struct FlatBlock {
     uint32_t id;
@@ -152,8 +152,8 @@ public:
         std::atomic<std::uint64_t> hot_swap_count{0};
         std::atomic<std::uint64_t> verify_fail_count{0};
         std::atomic<std::uint64_t> add_module_fail_count{0};
-        std::atomic<std::uint64_t> inlined_prim_count{0};   // fast-path
-        std::atomic<std::uint64_t> slow_prim_count{0};     // aura_prim_call path
+        std::atomic<std::uint64_t> inlined_prim_count{0}; // fast-path
+        std::atomic<std::uint64_t> slow_prim_count{0};    // aura_prim_call path
         std::atomic<std::uint64_t> cached_function_count{0};
         // Issue #170 Phase 1 / item #1: counter for IROpcodes that
         // the JIT lowering doesn't have a case for. The default
@@ -191,7 +191,7 @@ public:
     // LLVM pipeline instead of returning a stale fn_ptr.
     void invalidate(const char* name);
 
-    private:
+private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     mutable Metrics metrics_;
@@ -212,10 +212,8 @@ bool emit_object_module(void* ir_module, const std::string& out_path);
 
 /// Run backward escape analysis on flat IR instructions.
 /// Fills escape_map (size = local_count). 0 = NON_ESCAPING, 1 = ESCAPED.
-void run_escape_analysis(
-    const std::vector<std::vector<FlatInstruction>>& flat_instrs,
-    uint32_t local_count,
-    std::vector<uint8_t>& escape_map);
+void run_escape_analysis(const std::vector<std::vector<FlatInstruction>>& flat_instrs,
+                         uint32_t local_count, std::vector<uint8_t>& escape_map);
 
 } // namespace aura::jit
 

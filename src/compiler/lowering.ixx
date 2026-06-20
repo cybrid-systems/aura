@@ -83,7 +83,8 @@ export struct LoweringState {
         LoweringState& state;
         ast::NodeId saved;
         SourceScope(LoweringState& s, ast::NodeId id)
-            : state(s), saved(s.current_source_id) {
+            : state(s)
+            , saved(s.current_source_id) {
             state.current_source_id = id;
         }
         ~SourceScope() { state.current_source_id = saved; }
@@ -97,9 +98,8 @@ export struct LoweringState {
 
     // Emit with explicit type_id override. Use when the result type
     // differs from current_source_id (e.g., CastOp target type).
-    void emit_with_type(aura::ir::IROpcode op, std::uint32_t tid,
-                        std::uint32_t op0, std::uint32_t op1 = 0,
-                        std::uint32_t op2 = 0, std::uint32_t op3 = 0) {
+    void emit_with_type(aura::ir::IROpcode op, std::uint32_t tid, std::uint32_t op0,
+                        std::uint32_t op1 = 0, std::uint32_t op2 = 0, std::uint32_t op3 = 0) {
         emit(op, op0, op1, op2, op3);
         if (cur_func && cur_block < cur_func->blocks.size() && tid != 0) {
             cur_func->blocks[cur_block].instructions.back().type_id = tid;
@@ -122,13 +122,10 @@ export struct LoweringState {
     //     (Phase 3 will populate from type info).
     //   - narrow_evidence: 0=no narrowing, non-zero=bitmask
     //     of applied narrowing predicates.
-    void emit_with_metadata(aura::ir::IROpcode op,
-                            std::uint32_t tid,
-                            std::uint8_t linear_state,
-                            std::uint32_t adt_variant,
-                            std::uint32_t narrow_evidence,
-                            std::uint32_t op0, std::uint32_t op1 = 0,
-                            std::uint32_t op2 = 0, std::uint32_t op3 = 0) {
+    void emit_with_metadata(aura::ir::IROpcode op, std::uint32_t tid, std::uint8_t linear_state,
+                            std::uint32_t adt_variant, std::uint32_t narrow_evidence,
+                            std::uint32_t op0, std::uint32_t op1 = 0, std::uint32_t op2 = 0,
+                            std::uint32_t op3 = 0) {
         emit_with_type(op, tid, op0, op1, op2, op3);
         if (cur_func && cur_block < cur_func->blocks.size()) {
             auto& last = cur_func->blocks[cur_block].instructions.back();
@@ -159,11 +156,10 @@ export struct LoweringState {
         // back()-of-AoS instruction for parity.
         if (dual_emit_soa && cur_func_v2_idx < module_v2.functions.size()) {
             auto& last_aos = blk.instructions.back();
-            module_v2.add_instruction(
-                cur_func_v2_idx, op, {op0, op1, op2, op3},
-                last_aos.source_ast_node_id, last_aos.type_id,
-                last_aos.shape_id, last_aos.linear_ownership_state,
-                last_aos.adt_variant_id, last_aos.narrow_evidence);
+            module_v2.add_instruction(cur_func_v2_idx, op, {op0, op1, op2, op3},
+                                      last_aos.source_ast_node_id, last_aos.type_id,
+                                      last_aos.shape_id, last_aos.linear_ownership_state,
+                                      last_aos.adt_variant_id, last_aos.narrow_evidence);
             ++soa_instructions_emitted;
         }
     }
@@ -258,10 +254,10 @@ export std::string unparse_node(const ast::FlatAST& flat, const ast::StringPool&
 // For now, lower_to_ir is preserved as a backward-compat
 // wrapper that calls lower_to_ir_result and unwraps. New
 // code should use lower_to_ir_result.
-export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_result(
-    ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
-    const Primitives* primitives = nullptr,
-    const aura::core::TypeRegistry* type_reg = nullptr);
+export aura::diag::LowerResult<aura::ir::IRModule>
+lower_to_ir_result(ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
+                   const Primitives* primitives = nullptr,
+                   const aura::core::TypeRegistry* type_reg = nullptr);
 
 export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_with_cache_result(
     ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
@@ -300,12 +296,10 @@ export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_with_cache_result
 // On failure (no Lambda found, or empty body), returns an
 // empty IRFunction (blocks.empty() == true). The caller
 // should check this and fall back to a full re-lower.
-export aura::ir::IRFunction lower_function_at(ast::FlatAST& flat, ast::StringPool& pool,
-                                              ast::ASTArena& arena, ast::NodeId lambda_node_id,
-                                              const Primitives* primitives = nullptr,
-                                              const std::unordered_map<
-                                                  std::string,
-                                                  std::vector<aura::ir::IRFunction>>* cache = nullptr,
-                                              std::vector<std::string>* cache_hits = nullptr);
+export aura::ir::IRFunction lower_function_at(
+    ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena, ast::NodeId lambda_node_id,
+    const Primitives* primitives = nullptr,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache = nullptr,
+    std::vector<std::string>* cache_hits = nullptr);
 
 } // namespace aura::compiler

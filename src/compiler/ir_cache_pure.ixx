@@ -53,14 +53,15 @@ export namespace aura::compiler {
 // All inputs are values (no reference to the cache entry or
 // the global mutation counter), so the function is fully
 // pure: same inputs → same output, always.
-bool should_relower(std::size_t source_hash,
-                           std::size_t cached_source_hash,
-                           bool dirty,
-                           std::uint64_t cached_mutation_count,
-                           std::uint64_t current_mutation_count) noexcept {
-    if (dirty) return true;
-    if (source_hash != cached_source_hash) return true;
-    if (cached_mutation_count < current_mutation_count) return true;
+bool should_relower(std::size_t source_hash, std::size_t cached_source_hash, bool dirty,
+                    std::uint64_t cached_mutation_count,
+                    std::uint64_t current_mutation_count) noexcept {
+    if (dirty)
+        return true;
+    if (source_hash != cached_source_hash)
+        return true;
+    if (cached_mutation_count < current_mutation_count)
+        return true;
     return false;
 }
 
@@ -76,11 +77,10 @@ bool should_relower(std::size_t source_hash,
 //
 // The output is in first-encounter order, deduplicated. The
 // function never mutates the input FlatAST or StringPool.
-std::vector<std::string> compute_dependencies(
-    const aura::ast::FlatAST& flat,
-    const aura::ast::StringPool& pool,
-    aura::ast::NodeId root,
-    const std::unordered_set<std::string>& available_defines) {
+std::vector<std::string>
+compute_dependencies(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                     aura::ast::NodeId root,
+                     const std::unordered_set<std::string>& available_defines) {
     std::vector<std::string> deps;
     std::unordered_set<std::string> seen;
 
@@ -95,8 +95,7 @@ std::vector<std::string> compute_dependencies(
             std::string_view name = pool.resolve(nv.sym_id);
             if (!name.empty()) {
                 std::string name_str(name);
-                if (available_defines.count(name_str) &&
-                    !seen.count(name_str)) {
+                if (available_defines.count(name_str) && !seen.count(name_str)) {
                     seen.insert(name_str);
                     deps.push_back(name_str);
                 }
@@ -121,8 +120,7 @@ std::vector<std::string> compute_dependencies(
 // Returns {name, body_node_id} if the root is a Define
 // node, otherwise nullopt. No side effects.
 std::optional<std::pair<std::string, aura::ast::NodeId>>
-try_extract_define(const aura::ast::FlatAST& flat,
-                   const aura::ast::StringPool& pool,
+try_extract_define(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                    aura::ast::NodeId root) {
     if (root == aura::ast::NULL_NODE)
         return std::nullopt;
@@ -131,9 +129,9 @@ try_extract_define(const aura::ast::FlatAST& flat,
     auto v = flat.get(root);
     if (v.tag == aura::ast::NodeTag::Define) {
         std::string_view name = pool.resolve(v.sym_id);
-        if (name.empty()) return std::nullopt;
-        aura::ast::NodeId body =
-            v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+        if (name.empty())
+            return std::nullopt;
+        aura::ast::NodeId body = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
         return std::make_pair(std::string(name), body);
     }
     return std::nullopt;

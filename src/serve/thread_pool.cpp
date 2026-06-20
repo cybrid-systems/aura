@@ -8,12 +8,11 @@
 namespace aura::serve {
 
 ThreadPool::ThreadPool(size_t num_threads) {
-    if (num_threads == 0) num_threads = 1;
+    if (num_threads == 0)
+        num_threads = 1;
     workers_.reserve(num_threads);
     for (size_t i = 0; i < num_threads; ++i) {
-        workers_.emplace_back([this](std::stop_token st) {
-            worker_loop(std::move(st));
-        });
+        workers_.emplace_back([this](std::stop_token st) { worker_loop(std::move(st)); });
     }
 }
 
@@ -52,7 +51,7 @@ void ThreadPool::worker_loop(std::stop_token st) {
             if (st.stop_requested() && queue_.empty())
                 return;
             if (queue_.empty())
-                continue;  // spurious wake, loop back
+                continue; // spurious wake, loop back
             task = std::move(queue_.front());
             queue_.pop_front();
         }
@@ -71,8 +70,8 @@ void ThreadPool::worker_loop(std::stop_token st) {
             uint64_t val = 1;
             auto n = ::write(task.wake_evfd, &val, sizeof(val));
             if (n == -1) {
-                std::fprintf(stderr, "thread_pool: write wake_evfd %d failed: %s\n",
-                             task.wake_evfd, std::strerror(errno));
+                std::fprintf(stderr, "thread_pool: write wake_evfd %d failed: %s\n", task.wake_evfd,
+                             std::strerror(errno));
             }
         }
 

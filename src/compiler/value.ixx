@@ -66,8 +66,10 @@ namespace aura::compiler::types {
 export struct EvalValue {
     std::int64_t val = 0;
 
-    constexpr EvalValue() noexcept : val(0) {}
-    constexpr explicit EvalValue(std::int64_t v) noexcept : val(v) {}
+    constexpr EvalValue() noexcept
+        : val(0) {}
+    constexpr explicit EvalValue(std::int64_t v) noexcept
+        : val(v) {}
 
     constexpr bool operator==(const EvalValue& o) const noexcept = default;
     constexpr auto operator<=>(const EvalValue& o) const noexcept = default;
@@ -79,15 +81,15 @@ export struct EvalValue {
 // ── Float helpers (extern "C" runtime functions) ──────
 // These are provided by lib/runtime.c
 extern "C" {
-    std::int64_t aura_alloc_float(double d);
-    double aura_float_ref(std::int64_t val);
+std::int64_t aura_alloc_float(double d);
+double aura_float_ref(std::int64_t val);
 }
 
 // ── make_* / is_* / as_* helpers ──────────────────────
 // All keep the same signature as before — this is a transparent refactor.
 
 export inline EvalValue make_int(std::int64_t v) noexcept {
-    return EvalValue(v << 1);  // fixnum encoding
+    return EvalValue(v << 1); // fixnum encoding
 }
 export inline bool is_int(const EvalValue& v) noexcept {
     // Fixnum: bit0=0, but STRING_BIAS and FLOAT_BIAS values also have bit0=0.
@@ -99,7 +101,7 @@ export inline std::int64_t as_int(const EvalValue& v) noexcept {
 }
 
 export inline EvalValue make_bool(bool v) noexcept {
-    return EvalValue(v ? 7 : 3);  // #t=7, #f=3
+    return EvalValue(v ? 7 : 3); // #t=7, #f=3
 }
 export inline bool is_bool(const EvalValue& v) noexcept {
     return v.val == 3 || v.val == 7;
@@ -109,14 +111,14 @@ export inline bool as_bool(const EvalValue& v) noexcept {
 }
 
 export inline EvalValue make_void() noexcept {
-    return EvalValue(11);  // void sentinel = 11
+    return EvalValue(11); // void sentinel = 11
 }
 export inline bool is_void(const EvalValue& v) noexcept {
-    return v.val == 11;  // void sentinel = 11
+    return v.val == 11; // void sentinel = 11
 }
 
 export inline EvalValue make_float(double d) {
-    return EvalValue(aura_alloc_float(d));  // FLOAT_BIAS encoding
+    return EvalValue(aura_alloc_float(d)); // FLOAT_BIAS encoding
 }
 export inline bool is_float(const EvalValue& v) noexcept {
     // Issue #181 Cycle 2: upper bound of float range is
