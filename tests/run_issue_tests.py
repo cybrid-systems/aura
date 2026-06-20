@@ -54,8 +54,7 @@ def discover_test_issue_binaries() -> list[str]:
         if not entry.is_file():
             continue
         name = entry.name
-        if (name.startswith("test_issues_")
-                or (name.startswith("test_issue_") and name not in bundled)):
+        if name.startswith("test_issues_") or (name.startswith("test_issue_") and name not in bundled):
             bins.append(name)
     return bins
 
