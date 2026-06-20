@@ -91,6 +91,14 @@ struct CompilerSnapshot {
     std::uint64_t typecheck_stale_cache_total = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
+    // Issue #259: type metadata propagation observability.
+    // Mirrors CompilerMetrics::{ir_instructions_total,
+    // ir_instructions_with_type_total}. The derived
+    // type_propagation_coverage_bp is computed at snapshot
+    // read time as with_type*10000/total in basis points.
+    std::uint64_t ir_instructions_total = 0;
+    std::uint64_t ir_instructions_with_type_total = 0;
+    std::uint64_t type_propagation_coverage_bp = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).

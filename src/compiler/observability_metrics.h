@@ -176,6 +176,26 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> typecheck_cache_misses_total{0};
     std::atomic<std::uint64_t> typecheck_stale_cache_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
+    // Issue #259: type metadata propagation observability.
+    // IRInstruction has a `type_id` field (0 = unknown/dynamic)
+    // that the lowering pass populates for some opcodes (CastOp
+    // coercions, type annotations) but not for most (Call, If,
+    // Let). The full #259 scope is to wire propagation across
+    // all key opcodes so the JIT can use the type info for
+    // const-fold, dead-code elimination, and runtime
+    // assertions. This scope-limited close ships the
+    // observability foundation:
+    // - ir_instructions_total: lifetime total IR instructions
+    //   executed by the IR interpreter
+    // - ir_instructions_with_type_total: lifetime total
+    //   instructions executed where type_id != 0 (the
+    //   propagation landed)
+    // The derived metric type_propagation_coverage_bp is
+    // computed at snapshot read time as with_type/total*10000.
+    // Issue #259 AC: increase coverage (current <100% since
+    // most lowering sites don't call emit_with_type today).
+    std::atomic<std::uint64_t> ir_instructions_total{0};
+    std::atomic<std::uint64_t> ir_instructions_with_type_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
