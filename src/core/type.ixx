@@ -26,7 +26,7 @@
 // keep the numeric values in sync with this file. See
 // src/compiler/value_tags.h for an example of how that's done.
 //
-// Related: docs/design/issue-58-module-boundaries.md
+// Related: Issue #58 (archived: git tag docs-archive-pre-2026-06)
 //
 module;
 #include <cstdint>

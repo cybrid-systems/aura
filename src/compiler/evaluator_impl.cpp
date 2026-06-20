@@ -6203,7 +6203,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // (the AST being evaluated right now), set by CompilerService::eval /
         // eval_ir / exec_jit. Optional :workspace keyword reads the persistent
         // EDSL workspace (set via (set-code ...)).
-        // See docs/design/dual-workspace-incremental-ir.md
+        // See dual-workspace design (archived: docs-archive-pre-2026-06)
         //
         // Use an enum to distinguish "user asked for :workspace" (even if
         // workspace_flat_ is null) from "no preference" (use current_flat_).

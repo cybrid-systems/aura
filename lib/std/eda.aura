@@ -44,7 +44,7 @@
 ;     `eq?` may fail for same-name symbols from different
 ;     packages.
 ;
-; Refs: docs/design/issue-182-hardware-eda.md
+; Refs: Issue #182 (archived: git tag docs-archive-pre-2026-06)
 
 ; ═══════════════════════════════════════════════════════════
 ; Hardware IR data types (list-based)

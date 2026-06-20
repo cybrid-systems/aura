@@ -30,8 +30,7 @@
 //          added in compact()/shrink_to_fit() verified via "doesn't crash on bad input"
 //   AC5: New benchmark test passes
 //        → test_fragmentation_scenario (long mutation chain → compact → measure)
-//   AC6: docs/design/double-arena.md created/updated
-//        → see docs/design/double-arena.md (shipped with this PR)
+//   AC6: double-arena design doc (archived: git tag docs-archive-pre-2026-06)
 //   AC7: Related issues closed or linked (#73 Phase2 cache, #145 SoA, GC work)
 //        → see closing comment on #187
 

@@ -2,8 +2,8 @@
 
 > **Status (2026-06-12, Issue #157 Phase 4)**: 🟢 Formalized. The
 > memory model was implicit across `typed_mutation.md §6`, `mutate_api.md §6`,
-> `developer/evaluator.md §3`, and the `issue-157-jit-workspace-invariant.md`
-> design note. This doc consolidates them into a single page.
+> `developer/evaluator.md §3`, and Issue #157（archived: `docs-archive-pre-2026-06`）.
+> This doc consolidates them into a single page.
 
 **Audience**: anyone writing C++ code that reads or writes the workspace
 FlatAST (mutate/query primitives, JIT runtime bridges, JIT inline IR,
@@ -347,10 +347,7 @@ understand the full picture. This doc:
 | `typed_mutation.md §6.3` | Mutate primitive integration with `workspace_mtx_` |
 | `mutate_api.md §6` | High-level concurrency + safety protocol |
 | `developer/evaluator.md §3` | C++ canonical mutate skeleton |
-| `docs/design/notes/issue-107-workspace-mutex.md` | Original `#107` design (workspace_mtx_ + version counter) |
-| `docs/design/notes/issue-157-jit-workspace-invariant.md` | JIT-layer analysis (Phase 0/1/1b/1c/2/5 fix the races) |
-| `docs/design/notes/issue-61-deopt-guards.md` | `OpGuardShape` / lazy-deopt design (entry-guard vs mid-function guard) |
-| `docs/design/notes/issue-115-closing.md` | The stale `fn_ptr` fix that ties to Phase 4 |
+| Issues #107 / #157 / #61 / #115 | Archived at `git tag docs-archive-pre-2026-06` under `docs/design/notes/` |
 
 ## 11. Versioning
 

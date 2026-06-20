@@ -285,7 +285,7 @@ set-code → query → typed-mutate → eval-current → TypeChecker
 
 ## 7. 参考文档
 
-- `design/notes/aura_typesystem_formal.md` — 形式类型规则（历史参考）
+- 形式类型规则（历史）— archived: `git tag docs-archive-pre-2026-06`, path `docs/design/notes/aura_typesystem_formal.md`
 - `docs/design/core/typed_mutation.md` — 带类型检查的 EDSL 变异
 - `docs/design/compilation/ir_pipeline.md` — IR 管线设计
 - `docs/roadmap.md` — 路线图

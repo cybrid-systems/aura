@@ -13,7 +13,7 @@
 //
 // Phase 2+ (deferred to fresh session): port LoweringState,
 // ir_executor, passes, JIT bridge to use IRModuleV2. See
-// docs/design/ir_soa_migration.md for the full plan.
+// Issue #254 / ir_soa_migration (archived: git tag docs-archive-pre-2026-06).
 //
 // This file is intentionally independent — no consumer imports
 // it yet. The existing IRModule paths continue to work

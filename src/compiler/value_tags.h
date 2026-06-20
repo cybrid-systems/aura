@@ -104,7 +104,7 @@ static_assert(RefKeyword == 11, "RefType drift: update value_tags.h + lib/runtim
 // to match RefType before storing — see shape_profiler.cpp:49-55 for
 // the canonical mapping function.
 //
-// Related: docs/design/issue-58-module-boundaries.md
+// Related: Issue #58 (archived: git tag docs-archive-pre-2026-06)
 //
 
 // ── Tag inspection / construction (low-level) ────────────────────

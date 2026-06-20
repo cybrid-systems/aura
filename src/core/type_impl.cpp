@@ -416,7 +416,7 @@ TypeId TypeRegistry::instantiate_forall(TypeId forall_id,
     return result;
 }
 
-// Issue #70: real structural subtyping. See docs/design/issue-70-subtyping-design.md
+// Issue #70: real structural subtyping (archived: git tag docs-archive-pre-2026-06)
 // for the full design. The public is_subtype delegates to the depth-limited
 // helper so the public API stays clean.
 bool TypeRegistry::is_subtype(TypeId sub, TypeId sup) const {

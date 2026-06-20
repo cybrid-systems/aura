@@ -32,7 +32,7 @@
 // path is cheaper for lib/runtime.c, JIT runtime C++, and any
 // non-module consumer.
 //
-// Related: docs/design/issue-58-module-boundaries.md
+// Related: Issue #58 (archived: git tag docs-archive-pre-2026-06)
 //
 module;
 #include "value_tags.h"
@@ -160,7 +160,7 @@ export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
 //
 // These prototypes are for testing/migration only. The full
 // migration (replacing is_string, is_float, JIT emitter, etc.)
-// is the work of Cycle 2 — see docs/design/issue-181.
+// is the work of Cycle 2 — see Issue #181 (archived: docs-archive-pre-2026-06).
 export inline EvalValue make_string_v2(std::uint64_t idx) noexcept {
     return EvalValue(make_string_raw_v2(idx));
 }

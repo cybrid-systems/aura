@@ -173,7 +173,7 @@
 ; which is the surrounding `begin`/eval form, not the script set via
 ; (set-code ...). That makes fn-name-list see the require'd module's
 ; defines and miss the "no defines" case the test expects.
-; See docs/design/dual-workspace-incremental-ir.md for context.
+; See dual-workspace design (archived: git tag docs-archive-pre-2026-06).
 (define (colony:search expected-str max-variants)
   (let* ((src (current-source :workspace))
          (fns (fn-name-list src))

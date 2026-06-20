@@ -42,7 +42,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 //
 // This file uses `// Issue #157:` markers on every bypass site. The full
 // inventory + phased fix plan lives in
-//   docs/design/notes/issue-157-jit-workspace-invariant.md
+//   Issue #157 (archived: git tag docs-archive-pre-2026-06)
 // Phase 0 (this commit): inventory + telemetry counter, no behavior change.
 // Phase 1+: wrap each site with workspace_mtx_ acquire/release or add
 // defuse_version_ checks.

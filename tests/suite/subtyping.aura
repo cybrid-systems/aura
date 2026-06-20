@@ -19,7 +19,7 @@
 ;; checking, ADT construction) rather than calling is_subtype
 ;; directly.
 ;;
-;; See docs/design/issue-70-subtyping-design.md for the full design.
+;; See Issue #70 (archived: git tag docs-archive-pre-2026-06).
 
 (require "std/test" all:)
 

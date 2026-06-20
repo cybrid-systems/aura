@@ -38,11 +38,10 @@
 
 **注意**：`design/core/` 等文档可能落后于代码。以测试、`(api-reference)` 和 `src/` 为准。
 
-- **`design/core/`** — 自修改、类型、workspace、编排（7 篇）
+- **`design/core/`** — 自修改、类型、workspace、编排（8 篇）
 - **`design/compilation/`** — IR 管线、JIT（2 篇）
 - **`design/runtime/`** — async serve、FFI（2 篇）
-- **`design/notes/`** — 归档探索（~80 篇，勿当实装规格）
-- **`design/history/closings/`** — issue 结案摘要（查历史用 `git log`）
+- **`design/history/`** — 归档说明；历史正文见 git tag `docs-archive-pre-2026-06`
 
 ### 核心 (`design/core/`)
 

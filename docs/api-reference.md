@@ -186,14 +186,5 @@
 ## Examples
 
 For end-to-end runnable examples combining `query:pattern`,
-`mutate:query-and-replace`, hygienic macros, and safe
-snapshot/rollback, see
-[`docs/examples/macro-edsl-transforms.md`](examples/macro-edsl-transforms.md).
-
-The examples cover:
-
-1. Simple constant substitution (`(+ x 1)` → `(+ x 2)`)
-2. Function wrapping (`if` → `cond`)
-3. Call-site rewriting (inline `+` → named `add`)
-4. Macro-introduced code instrumentation
-5. Snapshot → mutate → verify → rollback safety pattern
+`mutate:query-and-replace`, and snapshot/rollback, see
+`tests/suite/mutate-structured.aura` and `tests/suite/edsl_errors.aura`.
