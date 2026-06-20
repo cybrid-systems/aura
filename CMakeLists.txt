@@ -4,6 +4,12 @@ set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
 project(aura LANGUAGES CXX C)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraTest.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraIssueBundles.cmake)
+
+# P0: evaluator implementation partitions (same module: aura.compiler.evaluator).
+set(AURA_EVALUATOR_SOURCE_FILES
+    src/compiler/evaluator_impl.cpp
+    src/compiler/evaluator_primitives_core.cpp
+)
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -60,7 +66,7 @@ target_sources(aura PRIVATE
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
+    ${AURA_EVALUATOR_SOURCE_FILES}
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
@@ -236,7 +242,7 @@ target_sources(test_ir PRIVATE
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
+    ${AURA_EVALUATOR_SOURCE_FILES}
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
@@ -351,7 +357,7 @@ add_library(aura_test_objects STATIC
     src/serve/worker.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
-    src/compiler/evaluator_impl.cpp
+    ${AURA_EVALUATOR_SOURCE_FILES}
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
@@ -474,7 +480,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
-    src/compiler/evaluator_impl.cpp
+    ${AURA_EVALUATOR_SOURCE_FILES}
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
