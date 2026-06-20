@@ -48,6 +48,12 @@ function(aura_issue_test_link_llvm_jit TARGET)
     target_link_libraries(${TARGET} PRIVATE ${llvm_libs})
 endfunction()
 
+# LLVM JIT + tests/ include (closure-bridge issue tests).
+function(aura_issue_test_link_llvm_jit_tests TARGET)
+    target_include_directories(${TARGET} PRIVATE tests)
+    aura_issue_test_link_llvm_jit(${TARGET})
+endfunction()
+
 # Reflection-only standalone tests (no full aura-reflect link set).
 function(aura_add_issue_test_reflect_standalone NAME)
     add_executable(${NAME} tests/${NAME}.cpp)
