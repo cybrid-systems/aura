@@ -167,24 +167,39 @@ def cmd_build():
     if r != 0:
         return r
 
-    # One ninja invocation for the main binaries (avoids 3× cmake driver overhead).
-    r = run(
-        [
-            "cmake",
-            "--build",
-            str(BUILD),
-            "--target",
-            "aura",
-            "test_ir",
-            "test_concurrent",
-            "-j",
-            str(nproc),
-        ],
-        cwd=ROOT,
-    )
-    if r != 0:
-        fail("build main targets failed")
-        return r
+    # Build main binaries one target at a time. A single multi-target
+    # ninja -jN invocation races ast.ixx across aura/test_ir and can
+    # trigger a flaky GCC 16 ICE in the ealias pass under -O2.
+    for target in ("aura", "test_ir", "test_concurrent"):
+        r = run(
+            [
+                "cmake",
+                "--build",
+                str(BUILD),
+                "--target",
+                target,
+                "-j",
+                str(nproc),
+            ],
+            cwd=ROOT,
+        )
+        if r != 0:
+            warn(f"{target} build failed — retrying once (GCC ICE workaround)")
+            r = run(
+                [
+                    "cmake",
+                    "--build",
+                    str(BUILD),
+                    "--target",
+                    target,
+                    "-j",
+                    str(nproc),
+                ],
+                cwd=ROOT,
+            )
+        if r != 0:
+            fail(f"build {target} failed")
+            return r
 
     # Build test_issue_* targets. Full tier uses the aggregate;
     # fast tier builds a representative subset plus any issue

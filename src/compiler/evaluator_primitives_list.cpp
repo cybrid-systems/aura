@@ -22,15 +22,6 @@ using PredApplyFn = std::function<bool(const EvalValue& fn, const EvalValue& arg
 using BinaryApplyFn =
     std::function<EvalValue(const EvalValue& fn, const EvalValue& acc, const EvalValue& arg)>;
 
-struct ListPrimitiveContext {
-    std::pmr::vector<Pair>& pairs;
-    std::pmr::vector<std::string>& string_heap;
-    std::vector<EvalValue>& error_values;
-    UnaryApplyFn apply_unary;
-    PredApplyFn apply_pred;
-    BinaryApplyFn apply_binary;
-};
-
 using namespace types;
 
 namespace {
@@ -45,20 +36,17 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               std::pmr::vector<std::string>& string_heap,
                               std::vector<EvalValue>& error_values, UnaryApplyFn apply_unary,
                               PredApplyFn apply_pred, BinaryApplyFn apply_binary) {
-    ListPrimitiveContext ctx{pairs, string_heap, error_values, std::move(apply_unary),
-                             std::move(apply_pred), std::move(apply_binary)};
-
-    add("list", [&ctx](std::span<const EvalValue> a) {
+    add("list", [&pairs](std::span<const EvalValue> a) {
         // Build proper list (pair chain ending with void)
         EvalValue result = make_void();
         for (auto it = a.rbegin(); it != a.rend(); ++it) {
-            auto id = ctx.pairs.size();
-            ctx.pairs.push_back({*it, result});
+            auto id = pairs.size();
+            pairs.push_back({*it, result});
             result = make_pair(id);
         }
         return result;
     });
-    add("list?", [&ctx](std::span<const EvalValue> a) {
+    add("list?", [&pairs](std::span<const EvalValue> a) {
         if (a.empty())
             return make_bool(true);
         auto v = a[0];
@@ -66,16 +54,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!is_pair(v))
                 return make_bool(false);
             auto idx = as_pair_idx(v);
-            if (idx >= ctx.pairs.size())
+            if (idx >= pairs.size())
                 return make_bool(false);
-            v = ctx.pairs[idx].cdr; // follow cdr chain
+            v = pairs[idx].cdr; // follow cdr chain
         }
         return make_int(1);
     });
     add("null?", [](const auto& a) {
         return make_bool(!a.empty() && (is_void(a[0]) || (is_int(a[0]) && as_int(a[0]) == 0)));
     });
-    add("length", [&ctx](std::span<const EvalValue> a) {
+    add("length", [&pairs](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         auto v = a[0];
@@ -84,50 +72,50 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!is_pair(v))
                 return make_int(0);
             auto idx = as_pair_idx(v);
-            if (idx >= ctx.pairs.size())
+            if (idx >= pairs.size())
                 return make_int(0);
-            v = ctx.pairs[idx].cdr;
+            v = pairs[idx].cdr;
             n++;
         }
         return make_int(n);
     });
-    add("list-ref", [&ctx](std::span<const EvalValue> a) {
+    add("list-ref", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.size() < 2) {
-            auto __s = ctx.string_heap.size();
-            ctx.string_heap.push_back("list-ref: too few args");
-            auto __e = ctx.error_values.size();
-            ctx.error_values.push_back(make_string(__s));
+            auto __s = string_heap.size();
+            string_heap.push_back("list-ref: too few args");
+            auto __e = error_values.size();
+            error_values.push_back(make_string(__s));
             return make_error(__e);
         }
         auto v = a[0];
         auto pos = static_cast<std::size_t>(as_int(a[1]));
         for (std::size_t i = 0; i < pos; ++i) {
             if (!is_pair(v)) {
-                auto __s = ctx.string_heap.size();
-                ctx.string_heap.push_back("list-ref: index out of bounds");
-                auto __e = ctx.error_values.size();
-                ctx.error_values.push_back(make_string(__s));
+                auto __s = string_heap.size();
+                string_heap.push_back("list-ref: index out of bounds");
+                auto __e = error_values.size();
+                error_values.push_back(make_string(__s));
                 return make_error(__e);
             }
             auto idx = as_pair_idx(v);
-            if (idx >= ctx.pairs.size()) {
-                auto __s = ctx.string_heap.size();
-                ctx.string_heap.push_back("list-ref: corrupted pair");
-                auto __e = ctx.error_values.size();
-                ctx.error_values.push_back(make_string(__s));
+            if (idx >= pairs.size()) {
+                auto __s = string_heap.size();
+                string_heap.push_back("list-ref: corrupted pair");
+                auto __e = error_values.size();
+                error_values.push_back(make_string(__s));
                 return make_error(__e);
             }
-            v = ctx.pairs[idx].cdr;
+            v = pairs[idx].cdr;
         }
         if (is_pair(v)) {
             auto idx = as_pair_idx(v);
-            return idx < ctx.pairs.size() ? ctx.pairs[idx].car : make_int(0);
+            return idx < pairs.size() ? pairs[idx].car : make_int(0);
         }
         return v;
     });
     // (member val list) — Find val in list using content equality (equal?)
     // Returns the tail of the list starting with val, or #f if not found
-    add("member", [&ctx](std::span<const EvalValue> a) {
+    add("member", [&pairs, &string_heap](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(0);
         auto& val = a[0];
@@ -139,8 +127,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return as_int(x) == as_int(y);
             if (is_string(x) && is_string(y)) {
                 auto xi = as_string_idx(x), yi = as_string_idx(y);
-                return xi < ctx.string_heap.size() && yi < ctx.string_heap.size() &&
-                       ctx.string_heap[xi] == ctx.string_heap[yi];
+                return xi < string_heap.size() && yi < string_heap.size() &&
+                       string_heap[xi] == string_heap[yi];
             }
             if (is_bool(x) && is_bool(y))
                 return as_bool(x) == as_bool(y);
@@ -150,16 +138,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!is_pair(v))
                 return make_int(0);
             auto idx = as_pair_idx(v);
-            if (idx >= ctx.pairs.size())
+            if (idx >= pairs.size())
                 return make_int(0);
-            if (elem_eq(ctx.pairs[idx].car, val))
+            if (elem_eq(pairs[idx].car, val))
                 return v;
-            v = ctx.pairs[idx].cdr;
+            v = pairs[idx].cdr;
         }
         return make_int(0);
     });
     // (append list ...) — Variadic: concatenate all provided lists
-    add("append", [&ctx](std::span<const EvalValue> a) {
+    add("append", [&pairs](std::span<const EvalValue> a) {
         if (a.empty())
             return make_void();
         if (a.size() < 2)
@@ -181,32 +169,32 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     break;
                 }
                 auto idx = as_pair_idx(v);
-                if (idx >= ctx.pairs.size()) {
+                if (idx >= pairs.size()) {
                     result = a[0];
                     break;
                 }
-                auto new_id = ctx.pairs.size();
-                ctx.pairs.push_back({ctx.pairs[idx].car, make_void()});
+                auto new_id = pairs.size();
+                pairs.push_back({pairs[idx].car, make_void()});
                 auto new_pair = make_pair(new_id);
                 if (is_void(new_result))
                     new_result = new_pair;
                 else {
                     auto tidx = as_pair_idx(tail);
-                    ctx.pairs[tidx].cdr = new_pair;
+                    pairs[tidx].cdr = new_pair;
                 }
                 tail = new_pair;
-                v = ctx.pairs[idx].cdr;
+                v = pairs[idx].cdr;
             }
             if (!is_void(tail)) {
                 auto tidx = as_pair_idx(tail);
-                ctx.pairs[tidx].cdr = list2;
+                pairs[tidx].cdr = list2;
             }
             if (!is_void(new_result))
                 result = new_result;
         }
         return result;
     });
-    add("reverse", [&ctx](std::span<const EvalValue> a) {
+    add("reverse", [&pairs](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         auto v = a[0];
@@ -215,16 +203,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!is_pair(v))
                 return a[0];
             auto idx = as_pair_idx(v);
-            if (idx >= ctx.pairs.size())
+            if (idx >= pairs.size())
                 return a[0];
-            auto new_id = ctx.pairs.size();
-            ctx.pairs.push_back({ctx.pairs[idx].car, result});
+            auto new_id = pairs.size();
+            pairs.push_back({pairs[idx].car, result});
             result = make_pair(new_id);
-            v = ctx.pairs[idx].cdr;
+            v = pairs[idx].cdr;
         }
         return result;
     });
-    add("map", [&ctx](std::span<const EvalValue> a) {
+    add("map", [&pairs, apply_unary](std::span<const EvalValue> a) {
         // (map func list) — apply func to each element, collect results
         if (a.size() < 2 || is_void(a[1]))
             return make_void();
@@ -236,13 +224,13 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
         while (is_pair(current)) {
             auto idx = as_pair_idx(current);
-            if (idx >= ctx.pairs.size())
+            if (idx >= pairs.size())
                 break;
 
-            auto mapped = ctx.apply_unary(a[0], ctx.pairs[idx].car);
+            auto mapped = apply_unary(a[0], pairs[idx].car);
 
-            auto new_id = ctx.pairs.size();
-            ctx.pairs.push_back({mapped, make_void()});
+            auto new_id = pairs.size();
+            pairs.push_back({mapped, make_void()});
             auto new_pair = make_pair(new_id);
 
             if (first) {
@@ -251,17 +239,17 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 first = false;
             } else {
                 auto tail_idx = as_pair_idx(tail);
-                if (tail_idx < ctx.pairs.size())
-                    ctx.pairs[tail_idx].cdr = new_pair;
+                if (tail_idx < pairs.size())
+                    pairs[tail_idx].cdr = new_pair;
                 tail = new_pair;
             }
 
-            current = ctx.pairs[idx].cdr;
+            current = pairs[idx].cdr;
         }
 
         return result;
     });
-    add("filter", [&ctx](std::span<const EvalValue> a) {
+    add("filter", [&pairs, apply_pred](std::span<const EvalValue> a) {
         // (filter pred list) — keep elements where pred returns truthy
         if (a.size() < 2 || is_void(a[1]))
             return make_void();
@@ -273,13 +261,13 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
         while (is_pair(current)) {
             auto idx = as_pair_idx(current);
-            if (idx >= ctx.pairs.size())
+            if (idx >= pairs.size())
                 break;
 
-            bool keep = ctx.apply_pred(a[0], ctx.pairs[idx].car);
+            bool keep = apply_pred(a[0], pairs[idx].car);
             if (keep) {
-                auto new_id = ctx.pairs.size();
-                ctx.pairs.push_back({ctx.pairs[idx].car, make_void()});
+                auto new_id = pairs.size();
+                pairs.push_back({pairs[idx].car, make_void()});
                 auto new_pair = make_pair(new_id);
 
                 if (first) {
@@ -288,18 +276,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     first = false;
                 } else {
                     auto tail_idx = as_pair_idx(tail);
-                    if (tail_idx < ctx.pairs.size())
-                        ctx.pairs[tail_idx].cdr = new_pair;
+                    if (tail_idx < pairs.size())
+                        pairs[tail_idx].cdr = new_pair;
                     tail = new_pair;
                 }
             }
 
-            current = ctx.pairs[idx].cdr;
+            current = pairs[idx].cdr;
         }
 
         return result;
     });
-    add("take", [&ctx](std::span<const EvalValue> a) {
+    add("take", [&pairs](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_void();
         auto n = static_cast<std::size_t>(as_int(a[0]));
@@ -312,12 +300,12 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!is_pair(v))
                 return result;
             auto idx = as_pair_idx(v);
-            if (idx >= ctx.pairs.size())
+            if (idx >= pairs.size())
                 return result;
-            auto new_id = ctx.pairs.size();
-            ctx.pairs.push_back({ctx.pairs[idx].car, result});
+            auto new_id = pairs.size();
+            pairs.push_back({pairs[idx].car, result});
             result = make_pair(new_id);
-            v = ctx.pairs[idx].cdr;
+            v = pairs[idx].cdr;
         }
         // Reverse to get correct order
         EvalValue final = make_void();
@@ -325,16 +313,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!is_pair(result))
                 break;
             auto idx = as_pair_idx(result);
-            if (idx >= ctx.pairs.size())
+            if (idx >= pairs.size())
                 break;
-            auto nid = ctx.pairs.size();
-            ctx.pairs.push_back({ctx.pairs[idx].car, final});
+            auto nid = pairs.size();
+            pairs.push_back({pairs[idx].car, final});
             final = make_pair(nid);
-            result = ctx.pairs[idx].cdr;
+            result = pairs[idx].cdr;
         }
         return final;
     });
-    add("drop", [&ctx](std::span<const EvalValue> a) {
+    add("drop", [&pairs](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_void();
         auto n = static_cast<std::size_t>(as_int(a[0]));
@@ -345,13 +333,13 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!is_pair(v))
                 return make_void();
             auto idx = as_pair_idx(v);
-            if (idx >= ctx.pairs.size())
+            if (idx >= pairs.size())
                 return make_void();
-            v = ctx.pairs[idx].cdr;
+            v = pairs[idx].cdr;
         }
         return v;
     });
-    add("foldl", [&ctx](std::span<const EvalValue> a) {
+    add("foldl", [&pairs, apply_binary](std::span<const EvalValue> a) {
         if (a.size() < 3)
             return make_void();
         auto acc = a[1];
@@ -361,10 +349,10 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!is_pair(lst))
                 break;
             auto idx = as_pair_idx(lst);
-            if (idx >= ctx.pairs.size())
+            if (idx >= pairs.size())
                 break;
-            acc = ctx.apply_binary(a[0], acc, ctx.pairs[idx].car);
-            lst = ctx.pairs[idx].cdr;
+            acc = apply_binary(a[0], acc, pairs[idx].car);
+            lst = pairs[idx].cdr;
         }
         return acc;
     });
