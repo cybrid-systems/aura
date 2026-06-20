@@ -1530,20 +1530,7 @@ target_link_libraries(test_issue_196 PRIVATE ${llvm_libs})
 # Reuses the test_issue_196 module dep chain (same
 # CXX_MODULES list, same source files).
 aura_add_issue_test(test_issue_224)
-target_include_directories(test_issue_224 PRIVATE src src/compiler tests)
-target_sources(test_issue_224 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_224 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_224 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_224 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit_tests(test_issue_224)
 
 # Issue #197: branch-aware inliner + parameter renaming
 # (extends InlinePass from #171). Predicate + single-block
@@ -2175,21 +2162,7 @@ aura_add_issue_test_standalone(test_issue_223)
 # keeps the FlatAST alive as long as the bridge exists
 # — even after the lowering arena is reset.
 aura_add_issue_test(test_issue_224_closure_bridge)
-target_include_directories(test_issue_224_closure_bridge PRIVATE src src/compiler tests)
-target_sources(test_issue_224_closure_bridge PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_224_closure_bridge PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_224_closure_bridge PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_224_closure_bridge PRIVATE ${llvm_libs})
-add_test(NAME issue_224_closure_bridge_verification COMMAND ./test_issue_224_closure_bridge)
+aura_issue_test_link_llvm_jit_tests(test_issue_224_closure_bridge)
 
 # Issue #225 cycle 3: bridge invalidation. Tests verify
 # that mark_define_dirty / hot_swap_function_impl / reset()
@@ -2197,21 +2170,7 @@ add_test(NAME issue_224_closure_bridge_verification COMMAND ./test_issue_224_clo
 # affected entry's bridge data, so any closure holding a
 # reference will detect staleness and re-parse.
 aura_add_issue_test(test_issue_225_bridge_invalidation)
-target_include_directories(test_issue_225_bridge_invalidation PRIVATE src src/compiler tests)
-target_sources(test_issue_225_bridge_invalidation PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_225_bridge_invalidation PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_225_bridge_invalidation PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_225_bridge_invalidation PRIVATE ${llvm_libs})
-add_test(NAME issue_225_bridge_invalidation_verification COMMAND ./test_issue_225_bridge_invalidation)
+aura_issue_test_link_llvm_jit_tests(test_issue_225_bridge_invalidation)
 
 # Issue #226 Cycle 4: closure-bridge tests + invariants + TSan
 # (Issue #180 Cycle 4). 4 test sections — one per cycle:
@@ -2220,7 +2179,7 @@ add_test(NAME issue_225_bridge_invalidation_verification COMMAND ./test_issue_22
 #   3. post-mutation invariant checks
 #   4. doomsday stress (200 fibers, random ops)
 aura_add_issue_test(test_issue_226)
-target_include_directories(test_issue_226 PRIVATE src src/compiler tests)
+aura_issue_test_link_llvm_jit_tests(test_issue_226)
 
 # Issue #237: AOT end-to-end test (spawns aura --emit-binary as subprocess,
 # verifies the resulting ELF runs and produces expected output).
@@ -2229,20 +2188,6 @@ add_executable(test_issue_237 tests/test_issue_237.cpp)
 target_include_directories(test_issue_237 PRIVATE tests)
 target_link_libraries(test_issue_237 PRIVATE aura_test_objects)
 add_test(NAME issue_237_verification COMMAND ./test_issue_237)
-target_sources(test_issue_226 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_226 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_226 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_226 PRIVATE ${llvm_libs})
-add_test(NAME issue_226_closure_bridge_stress_verification COMMAND ./test_issue_226)
 
 # Issue #227: Occurrence Typing narrowing + ADT exhaustiveness
 # after Typed Mutations (post #168 epoch fix). Cycle 1 of the

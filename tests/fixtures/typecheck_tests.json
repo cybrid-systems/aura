@@ -1,0 +1,52 @@
+[
+  {
+    "name": "int_literal",
+    "code": "42",
+    "expected_type": "Int"
+  },
+  {
+    "name": "str_literal",
+    "code": "\"hi\"",
+    "expected_type": "String"
+  },
+  {
+    "name": "add",
+    "code": "(+ 1 2)",
+    "expected_type": "Int"
+  },
+  {
+    "name": "string_append",
+    "code": "(string-append \"a\" \"b\")",
+    "expected_type": "String"
+  },
+  {
+    "name": "lambda",
+    "code": "(lambda (x) x)",
+    "expected_type": "->"
+  },
+  {
+    "name": "type_of",
+    "code": "(type-of 42)",
+    "expected_type": "Type"
+  },
+  {
+    "name": "type_query",
+    "code": "(type? 42 \"Int\")",
+    "expected_type": "Bool"
+  },
+  {
+    "name": "occurrence",
+    "code": "(let ((x \"hi\")) (if (string? x) x \"fallback\"))",
+    "expected_type": "String"
+  },
+  {
+    "name": "coercion_note",
+    "code": "(+ \"42\" 1)",
+    "expected_type": "Int"
+  },
+  {
+    "name": "wrong_arity",
+    "code": "(+ 1)",
+    "expected_type": "Int"
+  }
+]

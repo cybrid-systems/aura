@@ -43,6 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
 from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn
 from integ_cases import load_integ_cases
+from typecheck_cases import load_typecheck_cases
 
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT / "build"
@@ -285,21 +286,9 @@ def test_typecheck():
         fail(f"{AURA} not found")
         return 1
 
-    cases = [
-        ("int_literal", "42", "Int"),
-        ("str_literal", '"hi"', "String"),
-        ("add", "(+ 1 2)", "Int"),
-        ("string_append", '(string-append "a" "b")', "String"),
-        ("lambda", "(lambda (x) x)", "->"),
-        ("type_of", "(type-of 42)", "Type"),
-        ("type_query", '(type? 42 "Int")', "Bool"),
-        ("occurrence", '(let ((x "hi")) (if (string? x) x "fallback"))', "String"),
-        ("coercion_note", '(+ "42" 1)', "Int"),
-        ("wrong_arity", "(+ 1)", "Int"),
-    ]
-
     passed = failed = 0
-    for name, code, exp_type in cases:
+    for tc in load_typecheck_cases():
+        name, code, exp_type = tc.name, tc.code, tc.expected_type
         r = subprocess.run(
             [str(AURA), "--typecheck"],
             input=code + "\n",
