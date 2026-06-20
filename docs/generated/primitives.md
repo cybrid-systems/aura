@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**377** registrations scanned from `src/**/*.cpp`.
+**402** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -142,7 +142,20 @@ Runtime canonical list: `(api-reference)`.
 - `compile:status` — `src/compiler/evaluator_impl.cpp`
 - `compile:type-propagation-stats` — `src/compiler/evaluator_impl.cpp`
 
-## Core builtins (232)
+## C FFI (10)
+
+- `c-alloc` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-free` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-func` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-load` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-opaque` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-opaque->int` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-opaque?` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-struct-ref` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
+
+## Core builtins (247)
 
 - `abs` — `src/compiler/evaluator_impl.cpp`
 - `acos` — `src/compiler/evaluator_impl.cpp`
@@ -162,6 +175,7 @@ Runtime canonical list: `(api-reference)`.
 - `auto-evolve-tick` — `src/compiler/evaluator_impl.cpp`
 - `auto-evolve-total-fixed` — `src/compiler/evaluator_impl.cpp`
 - `auto-rollback-on-panic` — `src/compiler/evaluator_impl.cpp`
+- `boolean?` — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` — `src/compiler/evaluator_impl.cpp`
 - `caaar` — `src/compiler/evaluator_impl.cpp`
 - `caadr` — `src/compiler/evaluator_impl.cpp`
@@ -181,6 +195,13 @@ Runtime canonical list: `(api-reference)`.
 - `cdr` — `src/compiler/evaluator_impl.cpp`
 - `ceil` — `src/compiler/evaluator_impl.cpp`
 - `char->integer` — `src/compiler/evaluator_impl.cpp`
+- `char-alphabetic?` — `src/compiler/evaluator_primitives_core.cpp`
+- `char-downcase` — `src/compiler/evaluator_primitives_core.cpp`
+- `char-numeric?` — `src/compiler/evaluator_primitives_core.cpp`
+- `char-upcase` — `src/compiler/evaluator_primitives_core.cpp`
+- `char-whitespace?` — `src/compiler/evaluator_primitives_core.cpp`
+- `char<?` — `src/compiler/evaluator_primitives_core.cpp`
+- `char=?` — `src/compiler/evaluator_primitives_core.cpp`
 - `char?` — `src/compiler/evaluator_impl.cpp`
 - `check` — `src/compiler/evaluator_impl.cpp`
 - `check-capability` — `src/compiler/evaluator_impl.cpp`
@@ -214,6 +235,7 @@ Runtime canonical list: `(api-reference)`.
 - `file-exists?` — `src/compiler/evaluator_impl.cpp`
 - `file-size` — `src/compiler/evaluator_impl.cpp`
 - `filter` — `src/compiler/evaluator_impl.cpp`
+- `float?` — `src/compiler/evaluator_primitives_core.cpp`
 - `floor` — `src/compiler/evaluator_impl.cpp`
 - `foldl` — `src/compiler/evaluator_impl.cpp`
 - `format` — `src/compiler/evaluator_impl.cpp`
@@ -253,6 +275,7 @@ Runtime canonical list: `(api-reference)`.
 - `import` — `src/compiler/evaluator_impl.cpp`
 - `inexact->exact` — `src/compiler/evaluator_impl.cpp`
 - `integer->char` — `src/compiler/evaluator_impl.cpp`
+- `integer?` — `src/compiler/evaluator_primitives_core.cpp`
 - `intend` — `src/compiler/evaluator_impl.cpp`
 - `intend-analytics` — `src/compiler/evaluator_impl.cpp`
 - `intend-history` — `src/compiler/evaluator_impl.cpp`
@@ -293,12 +316,14 @@ Runtime canonical list: `(api-reference)`.
 - `newline` — `src/compiler/evaluator_impl.cpp`
 - `null?` — `src/compiler/evaluator_impl.cpp`
 - `number->string` — `src/compiler/evaluator_impl.cpp`
+- `number?` — `src/compiler/evaluator_primitives_core.cpp`
 - `pair?` — `src/compiler/evaluator_impl.cpp`
 - `panic-auto-rollback?` — `src/compiler/evaluator_impl.cpp`
 - `panic-checkpoint` — `src/compiler/evaluator_impl.cpp`
 - `panic-restore` — `src/compiler/evaluator_impl.cpp`
 - `panic-safe-source` — `src/compiler/evaluator_impl.cpp`
 - `pow` — `src/compiler/evaluator_impl.cpp`
+- `procedure?` — `src/compiler/evaluator_primitives_core.cpp`
 - `query-annotate-functions` — `src/compiler/evaluator_impl.cpp`
 - `query-expected-type` — `src/compiler/evaluator_impl.cpp`
 - `query-type-of` — `src/compiler/evaluator_impl.cpp`
@@ -349,6 +374,7 @@ Runtime canonical list: `(api-reference)`.
 - `substring` — `src/compiler/evaluator_impl.cpp`
 - `suggest-annotation-at` — `src/compiler/evaluator_impl.cpp`
 - `symbol-append` — `src/compiler/evaluator_impl.cpp`
+- `symbol?` — `src/compiler/evaluator_primitives_core.cpp`
 - `syntax-marker` — `src/compiler/evaluator_impl.cpp`
 - `syntax-marker-counts` — `src/compiler/evaluator_impl.cpp`
 - `take` — `src/compiler/evaluator_impl.cpp`
@@ -371,6 +397,8 @@ Runtime canonical list: `(api-reference)`.
 - `vector-ref` — `src/compiler/evaluator_impl.cpp`
 - `vector-set!` — `src/compiler/evaluator_impl.cpp`
 - `vector?` — `src/compiler/evaluator_impl.cpp`
+- `void` — `src/compiler/evaluator_primitives_core.cpp`
+- `void?` — `src/compiler/evaluator_primitives_core.cpp`
 - `while` — `src/compiler/evaluator_impl.cpp`
 - `with-capability` — `src/compiler/evaluator_impl.cpp`
 - `workspace-state` — `src/compiler/evaluator_impl.cpp`
