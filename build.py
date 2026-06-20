@@ -43,6 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
 from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn
 from integ_cases import load_integ_cases
+from smoke_cases import load_smoke_cases
 from typecheck_cases import load_typecheck_cases
 
 ROOT = Path(__file__).resolve().parent
@@ -333,14 +334,6 @@ def test_bench():
 # Smoke tests
 # ═══════════════════════════════════════════════════════════════
 
-SMOKE_TESTS = [
-    ("basic_eval", "echo 42 | build/aura", "42"),
-    ("basic_add", "echo '(+ 1 2)' | build/aura", "3"),
-    ("basic_ir", "echo '(+ 1 2)' | build/aura --ir", "3"),
-    ("basic_typecheck", "echo 42 | build/aura --typecheck", "Int"),
-    ("basic_serve", "printf '(+ 1 2)' | build/aura --serve", "status"),
-]
-
 
 def test_smoke():
     """快速冒烟测试"""
@@ -350,7 +343,8 @@ def test_smoke():
         return 1
 
     passed = failed = 0
-    for name, cmd, expected in SMOKE_TESTS:
+    for sc in load_smoke_cases():
+        name, cmd, expected = sc.name, sc.command, sc.expected
         r = subprocess.run(
             ["bash", "-c", f"cd {ROOT} && {cmd}"],
             capture_output=True,

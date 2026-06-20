@@ -20,182 +20,15 @@ import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+
+from benchmark_cases import BenchCase, load_benchmark_cases
 
 # Use AURA_BIN env var if set (CI), otherwise default to build/aura relative to this file
 _SCRIPT_DIR = Path(__file__).resolve().parent
 AURA = os.environ.get("AURA_BIN") or str(_SCRIPT_DIR.parent / "build" / "aura")
 BASELINE_FILE = _SCRIPT_DIR / "benchmark_baseline.json"
 
-# ── Benchmark definitions ──────────────────────────────────────
-
-
-@dataclass
-class BenchCase:
-    name: str
-    code: str
-    pipeline: str  # "eval", "ir", "typecheck"
-    expected_val: Any = None  # expected numeric result (for eval/ir)
-    expected_type: str = None  # expected type string (for typecheck)
-    expected_err: str = None  # expected error substring
-
-
-BENCHMARKS = [
-    # ── L1: Literals ─────────────────────────────────────────
-    BenchCase("literal_int", "42", "eval", expected_val=42),
-    BenchCase("literal_neg", "-5", "eval", expected_val=-5),
-    BenchCase("literal_string", '"hello"', "eval", expected_val=None),
-    # ── L2: Arithmetic ───────────────────────────────────────
-    BenchCase("add", "(+ 1 2)", "eval", expected_val=3),
-    BenchCase("add_many", "(+ (+ (+ (+ 1 2) 3) 4) 5)", "eval", expected_val=15),
-    BenchCase("sub", "(- 10 3)", "eval", expected_val=7),
-    BenchCase("mul", "(* 6 7)", "eval", expected_val=42),
-    BenchCase("div", "(/ 100 5)", "eval", expected_val=20),
-    BenchCase("nested_arith", "(+ (* 2 3) (/ 10 2))", "eval", expected_val=11),
-    # ── L3: Let / Variables ──────────────────────────────────
-    BenchCase("let_simple", "(let ((x 10)) x)", "eval", expected_val=10),
-    BenchCase("let_add", "(let ((x 1) (y 2)) (+ x y))", "eval", expected_val=3),
-    BenchCase(
-        "letrec_fact",
-        "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))",
-        "eval",
-        expected_val=3628800,
-    ),
-    BenchCase(
-        "fib_20",
-        "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 20))",
-        "eval",
-        expected_val=6765,
-    ),
-    # ── L4: Lambda / Closure ─────────────────────────────────
-    BenchCase("lambda_apply", "((lambda (x) (* x 2)) 5)", "eval", expected_val=10),
-    BenchCase("closure", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "eval", expected_val=42),
-    BenchCase(
-        "higher_order",
-        "((lambda (f) (f 10)) (lambda (x) (* x x)))",
-        "eval",
-        expected_val=100,
-    ),
-    # ── L5: Conditionals ─────────────────────────────────────
-    BenchCase("if_true", "(if 1 42 0)", "eval", expected_val=42),
-    BenchCase("if_false", "(if 0 42 0)", "eval", expected_val=0),
-    BenchCase("if_compare", "(if (< 3 5) 100 200)", "eval", expected_val=100),
-    # ── L6: Strings ──────────────────────────────────────────
-    BenchCase("str_append", '(string-append "a" "b")', "eval", expected_val=None),
-    BenchCase("str_length", '(string-length "hello")', "eval", expected_val=5),
-    BenchCase("vec_basic", "(vector 1 2 3)", "eval", expected_val=None),
-    BenchCase("vec_ref", "(vector-ref (vector 10 20 30) 1)", "eval", expected_val=20),
-    # ── L6: Pairs ────────────────────────────────────────────
-    BenchCase("cons_car", "(car (cons 1 2))", "eval", expected_val=1),
-    BenchCase("cons_cdr", "(cdr (cons 1 2))", "eval", expected_val=2),
-    # ── IR pipeline benchmarks ───────────────────────────────
-    BenchCase("ir_add", "(+ 1 2)", "ir", expected_val=3),
-    BenchCase(
-        "ir_fact",
-        "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
-        "ir",
-        expected_val=120,
-    ),
-    BenchCase(
-        "ir_fib_10",
-        "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))",
-        "ir",
-        expected_val=55,
-    ),
-    BenchCase("ir_lambda", "((lambda (x) (* x 2)) 5)", "ir", expected_val=10),
-    BenchCase("ir_closure", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "ir", expected_val=42),
-    BenchCase("ir_if", "(if (< 3 5) 100 200)", "ir", expected_val=100),
-    # ── Typecheck benchmarks ─────────────────────────────────
-    BenchCase("tc_literal", "42", "typecheck", expected_type="Int"),
-    BenchCase("tc_add", "(+ 1 2)", "typecheck", expected_type="Int"),
-    BenchCase("tc_str", '"hello"', "typecheck", expected_type="String"),
-    BenchCase("tc_lambda", "(lambda (x) x)", "typecheck", expected_type="->"),
-    BenchCase("tc_let", "(let ((x 10)) x)", "typecheck", expected_type="Int"),
-    BenchCase(
-        "tc_string_append",
-        '(string-append "a" "b")',
-        "typecheck",
-        expected_type="String",
-    ),
-    BenchCase("tc_string_length", '(string-length "hello")', "typecheck", expected_type="Int"),
-    BenchCase("tc_type_of", "(type-of 42)", "typecheck", expected_type="Type"),
-    BenchCase("tc_type_query", '(type? 42 "Int")', "typecheck", expected_type="Bool"),
-    BenchCase(
-        "tc_occurrence",
-        '(let ((x "hello")) (if (string? x) x "fallback"))',
-        "typecheck",
-        expected_type="String",
-    ),
-    BenchCase("tc_coercion", '(+ "42" 1)', "typecheck", expected_type="Int"),
-    # ── Gradual coercion runtime ─────────────────────────────
-    BenchCase("coerce_arith", '(+ 1 "2")', "eval", expected_val=3),
-    BenchCase("coerce_str_len", "(string-length 12345)", "eval", expected_val=5),
-    # ── Issue #136: orch:parallel + ADT + multi-agent coverage ──
-    # The original cases are mostly micro-eval. These exercise the
-    # higher-level constructs called out in Issue #136:
-    # "Add realistic workloads: orchestration pipelines, ADT + match,
-    #  synthesis, multi-agent scenarios"
-    #
-    # orch:parallel (3 agents): square, double, add-100
-    BenchCase(
-        "par_orch_3_agents",
-        '(require "std/orchestrator" all:) '
-        "(orch:parallel "
-        "(list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)",
-        "eval",
-        expected_val=None,  # returns a list; check runs without error
-    ),
-    # orch:parallel (5 agents): 5 different transformations
-    BenchCase(
-        "par_orch_5_agents",
-        '(require "std/orchestrator" all:) '
-        "(orch:parallel "
-        "(list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) "
-        "(lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)",
-        "eval",
-        expected_val=None,
-    ),
-    # ADT: list length recursion (uses pair/cell/match primitives
-    # similar to (datatype ...) form). Recursive function over a
-    # list — exercises the IR's Call/Phi block generation in
-    # addition to pair manipulation.
-    BenchCase(
-        "adt_list_length",
-        "(define (length lst)   (if (null? lst) 0 (+ 1 (length (cdr lst))))) (length (list 1 2 3 4 5 6 7 8 9 10))",
-        "eval",
-        expected_val=10,
-    ),
-    # Issue #140: query:pattern EDSL primitive with Ellipsis
-    # support. Verifies the primitive runs on a real workspace and
-    # produces the expected number of matches. Hygiene is verified
-    # by test_issue_140.cpp at the C++ level.
-    BenchCase(
-        "query_pattern_simple",
-        '(set-code "(begin (fib 1) (fib 2) (fib 3) (fib 4) (fib 5))") (length (query:pattern "(fib ...)"))',
-        "eval",
-        expected_val=5,
-    ),
-    BenchCase(
-        "query_pattern_with_let",
-        '(set-code "(begin (let ((x 1)) x) (let ((x 2)) x) (let ((x 3)) x))") '
-        '(length (query:pattern "(let ((x ...)) ...)"))',
-        "eval",
-        expected_val=3,
-    ),
-    # Multi-agent: pipeline (each step sees prior result via fiber:join)
-    BenchCase(
-        "multi_agent_pipeline",
-        '(require "std/orchestrator" all:) '
-        "(define (pipeline x) "
-        "  (define r1 (fiber:join (fiber:spawn (lambda () (* x 2))))) "
-        "  (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1))))) "
-        "  (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3))))) "
-        "  r3) "
-        "(pipeline 10)",
-        "eval",
-        expected_val=None,
-    ),
-]
+# Benchmark definitions: tests/fixtures/benchmark_tests.json
 
 # ── Measurement helpers ───────────────────────────────────────
 
@@ -311,13 +144,13 @@ def get_timestamp() -> str:
 
 def run_all() -> BenchSuiteResult:
     suite = BenchSuiteResult(timestamp=get_timestamp())
-    suite.total_cases = len(BENCHMARKS)
+    suite.total_cases = len(load_benchmark_cases())
 
     print(f"Aura Benchmark Suite — {suite.total_cases} cases")
     print(f"Binary: {AURA}")
     print(f"{'─' * 60}")
 
-    for i, bench in enumerate(BENCHMARKS, 1):
+    for i, bench in enumerate(load_benchmark_cases(), 1):
         result = measure_pipeline(bench.name, bench.code, bench.pipeline)
 
         # Check pass/fail
