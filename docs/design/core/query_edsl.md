@@ -192,9 +192,7 @@
 replacement 中可用）。这才是**宏式变换**（macro-style transform）
 的入口原语。
 
-详见 §3 “Query + Transform 组合”与
-[docs/examples/macro-edsl-transforms.md](../examples/macro-edsl-transforms.md)
-的 4-5 个运行示例。
+详见 §3 “Query + Transform 组合”与 `tests/suite/mutate-structured.aura` 中的运行示例。
 
 ### 2.4 谓词 + 过滤（#110 后实装）
 
@@ -362,8 +360,7 @@ replacement 中可用）。这才是**宏式变换**（macro-style transform）
   "rename foo→bar")
 ```
 
-这是把 query 和 replace 组合为单步原子操作的关键原语。详见
-[docs/design/history/closings/110-closing.md](../history/closings/110-closing.md)。
+这是把 query 和 replace 组合为单步原子操作的关键原语（Issue #110，archived: `docs-archive-pre-2026-06`）。
 
 > ⚠️ **使用警示**：写一个 combine（read + write）循环的 mutate 时，**必须**在循环
 > 外 snapshot `end_id = flat.size()`。详见
@@ -594,8 +591,6 @@ Serve 协议本身不变。新增的 `query:where` / `mutate:query-and-replace` 
 ## 11. 相关文档
 
 - [docs/developer/evaluator.md](../developer/evaluator.md) — evaluator C++ 实现细节
-- [docs/design/history/closings/107-closing.md](../history/closings/107-closing.md) — workspace mutex + AST versioning
-- [docs/design/history/closings/110-closing.md](../history/closings/110-closing.md) — qar + self-modifying-flat 教训
-- [docs/design/history/closings/111-closing.md](../history/closings/111-closing.md) — self-modifying-flat 审计
-- [docs/design/defuse_analysis.md](defuse_analysis.md) — DefUseIndex 内部设计
+- Issues #107 / #110 / #111 closings — archived: `git tag docs-archive-pre-2026-06`
+- `src/compiler/query_impl.cpp` — DefUseIndex 实现
 - [docs/tutorial.md §10](../tutorial.md) — EDSL / AI Agent 开发 tutorial

@@ -108,7 +108,7 @@ static_assert(PrimNullP == 43, "PrimId drift: aura_jit.cpp vs ir.ixx");
 // evaluator primitives DO acquire the lock + yield, so concurrent
 // mutate + JIT execution races on shared heap structures.
 //
-// See docs/design/notes/issue-157-jit-workspace-invariant.md for the
+// See Issue #157 (archived: git tag docs-archive-pre-2026-06) for the
 // full inventory and phased fix plan. Phase 0 (this commit) adds the
 // telemetry counter and bypass markers; Phase 1 wraps P1 sites with
 // lock acquire/release and adds version checks at L2 entry points.

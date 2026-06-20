@@ -23,7 +23,7 @@ Aura 是一个自修改 Lisp 运行时，核心能力包括：
 写真实用例（tests/suite、tests/regression、lib/std demo）→ 暴露 core gaps → 修复核心 → 写更难用例
 ```
 
-每个端到端用例应能暴露 3-5 个 Aura 核心短板；修复这些短板是 P 系列迭代的主要驱动力。历史背景见 `design/notes/projects_iteration.md`（归档）。
+每个端到端用例应能暴露 3-5 个 Aura 核心短板；修复这些短板是 P 系列迭代的主要驱动力。早期方法论见 git tag `docs-archive-pre-2026-06` 下的 `docs/design/notes/projects_iteration.md`。
 
 ### 当前验证场（替代原 projects/）
 

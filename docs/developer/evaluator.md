@@ -459,7 +459,7 @@ per-instance state, registration in Evaluator ctor).
 
 ### Why the bypass still exists (historical)
 
-`docs/design/issue-108-datatype-followup.md` (and 134-closing, 108-closing) document the two failed attempts at "normal" defines. Conclusion: parser returns one root node per top-level form, so `(datatype ...)` cannot emit N top-level defines. The (now per-Evaluator) ctor table + primitive bridge is the preserved workaround. See also parser_impl.cpp comments for the registration trigger path.
+Issue #108 follow-up（archived: `git tag docs-archive-pre-2026-06`）documents the two failed attempts at "normal" defines. Conclusion: parser returns one root node per top-level form, so `(datatype ...)` cannot emit N top-level defines. The (now per-Evaluator) ctor table + primitive bridge is the preserved workaround. See also parser_impl.cpp comments for the registration trigger path.
 
 ### When / how to extend
 
@@ -854,17 +854,12 @@ it before the regression lands.
 
 ## 14. Related docs
 
-- `docs/design/issue-110-followup.md` — qar crash root cause
-  (the §1 rule's origin story)
-- `docs/design/issue-111-audit.md` — 22-loop audit that
-  recommended this guide
-- `docs/design/issue-108-datatype-followup.md` — why the ADT
-  ctor table exists
-- `docs/design/defuse_analysis.md` — DefUseIndex data structures
-- `docs/design/concurrency_model.md` — fiber scheduler
-  integration (`g_fiber_yield_mutation_boundary`)
-- `docs/design/cpp26_guide.md` — coding style targets (separate
-  concern, but read together)
+- Issues #110 / #111 / #108 — archived at `git tag docs-archive-pre-2026-06`
+  under `docs/design/notes/` and `docs/design/history/closings/`
+- `src/compiler/query_impl.cpp` — DefUseIndex data structures
+- `src/serve/scheduler.cpp` — fiber scheduler integration
+  (`g_fiber_yield_mutation_boundary`)
+- `.clang-format`, `CMakeLists.txt` — C++26 / module build conventions
 
 ---
 

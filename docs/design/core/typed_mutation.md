@@ -620,9 +620,7 @@ OOM 时 `ast:snapshot` 把 source string 也存一份（`has_flat=false`）；
 
 ## 10. 相关文档
 
-- [`docs/design/history/closings/107-closing.md`](../history/closings/107-closing.md) — workspace mutex + AST versioning + direct snapshot
-- [`docs/design/history/closings/110-closing.md`](../history/closings/110-closing.md) — qar + self-modifying-flat 教训
-- [`docs/design/history/closings/111-closing.md`](../history/closings/111-closing.md) — self-modifying-flat 审计
+- Issues #107 / #110 / #111 closings — archived: `git tag docs-archive-pre-2026-06`
 - [`docs/developer/evaluator.md`](../developer/evaluator.md) — evaluator 开发者指南（C++ 实装细节）
-- [`docs/design/defuse_analysis.md`](defuse_analysis.md) — DefUseIndex 内部数据布局
+- `src/compiler/query_impl.cpp` — DefUseIndex 内部数据布局
 - [`docs/design/core/query_edsl.md`](query_edsl.md) — Query + Transform EDSL 全貌

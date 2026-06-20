@@ -1150,7 +1150,7 @@ public:
         // Dual-workspace (Phase 1): make this flat/pool visible to
         // source-reading primitives (current-source default, etc.) and
         // also to mutate:* primitives. Set BEFORE any user code runs.
-        // See docs/design/dual-workspace-incremental-ir.md
+        // See dual-workspace design (archived: docs-archive-pre-2026-06)
         evaluator_.set_flat_pool(flat_ptr, pool_ptr);
         evaluator_.set_current_flat(flat_ptr);
         evaluator_.set_current_pool(pool_ptr);
@@ -2733,7 +2733,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
     // ── EDSL IR cache V2 (Phase 2) public API ──
     // Called from evaluator_impl.cpp's (eval-current) primitive.
-    // See docs/design/dual-workspace-incremental-ir.md for the design.
+    // See dual-workspace design (archived: docs-archive-pre-2026-06).
 
     // Look up a define in the cache. Returns:
     //   0 = hit, source matches, not dirty → reuse cached IR

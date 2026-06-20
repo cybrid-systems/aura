@@ -156,7 +156,7 @@ an external compiler-implementation milestone.
   foundation (Phase 0).
 - Issue #256 — AST operation observability foundation
   (Phase 1).
-- `docs/design/ir_soa_migration.md` — sister roadmap
+- Issue #254 / `ir_soa_migration.md` — archived: `git tag docs-archive-pre-2026-06`
   for the IR layer SoA/DOD migration (different layer,
   same scope-limited-close pattern).
 - `docs/roadmap.md` — overall Aura roadmap.

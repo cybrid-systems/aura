@@ -59,7 +59,7 @@ export class Evaluator;
 
 // EnvId — uint32_t index into Evaluator::env_frames_ arena.
 // Full SoA documentation in §2.7.5 / §2.7.6 of
-// docs/design/cpp26_guide.md. Declared here (above Env) so
+// C++26 module conventions (.clang-format). Declared here (above Env) so
 // Env can hold an EnvId parent_id_ field. Issue #145 Phase 2.1.
 export using EnvId = std::uint32_t;
 export constexpr EnvId NULL_ENV_ID = std::numeric_limits<EnvId>::max();
@@ -771,7 +771,7 @@ public:
     // Set the AST/pool that source-reading primitives (current-source) read
     // by default. The "per-eval current source" pointer. Set by
     // CompilerService::eval / eval_ir / exec_jit right after parsing the
-    // script, before any user code runs. See docs/design/dual-workspace-incremental-ir.md
+    // script, before any user code runs. See dual-workspace design (archived: docs-archive-pre-2026-06)
     // for the dual-workspace rationale.
     void set_current_flat(ast::FlatAST* f) { current_flat_ = f; }
     void set_current_pool(ast::StringPool* p) { current_pool_ = p; }
@@ -783,7 +783,7 @@ public:
     // pool where almost all `intern()` calls already route (39 sites
     // in evaluator_impl.cpp, vs. ~5 in pat_pool / tmp_pool / local
     // scratch pools). The pool unification refactor (Phase 2.5.0 in
-    // docs/design/cpp26_guide.md §2.7.7) will:
+    // C++26 module layout) will:
     //
     //   1. Route every new `intern()` call through this accessor
     //      instead of the named pool_ members.

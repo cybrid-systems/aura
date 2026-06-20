@@ -24,7 +24,7 @@
 // first element. Predicates check (vec[0] == tag) using ==
 // (for enums, since they're not package-qualified strings).
 //
-// Refs: docs/design/issue-182-hardware-eda.md
+// Refs: Issue #182 (archived: git tag docs-archive-pre-2026-06)
 //       lib/std/eda.aura (Aura stdlib port — blocked)
 
 #include <cassert>

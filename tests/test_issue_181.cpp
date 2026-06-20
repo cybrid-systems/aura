@@ -32,7 +32,7 @@
 //   - Contracts / ShapeProfiler integration with the new tag
 //     (Cycle 3)
 //
-// Refs: docs/design/issue-181-evalvalue-encoding-redesign.md
+// Refs: Issue #181 (archived: git tag docs-archive-pre-2026-06)
 //       (Commit 730ba12 — design + 4-cycle plan)
 //
 // Per Aura workflow: develop on main, no feature branches

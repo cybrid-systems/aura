@@ -77,6 +77,6 @@ LLM → 方向性代码 → 编译 → 测量距离 → fine/putt?
 
 ## 延伸阅读
 
-- 蚁群 / PID / 控制论相关：`design/notes/` 下的 ant_*、adaptive_intend_pid 等（历史探索，当前状态见 `design/core/agent_orchestration.md` §0 和 roadmap）。
-- 语言规格：`design/notes/aura_language_spec.md`（历史），当前以 `design/core/` + 代码为准。
-- 完整设计演进见 Git 历史和 `design/history/`。
+- 蚁群 / PID / 控制论：见 `design/core/agent_orchestration.md` 与 `lib/std/orchestrator.aura`；历史探索在 git tag `docs-archive-pre-2026-06`。
+- 语言规格：以 `design/core/` + `src/` + `tests/suite/` 为准。
+- 完整设计演进：`git log -- docs/` 或 tag `docs-archive-pre-2026-06`。

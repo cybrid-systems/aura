@@ -4,7 +4,7 @@
 // test_issue_227.cpp — Issue #227: Occurrence Typing narrowing +
 // ADT exhaustiveness after Typed Mutations (post #168 epoch fix)
 //
-// Documented in docs/design/incremental_type_cache_safety.md as
+// Documented in incremental_type_cache_safety (archived: docs-archive-pre-2026-06) as
 // Phase 2-4 deferred mitigations. The current coarse epoch gate
 // (Phase 1, #168) catches the most common mutation cases by
 // globally invalidating the type cache on any mutation. But the

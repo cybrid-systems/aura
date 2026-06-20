@@ -409,8 +409,8 @@ import aura.core.ast;     // has `import std;` internally
 #include <cstdio>          // conflicts with the std module
 ```
 
-**3 unblock options** (see
-`docs/cycle14-reflect-module-status.md` for full analysis):
+**3 unblock options** (full analysis archived at git tag
+`docs-archive-pre-2026-06`, file `docs/cycle14-reflect-module-status.md`):
 
 1. Wait for GCC 16.2 (upstream fix for the dual std module +
    P2996 reflection ICE) — ~1 day
@@ -418,9 +418,7 @@ import aura.core.ast;     // has `import std;` internally
 3. Keep the test_issue_178 cargo-cult (hand-written
    `NodeViewFullLike` copy) — current in-env workaround
 
-**The fix is upstream**; we have the test_issue_178.cpp written
-and ready to run when the env is fixed. See
-`docs/issue-drafts/178-real-nodeview-production.md`.
+**The fix is upstream**; `tests/test_issue_178.cpp` is ready when the env is fixed.
 
 ---
 
