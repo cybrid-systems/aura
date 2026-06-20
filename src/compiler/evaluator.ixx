@@ -416,12 +416,50 @@ namespace primitives_detail {
 void register_mutate_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
                                 std::function<EvalValue(const std::string&, const std::string&)> mev,
                                 std::function<void()> destroy_defuse_index);
+void register_workspace_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+                                 std::function<void()> destroy_defuse_index);
 }
+
+// Workspace layering (P13) — shared by evaluator_impl + workspace primitives TU.
+struct WorkspaceNode {
+    std::string name;
+    ast::FlatAST* flat = nullptr;
+    ast::StringPool* pool = nullptr;
+    ast::FlatAST* parent_flat_ = nullptr;
+    ast::StringPool* parent_pool_ = nullptr;
+    std::uint64_t generation = 0;
+    bool read_only = false;
+    bool has_own_flat = false;
+    bool is_root = false;
+    std::size_t memory_used = 0;
+    std::size_t memory_budget = 0;
+    std::uint64_t cow_refused_count = 0;
+};
+
+struct WorkspaceTree {
+    std::vector<WorkspaceNode> nodes_;
+    std::uint32_t active_idx_ = 0;
+
+    [[nodiscard]] std::size_t size() const { return nodes_.size(); }
+    [[nodiscard]] std::uint32_t active_idx() const { return active_idx_; }
+    WorkspaceNode* active() { return active_idx_ < nodes_.size() ? &nodes_[active_idx_] : nullptr; }
+
+    bool ensure_local_flat(std::uint32_t idx);
+    std::uint32_t create_child(const std::string& name, ast::FlatAST* parent_flat,
+                               ast::StringPool* parent_pool);
+    bool delete_child(std::uint32_t idx);
+    bool set_active(std::uint32_t idx);
+    void set_read_only(std::uint32_t idx, bool ro);
+    [[nodiscard]] bool can_write(std::uint32_t idx);
+};
 
 export class Evaluator {
     friend void primitives_detail::register_mutate_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<EvalValue(const std::string&, const std::string&)> mev,
+        std::function<void()> destroy_defuse_index);
+    friend void primitives_detail::register_workspace_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<void()> destroy_defuse_index);
 
 public:
@@ -2432,5 +2470,84 @@ export struct ClosureView {
 // header-light).
 export EnvView make_env_view(const Env& env);
 export ClosureView make_closure_view(const Closure& cl);
+
+// WorkspaceTree method bodies (declared above Evaluator).
+inline bool WorkspaceTree::ensure_local_flat(std::uint32_t idx) {
+    auto& n = nodes_[idx];
+    if (n.is_root)
+        return true;
+    if (n.read_only)
+        return false;
+    if (n.has_own_flat)
+        return true;
+    if (n.parent_flat_) {
+        std::size_t parent_bytes = 0;
+        if (n.parent_pool_)
+            parent_bytes += n.parent_pool_->data_size();
+        if (n.parent_flat_)
+            parent_bytes += n.parent_flat_->size() * 64;
+        if (n.memory_budget > 0 && (n.memory_used + parent_bytes) > n.memory_budget) {
+            ++n.cow_refused_count;
+            return false;
+        }
+        auto* new_flat = new ast::FlatAST();
+        auto* new_pool = new ast::StringPool();
+        *new_flat = *n.parent_flat_;
+        *new_pool = *n.parent_pool_;
+        n.flat = new_flat;
+        n.pool = new_pool;
+        n.has_own_flat = true;
+        n.generation = 1;
+        n.memory_used = parent_bytes;
+        return true;
+    }
+    return false;
+}
+
+inline std::uint32_t WorkspaceTree::create_child(const std::string& name, ast::FlatAST* parent_flat,
+                                                 ast::StringPool* parent_pool) {
+    auto idx = static_cast<std::uint32_t>(nodes_.size());
+    WorkspaceNode node;
+    node.name = name;
+    node.parent_flat_ = parent_flat;
+    node.parent_pool_ = parent_pool;
+    node.flat = parent_flat;
+    node.pool = parent_pool;
+    nodes_.push_back(std::move(node));
+    return idx;
+}
+
+inline bool WorkspaceTree::delete_child(std::uint32_t idx) {
+    if (idx == 0 || idx >= nodes_.size())
+        return false;
+    auto& n = nodes_[idx];
+    if (n.has_own_flat) {
+        delete n.flat;
+        delete n.pool;
+    }
+    n.flat = nullptr;
+    n.pool = nullptr;
+    n.parent_flat_ = nullptr;
+    n.parent_pool_ = nullptr;
+    return true;
+}
+
+inline bool WorkspaceTree::set_active(std::uint32_t idx) {
+    if (idx >= nodes_.size())
+        return false;
+    active_idx_ = idx;
+    return true;
+}
+
+inline void WorkspaceTree::set_read_only(std::uint32_t idx, bool ro) {
+    if (idx < nodes_.size())
+        nodes_[idx].read_only = ro;
+}
+
+inline bool WorkspaceTree::can_write(std::uint32_t idx) {
+    if (idx >= nodes_.size())
+        return false;
+    return !nodes_[idx].read_only;
+}
 
 } // namespace aura::compiler
