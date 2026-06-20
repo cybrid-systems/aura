@@ -324,29 +324,19 @@ void test_3_two_thread_smoke() {
     std::vector<NodeId> ids;
     for (int i = 0; i < N_NODES; ++i) ids.push_back(ast.add_node());
 
+    std::atomic<bool> reader_ready{false};
     std::atomic<bool> writer_done{false};
     std::atomic<int> read_count{0};
     std::atomic<std::uint16_t> reader_max_gen{0};
     std::atomic<std::uint16_t> reader_min_gen{UINT16_MAX};
 
-    // Writer: 1000 set_child on random nodes
-    std::thread writer([&]() {
-        std::mt19937 rng(42);
-        std::uniform_int_distribution<int> dist(0, N_NODES - 1);
-        for (int i = 0; i < 1000; ++i) {
-            NodeId from = ids[dist(rng)];
-            NodeId to = ids[dist(rng)];
-            ast.set_child(from, 0, to);
-        }
-        writer_done = true;
-    });
-
     // Reader: continuous reads, verify generation monotonicity.
     // Holds a reader lock for the duration of the read to test
     // the try_acquire_reader_lock API.
     std::thread reader([&]() {
+        reader_ready.store(true, std::memory_order_release);
         int count = 0;
-        while (!writer_done) {
+        while (!writer_done.load(std::memory_order_acquire)) {
             auto rg = ast.try_acquire_reader_lock();
             if (rg) {
                 std::uint16_t g = ast.generation_;
@@ -360,8 +350,29 @@ void test_3_two_thread_smoke() {
                 (void)sz;
                 ++count;
             }
+            std::this_thread::yield();
         }
         read_count = count;
+    });
+
+    // Writer: 1000 set_child on random nodes. Wait for the reader
+    // thread to start and yield periodically so single-core CI
+    // runners still observe concurrent mutate + read overlap.
+    std::thread writer([&]() {
+        while (!reader_ready.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        std::mt19937 rng(42);
+        std::uniform_int_distribution<int> dist(0, N_NODES - 1);
+        for (int i = 0; i < 1000; ++i) {
+            NodeId from = ids[dist(rng)];
+            NodeId to = ids[dist(rng)];
+            ast.set_child(from, 0, to);
+            if ((i & 15) == 0) {
+                std::this_thread::yield();
+            }
+        }
+        writer_done.store(true, std::memory_order_release);
     });
 
     writer.join();
