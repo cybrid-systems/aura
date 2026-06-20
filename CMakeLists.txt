@@ -30,6 +30,11 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
+    src/compiler/ir_soa.ixx  # Issue #254: imported by lowering.ixx
+                            # (LoweringState holds an IRModuleV2 field
+                            # for the SoA dual-emit path). Must be in
+                            # the main aura target so the main
+                            # binary's lowering.ixx import resolves.
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
