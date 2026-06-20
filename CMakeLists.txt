@@ -515,15 +515,8 @@ aura_add_issue_test(test_issue_124)
 # Issue #125 verification: per-module dirty tracking + skip
 # optimization counters. Standalone binary so the metrics /
 # observability tests can run in isolation.
-add_executable(test_issue_125 tests/test_issue_125.cpp)
-set_property(TARGET test_issue_125 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_125 PRIVATE src src/compiler)
-target_sources(test_issue_125 PRIVATE
-src/compiler/observability_metrics.h
-)
-aura_test_compile_options(test_issue_125)
-target_link_libraries(test_issue_125 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_125_verification COMMAND ./test_issue_125)
+aura_add_issue_test(test_issue_125)
+aura_issue_test_observability(test_issue_125)
 
 # Issue #126 verification: pure functions extracted from
 # CompilerService and Evaluator. Standalone binary that
@@ -535,15 +528,8 @@ aura_add_issue_test(test_issue_126)
 # aliases + lower_to_ir_result. Standalone binary that
 # exercises the new diag.ixx aliases and lowering.ixx
 # Result-returning function in isolation.
-add_executable(test_issue_127 tests/test_issue_127.cpp)
-set_property(TARGET test_issue_127 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_127 PRIVATE src src/compiler)
-target_sources(test_issue_127 PRIVATE
-src/compiler/observability_metrics.h
-)
-aura_test_compile_options(test_issue_127)
-target_link_libraries(test_issue_127 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_127_verification COMMAND ./test_issue_127)
+aura_add_issue_test(test_issue_127)
+aura_issue_test_observability(test_issue_127)
 
 # Issue #128 verification: std::span adoption in hot
 # paths. Standalone binary that exercises the new
@@ -554,15 +540,7 @@ aura_add_issue_test(test_issue_128)
 # Issue #130 verification: cache hit rate metric.
 # Standalone binary that exercises the new
 # TypeChecker::cache_hit_rate() getter.
-add_executable(test_issue_130 tests/test_issue_130.cpp)
-set_property(TARGET test_issue_130 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_130 PRIVATE src)
-# Fix #2: consume prebuilt BMIs from AURA_MODULE_BMI_DIR (produced by
-# aura_test_objects). No more per-binary re-emission of the 17 .ixx
-# modules previously listed here.
-aura_test_compile_options(test_issue_130)
-target_link_libraries(test_issue_130 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_130_verification COMMAND ./test_issue_130)
+aura_add_issue_test(test_issue_130)
 
 # Issue #131 verification: FFI primitives extracted from
 # monolithic evaluator_impl.cpp. Standalone binary that
@@ -625,25 +603,8 @@ src/compiler/observability_metrics.h
 # + value/diag/value_impl; append the heavy orchestration/eval/JIT
 # specifics (serve, parser, evaluator*, lowering*, query*, jit*,
 # LLVM bits, rtti flags, extra includes).
-add_executable(test_issue_135 tests/test_issue_135.cpp)
-set_property(TARGET test_issue_135 PROPERTY CXX_MODULE_STD ON)
-target_sources(test_issue_135 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_135 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_135 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_135 PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_135)
-target_link_libraries(test_issue_135 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_135_verification COMMAND ./test_issue_135)
+aura_add_issue_test(test_issue_135)
+aura_issue_test_link_llvm_jit(test_issue_135)
 
 # Issue #136 verification: memory hardening + hash performance
 # + AOT polish + expanded benchmarks. The runtime.c tests for
@@ -763,26 +724,8 @@ aura_add_issue_test(test_issue_163)
 # timeout), (4) 20 parallel fibers via orch:parallel work,
 # (5) 50 sequential spawn+join complete within reasonable time
 # (proves no CPU burn from the removed spin fallback).
-add_executable(test_issue_164 tests/test_issue_164.cpp)
-set_property(TARGET test_issue_164 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_164 PRIVATE src src/compiler)
-target_sources(test_issue_164 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_164 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_164 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_164 PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_164)
-target_link_libraries(test_issue_164 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_164_verification COMMAND ./test_issue_164)
+aura_add_issue_test(test_issue_164)
+aura_issue_test_link_llvm_jit(test_issue_164)
 
 # Issue #184 verification: MutationBoundaryGuard RAII + atomic
 # defuse_version_ + Fiber + Mutation Concurrency Safety. Cycle 1
@@ -791,25 +734,8 @@ add_test(NAME issue_164_verification COMMAND ./test_issue_164)
 # path (success, parse error, type error), and defuse_version_ is
 # monotonic under typed_mutate. Cycles 2-5 will extend with
 # multi-threaded smoke, fiber yield integration, and stress tests.
-add_executable(test_issue_184 tests/test_issue_184.cpp)
-set_property(TARGET test_issue_184 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_184 PRIVATE src src/compiler)
-target_sources(test_issue_184 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_184 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_184 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_184 PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_184)
-target_link_libraries(test_issue_184 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_184_verification COMMAND ./test_issue_184)
+aura_add_issue_test(test_issue_184)
+aura_issue_test_link_llvm_jit(test_issue_184)
 
 # Issue #165 verification: macro re-expansion + SyntaxMarker
 # handling after EDSL mutations. The test is TDD — it
@@ -824,51 +750,15 @@ add_test(NAME issue_184_verification COMMAND ./test_issue_184)
 # and is expected to FAIL on the current main (proving the
 # bug exists) and PASS after the post-mutation macro
 # re-expansion pass is added.
-add_executable(test_issue_165 tests/test_issue_165.cpp)
-set_property(TARGET test_issue_165 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_165 PRIVATE src src/compiler)
-target_sources(test_issue_165 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_165 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_165 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_165 PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_165)
-target_link_libraries(test_issue_165 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_165_verification COMMAND ./test_issue_165)
+aura_add_issue_test(test_issue_165)
+aura_issue_test_link_llvm_jit(test_issue_165)
 
 # Issue #166 verification: multi-layer cache invalidation
 # (Phase 1: epoch counter). Verifies the basic flow still
 # works after adding the global mutation_epoch_ + per-entry
 # last_seen_epoch_ on IRCacheEntry and JitCachedFn.
-add_executable(test_issue_166 tests/test_issue_166.cpp)
-set_property(TARGET test_issue_166 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_166 PRIVATE src src/compiler)
-target_sources(test_issue_166 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_166 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_166 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_166 PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_166)
-target_link_libraries(test_issue_166 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_166_verification COMMAND ./test_issue_166)
+aura_add_issue_test(test_issue_166)
+aura_issue_test_link_llvm_jit(test_issue_166)
 
 # Issue #167 verification: IR layer SoA/DOD migration
 # (Phase 1: scaffold). Verifies the basic IRModuleV2 +
@@ -888,25 +778,8 @@ aura_add_issue_test(test_issue_168)
 # Issue #169 verification: Fine-grained Incremental Compilation
 # v3 (Phase 1: config flag). Verifies the IncrementalStrictness
 # enum + CompilerService set/get methods + no-behavior-change.
-add_executable(test_issue_169 tests/test_issue_169.cpp)
-set_property(TARGET test_issue_169 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_169 PRIVATE src src/compiler)
-target_sources(test_issue_169 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_169 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_169 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_169 PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_169)
-target_link_libraries(test_issue_169 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_169_verification COMMAND ./test_issue_169)
+aura_add_issue_test(test_issue_169)
+aura_issue_test_link_llvm_jit(test_issue_169)
 
 # Issue #170 verification: LLVM JIT AOT entry points
 # (Phase 1). Verifies the new public API on the empty
@@ -933,26 +806,8 @@ target_link_libraries(test_issue_170 PRIVATE ${llvm_libs})
 # harness. Measures eval_current latency across 4 scenarios
 # × N workspace sizes, outputs JSON to tests/bench_results/.
 # Standalone binary so the benchmark runs in isolation.
-add_executable(test_issue_159_bench tests/test_issue_159_bench.cpp)
-set_property(TARGET test_issue_159_bench PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_159_bench PRIVATE src src/compiler)
-target_sources(test_issue_159_bench PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_159_bench PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_159_bench PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_159_bench PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_159_bench)
-target_link_libraries(test_issue_159_bench PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_159_bench COMMAND ./test_issue_159_bench)
+aura_add_issue_test(test_issue_159_bench)
+aura_issue_test_link_llvm_jit(test_issue_159_bench)
 
 # Issue #138 verification: incremental dirty propagation and
 # fine-grained type checking for EDSL mutations. The work was
@@ -965,103 +820,31 @@ add_test(NAME issue_159_bench COMMAND ./test_issue_159_bench)
 #     stale_cache with TYPE_VAR validation)
 #   - Stress test: 100 mutate+typecheck cycles
 #   - Performance: incremental vs full typecheck cache behavior
-add_executable(test_issue_138 tests/test_issue_138.cpp)
-set_property(TARGET test_issue_138 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_138 PRIVATE src src/compiler)
-target_sources(test_issue_138 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_138 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_138 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_138 PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_138)
-target_link_libraries(test_issue_138 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_138_verification COMMAND ./test_issue_138)
+aura_add_issue_test(test_issue_138)
+aura_issue_test_link_llvm_jit(test_issue_138)
 
 # Issue #139 verification: structural refactor primitives
 # (mutate:extract-function, mutate:inline-call, mutate:rename-symbol,
 # mutate:refactor/extract, mutate:move-node, mutate:splice, mutate:wrap).
 # The work was already shipped across earlier sub-issues. This
 # binary verifies the operators work end-to-end on real Aura code.
-add_executable(test_issue_139 tests/test_issue_139.cpp)
-set_property(TARGET test_issue_139 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_139 PRIVATE src src/compiler)
-target_sources(test_issue_139 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_139 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_139 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_139 PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_139)
-target_link_libraries(test_issue_139 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_139_verification COMMAND ./test_issue_139)
+aura_add_issue_test(test_issue_139)
+aura_issue_test_link_llvm_jit(test_issue_139)
 
 # Issue #140 verification: query:pattern EDSL primitive with
 # Ellipsis and basic hygiene. The work was already shipped
 # (the primitive exists at evaluator_impl.cpp:6326). This PR
 # adds a hygiene fix (skip SyntaxMarker::MacroIntroduced nodes)
 # and a verification binary.
-add_executable(test_issue_140 tests/test_issue_140.cpp)
-set_property(TARGET test_issue_140 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_140 PRIVATE src src/compiler)
-target_sources(test_issue_140 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_140 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_140 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_140 PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_140)
-target_link_libraries(test_issue_140 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_140_verification COMMAND ./test_issue_140)
+aura_add_issue_test(test_issue_140)
+aura_issue_test_link_llvm_jit(test_issue_140)
 
 # Issue #141 verification: full WorkspaceTree with COW, read-only
 # permissions, and merge primitives. All 18 workspace:* primitives
 # were already shipped in earlier sub-issues (#97, #98, #107).
 # This binary verifies they work end-to-end.
-add_executable(test_issue_141 tests/test_issue_141.cpp)
-set_property(TARGET test_issue_141 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_141 PRIVATE src src/compiler)
-target_sources(test_issue_141 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_141 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_141 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_141 PRIVATE aura_test_objects ${llvm_libs})
-aura_test_compile_options(test_issue_141)
-target_link_libraries(test_issue_141 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_141_verification COMMAND ./test_issue_141)
+aura_add_issue_test(test_issue_141)
+aura_issue_test_link_llvm_jit(test_issue_141)
 
 # Issue #142 verification: composite query primitives (query:where /
 # query:filter) plus mutate:replace-subtree with capture detection
@@ -1462,12 +1245,8 @@ target_link_libraries(test_issue_149 PRIVATE ${llvm_libs})
 # only counted call sites). TCO tests follow in a follow-up
 # commit when the TCO pass ships.
 # Phase 2 pilot-31 prep: short form attempted (added adt/pure/ffi for evaluator imports) but link requires more impls (Primitives, mutation_stack TLS etc from full evaluator support). Restored full original block for health (pattern of 141/145 preps). Binary ran 30/30 previously. Docs updated. 
-add_executable(test_issue_171 tests/test_issue_171.cpp)
-set_property(TARGET test_issue_171 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_171 PRIVATE src src/compiler)
-aura_test_compile_options(test_issue_171)
-target_link_libraries(test_issue_171 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_171_verification COMMAND ./test_issue_171)
+aura_add_issue_test(test_issue_171)
+target_include_directories(test_issue_171 PRIVATE src/compiler)
 
 # Issue #204 verification: GC env_frames_ walk integration
 # (Issue #172 Phase 4). Verifies GCCollector::mark_env_frame_roots()
@@ -1475,65 +1254,16 @@ add_test(NAME issue_171_verification COMMAND ./test_issue_171)
 # parent chains. The caller-side integration (evaluator walking
 # env_frames_ and producing the index lists) is a separate
 # follow-up — this test verifies the GC-side method only.
-add_executable(test_issue_204 tests/test_issue_204.cpp)
-set_property(TARGET test_issue_204 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_204 PRIVATE src src/serve)
-target_sources(test_issue_204 PRIVATE
-    # Same dep as test_issue_205: aura_set_current_fiber_id_fn
-    # (defined in aura_jit_runtime.cpp) is called from
-    # fiber.cpp's static init in libaura_test_objects.a.
-    # Plus aura_jit.cpp (defines emit_native_object, called
-    # from aura_jit_bridge.cpp) and the contract / dispatch
-    # stubs (test binaries don't have CompilerService or
-    # aura.compiler.constant_folding's libaura_test_objects
-    # symbol export).
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit.cpp
-    src/core/contract_stub.cpp
-    src/compiler/aura_jit_prim_dispatch_stub.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_204 PRIVATE src src/compiler)
-target_compile_definitions(test_issue_204 PRIVATE AURA_HAVE_LLVM=1)
-target_include_directories(test_issue_204 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_link_libraries(test_issue_204 PRIVATE ${llvm_libs})
-aura_test_compile_options(test_issue_204)
-target_link_libraries(test_issue_204 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_204_verification COMMAND ./test_issue_204)
+aura_add_issue_test(test_issue_204)
+aura_issue_test_link_llvm_fiber_stubs(test_issue_204)
 
 # Issue #205 verification: caller-side env_frames_ walk
 # wires evaluator to GCCollector::mark_env_frame_roots.
 # Verifies the registration mechanism + EnvFrameRoots
 # struct + that mark_env_frame_roots is invoked with the
 # env walk's output.
-add_executable(test_issue_205 tests/test_issue_205.cpp)
-set_property(TARGET test_issue_205 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_205 PRIVATE src src/serve)
-target_sources(test_issue_205 PRIVATE
-    # Same dep as test_concurrent: aura_set_current_fiber_id_fn
-    # (defined in aura_jit_runtime.cpp) is called from
-    # fiber.cpp's static init. Plus aura_jit.cpp
-    # (defines emit_native_object, called from
-    # aura_jit_bridge.cpp) and the contract / dispatch
-    # stubs.
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit.cpp
-    src/core/contract_stub.cpp
-    src/compiler/aura_jit_prim_dispatch_stub.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_205 PRIVATE src src/compiler)
-target_compile_definitions(test_issue_205 PRIVATE AURA_HAVE_LLVM=1)
-target_include_directories(test_issue_205 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_link_libraries(test_issue_205 PRIVATE ${llvm_libs})
-aura_test_compile_options(test_issue_205)
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_link_libraries(test_issue_205 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_205_verification COMMAND ./test_issue_205)
+aura_add_issue_test(test_issue_205)
+aura_issue_test_link_llvm_fiber_stubs(test_issue_205)
 
 # Issue #173 verification: stable-id type aliases (Phase 2 of
 # #145 workstream 2). Verifies PairId/CellId/StringId +
@@ -1825,23 +1555,15 @@ target_link_libraries(test_issue_224 PRIVATE ${llvm_libs})
 # transformation shipped; multi-block CFG splicing is a
 # follow-up. Pattern matches test_issue_171 (direct C++ tests
 # on IRModule, no Aura layer needed).
-add_executable(test_issue_197 tests/test_issue_197.cpp)
-set_property(TARGET test_issue_197 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_197 PRIVATE src src/compiler)
-aura_test_compile_options(test_issue_197)
-target_link_libraries(test_issue_197 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_197_verification COMMAND ./test_issue_197)
+aura_add_issue_test(test_issue_197)
+target_include_directories(test_issue_197 PRIVATE src/compiler)
 
 # Issue #246 verification: Inliner MacroIntroduced-awareness.
 # Scope-limited close: IRFunction.marker + InlinePass consults
 # it via respect_macro_hygiene_ static flag (default true).
 # Pure C++ test on IRModule + IRFunction + InlinePass, no Aura.
-add_executable(test_issue_246 tests/test_issue_246.cpp)
-set_property(TARGET test_issue_246 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_246 PRIVATE src src/compiler)
-aura_test_compile_options(test_issue_246)
-target_link_libraries(test_issue_246 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_246_inliner_macro_hygiene_verification COMMAND ./test_issue_246)
+aura_add_issue_test(test_issue_246)
+target_include_directories(test_issue_246 PRIVATE src/compiler)
 
 # Issue #247 verification: SyntaxMarker observability integration
 # (CompilerSnapshot marker fields + query:marker-stats primitive).
@@ -2377,13 +2099,7 @@ add_test(NAME issue_213_panic_fiber_verification COMMAND ./test_issue_213_panic_
 # reflect.hh (requires -freflection flag, which the aura
 # target doesn't use). The Aura-side test (Test 4) shells
 # out to the ./build/aura binary.
-add_executable(test_issue_214 tests/test_issue_214.cpp)
-set_property(TARGET test_issue_214 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_214 PRIVATE src)
-target_compile_options(test_issue_214 PRIVATE -freflection -Wall)
-target_compile_features(test_issue_214 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_214 PRIVATE aura_test_objects stdc++ pthread)
-add_test(NAME issue_214_verification COMMAND ./test_issue_214)
+aura_add_issue_test_reflect_standalone(test_issue_214)
 
 # Issue #215: auto_deserialize for containers + nested struct
 # (Issue #178 Cycle 2).
@@ -2391,13 +2107,7 @@ add_test(NAME issue_214_verification COMMAND ./test_issue_214)
 # Standalone C++ test (like test_issue_214) because the
 # test exercises the reflect.hh header directly with the
 # -freflection compile flag.
-add_executable(test_issue_215 tests/test_issue_215.cpp)
-set_property(TARGET test_issue_215 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_215 PRIVATE src)
-target_compile_options(test_issue_215 PRIVATE -freflection -Wall)
-target_compile_features(test_issue_215 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_215 PRIVATE aura_test_objects stdc++ pthread)
-add_test(NAME issue_215_verification COMMAND ./test_issue_215)
+aura_add_issue_test_reflect_standalone(test_issue_215)
 
 # Issue #216: query:schema + mutate integration
 # (Issue #178 Cycle 3).
@@ -2407,38 +2117,21 @@ add_test(NAME issue_215_verification COMMAND ./test_issue_215)
 # with the -freflection compile flag. Tests 3-6 shell out
 # to the ./build/aura binary to test the Aura-side
 # query:schema primitive.
-add_executable(test_issue_216 tests/test_issue_216.cpp)
-set_property(TARGET test_issue_216 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_216 PRIVATE src)
-target_compile_options(test_issue_216 PRIVATE -freflection -Wall)
-target_compile_features(test_issue_216 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_216 PRIVATE aura_test_objects stdc++ pthread)
-add_test(NAME issue_216_verification COMMAND ./test_issue_216)
+aura_add_issue_test_reflect_standalone(test_issue_216)
 
 # Issue #217: AST/IR migration to reflect_members +
 # auto_serialize (Issue #178 Cycle 4). The full scope is
 # 1 week of focused work; this test is the Cycle 1 pilot
 # that verifies the reflection infrastructure works for
 # IR-shaped types (OpcodeInfo, IRInstruction).
-add_executable(test_issue_217 tests/test_issue_217.cpp)
-set_property(TARGET test_issue_217 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_217 PRIVATE src)
-target_compile_options(test_issue_217 PRIVATE -freflection -Wall)
-target_compile_features(test_issue_217 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_217 PRIVATE aura_test_objects stdc++ pthread)
-add_test(NAME issue_217_verification COMMAND ./test_issue_217)
+aura_add_issue_test_reflect_standalone(test_issue_217)
 
 # Issue #219: gap-buffer child_data_ for O(1) insert/remove
 # in FlatAST. Tests the GapBuffer<T> template defined in
 # src/core/gap_buffer.hh. Standalone test (no production
 # module imports), so it doesn't trigger the GCC 16.1
 # std module + P2996 reflection conflict.
-add_executable(test_issue_219 tests/test_issue_219.cpp)
-target_include_directories(test_issue_219 PRIVATE src)
-target_compile_options(test_issue_219 PRIVATE -Wall -Wextra)
-target_compile_features(test_issue_219 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_219 PRIVATE aura_test_objects stdc++ pthread)
-add_test(NAME issue_219_verification COMMAND ./test_issue_219)
+aura_add_issue_test_standalone(test_issue_219)
 
 # Issue #220: per-node children linked list (Issue #179 Cycle 2).
 # Replaces FlatAST's std::pmr::vector<NodeId> child_data_ (with
@@ -2449,24 +2142,14 @@ add_test(NAME issue_219_verification COMMAND ./test_issue_219)
 # no more shifting of "all subsequent child_begin_ entries").
 # Standalone test (no module imports — avoids the GCC 16.1
 # std module + P2996 reflection conflict).
-add_executable(test_issue_220 tests/test_issue_220.cpp)
-target_include_directories(test_issue_220 PRIVATE src)
-target_compile_options(test_issue_220 PRIVATE -Wall -Wextra)
-target_compile_features(test_issue_220 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_220 PRIVATE aura_test_objects stdc++ pthread)
-add_test(NAME issue_220_verification COMMAND ./test_issue_220)
+aura_add_issue_test_standalone(test_issue_220)
 
 # Issue #221: persistent child vectors (Issue #179 Cycle 3,
 # slice 1/5). Tests the PersistentChildVector<T> data
 # structure defined in src/core/persistent_child_vector.hh.
 # Standalone test (no module imports — avoids the GCC 16.1
 # std module + P2996 reflection conflict).
-add_executable(test_issue_221 tests/test_issue_221.cpp)
-target_include_directories(test_issue_221 PRIVATE src)
-target_compile_options(test_issue_221 PRIVATE -Wall -Wextra)
-target_compile_features(test_issue_221 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_221 PRIVATE aura_test_objects stdc++ pthread)
-add_test(NAME issue_221_verification COMMAND ./test_issue_221)
+aura_add_issue_test_standalone(test_issue_221)
 
 # Issue #222: structural mutation concurrency safety (Issue #179
 # Cycle 4, slice 1/3). Tests the begin_structural_mutation() /
@@ -2475,12 +2158,7 @@ add_test(NAME issue_221_verification COMMAND ./test_issue_221)
 # API. Standalone test (no module imports — avoids the GCC 16.1
 # std module + P2996 reflection conflict). Uses a TestFlatAST
 # stub that mirrors the production API for testing purposes.
-add_executable(test_issue_222 tests/test_issue_222.cpp)
-target_include_directories(test_issue_222 PRIVATE src)
-target_compile_options(test_issue_222 PRIVATE -Wall -Wextra)
-target_compile_features(test_issue_222 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_222 PRIVATE aura_test_objects stdc++ pthread)
-add_test(NAME issue_222_verification COMMAND ./test_issue_222)
+aura_add_issue_test_standalone(test_issue_222)
 
 # Issue #223: closure-bridge epoch counter for lifetime tracking
 # (Issue #180 Cycle 1). Tests bridge_epoch_ on ClosureBridgeData +
@@ -2489,12 +2167,7 @@ add_test(NAME issue_222_verification COMMAND ./test_issue_222)
 # imports — avoids the GCC 16.1 std module + P2996 reflection
 # conflict). Uses a MockEpochTracker that mirrors the production
 # mutation_epoch_ / bridge_epoch() semantics.
-add_executable(test_issue_223 tests/test_issue_223.cpp)
-target_include_directories(test_issue_223 PRIVATE src)
-target_compile_options(test_issue_223 PRIVATE -Wall -Wextra)
-target_compile_features(test_issue_223 PUBLIC cxx_std_26)
-target_link_libraries(test_issue_223 PRIVATE aura_test_objects stdc++ pthread)
-add_test(NAME issue_223_verification COMMAND ./test_issue_223)
+aura_add_issue_test_standalone(test_issue_223)
 
 # Issue #224 cycle 2: shared_ptr-based bridge ownership.
 # Tests verify the new std::shared_ptr<const T> fields
@@ -2717,12 +2390,8 @@ add_test(NAME issue_228_dependent_type_system_verification COMMAND ./test_issue_
 # Verifies the generic reflect path works on the actual
 # production struct (12 fields: 8 POD scalars + 3 spans
 # + 1 enum-byte).
-add_executable(test_issue_178 tests/test_issue_178.cpp)
-set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_178 PRIVATE src)
-aura_test_compile_options_reflect(test_issue_178)
-target_link_libraries(test_issue_178 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_178_verification COMMAND ./test_issue_178)
+aura_add_issue_test(test_issue_178)
+target_compile_options(test_issue_178 PRIVATE -freflection)
 
 # ── Aggregate target: build all test_issue_* binaries in one ninja invocation ──
 #
