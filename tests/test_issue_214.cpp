@@ -158,11 +158,45 @@ bool test_json_roundtrip() {
 // checks the output. The test is skipped if aura isn't
 // built.
 #include <cstdlib>
+#include <filesystem>
 #include <sstream>
+#include <unistd.h>
+
+namespace fs = std::filesystem;
+
+// Find the aura binary. Tries (in order):
+//   1. $AURA_BIN env var if set (CI / build.py can set this)
+//   2. ./aura relative to the test binary's directory
+//      (/proc/self/exe → build/, so this finds build/aura)
+//   3. CWD-relative ./build/aura (project-root CWD case)
+//   4. PATH lookup (last resort)
+// CI fix: previously hardcoded `cd /home/dev/code/aura && ...`
+// which broke on any other absolute path (e.g. CI's
+// /__w/aura/aura/ working dir).
+static std::string find_aura_binary_path() {
+    const char* env = ::getenv("AURA_BIN");
+    if (env && *env && fs::is_regular_file(env)) return env;
+    char buf[4096] = {0};
+    ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        fs::path p(buf);
+        fs::path candidate = p.parent_path() / "aura";
+        if (fs::is_regular_file(candidate)) return candidate.string();
+    }
+    // Fallback: CWD-relative
+    if (fs::is_regular_file("./build/aura")) return fs::absolute("./build/aura").string();
+    return "aura";
+}
 
 static std::string exec_aura(const std::string& code) {
-    std::string cmd = "cd /home/dev/code/aura && echo '" + code +
-                      "' | ./build/aura 2>/dev/null";
+    std::string aura_path = find_aura_binary_path();
+    // Escape single quotes in code for safe shell interpolation
+    std::string escaped;
+    for (char c : code) {
+        if (c == '\'') escaped += "'\\''";
+        else escaped += c;
+    }
+    std::string cmd = "echo '" + escaped + "' | '" + aura_path + "' 2>/dev/null";
     FILE* p = ::popen(cmd.c_str(), "r");
     if (!p) return "";
     std::string out;
