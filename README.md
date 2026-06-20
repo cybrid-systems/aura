@@ -58,7 +58,7 @@ Aura 遵循三个原则：
 ./build.py check    # CI：构建 + 核心测试
 ```
 
-贡献运行时：[`docs/developer/evaluator.md`](docs/developer/evaluator.md)。
+贡献运行时：[`docs/contributing.md`](docs/contributing.md)。
 
 ## License
 

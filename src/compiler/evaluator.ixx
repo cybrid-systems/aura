@@ -1176,7 +1176,7 @@ private:
 
     // Centralized tagged error pair builder ("error" . ("kind" . "message")).
     // Replaces the ~14 duplicated local `auto merr = [this](...)` lambdas
-    // (see docs/developer/evaluator.md §3.2). Body implemented in evaluator_impl.cpp.
+    // (see docs/contributing.md §3). Body implemented in evaluator_impl.cpp.
     // Added in refactor Step 0.1 (pure addition, no call-site changes yet).
     [[nodiscard]] EvalValue make_merr(const std::string& k, const std::string& m);
 
