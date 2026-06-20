@@ -80,6 +80,16 @@ EvalResult IRInterpreter::execute() {
         auto result = run_function(*frame.func, frame.locals, frame.args);
 
         if (std::holds_alternative<PendingCall>(result)) {
+            // Issue #252: PendingCall is the "actual closure call"
+            // moment for the IR interpreter. Bump the IR counter
+            // here (in addition to IROpcode::Call's bump, which
+            // may or may not lead to a PendingCall — some Call
+            // instructions resolve to primitives or other ops
+            // before they reach this point).
+            if (context_.metrics) {
+                context_.metrics->closure_calls_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
             auto& pc = std::get<PendingCall>(result);
             auto new_count = pc.func->local_count + std::max(std::size_t(64), pc.args.size());
             std::vector<EvalValue> new_locals(new_count, make_void());
@@ -750,6 +760,18 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Call: {
+                    // Issue #252: IR path closure dispatch counter.
+                    // The IR has its own runtime_closures_ map
+                    // (not the tree-walker's closures_), so this
+                    // is a separate counter from apply_closure's.
+                    // Bump the IR-specific counter on the shared
+                    // CompilerMetrics (so snapshot() can sum them).
+                    if (context_.metrics) {
+                        context_.metrics->closure_ir_calls.fetch_add(
+                            1, std::memory_order_relaxed);
+                        context_.metrics->closure_calls_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                     auto& callee_val = locals[ops[0]];
                     auto arg_base = ops[1];
                     auto arg_count = ops[2];
@@ -851,6 +873,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Apply: {
+                    // Issue #252: IR path closure dispatch counter
+                    // (same as IROpcode::Call above)
+                    if (context_.metrics) {
+                        context_.metrics->closure_ir_calls.fetch_add(
+                            1, std::memory_order_relaxed);
+                        context_.metrics->closure_calls_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                     auto& closure_val = locals[ops[0]];
                     auto arg_count = ops[1];
                     std::vector<EvalValue> apply_args;

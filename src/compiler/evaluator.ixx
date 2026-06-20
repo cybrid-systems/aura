@@ -498,6 +498,13 @@ public:
 
     void set_module_loaded_callback(ModuleLoadedFn cb) { module_loaded_cb_ = std::move(cb); }
     void set_type_registry(void* reg) { type_registry_ = reg; }
+    // Issue #252: closure dual-path observability. Pass a
+    // CompilerMetrics* (or nullptr to disable). The Evaluator's
+    // apply_closure increments the closure_* counters on the
+    // metrics struct. The IR's IROpcode::Call/Apply also
+    // writes to the same metrics struct (via IRContext).
+    // Both paths use the same single source of truth.
+    void set_compiler_metrics(void* m) { compiler_metrics_ = m; }
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
     // Issue #223: returns the current bridge_epoch from the
     // service (or 0 if no service is bound). Closure-construction
@@ -1234,6 +1241,11 @@ private:
     // shared lock; writer (closures_[cid] = ...) takes unique.
     mutable std::shared_mutex closures_mtx_;
     ClosureBridgeFn closure_bridge_;
+    // Issue #252: optional pointer to CompilerMetrics for
+    // closure_* counter increments. nullptr = counters
+    // disabled (Evaluator constructed without service
+    // orchestration; e.g. legacy standalone usage).
+    void* compiler_metrics_ = nullptr;
     ModuleLoadedFn module_loaded_cb_;
     std::unordered_map<std::string, MacroDef> macros_;
     std::vector<Env*> modules_; // module objects (arena-allocated, indexed by ModuleRef.index)
@@ -1963,6 +1975,8 @@ public:
     [[nodiscard]] std::uint64_t atomic_batch_bumps_saved_total() const noexcept {
         return atomic_batch_bumps_saved_total_.load(std::memory_order_relaxed);
     }
+
+
 
     // ── Issue #184: MutationBoundaryGuard (RAII) ─────────────
     // Acquires the exclusive workspace write lock + bumps

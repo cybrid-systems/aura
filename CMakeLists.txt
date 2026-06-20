@@ -2050,6 +2050,29 @@ target_compile_definitions(test_issue_249 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_249 PRIVATE ${llvm_libs})
 add_test(NAME issue_249_stable_node_ref_ergonomics_verification COMMAND ./test_issue_249)
 
+# Issue #252 verification: closure dual-path observability.
+# Scope-limited close: 5 counters + closure:stats primitive.
+# Follow-up #396 will add the actual fast paths.
+# Phase 2 pilot-46: converted using early helper. Mirrors
+# test_issue_250's per-test source setup (uses CompilerService
+# which pulls in JIT + observability + the TLarena globals).
+aura_add_issue_test(test_issue_252)
+target_include_directories(test_issue_252 PRIVATE src src/compiler)
+target_sources(test_issue_252 PRIVATE
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+    src/compiler/observability_snapshot.h
+    src/core/contract_stub.cpp
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_252 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_252 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_252 PRIVATE ${llvm_libs})
+add_test(NAME issue_252_closure_observability_verification COMMAND ./test_issue_252)
+
 # Issue #250 verification: atomic-batch truly atomic.
 # Integration test (uses CompilerService).
 aura_add_issue_test(test_issue_250)

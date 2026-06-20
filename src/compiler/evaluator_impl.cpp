@@ -8,6 +8,9 @@ module;
 #include <dlfcn.h>
 #include <sys/socket.h>
 
+// Issue #252: closure dual-path observability
+#include "observability_metrics.h"
+
 #include <netinet/in.h>
 #include "runtime_shared.h"
 #include "git_ctx.h"
@@ -9661,6 +9664,80 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         };
         return build_hash(kv);
     });
+
+    // (closure:stats) — Issue #252: observability for
+    // apply_closure dual-path. Hash with the 5 counters
+    // (calls-total, ffi-calls, tw-calls, bridge-calls,
+    // stale-returns) + bridge-fraction (helper for
+    // dashboards: how much of the dispatch goes to the
+    // bridge path, which is the slowest).
+    primitives_.add("closure:stats", [this](const auto&) -> EvalValue {
+        // Re-use the build_hash from atomic-batch:stats
+        // (defined in the lambda above). It's the same code
+        // pattern, so we re-bind to keep the closure:stats
+        // self-contained.
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        // Issue #252: closure stats. Read from compiler_metrics_
+        // (shared with the IR's IROpcode::Call/Apply). If metrics
+        // is not set (legacy standalone use), all counters are 0.
+        std::uint64_t calls = 0, ffi_c = 0, tw_c = 0, ir_c = 0;
+        std::uint64_t bridge_c = 0, stale_c = 0;
+        if (compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            calls = m->closure_calls_total.load(std::memory_order_relaxed);
+            ffi_c = m->closure_ffi_calls.load(std::memory_order_relaxed);
+            tw_c = m->closure_tw_calls.load(std::memory_order_relaxed);
+            ir_c = m->closure_ir_calls.load(std::memory_order_relaxed);
+            bridge_c = m->closure_bridge_calls.load(std::memory_order_relaxed);
+            stale_c = m->closure_stale_returns.load(std::memory_order_relaxed);
+        }
+        std::uint64_t bridge = bridge_c;
+        // bridge-fraction * 100 (integer percent). 0 if no calls.
+        std::int64_t bridge_pct = calls > 0
+            ? static_cast<std::int64_t>((bridge * 100) / calls)
+            : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"calls-total", make_int(static_cast<std::int64_t>(calls))},
+            {"ffi-calls", make_int(static_cast<std::int64_t>(ffi_c))},
+            {"tw-calls", make_int(static_cast<std::int64_t>(tw_c))},
+            {"ir-calls", make_int(static_cast<std::int64_t>(ir_c))},
+            {"bridge-calls", make_int(static_cast<std::int64_t>(bridge))},
+            {"stale-returns", make_int(static_cast<std::int64_t>(stale_c))},
+            {"bridge-fraction-pct", make_int(bridge_pct)},
+        };
+        return build_hash(kv);
+    });
 }
 
 
@@ -17981,8 +18058,21 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
                                                   std::span<const EvalValue> args) {
+    // Issue #252: closure dual-path observability. Bump the
+    // total counter on every call. The path-specific counters
+    // (ffi / tw / bridge / ir) are bumped in each branch.
+    // The IR path (runtime_closures_) bumps the ir counter
+    // via the shared metrics pointer (set by service.ixx).
+    if (compiler_metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+        m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
+    }
     // Check for foreign function closure (cid < ffi_runtime_.func_count())
     if (cid < ffi_runtime_.func_count()) {
+        if (compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            m->closure_ffi_calls.fetch_add(1, std::memory_order_relaxed);
+        }
         auto fidx = cid;
         if (fidx < ffi_runtime_.func_count()) {
             auto& ff = ffi_runtime_.func_at(static_cast<std::size_t>(fidx));
@@ -18070,6 +18160,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
         }
     }
     if (cl_found) {
+        if (compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            m->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
+        }
         // Issue #145 Phase 2.3 — materialize the call env from
         // the SoA arena (env_frames_[cl.env_id]) -- legacy cl.env pointer path removed in P0.
         // materialize_call_env now takes env_frames_mtx_
@@ -18108,6 +18202,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
             // arena. The body_source re-parse fallback is a
             // future slice (requires parser integration).
             if (is_bridge_stale(cl_copy.bridge_epoch, current_bridge_epoch())) {
+                if (compiler_metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+                    m->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+                }
                 return std::nullopt;
             }
             auto r = eval_flat(*cl_copy.flat, *cl_copy.pool, cl_copy.body_id, ne);
@@ -18119,6 +18217,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
 
     // Try IR bridge
     if (closure_bridge_) {
+        if (compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            m->closure_bridge_calls.fetch_add(1, std::memory_order_relaxed);
+        }
         return closure_bridge_(cid, args);
     }
 
@@ -20237,6 +20339,11 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         // Check for foreign function (high bit set)
                         if (cid < ffi_runtime_.func_count()) {
                             // Dispatch FFI through apply_closure
+                            // (Issue #252: apply_closure increments
+                            // closure_calls_total + closure_ffi_calls
+                            // for the FFI branch — no double-count
+                            // here because eval_flat's FFI inline path
+                            // delegates the counter bumps to it.)
                             std::size_t named_count = 0;
                             std::vector<EvalValue> cargs;
                             for (std::size_t i = 0; i + 1 < v.children.size(); ++i) {
@@ -20250,6 +20357,17 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 return *result;
                             return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
                                                               "eval_flat: foreign call failed"});
+                        }
+                        // Issue #252: eval_flat's inline TW closure
+                        // call path does NOT go through apply_closure
+                        // (it inlines the body for TCO). Bump the
+                        // total + TW counter here so the snapshot is
+                        // consistent with apply_closure's other
+                        // entry points.
+                        if (compiler_metrics_) {
+                            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+                            m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
+                            m->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
                         }
                         auto it = closures_.find(cid);
                         if (it == closures_.end())

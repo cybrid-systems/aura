@@ -322,6 +322,14 @@ public:
         evaluator_.set_arena(&arena_);
         evaluator_.set_temp_arena(&temp_arena_);
         evaluator_.set_type_registry(&type_registry_);
+        // Issue #252: wire the shared CompilerMetrics to the
+        // Evaluator. apply_closure increments the closure_*
+        // counters on this struct (also incremented by the
+        // IR's IROpcode::Call/Apply via IRContext). This
+        // gives us a single source of truth for the dispatch
+        // counters, so the snapshot and closure:stats read
+        // a consistent value.
+        evaluator_.set_compiler_metrics(&metrics_);
         evaluator_.set_compiler_service(this);
         evaluator_.set_session_id(session_id_);
         // Phase 2: EDSL IR cache V2 hooks. Let evaluator_impl.cpp mark
@@ -3872,6 +3880,17 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         s.atomic_batch_ops_total = evaluator_.atomic_batch_ops_total();
         s.atomic_batch_rollbacks = evaluator_.atomic_batch_rollbacks();
         s.atomic_batch_bumps_saved_total = evaluator_.atomic_batch_bumps_saved_total();
+        // Issue #252: closure dual-path observability. Read
+        // from the shared CompilerMetrics struct (also bumped
+        // by the IR's IROpcode::Call/Apply). The Evaluator's
+        // apply_closure writes to the same struct via the
+        // compiler_metrics_ pointer set in the constructor.
+        s.closure_calls_total = metrics_.closure_calls_total.load(std::memory_order_relaxed);
+        s.closure_ffi_calls = metrics_.closure_ffi_calls.load(std::memory_order_relaxed);
+        s.closure_tw_calls = metrics_.closure_tw_calls.load(std::memory_order_relaxed);
+        s.closure_ir_calls = metrics_.closure_ir_calls.load(std::memory_order_relaxed);
+        s.closure_bridge_calls = metrics_.closure_bridge_calls.load(std::memory_order_relaxed);
+        s.closure_stale_returns = metrics_.closure_stale_returns.load(std::memory_order_relaxed);
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
         // shared_lock on workspace_mtx_ to keep the flat

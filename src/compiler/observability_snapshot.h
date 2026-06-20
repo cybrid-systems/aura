@@ -40,6 +40,21 @@ struct CompilerSnapshot {
     std::uint64_t atomic_batch_ops_total = 0;
     std::uint64_t atomic_batch_rollbacks = 0;
     std::uint64_t atomic_batch_bumps_saved_total = 0;
+    // Issue #252: closure dual-path observability. Counters
+    // for the 3 dispatch paths in apply_closure + stale-bridge
+    // returns (Issue #223). The fast-path optimization in
+    // #252 follow-ups will be measured by changes in these.
+    // - closure_calls_total: every apply_closure call
+    // - closure_ffi_calls: FFI-dispatched
+    // - closure_tw_calls: tree-walker closures_ map hit
+    // - closure_bridge_calls: closure_bridge_ (IR/JIT)
+    // - closure_stale_returns: stale-bridge nullopt returns
+    std::uint64_t closure_calls_total = 0;
+    std::uint64_t closure_ffi_calls = 0;
+    std::uint64_t closure_tw_calls = 0;
+    std::uint64_t closure_bridge_calls = 0;
+    std::uint64_t closure_ir_calls = 0;
+    std::uint64_t closure_stale_returns = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).
