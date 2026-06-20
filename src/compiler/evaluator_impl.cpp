@@ -121,6 +121,13 @@ void register_pair_and_string_primitives(std::function<void(std::string, PrimFn)
                                          std::pmr::vector<Pair>& pairs,
                                          std::pmr::vector<std::string>& string_heap,
                                          std::vector<EvalValue>& error_values);
+void register_list_primitives(
+    std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
+    std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
+    std::function<EvalValue(const EvalValue& fn, const EvalValue& arg)> apply_unary,
+    std::function<bool(const EvalValue& fn, const EvalValue& arg)> apply_pred,
+    std::function<EvalValue(const EvalValue& fn, const EvalValue& acc, const EvalValue& arg)>
+        apply_binary);
 }
 
 // Forward decl: macro body cloner (defined at end of file)
@@ -1767,189 +1774,10 @@ void Evaluator::init_pair_primitives() {
         return parse_value();
     });
 
-    primitives_.add("list", [this](std::span<const EvalValue> a) {
-        // Build proper list (pair chain ending with void)
-        EvalValue result = make_void();
-        for (auto it = a.rbegin(); it != a.rend(); ++it) {
-            auto id = pairs_.size();
-            pairs_.push_back({*it, result});
-            result = make_pair(id);
-        }
-        return result;
-    });
-    primitives_.add("list?", [this](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_bool(true);
-        auto v = a[0];
-        while (!is_end_of_list(v)) {
-            if (!is_pair(v))
-                return make_bool(false);
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs_.size())
-                return make_bool(false);
-            v = pairs_[idx].cdr; // follow cdr chain
-        }
-        return make_int(1);
-    });
-    primitives_.add("null?", [](const auto& a) {
-        return make_bool(!a.empty() && (is_void(a[0]) || (is_int(a[0]) && as_int(a[0]) == 0)));
-    });
-    primitives_.add("length", [this](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        auto v = a[0];
-        std::int64_t n = 0;
-        while (!is_end_of_list(v)) {
-            if (!is_pair(v))
-                return make_int(0);
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs_.size())
-                return make_int(0);
-            v = pairs_[idx].cdr;
-            n++;
-        }
-        return make_int(n);
-    });
-    primitives_.add("list-ref", [this](std::span<const EvalValue> a) {
-        if (a.size() < 2) {
-            auto __s = string_heap_.size();
-            string_heap_.push_back("list-ref: too few args");
-            auto __e = error_values_.size();
-            error_values_.push_back(make_string(__s));
-            return make_error(__e);
-        }
-        auto v = a[0];
-        auto pos = static_cast<std::size_t>(as_int(a[1]));
-        for (std::size_t i = 0; i < pos; ++i) {
-            if (!is_pair(v)) {
-                auto __s = string_heap_.size();
-                string_heap_.push_back("list-ref: index out of bounds");
-                auto __e = error_values_.size();
-                error_values_.push_back(make_string(__s));
-                return make_error(__e);
-            }
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs_.size()) {
-                auto __s = string_heap_.size();
-                string_heap_.push_back("list-ref: corrupted pair");
-                auto __e = error_values_.size();
-                error_values_.push_back(make_string(__s));
-                return make_error(__e);
-            }
-            v = pairs_[idx].cdr;
-        }
-        if (is_pair(v)) {
-            auto idx = as_pair_idx(v);
-            return idx < pairs_.size() ? pairs_[idx].car : make_int(0);
-        }
-        return v;
-    });
-    // (member val list) — Find val in list using content equality (equal?)
-    // Returns the tail of the list starting with val, or #f if not found
-    primitives_.add("member", [this](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(0);
-        auto& val = a[0];
-        auto v = a[1];
-        auto elem_eq = [&](const EvalValue& x, const EvalValue& y) -> bool {
-            if (x == y)
-                return true;
-            if (is_int(x) && is_int(y))
-                return as_int(x) == as_int(y);
-            if (is_string(x) && is_string(y)) {
-                auto xi = as_string_idx(x), yi = as_string_idx(y);
-                return xi < string_heap_.size() && yi < string_heap_.size() &&
-                       string_heap_[xi] == string_heap_[yi];
-            }
-            if (is_bool(x) && is_bool(y))
-                return as_bool(x) == as_bool(y);
-            return false;
-        };
-        while (!is_end_of_list(v)) {
-            if (!is_pair(v))
-                return make_int(0);
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs_.size())
-                return make_int(0);
-            if (elem_eq(pairs_[idx].car, val))
-                return v;
-            v = pairs_[idx].cdr;
-        }
-        return make_int(0);
-    });
-    // (append list ...) — Variadic: concatenate all provided lists
-    primitives_.add("append", [this](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_void();
-        if (a.size() < 2)
-            return a[0];
-        // Iteratively append all arguments
-        auto result = a[0];
-        for (std::size_t i = 1; i < a.size(); ++i) {
-            auto list2 = a[i];
-            if (is_end_of_list(result)) {
-                result = list2;
-                continue;
-            }
-            EvalValue new_result = make_void();
-            EvalValue tail = make_void();
-            auto v = result;
-            while (!is_end_of_list(v)) {
-                if (!is_pair(v)) {
-                    result = a[0];
-                    break;
-                }
-                auto idx = as_pair_idx(v);
-                if (idx >= pairs_.size()) {
-                    result = a[0];
-                    break;
-                }
-                auto new_id = pairs_.size();
-                pairs_.push_back({pairs_[idx].car, make_void()});
-                auto new_pair = make_pair(new_id);
-                if (is_void(new_result))
-                    new_result = new_pair;
-                else {
-                    auto tidx = as_pair_idx(tail);
-                    pairs_[tidx].cdr = new_pair;
-                }
-                tail = new_pair;
-                v = pairs_[idx].cdr;
-            }
-            if (!is_void(tail)) {
-                auto tidx = as_pair_idx(tail);
-                pairs_[tidx].cdr = list2;
-            }
-            if (!is_void(new_result))
-                result = new_result;
-        }
-        return result;
-    });
-    primitives_.add("reverse", [this](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        auto v = a[0];
-        EvalValue result = make_void();
-        while (!is_end_of_list(v)) {
-            if (!is_pair(v))
-                return a[0];
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs_.size())
-                return a[0];
-            auto new_id = pairs_.size();
-            pairs_.push_back({pairs_[idx].car, result});
-            result = make_pair(new_id);
-            v = pairs_[idx].cdr;
-        }
-        return result;
-    });
-    primitives_.add("map", [this](std::span<const EvalValue> a) {
-        // (map func list) — apply func to each element, collect results
-        if (a.size() < 2 || is_void(a[1]))
-            return make_void();
-
-        // Helper to apply a function (closure or primitive) to a single argument
-        auto apply_fn = [&](const EvalValue& fn, const EvalValue& arg) -> EvalValue {
+    primitives_detail::register_list_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        pairs_, string_heap_, error_values_,
+        [this](const EvalValue& fn, const EvalValue& arg) -> EvalValue {
             if (is_primitive(fn)) {
                 auto slot = as_primitive_slot(fn);
                 if (slot >= primitives_.slot_count())
@@ -1965,48 +1793,8 @@ void Evaluator::init_pair_primitives() {
                 return result ? *result : make_void();
             }
             return make_void();
-        };
-
-        // Walk the list, apply func to each element, build result in order
-        EvalValue result = make_void();
-        EvalValue tail = make_void();
-        bool first = true;
-        EvalValue current = a[1];
-
-        while (is_pair(current)) {
-            auto idx = as_pair_idx(current);
-            if (idx >= pairs_.size())
-                break;
-
-            auto mapped = apply_fn(a[0], pairs_[idx].car);
-
-            auto new_id = pairs_.size();
-            pairs_.push_back({mapped, make_void()});
-            auto new_pair = make_pair(new_id);
-
-            if (first) {
-                result = new_pair;
-                tail = new_pair;
-                first = false;
-            } else {
-                auto tail_idx = as_pair_idx(tail);
-                if (tail_idx < pairs_.size())
-                    pairs_[tail_idx].cdr = new_pair;
-                tail = new_pair;
-            }
-
-            current = pairs_[idx].cdr;
-        }
-
-        return result;
-    });
-    primitives_.add("filter", [this](std::span<const EvalValue> a) {
-        // (filter pred list) — keep elements where pred returns truthy
-        if (a.size() < 2 || is_void(a[1]))
-            return make_void();
-
-        // Helper to apply a predicate (closure or primitive) to a single argument
-        auto apply_pred = [&](const EvalValue& fn, const EvalValue& arg) -> bool {
+        },
+        [this](const EvalValue& fn, const EvalValue& arg) -> bool {
             if (is_primitive(fn)) {
                 auto slot = as_primitive_slot(fn);
                 if (slot >= primitives_.slot_count())
@@ -2022,41 +1810,25 @@ void Evaluator::init_pair_primitives() {
                 return result ? aura::compiler::pure::is_truthy(*result) : false;
             }
             return false;
-        };
-
-        EvalValue result = make_void();
-        EvalValue tail = make_void();
-        bool first = true;
-        EvalValue current = a[1];
-
-        while (is_pair(current)) {
-            auto idx = as_pair_idx(current);
-            if (idx >= pairs_.size())
-                break;
-
-            bool keep = apply_pred(a[0], pairs_[idx].car);
-            if (keep) {
-                auto new_id = pairs_.size();
-                pairs_.push_back({pairs_[idx].car, make_void()});
-                auto new_pair = make_pair(new_id);
-
-                if (first) {
-                    result = new_pair;
-                    tail = new_pair;
-                    first = false;
-                } else {
-                    auto tail_idx = as_pair_idx(tail);
-                    if (tail_idx < pairs_.size())
-                        pairs_[tail_idx].cdr = new_pair;
-                    tail = new_pair;
-                }
+        },
+        [this](const EvalValue& fn, const EvalValue& acc, const EvalValue& arg) -> EvalValue {
+            if (is_primitive(fn)) {
+                auto slot = as_primitive_slot(fn);
+                if (slot >= primitives_.slot_count())
+                    return make_void();
+                auto prim = primitives_.lookup(primitives_.name_for_slot(slot));
+                if (!prim)
+                    return make_void();
+                return (*prim)({acc, arg});
             }
+            if (is_closure(fn)) {
+                auto cid = as_closure_id(fn);
+                auto result = apply_closure(cid, {acc, arg});
+                return result ? *result : make_void();
+            }
+            return make_void();
+        });
 
-            current = pairs_[idx].cdr;
-        }
-
-        return result;
-    });
 
     // ── Vector primitives ─────────────────────────────────────────
     primitives_.add("vector", [this](std::span<const EvalValue> a) {
@@ -4544,110 +4316,6 @@ void Evaluator::init_pair_primitives() {
     });
 
     // ── List utility primitives ────────────────────────────────────
-    primitives_.add("take", [this](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_void();
-        auto n = static_cast<std::size_t>(as_int(a[0]));
-        auto v = a[1];
-        if (n == 0 || is_end_of_list(v))
-            return make_void();
-        EvalValue result = make_void();
-        // Build result in reverse then reverse it
-        for (std::size_t i = 0; i < n; ++i) {
-            if (!is_pair(v))
-                return result;
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs_.size())
-                return result;
-            auto new_id = pairs_.size();
-            pairs_.push_back({pairs_[idx].car, result});
-            result = make_pair(new_id);
-            v = pairs_[idx].cdr;
-        }
-        // Reverse to get correct order
-        EvalValue final = make_void();
-        while (!is_end_of_list(result)) {
-            if (!is_pair(result))
-                break;
-            auto idx = as_pair_idx(result);
-            if (idx >= pairs_.size())
-                break;
-            auto nid = pairs_.size();
-            pairs_.push_back({pairs_[idx].car, final});
-            final = make_pair(nid);
-            result = pairs_[idx].cdr;
-        }
-        return final;
-    });
-    primitives_.add("drop", [this](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_void();
-        auto n = static_cast<std::size_t>(as_int(a[0]));
-        auto v = a[1];
-        for (std::size_t i = 0; i < n; ++i) {
-            if (is_end_of_list(v))
-                return make_void();
-            if (!is_pair(v))
-                return make_void();
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs_.size())
-                return make_void();
-            v = pairs_[idx].cdr;
-        }
-        return v;
-    });
-    primitives_.add("foldl", [this](std::span<const EvalValue> a) {
-        if (a.size() < 3)
-            return make_void();
-        auto f = a[0];
-        auto acc = a[1];
-        auto lst = a[2];
-
-        // Handle primitive function (e.g., (foldl + 0 (list 1 2 3)))
-        if (is_primitive(f)) {
-            auto slot = as_primitive_slot(f);
-            if (slot >= primitives_.slot_count())
-                return make_void();
-            auto prim = primitives_.lookup(primitives_.name_for_slot(slot));
-            if (!prim)
-                return make_void();
-
-            while (!is_end_of_list(lst)) {
-                if (!is_pair(lst))
-                    break;
-                auto idx = as_pair_idx(lst);
-                if (idx >= pairs_.size())
-                    break;
-
-                // Call primitive with (acc, car)
-                acc = (*prim)({acc, pairs_[idx].car});
-                lst = pairs_[idx].cdr;
-            }
-            return acc;
-        }
-
-        // Handle closure function
-        if (!is_closure(f))
-            return make_void();
-        auto cid = as_closure_id(f);
-
-        while (!is_end_of_list(lst)) {
-            if (!is_pair(lst))
-                break;
-            auto idx = as_pair_idx(lst);
-            if (idx >= pairs_.size())
-                break;
-
-            // Build args: (acc element) for binary foldl, (acc) for unary
-            std::vector<EvalValue> fargs = {acc, pairs_[idx].car};
-            auto result = apply_closure(cid, fargs);
-            if (!result)
-                break;
-            acc = *result;
-            lst = pairs_[idx].cdr;
-        }
-        return acc;
-    });
 
     // ── Typed mutation operators ──────────────────────────────────
 
