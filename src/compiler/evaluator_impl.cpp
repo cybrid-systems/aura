@@ -2097,7 +2097,8 @@ void Evaluator::init_pair_primitives() {
                 } else if (types::is_int(key_val)) {
                     kh = static_cast<std::uint64_t>(types::as_int(key_val)) * 0x9e3779b97f4a7c15ull;
                 }
-                auto fp = static_cast<std::uint8_t>(kh >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((kh >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 // Check if key already exists (need string content comparison)
                 bool found = false;
                 for (std::size_t at = 0; at < cap; ++at) {
@@ -2786,7 +2787,8 @@ void Evaluator::init_pair_primitives() {
         };
         for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
             auto h = khash(a[i]);
-            auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
             for (std::size_t at = 0; at < cap; ++at) {
                 auto idx = ((h >> 1) + at) & (cap - 1);
                 if (meta[idx] == 0xFF) {
@@ -9627,7 +9629,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -9686,7 +9689,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -9777,7 +9781,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -9842,7 +9847,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -9910,7 +9916,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -9948,6 +9955,96 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             {"parent-of-call-count", make_int(static_cast<std::int64_t>(parent_calls))},
             {"mark-dirty-upward-call-count", make_int(static_cast<std::int64_t>(dirty_calls))},
             {"mark-dirty-total-nodes", make_int(static_cast<std::int64_t>(dirty_nodes))},
+        };
+        return build_hash(kv);
+    });
+
+    // (compile:multi-mutation-stats) — Issue #258: observability
+    // for the multi-mutation incremental typecheck path.
+    // Hash with 4 fields:
+    //   - cache-hits-total: lifetime total clean nodes with
+    //     valid cached types (skipped re-inference)
+    //   - cache-misses-total: lifetime total nodes that were
+    //     re-inferred (dirty or no cache)
+    //   - stale-cache-total: lifetime total cached types
+    //     rejected due to free type vars (pre-solve cache
+    //     pollution)
+    //   - delta-solve-time-us: lifetime total microseconds
+    //     spent in ConstraintSystem::solve_delta()
+    //   - multi-mutation-recompute-ratio-bp: derived from
+    //     the 3 counters — cache_misses / total in basis
+    //     points (0-10000). 0 = no recomputation, 10000 =
+    //     all recomputation. The AC1 metric from #258.
+    // Returns a hash with all 5 counts (all 0 if no typecheck
+    // has happened yet, or if no service is bound).
+    primitives_.add("compile:multi-mutation-stats", [this](const auto&) -> EvalValue {
+        // Re-use the build_hash pattern from above primitives.
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            // Issue #258: capacity 32 (was 8 in earlier primitives)
+            // because this primitive returns 5 keys (cache-hits,
+            // cache-misses, stale-cache, delta-solve-time-us, ratio-bp).
+            // Capacity 8 worked for the 4-key primitives (#252/#253/#254/#255/#256)
+            // but 5 keys + the FNV-1a collision pattern occasionally
+            // failed to insert one key (val=11 = void returned by
+            // hash-ref for missing keys). 32 leaves plenty of headroom
+            // and avoids the rare 5-key + cap-8 collision.
+            auto* ht = FlatHashTable::create(32);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                // Issue #258: mask fp to avoid 0xFF collision
+                // with HASH_EMPTY sentinel. Without the mask,
+                // a key whose FNV-1a top byte is 0x7F would
+                // produce fp=0xFF (=HASH_EMPTY), and hash-ref
+                // would skip the slot thinking it's empty.
+                // (h >> 57) gives a 7-bit value [0x00..0x7F];
+                // (h >> 57) & 0x7F keeps the 7 bits; | 0x80
+                // sets the high bit so fp is in [0x80..0xFE],
+                // never 0xFF.
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t hits = 0, misses = 0, stale = 0, solve_us = 0;
+        if (compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            hits    = m->typecheck_cache_hits_total.load(std::memory_order_relaxed);
+            misses  = m->typecheck_cache_misses_total.load(std::memory_order_relaxed);
+            stale   = m->typecheck_stale_cache_total.load(std::memory_order_relaxed);
+            solve_us = m->delta_solve_time_us.load(std::memory_order_relaxed);
+        }
+        std::uint64_t total = hits + misses + stale;
+        std::uint64_t ratio_bp = (total > 0) ? (misses * 10000u / total) : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"cache-hits-total", make_int(static_cast<std::int64_t>(hits))},
+            {"cache-misses-total", make_int(static_cast<std::int64_t>(misses))},
+            {"stale-cache-total", make_int(static_cast<std::int64_t>(stale))},
+            {"delta-solve-time-us", make_int(static_cast<std::int64_t>(solve_us))},
+            {"multi-mutation-recompute-ratio-bp", make_int(static_cast<std::int64_t>(ratio_bp))},
         };
         return build_hash(kv);
     });
@@ -16598,7 +16695,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         for (auto& [k, v] : kv) {
             std::uint64_t h = 0xcbf29ce484222325ull;
             for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-            auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
             auto kidx = string_heap_.size();
             string_heap_.push_back(k);
             EvalValue key_ev = make_string(kidx);
@@ -16730,7 +16828,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -16805,7 +16904,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -17108,7 +17208,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 for (auto& [k, v] : kv) {
                     std::uint64_t h = 0xcbf29ce484222325ull;
                     for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                    auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                     auto kidx = string_heap_.size();
                     string_heap_.push_back(k);
                     EvalValue key_ev = make_string(kidx);
@@ -17188,7 +17289,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -17362,7 +17464,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
             for (auto& [k, v] : kv) {
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -17471,7 +17574,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
                 // Hash the key with FNV-1a (matches user-level (hash ...) behavior).
                 std::uint64_t h = 0xcbf29ce484222325ull;
                 for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
                 // Intern the key as a String EvalValue.
                 auto kidx = string_heap_.size();
                 string_heap_.push_back(k);
@@ -17626,7 +17730,8 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
         auto hput = [&](const std::string& k, const EvalValue& v) -> bool {
             std::uint64_t h = 0xcbf29ce484222325ull;
             for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-            auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
             auto kidx = string_heap_.size();
             string_heap_.push_back(k);
             EvalValue key_ev = make_string(kidx);
@@ -18240,7 +18345,8 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
     for (auto& [k, v] : kv) {
         std::uint64_t h = 0xcbf29ce484222325ull;
         for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-        auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;  // Issue #258: avoid HASH_EMPTY collision
         auto kidx = string_heap_.size();
         string_heap_.push_back(k);
         EvalValue key_ev = make_string(kidx);

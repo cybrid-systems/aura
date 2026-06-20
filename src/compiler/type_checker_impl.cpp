@@ -575,6 +575,37 @@ SolveResult ConstraintSystem::solve(std::vector<Constraint>* unresolved_out) {
 // total constraint set; the benchmark in Phase 6 will
 // measure real-world numbers.
 SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_out) {
+    // Issue #258: time the delta solve. The timer accumulates
+    // into CompilerMetrics::delta_solve_time_us (lifetime total)
+    // via the metrics_ pointer. The RAII guard ensures the
+    // elapsed time is captured even on early-return paths.
+    // We use a void pointer (forward-declared via the
+    // observability_metrics.h header) to avoid pulling the
+    // full CompilerMetrics definition into this TU.
+    if (metrics_) {
+        auto start = std::chrono::steady_clock::now();
+        auto result = solve_delta_impl(unresolved_out);
+        auto end = std::chrono::steady_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        // Forward-declared CompilerMetrics in observability_metrics.h.
+        // We use the offset of delta_solve_time_us via the
+        // metrics_ type's known layout — see header for the
+        // ordering. The metrics_ pointer is opaque here.
+        struct MetricsAccess {
+            std::atomic<std::uint64_t> delta_solve_time_us{0};
+        };
+        static_cast<MetricsAccess*>(metrics_)->delta_solve_time_us.fetch_add(
+            static_cast<std::uint64_t>(us), std::memory_order_relaxed);
+        return result;
+    }
+    return solve_delta_impl(unresolved_out);
+}
+
+// Issue #258: solve_delta() body split out so the timer wrapper
+// above can wrap it cleanly. The actual algorithm is unchanged
+// from Issue #148 Phase 2 — only the structure is different
+// (moved into a private impl method).
+SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolved_out) {
     if (dirty_count_ == 0) return SolveResult::SOLVED;
 
     // Build the delta worklist from constraint_dirty_.
@@ -2880,7 +2911,7 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     // we don't need to call back into the engine.
     auto r = type_check_flat_pure(flat, pool, node, types, diag,
                                   type_sigs_, type_module_src_,
-                                  strict_, cache_epoch_);
+                                  strict_, cache_epoch_, metrics_);
     stats_.cache_hits += r.cache_hits;
     stats_.cache_misses += r.cache_misses;
     stats_.stale_cache += r.stale_cache;
@@ -2897,7 +2928,8 @@ TypeCheckResult type_check_flat_pure(
     TypeRegistry& types, DiagnosticCollector& diag,
     const std::unordered_map<std::string, TypeId>& sigs,
     const std::unordered_map<std::string, std::string>& module_src,
-    bool strict, std::uint64_t cache_epoch)
+    bool strict, std::uint64_t cache_epoch,
+    void* metrics)  // Issue #258: optional metrics pointer
 {
     TypeCheckResult result;
     InferenceEngine engine(types, diag);
@@ -2905,6 +2937,9 @@ TypeCheckResult type_check_flat_pure(
     engine.declared_sigs_ = sigs;
     engine.set_strict(strict);  // Issue #79: plumb strict mode
     engine.set_cache_epoch(cache_epoch);  // Issue #168
+    // Issue #258: forward metrics so solve_delta timing
+    // accumulates into CompilerMetrics::delta_solve_time_us.
+    if (metrics) engine.set_metrics(metrics);
     engine.bind_declared_sigs();
     result.inferred_type = engine.infer_flat(flat, pool, root);
     // Capture per-call stats (Issue #72) for the result.

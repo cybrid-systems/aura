@@ -117,6 +117,20 @@ public:
     // any unification failure, SolveResult::TIMEOUT if the
     // pass limit is hit before fixpoint.
     SolveResult solve_delta(std::vector<Constraint>* unresolved_out = nullptr);
+    // Issue #258: split-out implementation of solve_delta().
+    // The public solve_delta() wraps this with a timer that
+    // accumulates into CompilerMetrics::delta_solve_time_us.
+    // Splitting lets the wrapper use a uniform RAII-style
+    // pattern without duplicating the early-return paths.
+    SolveResult solve_delta_impl(std::vector<Constraint>* unresolved_out);
+    // Issue #258: metrics pointer for solve_delta() timing.
+    // Set by CompilerService::typecheck_full() and
+    // incremental_infer() via set_metrics() (same pattern as
+    // the JIT / IR interpreter). Null by default (unit tests
+    // that construct ConstraintSystem directly don't need it).
+    void* metrics_ = nullptr;
+
+    void set_metrics(void* m) { metrics_ = m; }
     // O(1) "is the constraint set dirty?". True iff
     // add_delta has been called since the last clear or solve.
     bool is_dirty() const { return dirty_count_ > 0; }
@@ -338,6 +352,10 @@ public:
     // everything). This is the safety net for mutations
     // that don't set is_dirty on the right nodes.
     void set_cache_epoch(std::uint64_t epoch) { cache_epoch_ = epoch; }
+    // Issue #258: forward the metrics pointer to the
+    // ConstraintSystem so solve_delta timing accumulates
+    // into CompilerMetrics::delta_solve_time_us.
+    void set_metrics(void* m) { cs_.set_metrics(m); }
     std::uint64_t epoch_invalidations() const {
         return epoch_invalidations_;
     }
@@ -526,7 +544,8 @@ export TypeCheckResult type_check_flat_pure(
     const std::unordered_map<std::string, aura::core::TypeId>& sigs = {},
     const std::unordered_map<std::string, std::string>& module_src = {},
     bool strict = false,
-    std::uint64_t cache_epoch = 0)
+    std::uint64_t cache_epoch = 0,
+    void* metrics = nullptr)  // Issue #258: optional metrics pointer
     // Issue #213 follow-up: C++26 contract. The function
     // is total: it handles any `root` (including
     // NULL_NODE — returns an invalid TypeId), any sigs /
@@ -571,6 +590,15 @@ export struct TypeChecker {
     // the per-call InferenceEngine, which uses it to
     // invalidate the cache on epoch advance.
     void set_cache_epoch(std::uint64_t epoch) { cache_epoch_ = epoch; }
+    // Issue #258: plumb the CompilerMetrics pointer through
+    // to ConstraintSystem::solve_delta() for timing. Today
+    // solve_delta isn't called from infer_flat_partial, so
+    // this is a future-use hook — but having the plumbing
+    // in place means the actual optimization wiring in
+    // a follow-up issue can just call set_metrics(&metrics)
+    // and start timing automatically.
+    void set_metrics(void* m) { metrics_ = m; }
+    void* metrics_ = nullptr;
 
     // Issue #130: cache hit rate (0.0 .. 1.0). Computed
     // as hits / (hits + misses + stale). Returns 0.0 if

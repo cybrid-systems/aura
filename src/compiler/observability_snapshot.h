@@ -80,6 +80,17 @@ struct CompilerSnapshot {
     std::uint64_t parent_of_call_count = 0;
     std::uint64_t mark_dirty_upward_call_count = 0;
     std::uint64_t mark_dirty_total_nodes = 0;
+    // Issue #258: multi-mutation incremental type checking
+    // observability. Mirrors CompilerMetrics::{typecheck_cache_hits_total,
+    // typecheck_cache_misses_total, typecheck_stale_cache_total,
+    // delta_solve_time_us}. multi_mutation_recompute_ratio is
+    // computed at snapshot read time as cache_misses /
+    // (hits + misses + stale) in basis points (0-10000).
+    std::uint64_t typecheck_cache_hits_total = 0;
+    std::uint64_t typecheck_cache_misses_total = 0;
+    std::uint64_t typecheck_stale_cache_total = 0;
+    std::uint64_t delta_solve_time_us = 0;
+    std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).
