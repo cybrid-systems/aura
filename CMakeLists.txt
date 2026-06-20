@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 4.3)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
     "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
 project(aura LANGUAGES CXX C)
+include(${CMAKE_SOURCE_DIR}/cmake/AuraTest.cmake)
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -97,12 +98,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_G
 endif()
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
-target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers
-    -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter
-    -Wno-misleading-indentation -Wno-parentheses
-)
+aura_test_compile_options(aura)
 
 # C++26 Contracts — use the native trailing `pre`/`post` function specifiers
 # and the `contract_assert()` statement. GCC 16.1 supports all three (and the
@@ -257,10 +253,7 @@ target_sources(test_ir PRIVATE
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
-target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter
-)
+aura_test_compile_options(test_ir)
 target_include_directories(test_ir PRIVATE src src/compiler)
 target_link_libraries(test_ir PRIVATE stdc++ stdc++exp aura-reflect)
 
@@ -304,10 +297,7 @@ target_include_directories(test_concurrent PRIVATE src src/compiler)
 target_compile_definitions(test_concurrent PRIVATE AURA_HAVE_LLVM=1)
 target_include_directories(test_concurrent PRIVATE ${LLVM_INCLUDE_DIRS})
 target_link_libraries(test_concurrent PRIVATE ${llvm_libs})
-target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_concurrent)
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 
@@ -412,10 +402,7 @@ target_sources(aura_test_objects PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/type_concepts.ixx)
 target_include_directories(aura_test_objects PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura_test_objects PUBLIC cxx_std_26)
-target_compile_options(aura_test_objects PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(aura_test_objects)
 target_link_libraries(aura_test_objects PUBLIC stdc++ stdc++exp aura-reflect)
 
 # Phase 2 dedup helper (definition placed early so it precedes all
@@ -437,10 +424,7 @@ function(aura_add_issue_test NAME)
     # visible in the per-target dir via the launcher-installed
     # symlinks, so test_issue_* binaries can `import` modules
     # without re-compiling the .ixx themselves.
-    target_compile_options(${NAME} PRIVATE -Wall -Wextra -Wpedantic
-        -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-        -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-        -Wno-parentheses)
+    aura_test_compile_options(${NAME})
     # Fix #1: link the shared test object lib. Compiled once, used
     # by all 55 test_issue_* binaries.
     target_link_libraries(${NAME} PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
@@ -495,94 +479,38 @@ target_include_directories(test_issue_117 PRIVATE src)
 # SolveResult (not bool) and unbound-variable / module-member
 # diagnostic paths tag the AST node. Standalone binary so the
 # diagnostics / solver tests can run in isolation.
-add_executable(test_issue_118 tests/test_issue_118.cpp)
-set_property(TARGET test_issue_118 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_118 PRIVATE src)
-target_compile_options(test_issue_118 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_118 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_118_verification COMMAND ./test_issue_118)
+aura_add_issue_test(test_issue_118)
 
 # Issue #119 verification: proper-blocking fiber:join (eventfd
 # wakeup in serve-async) + orch:parallel true parallel. Standalone
 # binary so the join / scheduler-API tests can run in isolation.
-add_executable(test_issue_119 tests/test_issue_119.cpp)
-set_property(TARGET test_issue_119 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_119 PRIVATE src)
-target_compile_options(test_issue_119 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_119 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_119_verification COMMAND ./test_issue_119)
+aura_add_issue_test(test_issue_119)
 
 # Issue #120 verification: define-hygienic-macro + clone_macro_body
 # with name_map. Standalone binary so the macro-hygiene tests
 # can run in isolation from the broader test_concurrent / test_ir
 # harnesses.
-add_executable(test_issue_120 tests/test_issue_120.cpp)
-set_property(TARGET test_issue_120 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_120 PRIVATE src)
-target_compile_options(test_issue_120 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_120 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_120_verification COMMAND ./test_issue_120)
+aura_add_issue_test(test_issue_120)
 
 # Issue #121 verification: gensym / symbol-append primitives +
 # recursive macro expansion. Standalone binary so the macro /
 # symbol tests can run in isolation.
-add_executable(test_issue_121 tests/test_issue_121.cpp)
-set_property(TARGET test_issue_121 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_121 PRIVATE src)
-target_compile_options(test_issue_121 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_121 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_121_verification COMMAND ./test_issue_121)
+aura_add_issue_test(test_issue_121)
 
 # Issue #122 verification: compile-time reflection exposed as
 # Aura runtime primitives. Standalone binary so the reflect
 # tests can run in isolation.
-add_executable(test_issue_122 tests/test_issue_122.cpp)
-set_property(TARGET test_issue_122 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_122 PRIVATE src)
-target_compile_options(test_issue_122 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_122 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_122_verification COMMAND ./test_issue_122)
+aura_add_issue_test(test_issue_122)
 
 # Issue #123 verification: IR-level pre-execution for require.
 # Standalone binary so the require-stripping tests can run in
 # isolation.
-add_executable(test_issue_123 tests/test_issue_123.cpp)
-set_property(TARGET test_issue_123 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_123 PRIVATE src)
-target_compile_options(test_issue_123 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_123 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_123_verification COMMAND ./test_issue_123)
+aura_add_issue_test(test_issue_123)
 
 # Issue #124 verification: try/catch exception support in IR +
 # interpreter. Standalone binary so the exception tests can
 # run in isolation.
-add_executable(test_issue_124 tests/test_issue_124.cpp)
-set_property(TARGET test_issue_124 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_124 PRIVATE src)
-target_compile_options(test_issue_124 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_124 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_124_verification COMMAND ./test_issue_124)
+aura_add_issue_test(test_issue_124)
 
 # Issue #125 verification: per-module dirty tracking + skip
 # optimization counters. Standalone binary so the metrics /
@@ -593,10 +521,7 @@ target_include_directories(test_issue_125 PRIVATE src src/compiler)
 target_sources(test_issue_125 PRIVATE
 src/compiler/observability_metrics.h
 )
-target_compile_options(test_issue_125 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_125)
 target_link_libraries(test_issue_125 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_125_verification COMMAND ./test_issue_125)
 
@@ -604,15 +529,7 @@ add_test(NAME issue_125_verification COMMAND ./test_issue_125)
 # CompilerService and Evaluator. Standalone binary that
 # exercises the new aura.compiler.ir_cache_pure module
 # in isolation from the full CompilerService.
-add_executable(test_issue_126 tests/test_issue_126.cpp)
-set_property(TARGET test_issue_126 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_126 PRIVATE src)
-target_compile_options(test_issue_126 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_126 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_126_verification COMMAND ./test_issue_126)
+aura_add_issue_test(test_issue_126)
 
 # Issue #127 verification: Result<T> pipeline-stage
 # aliases + lower_to_ir_result. Standalone binary that
@@ -624,10 +541,7 @@ target_include_directories(test_issue_127 PRIVATE src src/compiler)
 target_sources(test_issue_127 PRIVATE
 src/compiler/observability_metrics.h
 )
-target_compile_options(test_issue_127 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_127)
 target_link_libraries(test_issue_127 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_127_verification COMMAND ./test_issue_127)
 
@@ -635,15 +549,7 @@ add_test(NAME issue_127_verification COMMAND ./test_issue_127)
 # paths. Standalone binary that exercises the new
 # cells() span view and compute_kind_instructions
 # span helper.
-add_executable(test_issue_128 tests/test_issue_128.cpp)
-set_property(TARGET test_issue_128 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_128 PRIVATE src)
-target_compile_options(test_issue_128 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_128 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_128_verification COMMAND ./test_issue_128)
+aura_add_issue_test(test_issue_128)
 
 # Issue #130 verification: cache hit rate metric.
 # Standalone binary that exercises the new
@@ -654,25 +560,14 @@ target_include_directories(test_issue_130 PRIVATE src)
 # Fix #2: consume prebuilt BMIs from AURA_MODULE_BMI_DIR (produced by
 # aura_test_objects). No more per-binary re-emission of the 17 .ixx
 # modules previously listed here.
-target_compile_options(test_issue_130 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_130)
 target_link_libraries(test_issue_130 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_130_verification COMMAND ./test_issue_130)
 
 # Issue #131 verification: FFI primitives extracted from
 # monolithic evaluator_impl.cpp. Standalone binary that
 # exercises the new FFIRuntime class in isolation.
-add_executable(test_issue_131 tests/test_issue_131.cpp)
-set_property(TARGET test_issue_131 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_131 PRIVATE src)
-target_compile_options(test_issue_131 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_131 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_131_verification COMMAND ./test_issue_131)
+aura_add_issue_test(test_issue_131)
 
 # Phase 2 dedup (post-5.2 per roadmap): aura_add_issue_test helper.
 # Reduces the 30-60 line boilerplate per test_issue_* (add_executable,
@@ -746,10 +641,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_135 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_135 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_135 PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_135 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_135)
 target_link_libraries(test_issue_135 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_135_verification COMMAND ./test_issue_135)
 
@@ -888,10 +780,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_164 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_164 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_164 PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_164 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_164)
 target_link_libraries(test_issue_164 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_164_verification COMMAND ./test_issue_164)
 
@@ -918,10 +807,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_184 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_184 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_184 PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_184 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_184)
 target_link_libraries(test_issue_184 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_184_verification COMMAND ./test_issue_184)
 
@@ -955,10 +841,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_165 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_165 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_165 PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_165 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_165)
 target_link_libraries(test_issue_165 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_165_verification COMMAND ./test_issue_165)
 
@@ -983,10 +866,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_166 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_166 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_166 PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_166 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_166)
 target_link_libraries(test_issue_166 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_166_verification COMMAND ./test_issue_166)
 
@@ -1024,10 +904,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_169 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_169 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_169 PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_169 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_169)
 target_link_libraries(test_issue_169 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_169_verification COMMAND ./test_issue_169)
 
@@ -1073,10 +950,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_159_bench PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_159_bench PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_159_bench PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_159_bench PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_159_bench)
 target_link_libraries(test_issue_159_bench PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_159_bench COMMAND ./test_issue_159_bench)
 
@@ -1108,10 +982,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_138 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_138 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_138 PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_138 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_138)
 target_link_libraries(test_issue_138 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_138_verification COMMAND ./test_issue_138)
 
@@ -1137,10 +1008,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_139 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_139 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_139 PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_139 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_139)
 target_link_libraries(test_issue_139 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_139_verification COMMAND ./test_issue_139)
 
@@ -1166,10 +1034,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_140 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_140 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_140 PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_140 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_140)
 target_link_libraries(test_issue_140 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_140_verification COMMAND ./test_issue_140)
 
@@ -1194,10 +1059,7 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_141 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_141 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_141 PRIVATE aura_test_objects ${llvm_libs})
-target_compile_options(test_issue_141 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_141)
 target_link_libraries(test_issue_141 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_141_verification COMMAND ./test_issue_141)
 
@@ -1260,10 +1122,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
 )
-target_compile_options(test_gc_evaluator_integration PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_gc_evaluator_integration)
 target_link_libraries(test_gc_evaluator_integration PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME gc_evaluator_integration COMMAND ./test_gc_evaluator_integration)
 
@@ -1606,10 +1465,7 @@ target_link_libraries(test_issue_149 PRIVATE ${llvm_libs})
 add_executable(test_issue_171 tests/test_issue_171.cpp)
 set_property(TARGET test_issue_171 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_171 PRIVATE src src/compiler)
-target_compile_options(test_issue_171 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_171)
 target_link_libraries(test_issue_171 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_171_verification COMMAND ./test_issue_171)
 
@@ -1643,10 +1499,7 @@ target_include_directories(test_issue_204 PRIVATE src src/compiler)
 target_compile_definitions(test_issue_204 PRIVATE AURA_HAVE_LLVM=1)
 target_include_directories(test_issue_204 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_link_libraries(test_issue_204 PRIVATE ${llvm_libs})
-target_compile_options(test_issue_204 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_204)
 target_link_libraries(test_issue_204 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_204_verification COMMAND ./test_issue_204)
 
@@ -1677,10 +1530,7 @@ target_include_directories(test_issue_205 PRIVATE src src/compiler)
 target_compile_definitions(test_issue_205 PRIVATE AURA_HAVE_LLVM=1)
 target_include_directories(test_issue_205 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_link_libraries(test_issue_205 PRIVATE ${llvm_libs})
-target_compile_options(test_issue_205 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_205)
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_link_libraries(test_issue_205 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_205_verification COMMAND ./test_issue_205)
@@ -1978,10 +1828,7 @@ target_link_libraries(test_issue_224 PRIVATE ${llvm_libs})
 add_executable(test_issue_197 tests/test_issue_197.cpp)
 set_property(TARGET test_issue_197 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_197 PRIVATE src src/compiler)
-target_compile_options(test_issue_197 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_197)
 target_link_libraries(test_issue_197 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_197_verification COMMAND ./test_issue_197)
 
@@ -1992,10 +1839,7 @@ add_test(NAME issue_197_verification COMMAND ./test_issue_197)
 add_executable(test_issue_246 tests/test_issue_246.cpp)
 set_property(TARGET test_issue_246 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_246 PRIVATE src src/compiler)
-target_compile_options(test_issue_246 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(test_issue_246)
 target_link_libraries(test_issue_246 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_246_inliner_macro_hygiene_verification COMMAND ./test_issue_246)
 
@@ -2431,9 +2275,7 @@ add_test(NAME cycle14_reflect_bench COMMAND ./cycle14_reflect_bench)
 # is header-only.
 add_executable(cycle221_pcv_bench tests/bench/cycle221_pcv_bench.cpp)
 target_include_directories(cycle221_pcv_bench PRIVATE src)
-target_compile_options(cycle221_pcv_bench PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter)
+aura_test_compile_options(cycle221_pcv_bench)
 target_compile_features(cycle221_pcv_bench PUBLIC cxx_std_26)
 target_link_libraries(cycle221_pcv_bench PRIVATE stdc++ pthread)
 add_test(NAME cycle221_pcv_bench COMMAND ./cycle221_pcv_bench)
@@ -2450,10 +2292,7 @@ target_sources(issue_212_bench PRIVATE
 # Match aura_test_objects's compile flags so the prebuilt BMIs
 # in module_cache/aura_test_objects.dir/ (produced by the .ixx
 # compile) have the same identity the .cpp imports expect.
-target_compile_options(issue_212_bench PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options(issue_212_bench)
 target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_212_bench COMMAND ./issue_212_bench)
 
@@ -2881,10 +2720,7 @@ add_test(NAME issue_228_dependent_type_system_verification COMMAND ./test_issue_
 add_executable(test_issue_178 tests/test_issue_178.cpp)
 set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_178 PRIVATE src)
-target_compile_options(test_issue_178 PRIVATE -freflection -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
+aura_test_compile_options_reflect(test_issue_178)
 target_link_libraries(test_issue_178 PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_178_verification COMMAND ./test_issue_178)
 

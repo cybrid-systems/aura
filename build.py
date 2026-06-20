@@ -41,39 +41,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
+from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn
+
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT / "build"
 AURA = BUILD / "aura"
 TEST_BIN = BUILD / "test_ir"
 BENCH = ROOT / "tests" / "benchmark.py"
-
-# ── Colors ──────────────────────────────────────────────────────
-G = "\033[32m"
-Y = "\033[33m"
-R = "\033[31m"
-B = "\033[34m"
-N = "\033[0m"
-
-
-def ok(msg):
-    print(f"  {G}✓{N} {msg}")
-
-
-def fail(msg):
-    print(f"  {R}✗{N} {msg}")
-
-
-def warn(msg):
-    print(f"  {Y}!{N} {msg}")
-
-
-def info(msg):
-    print(f"  {B}→{N} {msg}")
-
-
-def run(cmd, **kwargs):
-    result = subprocess.run(cmd, **kwargs)
-    return result.returncode
 
 
 # ═══════════════════════════════════════════════════════════════
