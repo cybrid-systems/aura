@@ -142,6 +142,10 @@ void register_reflect_and_type_primitives(
     std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
     std::pmr::vector<std::string>& string_heap, std::vector<std::string>& keyword_table,
     void*& type_registry);
+void register_query_primitives(
+    std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
+    std::pmr::vector<std::string>& string_heap, void*& type_registry,
+    std::function<std::string(const std::string&)> resolve_module_path);
 }
 
 // Forward decl: macro body cloner (defined at end of file)
@@ -1472,6 +1476,11 @@ void Evaluator::init_pair_primitives() {
         [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
         pairs_, string_heap_, keyword_table_, type_registry_);
 
+    primitives_detail::register_query_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        pairs_, string_heap_, type_registry_,
+        [this](const std::string& path) { return resolve_module_path(path); });
+
     // ── ADT registration now delegated to adt_runtime_ (Step 2.3) ───
     // The old "adt:register-constructors" and "adt:reset-constructors"
     // (which mutated the removed global g_adt_constructors) have been
@@ -1484,163 +1493,6 @@ void Evaluator::init_pair_primitives() {
     // The ctor PrimitiveFn creation logic (the big lambda above)
     // will live inside adt_runtime.register_primitives in the
     // complete extraction.
-
-    // ── query:module-exports "path" ──────────────────────────
-    // Issue #214 Cycle 1: returns the list of exported symbol
-    // names for a stdlib module, parsed from the .aura source
-    // file's `(export ...)` form. Unlike reflect-module-exports
-    // (which works on already-registered module TYPES), this
-    // primitive works on stdlib PATHS that haven't been
-    // (require)'d yet — useful for autocomplete + AI agent
-    // discovery before importing.
-    //
-    // Usage: (query:module-exports "std/list")
-    // Returns: (foldr map for-each ...) — the symbol names
-    //          in declaration order, as an Aura list.
-    // On failure (path doesn't resolve, no (export ...) form):
-    // returns '().
-    primitives_.add("query:module-exports", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_void();
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size())
-            return make_void();
-        auto path = string_heap_[idx];
-        // Resolve the module path the same way load-module does
-        auto resolved = resolve_module_path(path);
-        if (resolved.empty())
-            return make_void();
-        // Read the file and scan for `(export ...)` form
-        std::ifstream f(resolved);
-        if (!f.is_open())
-            return make_void();
-        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        f.close();
-        // Find the first `(export` form. Scan character by
-        // character to handle multi-line exports.
-        std::vector<std::string> exports;
-        std::size_t pos = 0;
-        while (pos < content.size()) {
-            // Find next `(export` token (skip whitespace + comments)
-            auto export_pos = content.find("(export", pos);
-            if (export_pos == std::string::npos)
-                break;
-            // Verify the previous char is start-of-line or whitespace
-            // (avoid matching `(exported-thing)`).
-            if (export_pos > 0) {
-                char prev = content[export_pos - 1];
-                if (prev != '\n' && prev != ' ' && prev != '\t' && prev != '(') {
-                    pos = export_pos + 1;
-                    continue;
-                }
-            }
-            // Skip past `(export` and the following whitespace.
-            auto sym_start = export_pos + 7; // strlen("(export") == 7
-            while (sym_start < content.size() &&
-                   (content[sym_start] == ' ' || content[sym_start] == '\t' ||
-                    content[sym_start] == '\n' || content[sym_start] == '\r')) {
-                ++sym_start;
-            }
-            // Read symbols until `)`.
-            std::size_t i = sym_start;
-            while (i < content.size() && content[i] != ')') {
-                // Skip whitespace + comments between symbols.
-                if (content[i] == ' ' || content[i] == '\t' || content[i] == '\n' ||
-                    content[i] == '\r') {
-                    ++i;
-                    continue;
-                }
-                // Skip line comments (; ...) — skip to end of line.
-                if (content[i] == ';') {
-                    while (i < content.size() && content[i] != '\n')
-                        ++i;
-                    continue;
-                }
-                // Read a symbol: [a-zA-Z0-9_?!<>=*+-/.]
-                std::size_t s = i;
-                while (i < content.size()) {
-                    char c = content[i];
-                    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                        (c >= '0' && c <= '9') || c == '_' || c == '?' || c == '!' || c == '<' ||
-                        c == '>' || c == '=' || c == '*' || c == '+' || c == '-' || c == '/' ||
-                        c == '.' || c == '$') {
-                        ++i;
-                    } else {
-                        break;
-                    }
-                }
-                if (i > s) {
-                    exports.push_back(content.substr(s, i - s));
-                } else {
-                    // Unrecognized char — skip to avoid infinite loop.
-                    ++i;
-                }
-            }
-            // Done with this export form. Break (we only take
-            // the first one — subsequent `(export ...)` in
-            // a single file is non-standard).
-            break;
-        }
-        // Build an Aura list (in reverse — we accumulate onto the
-        // front of an existing list).
-        EvalValue lst = make_void();
-        for (auto it = exports.rbegin(); it != exports.rend(); ++it) {
-            auto sidx = string_heap_.size();
-            string_heap_.push_back(*it);
-            auto pid = pairs_.size();
-            pairs_.push_back({make_string(sidx), lst});
-            lst = make_pair(pid);
-        }
-        return lst;
-    });
-
-    // ── query:schema "TypeName" ──────────────────────────────────
-    // Issue #216 Cycle 3: returns the JSON Schema for a
-    // registered Aura type. The schema is generated at
-    // compile time by aura::reflect::schema<T>() in
-    // reflect_schema.hh. For C++ types registered via the
-    // type_registry_ (Issue #107), the type_name is looked
-    // up and the schema is returned as a string.
-    //
-    // Usage: (query:schema "int") → JSON schema string
-    //        (query:schema "MyStruct") → schema for MyStruct
-    // Returns: string (the JSON schema)
-    //          #f on failure (type not registered)
-    //
-    // Note: the schema is the SAME format as the Aura-side
-    // typecheck format. mutate:rebind uses query:schema
-    // internally for pre-mutation validation.
-    primitives_.add("query:schema", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_bool(false);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size())
-            return make_bool(false);
-        std::string name = string_heap_[idx];
-        // Lazy init: create the type registry on first use
-        if (!type_registry_) {
-            type_registry_ = new aura::core::TypeRegistry();
-        }
-        // Look up the type in the registry
-        auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry_);
-        if (!treg)
-            return make_bool(false);
-        auto ty = treg->lookup_type(name);
-        if (!ty.valid())
-            return make_bool(false);
-        // For now, return a minimal schema indicating the
-        // type is recognized. A future cycle can expand
-        // this to full P2996 reflection via the C++
-        // schema<T>() template (requires linking
-        // aura-reflect into the eval binary).
-        std::string schema = "{\"title\": \"" + name + "\"";
-        schema += ", \"type\": \"" +
-                  std::string(treg->tag_of(ty) == aura::core::TypeTag::MODULE ? "object" : "any") +
-                  "\"}";
-        auto sidx = string_heap_.size();
-        string_heap_.push_back(schema);
-        return make_string(sidx);
-    });
 
     primitives_.add("equal?", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)

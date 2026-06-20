@@ -26,7 +26,7 @@ Runtime canonical list: `(api-reference)`.
 - `query:index-stats` — `src/compiler/evaluator_impl.cpp`
 - `query:macro-introduced` — `src/compiler/evaluator_impl.cpp`
 - `query:marker-stats` — `src/compiler/evaluator_impl.cpp`
-- `query:module-exports` — `src/compiler/evaluator_impl.cpp`
+- `query:module-exports` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:node` — `src/compiler/evaluator_impl.cpp`
 - `query:node-type` — `src/compiler/evaluator_impl.cpp`
 - `query:parent` — `src/compiler/evaluator_impl.cpp`
@@ -34,7 +34,7 @@ Runtime canonical list: `(api-reference)`.
 - `query:pattern` — `src/compiler/evaluator_impl.cpp`
 - `query:reaches` — `src/compiler/evaluator_impl.cpp`
 - `query:root` — `src/compiler/evaluator_impl.cpp`
-- `query:schema` — `src/compiler/evaluator_impl.cpp`
+- `query:schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:schema-of-marker` — `src/compiler/evaluator_impl.cpp`
 - `query:siblings` — `src/compiler/evaluator_impl.cpp`
 - `query:stable-ref` — `src/compiler/evaluator_impl.cpp`
