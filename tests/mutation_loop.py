@@ -36,20 +36,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# ── Constants ──────────────────────────────────────────────────
+from _aura_harness import AURA_BIN as AURA
+from _aura_harness import ROOT, B, C, G, N, R, Y
 
-ROOT = Path(__file__).resolve().parent.parent
-AURA = ROOT / "build" / "aura"
 BENCH = ROOT / "tests" / "benchmark.py"
 FIXTURES = ROOT / "tests" / "fixtures"
-
-# Colors
-G = "\033[32m"  # green
-Y = "\033[33m"  # yellow
-R = "\033[31m"  # red
-B = "\033[34m"  # blue
-C = "\033[36m"  # cyan
-N = "\033[0m"  # reset
 
 
 # ═══════════════════════════════════════════════════════════════

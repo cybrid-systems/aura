@@ -28,10 +28,8 @@ import argparse
 import subprocess
 import sys
 import time
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-BUILD = ROOT / "build"
+from _aura_harness import BUILD, B, G, N, R, Y
 
 # Pre-existing test failures (NOT caused by recent PRs).
 # These tests fail with a stable signature; the runner
@@ -45,12 +43,6 @@ BUILD = ROOT / "build"
 # test_issue_164 heap corruption was fixed in <commit>
 # by adding shared_mutex on closures_ + env_frames_.
 PRE_EXISTING_FAILURES: set[str] = set()
-
-G = "\033[32m"
-R = "\033[31m"
-Y = "\033[33m"
-B = "\033[34m"
-N = "\033[0m"
 
 
 def discover_test_issue_binaries() -> list[str]:
