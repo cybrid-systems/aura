@@ -140,6 +140,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> is_valid_check_count{0};
     std::atomic<std::uint64_t> stable_ref_invalidations{0};
     std::atomic<std::uint64_t> atomic_batch_commits{0};
+    // Issue #256: AST operation observability. See ast.ixx
+    // for the bump sites + semantics. The ratio
+    // mark_dirty_total_nodes / mark_dirty_upward_call_count
+    // gives the average dirty-propagation depth per
+    // mutation — the key metric for whether a future
+    // std::meta-based AST operation refactor is worth it.
+    std::atomic<std::uint64_t> children_call_count{0};
+    std::atomic<std::uint64_t> parent_of_call_count{0};
+    std::atomic<std::uint64_t> mark_dirty_upward_call_count{0};
+    std::atomic<std::uint64_t> mark_dirty_total_nodes{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

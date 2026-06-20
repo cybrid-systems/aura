@@ -654,6 +654,31 @@ private:
     mutable std::atomic<std::uint64_t> is_valid_check_count_{0};
     mutable std::atomic<std::uint64_t> stable_ref_invalidations_{0};
     mutable std::atomic<std::uint64_t> atomic_batch_commits_{0};
+    // Issue #256: AST operation observability counters.
+    // The hand-written AST operations (children, parent_of,
+    // mark_dirty_upward) are candidates for std::meta-based
+    // auto-generation once P2996 lands in a compiler. Until
+    // then, these counters let users audit how often each
+    // operation fires:
+    // - children_call_count_: total children() calls
+    //   (reads of the per-node children_ SoA column)
+    // - parent_of_call_count_: total parent_of() calls
+    //   (reads of the parent_ SoA column)
+    // - mark_dirty_upward_call_count_: total
+    //   mark_dirty_upward() invocations
+    // - mark_dirty_total_nodes_: total nodes touched across
+    //   all mark_dirty_upward() calls (sum of queue sizes).
+    //   Divided by mark_dirty_upward_call_count_ gives the
+    //   average depth of dirty propagation per mutation —
+    //   a key metric for the std::meta refactor (if depth
+    //   is high, the refactor should batch or skip).
+    // Mutable so const children() / parent_of() overloads
+    // can bump them (the increment is observability, not
+    // a logical state change — the returned span is the same).
+    mutable std::atomic<std::uint64_t> children_call_count_{0};
+    mutable std::atomic<std::uint64_t> parent_of_call_count_{0};
+    mutable std::atomic<std::uint64_t> mark_dirty_upward_call_count_{0};
+    mutable std::atomic<std::uint64_t> mark_dirty_total_nodes_{0};
 
 private:
 
@@ -715,6 +740,10 @@ private:
         , is_valid_check_count_(other.is_valid_check_count_.load())
         , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
         , atomic_batch_commits_(other.atomic_batch_commits_.load())
+        , children_call_count_(other.children_call_count_.load())
+        , parent_of_call_count_(other.parent_of_call_count_.load())
+        , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
+        , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
         , match_info_(std::move(other.match_info_))
         , region_by_sym_(std::move(other.region_by_sym_))
         , region_by_lambda_id_(std::move(other.region_by_lambda_id_))
@@ -747,6 +776,10 @@ private:
             is_valid_check_count_.store(other.is_valid_check_count_.load());
             stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
             atomic_batch_commits_.store(other.atomic_batch_commits_.load());
+            children_call_count_.store(other.children_call_count_.load());
+            parent_of_call_count_.store(other.parent_of_call_count_.load());
+            mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
+            mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
             match_info_ = std::move(other.match_info_);
             region_by_sym_ = std::move(other.region_by_sym_);
             region_by_lambda_id_ = std::move(other.region_by_lambda_id_);
@@ -786,6 +819,10 @@ private:
         , is_valid_check_count_(other.is_valid_check_count_.load())
         , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
         , atomic_batch_commits_(other.atomic_batch_commits_.load())
+        , children_call_count_(other.children_call_count_.load())
+        , parent_of_call_count_(other.parent_of_call_count_.load())
+        , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
+        , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
         , match_info_(other.match_info_)
         , region_by_sym_(other.region_by_sym_)
         , region_by_lambda_id_(other.region_by_lambda_id_)
@@ -818,6 +855,10 @@ private:
             is_valid_check_count_.store(other.is_valid_check_count_.load());
             stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
             atomic_batch_commits_.store(other.atomic_batch_commits_.load());
+            children_call_count_.store(other.children_call_count_.load());
+            parent_of_call_count_.store(other.parent_of_call_count_.load());
+            mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
+            mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
             match_info_ = other.match_info_;
             region_by_sym_ = other.region_by_sym_;
             region_by_lambda_id_ = other.region_by_lambda_id_;
@@ -1362,12 +1403,19 @@ private:
 
     // ── Parent access ──────────────────────────────────────────
     NodeId parent_of(NodeId id) const {
+        // Issue #256: bump the call counter (lifetime total).
+        parent_of_call_count_.fetch_add(1, std::memory_order_relaxed);
         return id < parent_.size() ? parent_[id] : NULL_NODE;
     }
 
     // ── Child field access ─────────────────────────────────────
 
     std::span<const NodeId> children(NodeId id) const {
+        // Issue #256: bump the call counter (lifetime total).
+        // The early-return on out-of-range still bumps — we
+        // want to count how often callers probe with bad ids
+        // (cheap error metric).
+        children_call_count_.fetch_add(1, std::memory_order_relaxed);
         if (id >= children_.size()) return {};
         return std::span<const NodeId>(children_[id].data(), children_[id].size());
     }
@@ -2014,16 +2062,25 @@ private:
     // backward compatibility with the 30+ callers that don't yet
     // classify their mutations.
     void mark_dirty_upward(NodeId id, std::uint8_t reasons = kGeneralDirty) {
+        // Issue #256: bump the call counter + track total nodes
+        // touched. The ratio (total_nodes / call_count) gives
+        // the average dirty-propagation depth per mutation —
+        // the key metric for whether the std::meta refactor is
+        // worth it.
+        mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+        std::uint64_t touched = 0;
         std::deque<NodeId> queue;
         queue.push_back(id);
         while (!queue.empty()) {
             auto nid = queue.front();
             queue.pop_front();
             mark_dirty(nid, reasons);
+            ++touched;
             auto p = parent_[nid];
             if (p != NULL_NODE)
                 queue.push_back(p);
         }
+        mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
     }
 
     // Check if any node in a subtree (including the root) is dirty
@@ -2344,6 +2401,22 @@ private:
     }
     std::uint64_t atomic_batch_commits_v() const noexcept {
         return atomic_batch_commits_.load(std::memory_order_relaxed);
+    }
+    // Issue #256: AST operation observability accessors.
+    // Read by CompilerService::snapshot() to accumulate into
+    // CompilerMetrics for the (compile:ast-ops-stats) Aura
+    // primitive.
+    std::uint64_t children_call_count() const noexcept {
+        return children_call_count_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t parent_of_call_count() const noexcept {
+        return parent_of_call_count_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t mark_dirty_upward_call_count() const noexcept {
+        return mark_dirty_upward_call_count_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t mark_dirty_total_nodes() const noexcept {
+        return mark_dirty_total_nodes_.load(std::memory_order_relaxed);
     }
 
     bool rollback(std::uint64_t mutation_id) {
