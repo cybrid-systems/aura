@@ -3918,6 +3918,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         s.closure_stale_returns = metrics_.closure_stale_returns.load(std::memory_order_relaxed);
         // Issue #253: linear-move elision count (lifetime total).
         s.linear_elide_count = metrics_.linear_elide_count.load(std::memory_order_relaxed);
+        // Issue #254: IR SoA dual-emit counters (lifetime total).
+        s.ir_soa_instructions_emitted = metrics_.ir_soa_instructions_emitted.load(std::memory_order_relaxed);
+        s.ir_soa_functions_emitted = metrics_.ir_soa_functions_emitted.load(std::memory_order_relaxed);
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
         // shared_lock on workspace_mtx_ to keep the flat

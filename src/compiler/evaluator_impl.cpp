@@ -9755,6 +9755,62 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         }
         return make_int(static_cast<std::int64_t>(cnt));
     });
+
+    // (compile:ir-soa-stats) — Issue #254: observability for
+    // the IR SoA dual-emit path. Hash with the 2 counters
+    // (instructions-emitted, functions-emitted). Returns a
+    // hash with the counts (both 0 if no lowering has
+    // happened with dual-emit enabled, or if no service is
+    // bound). Companion to (compile:linear-elide-count) above
+    // + (closure:stats) — same compiler_metrics_ pointer
+    // pattern.
+    primitives_.add("compile:ir-soa-stats", [this](const auto&) -> EvalValue {
+        // Re-use the build_hash pattern from closure:stats
+        // above (same FNV-1a hash + open-addressing insert).
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t instr = 0, funcs = 0;
+        if (compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            instr = m->ir_soa_instructions_emitted.load(std::memory_order_relaxed);
+            funcs = m->ir_soa_functions_emitted.load(std::memory_order_relaxed);
+        }
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"instructions-emitted", make_int(static_cast<std::int64_t>(instr))},
+            {"functions-emitted", make_int(static_cast<std::int64_t>(funcs))},
+        };
+        return build_hash(kv);
+    });
 }
 
 

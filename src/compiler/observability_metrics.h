@@ -106,6 +106,15 @@ struct CompilerMetrics {
     // primitive read a single source of truth). The actual
     // elision logic is in pass_manager.ixx.
     std::atomic<std::uint64_t> linear_elide_count{0};
+    // Issue #254: IR SoA dual-emit counters (lifetime total).
+    // Bumped by service.ixx after each lower_to_ir call when
+    // dual-emit is enabled. The underlying counters live on
+    // LoweringState (soa_instructions_emitted /
+    // soa_functions_emitted). service.ixx accumulates them
+    // into metrics_ so snapshot() + the Aura primitive read
+    // a single source of truth.
+    std::atomic<std::uint64_t> ir_soa_instructions_emitted{0};
+    std::atomic<std::uint64_t> ir_soa_functions_emitted{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
