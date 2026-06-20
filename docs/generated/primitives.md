@@ -14,16 +14,16 @@ Runtime canonical list: `(api-reference)`.
 
 ## Query: (25)
 
-- `query:build-index` — `src/compiler/evaluator_impl.cpp`
+- `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:children` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:children-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:def-use` — `src/compiler/evaluator_impl.cpp`
-- `query:effects` — `src/compiler/evaluator_impl.cpp`
+- `query:def-use` — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:effects` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:filter` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:find` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:index-stats` — `src/compiler/evaluator_impl.cpp`
+- `query:index-stats` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:macro-introduced` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:marker-stats` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:module-exports` — `src/compiler/evaluator_primitives_query.cpp`
@@ -32,7 +32,7 @@ Runtime canonical list: `(api-reference)`.
 - `query:parent` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pattern` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:reaches` — `src/compiler/evaluator_impl.cpp`
+- `query:reaches` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:root` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:schema-of-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`

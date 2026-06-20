@@ -154,6 +154,15 @@ void register_workspace_query_primitives(
     std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
     std::function<aura::ast::StringPool*()> canonical_pool, std::function<void()> build_tag_arity_index,
     std::function<EvalValue(const std::string&, const std::string&)> mev);
+void register_defuse_query_primitives(
+    std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
+    aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
+    std::pmr::vector<std::string>& string_heap, std::function<void*()> ensure_defuse,
+    std::function<EvalValue(void* idx, aura::ast::SymId sym)> def_use_for_sym,
+    std::function<EvalValue(void* idx, aura::ast::NodeId node)> reaches_for_node,
+    std::function<EvalValue(void* idx, aura::ast::SymId sym)> effects_for_sym,
+    std::function<EvalValue(void* idx)> build_index, std::function<EvalValue(void* idx)> index_stats,
+    std::function<EvalValue(const std::string&, const std::string&)> make_merr);
 }
 
 // Forward decl: macro body cloner (defined at end of file)
@@ -8664,186 +8673,93 @@ Evaluator::Evaluator() {
         return list;
     };
 
-    // (query:def-use "sym-name")
-    //   → ((def-node-id ...) . (use-node-id ...))
-    //   Scope-level cached def-use chain. Builds index on first call,
-    //   incrementally rebuilds dirty scopes on subsequent calls.
-    primitives_.add("query:def-use",
-                    [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-                        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-                        // (Step 3.1 start) local merr removed; use make_merr (query cluster)
-                        if (a.empty() || !is_string(a[0]))
-                            return make_merr("bad-arg", "usage: (query:def-use sym-name)");
-                        if (!workspace_flat_ || !workspace_pool_)
-                            return make_merr("no-workspace", "no workspace AST loaded");
-                        auto sym_idx = as_string_idx(a[0]);
-                        if (sym_idx >= string_heap_.size())
-                            return make_merr("bad-arg", "symbol name string index out of range");
-                        auto target_name = string_heap_[sym_idx];
-                        auto target_sym = workspace_pool_->intern(target_name);
+    auto def_use_pair = [this, nodes_to_list](DefUseIndex* idx, aura::ast::SymId sym) -> EvalValue {
+        auto result = idx->query_def_use(sym);
+        auto def_list = nodes_to_list(result.defs);
+        auto use_list = nodes_to_list(result.uses);
+        auto result_pid = pairs_.size();
+        pairs_.push_back({def_list, use_list});
+        return make_pair(result_pid);
+    };
 
-                        auto idx = ensure_defuse();
-                        if (!idx)
-                            return make_merr("internal", "failed to build def-use index");
-
-                        auto result = idx->query_def_use(target_sym);
-                        auto def_list = nodes_to_list(result.defs);
-                        auto use_list = nodes_to_list(result.uses);
-
-                        auto result_pid = pairs_.size();
-                        pairs_.push_back({def_list, use_list});
-                        return make_pair(result_pid);
-                    });
-
-    // (query:reaches node-id)
-    //   → ((def-node-id ...) . (use-node-id ...))
-    //   Cached implementation using def-use index.
-    primitives_.add("query:reaches",
-                    [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-                        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-                        // (Step 3.1 continuation) local merr removed; using centralized make_merr
-                        if (a.empty() || !is_int(a[0]))
-                            return make_merr("bad-arg", "usage: (query:reaches node-id)");
-                        if (!workspace_flat_ || !workspace_pool_)
-                            return make_merr("no-workspace", "no workspace AST loaded");
-                        auto target = static_cast<DefUseIndex::NodeId>(as_int(a[0]));
-                        auto& flat = *workspace_flat_;
-                        if (target >= flat.size())
-                            return make_merr("out-of-range", "node ID " + std::to_string(target) +
-                                                                 " >= flat size " +
-                                                                 std::to_string(flat.size()));
-
-                        auto v = flat.get(target);
-                        DefUseIndex::SymId defined_sym = aura::ast::INVALID_SYM;
-                        switch (v.tag) {
-                            case aura::ast::NodeTag::Define:
-                            case aura::ast::NodeTag::Let:
-                            case aura::ast::NodeTag::LetRec:
-                                defined_sym = v.sym_id;
-                                break;
-                            default:
-                                return make_merr("type-error", "node " + std::to_string(target) +
-                                                                   " is not a definition node");
-                        }
-                        if (defined_sym == aura::ast::INVALID_SYM)
-                            return make_merr("internal", "definition node has invalid symbol id");
-
-                        auto idx = ensure_defuse();
-                        if (!idx)
-                            return make_merr("internal", "failed to build def-use index");
-
-                        auto result = idx->query_def_use(defined_sym);
-                        auto def_list = nodes_to_list(result.defs);
-                        auto use_list = nodes_to_list(result.uses);
-
-                        auto result_pid = pairs_.size();
-                        pairs_.push_back({def_list, use_list});
-                        return make_pair(result_pid);
-                    });
-
-    // (query:effects "sym-name")
-    //   → ((def-node-id ...) . (use-node-id ...) . (caller-node-id ...))
-    //   Cached defs + uses, linear scan for callers.
-    primitives_.add("query:effects",
-                    [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-                        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-                        // (Step 3.1) local merr removed; using make_merr
-                        if (a.empty() || !is_string(a[0]))
-                            return make_merr("bad-arg", "usage: (query:effects sym-name)");
-                        if (!workspace_flat_ || !workspace_pool_)
-                            return make_merr("no-workspace", "no workspace AST loaded");
-                        auto sym_idx = as_string_idx(a[0]);
-                        if (sym_idx >= string_heap_.size())
-                            return make_merr("bad-arg", "symbol name string index out of range");
-                        auto target_name = string_heap_[sym_idx];
-                        auto target_sym = workspace_pool_->intern(target_name);
-                        auto& flat = *workspace_flat_;
-
-                        auto idx = ensure_defuse();
-                        if (!idx)
-                            return make_merr("internal", "failed to build def-use index");
-
-                        auto duo = idx->query_def_use(target_sym);
-                        auto callers = idx->query_callers(target_sym, flat);
-
-                        auto def_list = nodes_to_list(duo.defs);
-                        auto use_list = nodes_to_list(duo.uses);
-                        auto caller_list = nodes_to_list(callers);
-
-                        auto c1 = pairs_.size();
-                        pairs_.push_back({caller_list, make_void()});
-                        auto c2 = pairs_.size();
-                        pairs_.push_back({use_list, make_pair(c1)});
-                        auto c3 = pairs_.size();
-                        pairs_.push_back({def_list, make_pair(c2)});
-                        return make_pair(c3);
-                    });
-
-    // (query:build-index)
-    //   → #t  Explicitly rebuild all def-use and call-graph indexes.
-    //   Useful for benchmark consistency or after bulk mutations.
-    primitives_.add("query:build-index", [this, ensure_defuse](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-        // (Step 3.1) local merr removed; make_merr
-        auto idx = ensure_defuse();
-        if (!idx)
-            return make_merr("internal", "failed to build def-use index");
-        // Force full rebuild regardless of version
-        idx->build(*workspace_flat_, *workspace_pool_);
-        defuse_version_.store(1, std::memory_order_relaxed);
-        this->defuse_rebuild_count_++;
-        defuse_affected_syms_.clear();
-        return make_int(1);
-    });
-
-    // (query:index-stats)
-    //   → ((callers . N) (def-syms . N) (refs . N) (rebuilds . N) (scopes . N) (nodes . N))
-    //   Statistics about the def-use and call-graph indexes.
-    primitives_.add("query:index-stats",
-                    [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-                        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-                        // (Step 3.1) local merr removed; make_merr
-                        auto idx = ensure_defuse();
-                        if (!idx)
-                            return make_merr("internal", "failed to build def-use index");
-                        auto& flat = *workspace_flat_;
-
-                        // Build: ((k1 . v1) (k2 . v2) ...) as a proper Aura list.
-                        // Use correct pattern: forward ref → push data → use ref.
-                        // Do NOT use the ref inside the data being pushed (would self-reference).
-                        auto make_kv = [&](std::string_view k, std::int64_t v) -> types::EvalValue {
-                            auto kv_ref = make_pair(pairs_.size());
-                            auto k_sym = string_heap_.size();
-                            string_heap_.push_back(std::string(k));
-                            types::EvalValue car = make_string(k_sym);
-                            types::EvalValue cdr = make_int(v);
-                            pairs_.push_back(Pair{car, cdr});
-                            return kv_ref;
-                        };
-
-                        // Build list in reverse: each new pair's cdr points to previous stats
-                        auto stats = make_void();
-                        auto push_kv = [&](std::string_view k, std::int64_t v) {
-                            auto kv_ref = make_kv(k, v);
-                            auto new_ref = make_pair(pairs_.size());
-                            pairs_.push_back(Pair{kv_ref, stats});
-                            stats = new_ref;
-                        };
-                        push_kv("nodes", flat.size());
-                        push_kv("scopes", idx->scopes_.size());
-                        push_kv("def-syms", idx->def_syms_.size());
-                        push_kv("refs", idx->refs_.size());
-                        push_kv("callers", idx->callers_of_.size());
-                        push_kv("rebuilds", (std::int64_t)defuse_rebuild_count_);
-                        // (#107 part 5) Per-sym version stats. stale-syms is the
-                        // number of syms whose callers_of_/callee_of_ data may be
-                        // out-of-date since the last refresh. defuse-version is the
-                        // monotonic counter bumped on each touch_sym() call.
-                        // stale-syms = 0 means the index is fully consistent.
-                        push_kv("stale-syms", (std::int64_t)idx->stale_count());
-                        push_kv("defuse-version", (std::int64_t)idx->current_version());
-                        return stats;
-                    });
+    primitives_detail::register_defuse_query_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        workspace_mtx_, workspace_flat_, workspace_pool_, string_heap_, ensure_defuse,
+        [def_use_pair](void* idx, aura::ast::SymId sym) {
+            return def_use_pair(static_cast<DefUseIndex*>(idx), sym);
+        },
+        [this, nodes_to_list, def_use_pair](void* idx, aura::ast::NodeId target) -> EvalValue {
+            auto& flat = *workspace_flat_;
+            auto v = flat.get(target);
+            aura::ast::SymId defined_sym = aura::ast::INVALID_SYM;
+            switch (v.tag) {
+                case aura::ast::NodeTag::Define:
+                case aura::ast::NodeTag::Let:
+                case aura::ast::NodeTag::LetRec:
+                    defined_sym = v.sym_id;
+                    break;
+                default:
+                    return make_merr("type-error", "node " + std::to_string(target) +
+                                                       " is not a definition node");
+            }
+            if (defined_sym == aura::ast::INVALID_SYM)
+                return make_merr("internal", "definition node has invalid symbol id");
+            return def_use_pair(static_cast<DefUseIndex*>(idx), defined_sym);
+        },
+        [this, nodes_to_list](void* idx, aura::ast::SymId sym) -> EvalValue {
+            auto* du_idx = static_cast<DefUseIndex*>(idx);
+            auto& flat = *workspace_flat_;
+            auto duo = du_idx->query_def_use(sym);
+            auto callers = du_idx->query_callers(sym, flat);
+            auto def_list = nodes_to_list(duo.defs);
+            auto use_list = nodes_to_list(duo.uses);
+            auto caller_list = nodes_to_list(callers);
+            auto c1 = pairs_.size();
+            pairs_.push_back({caller_list, make_void()});
+            auto c2 = pairs_.size();
+            pairs_.push_back({use_list, make_pair(c1)});
+            auto c3 = pairs_.size();
+            pairs_.push_back({def_list, make_pair(c2)});
+            return make_pair(c3);
+        },
+        [this](void* idx) -> EvalValue {
+            auto* du_idx = static_cast<DefUseIndex*>(idx);
+            du_idx->build(*workspace_flat_, *workspace_pool_);
+            defuse_version_.store(1, std::memory_order_relaxed);
+            defuse_rebuild_count_++;
+            defuse_affected_syms_.clear();
+            return make_int(1);
+        },
+        [this](void* idx) -> EvalValue {
+            auto* du_idx = static_cast<DefUseIndex*>(idx);
+            auto& flat = *workspace_flat_;
+            auto make_kv = [&](std::string_view k, std::int64_t v) -> types::EvalValue {
+                auto kv_ref = make_pair(pairs_.size());
+                auto k_sym = string_heap_.size();
+                string_heap_.push_back(std::string(k));
+                types::EvalValue car = make_string(k_sym);
+                types::EvalValue cdr = make_int(v);
+                pairs_.push_back(Pair{car, cdr});
+                return kv_ref;
+            };
+            auto stats = make_void();
+            auto push_kv = [&](std::string_view k, std::int64_t v) {
+                auto kv_ref = make_kv(k, v);
+                auto new_ref = make_pair(pairs_.size());
+                pairs_.push_back(Pair{kv_ref, stats});
+                stats = new_ref;
+            };
+            push_kv("nodes", flat.size());
+            push_kv("scopes", du_idx->scopes_.size());
+            push_kv("def-syms", du_idx->def_syms_.size());
+            push_kv("refs", du_idx->refs_.size());
+            push_kv("callers", du_idx->callers_of_.size());
+            push_kv("rebuilds", static_cast<std::int64_t>(defuse_rebuild_count_));
+            push_kv("stale-syms", static_cast<std::int64_t>(du_idx->stale_count()));
+            push_kv("defuse-version", static_cast<std::int64_t>(du_idx->current_version()));
+            return stats;
+        },
+        [this](const std::string& k, const std::string& m) { return make_merr(k, m); });
 
     // ═══════════════════════════════════════════════════════════════
     // P10: AST Snapshot / Restore / Diff
