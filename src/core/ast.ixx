@@ -728,12 +728,12 @@ public:
         , col_(std::move(other.col_))
         , type_id_(std::move(other.type_id_))
         , error_kind_(std::move(other.error_kind_))
-        , node_gen_(std::move(other.node_gen_))
         , value_cache_(std::move(other.value_cache_))
         , mutation_log_(std::move(other.mutation_log_))
         , node_first_mutation_(std::move(other.node_first_mutation_))
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
+        , node_gen_(std::move(other.node_gen_))
         , bump_generation_count_(other.bump_generation_count_.load())
         , is_valid_check_count_(other.is_valid_check_count_.load())
         , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
@@ -809,12 +809,12 @@ public:
         , col_(other.col_)
         , type_id_(other.type_id_)
         , error_kind_(other.error_kind_)
-        , node_gen_(other.node_gen_)
         , value_cache_(other.value_cache_)
         , mutation_log_(other.mutation_log_)
         , node_first_mutation_(other.node_first_mutation_)
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
+        , node_gen_(other.node_gen_)
         , bump_generation_count_(other.bump_generation_count_.load())
         , is_valid_check_count_(other.is_valid_check_count_.load())
         , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
@@ -886,10 +886,10 @@ public:
         , col_(alloc)
         , type_id_(alloc)
         , error_kind_(alloc)
-        , node_gen_(alloc)
         , value_cache_(alloc)
         , mutation_log_(alloc)
-        , node_first_mutation_(alloc) {}
+        , node_first_mutation_(alloc)
+        , node_gen_(alloc) {}
 
     // ── Builders ───────────────────────────────────────────────
 

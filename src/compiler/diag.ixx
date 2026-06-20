@@ -77,6 +77,10 @@ export constexpr std::string_view kind_name(ErrorKind k) {
             return "out of memory";
         case ErrorKind::Note:
             return "note";
+        case ErrorKind::UncaughtException:
+            return "uncaught exception";
+        case ErrorKind::Warning:
+            return "warning";
     }
     return "unknown";
 }

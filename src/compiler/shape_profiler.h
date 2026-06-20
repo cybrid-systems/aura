@@ -28,7 +28,7 @@ public:
     // ── Record a shape observation ─────────────────────────────
     // Called after each eval of function `fn` with the observed shape ID.
     // Returns true if the shape is now considered stable.
-    bool record_shape(FnKey fn, ShapeID shape_id) pre(shape_id != SHAPE_UNKNOWN);
+    bool record_shape(FnKey fn, ShapeID shape_id) pre(shape_id != 0);
 
     // ── Check stability ────────────────────────────────────────
     bool is_stable(FnKey fn) const;

@@ -434,7 +434,7 @@ int main(int argc, char* argv[]) {
             if (ln > 0)
                 (void)!::write(2, line, ln);
         }
-        (void)!::write(2, "Resolve with: addr2line -e aura -f -C <ip> <si_addr>\n", 56);
+        (void)!::write(2, "Resolve with: addr2line -e aura -f -C <ip> <si_addr>\n", 54);
         (void)!::write(2, "=== END CRASH ===\n", 18);
         // Re-raise with default handler so the shell sees the signal
         // and core-dump machinery (ulimit -c) still kicks in.

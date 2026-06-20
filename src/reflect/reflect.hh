@@ -666,6 +666,7 @@ void auto_serialize(std::vector<char>& buf, const T& obj) {
                 }
                 break;
             }
+            case MemberKind::Struct:
             case MemberKind::Other:
             case MemberKind::Unknown:
                 break;
@@ -950,6 +951,7 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 }
                 break;
             }
+            case MemberKind::Struct:
             case MemberKind::Other:
             case MemberKind::Unknown:
                 break;
@@ -1233,7 +1235,6 @@ template <typename T> void to_json_impl(std::string& out, const T& val) {
         out += '"';
 
     } else if constexpr (is_std_vector_v<T>) {
-        using Elem = typename T::value_type;
         out += '[';
         for (std::size_t i = 0; i < val.size(); ++i) {
             if (i > 0)
@@ -1302,7 +1303,7 @@ template <typename T> void bin_write(Buffer& buf, const T& val) {
 
     } else if constexpr (is_std_vector_v<T>) {
         // Vector → count + elements (recursive)
-        using Elem = typename T::value_type;
+
         buf.write(static_cast<std::uint32_t>(val.size()));
         for (auto& e : val)
             bin_write(buf, e);
@@ -1349,7 +1350,7 @@ template <typename T> void bin_read(BufferReader& reader, T& val) {
 
     } else if constexpr (is_std_vector_v<T>) {
         // Vector → count + elements (recursive)
-        using Elem = typename T::value_type;
+
         auto sz = reader.read<std::uint32_t>();
         val.resize(sz);
         for (auto& e : val)

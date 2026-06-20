@@ -53,6 +53,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -99,11 +100,13 @@ inline int register_test(const char* name, TestFn fn) {
 // The CHECK macro below is the standard form. Tests that
 // already use it don't need to change.
 #define CHECK(cond, msg) do { \
+    const auto& _check_msg = (msg); \
+    const char* _check_msg_cstr = std::string_view(_check_msg).data(); \
     if (!(cond)) { \
-        std::fprintf(stderr, "  FAIL: %s (line %d)\n", msg, __LINE__); \
+        std::fprintf(stderr, "  FAIL: %s (line %d)\n", _check_msg_cstr, __LINE__); \
         ++::aura::test::g_failed; \
     } else { \
-        std::fprintf(stdout, "  PASS: %s\n", msg); \
+        std::fprintf(stdout, "  PASS: %s\n", _check_msg_cstr); \
         ++::aura::test::g_passed; \
     } \
 } while (0)

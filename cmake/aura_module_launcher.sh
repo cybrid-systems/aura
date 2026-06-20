@@ -51,8 +51,10 @@ while [ $i -lt $# ]; do
     i=$((i+1))
 done
 
-/usr/bin/c++ "$@"
-RC=$?
+# GCC emits a noisy scan-phase warning when CMake's CXX module scanner
+# invokes the compiler without linking. Filter it from stderr only.
+/usr/bin/c++ "$@" 2> >(grep -v 'linker input file unused because linking not done' >&2)
+RC=${PIPESTATUS[0]}
 
 [ -n "$per_target_dir" ] || exit $RC
 per_target_dir="$BUILD_DIR/$per_target_dir"
