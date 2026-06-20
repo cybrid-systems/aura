@@ -58,6 +58,7 @@ using aura::test::g_failed;
 
 // ── Test 1: bridge_invalidations_count is exposed ───────────
 
+namespace aura_issue_225_bridge_invalidation_detail {
 bool test_bridge_invalidations_metric_exposed() {
     std::println("\n--- Test 1.1: bridge_invalidations_count metric is exposed ---");
     aura::compiler::CompilerService cs;
@@ -158,7 +159,7 @@ bool test_end_to_end_aurar_eval() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #225 cycle 3 (bridge invalidation) ═══\n");
 
     test_bridge_invalidations_metric_exposed();
@@ -172,3 +173,7 @@ int main() {
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+}  // namespace aura_issue_225_bridge_invalidation_detail
+
+int aura_issue_225_bridge_invalidation_run() { return aura_issue_225_bridge_invalidation_detail::run_tests(); }
+

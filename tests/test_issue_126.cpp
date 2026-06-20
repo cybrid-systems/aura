@@ -37,6 +37,7 @@ import aura.compiler.ir_cache_pure;
 
 // ── Test 1: should_relower covers all combinations ─────
 
+namespace aura_issue_126_detail {
 bool test_should_relower() {
     std::println("\n--- Test: should_relower — pure decision function ---");
 
@@ -197,7 +198,7 @@ bool test_try_extract_define() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #126 verification tests ═══\n");
     test_should_relower();
     test_fnv1a_64();
@@ -208,3 +209,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_126_detail
+
+int aura_issue_126_run() { return aura_issue_126_detail::run_tests(); }
+

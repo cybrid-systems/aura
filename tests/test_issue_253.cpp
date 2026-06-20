@@ -44,6 +44,7 @@ import aura.compiler.evaluator;
 import aura.compiler.pass_manager;
 import aura.compiler.service;
 
+namespace aura_issue_253_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
@@ -163,7 +164,7 @@ bool test_no_regression_on_pass_integration() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #253 — linear-move elision observability (scope-limited) ═══\n");
     test_initial_counter_zero();
     test_aura_primitive_returns_int();
@@ -175,3 +176,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_253_detail
+
+int aura_issue_253_run() { return aura_issue_253_detail::run_tests(); }
+

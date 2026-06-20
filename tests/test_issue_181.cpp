@@ -60,6 +60,7 @@ using aura::test::g_failed;
 // (see CMakeLists.txt).
 import aura.compiler.value;
 
+namespace aura_issue_181_detail {
 using aura::compiler::types::EvalValue;
 using aura::compiler::types::is_string_v2;
 using aura::compiler::types::make_string_v2;
@@ -440,7 +441,7 @@ bool test_v2_inline_agrees_with_raw() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #181 — EvalValue 64-bit tagged encoding (Cycles 1-3) ═══\n");
     std::fprintf(stdout, "  Option A encoding: dedicated (v & 3) == 2 tag for strings.\n");
     std::fprintf(stdout, "  Cycle 1: prototype + micro-bench.\n");
@@ -466,3 +467,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_181_detail
+
+int aura_issue_181_run() { return aura_issue_181_detail::run_tests(); }
+

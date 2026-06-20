@@ -47,6 +47,7 @@ using aura::test::g_failed;
 import aura.compiler.ir;
 import aura.compiler.pass_manager;
 
+namespace aura_issue_246_detail {
 namespace ir = aura::ir;
 
 // Helper: build a trivial-inlinable function (single block, const+return).
@@ -239,7 +240,7 @@ bool test_setter_round_trip() {
 // ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
-int main() {
+int run_tests() {
     std::println("═══ Issue #246 — Inliner MacroIntroduced-awareness ═══\n");
 
     std::println("AC #5: default marker field is 0 (back-compat)");
@@ -265,3 +266,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_246_detail
+
+int aura_issue_246_run() { return aura_issue_246_detail::run_tests(); }
+

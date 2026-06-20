@@ -38,6 +38,7 @@ using aura::test::g_failed;
 
 
 
+namespace aura_issue_205_detail {
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
 
 // ── Test 1: register_env_walk_fn accepts a callback ──
@@ -174,7 +175,7 @@ bool test_env_walk_empty_no_op() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #205 — caller-side env_frames_ walk ═══\n");
     std::fprintf(stdout, "  Wires evaluator env walk to GC mark_env_frame_roots.\n\n");
 
@@ -189,3 +190,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_205_detail
+
+int aura_issue_205_run() { return aura_issue_205_detail::run_tests(); }
+

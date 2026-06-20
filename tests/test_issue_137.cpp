@@ -47,6 +47,7 @@ import aura.parser.parser;
 
 
 // Helper: run a snippet and return the raw EvalValue
+namespace aura_issue_137_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -467,7 +468,7 @@ bool test_define_struct_pattern() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #137 verification tests ═══\n");
 
     std::println("── AC #1: No name capture in standard hygiene test cases ──");
@@ -518,3 +519,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_137_detail
+
+int aura_issue_137_run() { return aura_issue_137_detail::run_tests(); }
+

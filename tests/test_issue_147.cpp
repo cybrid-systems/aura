@@ -62,6 +62,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_147_detail {
 #define CHECK_EQ(a, b, msg) do { \
     auto _a = (a); auto _b = (b); \
     if (!(_a == _b)) { \
@@ -354,7 +355,7 @@ void test_occurrence_narrowing_invalidated() {
 // Main
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #147 soundness tests ═══\n");
 
     std::println("── AC #1: post_mutation_invariant_check is exported ──");
@@ -389,3 +390,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_147_detail
+
+int aura_issue_147_run() { return aura_issue_147_detail::run_tests(); }
+

@@ -36,6 +36,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_166_detail {
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
 
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
@@ -135,7 +136,7 @@ bool test_rapid_mutations() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #166 — multi-layer cache invalidation (Phase 1) ═══\n");
 
     test_eval_mutate_eval();
@@ -147,3 +148,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_166_detail
+
+int aura_issue_166_run() { return aura_issue_166_detail::run_tests(); }
+

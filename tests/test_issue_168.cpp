@@ -33,6 +33,7 @@ import aura.compiler.type_checker;
 
 
 
+namespace aura_issue_168_detail {
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
 
 // ── Test 1: TypeChecker accepts set_cache_epoch + exposes counter ──
@@ -103,7 +104,7 @@ bool test_let_poly_mutation() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #168 — incremental type cache safety (Phase 1) ═══\n");
 
     test_set_cache_epoch();
@@ -114,3 +115,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_168_detail
+
+int aura_issue_168_run() { return aura_issue_168_detail::run_tests(); }
+

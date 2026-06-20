@@ -12,6 +12,7 @@
 
 #include "issue_test_harness.hpp"  // 3.2 dedup pilot (common CHECK + globals)
 
+namespace aura_issue_error_merr_detail {
 bool test_harness_smoke() {
     std::println("\n--- Test: harness smoke (pilot for 1.1) ---");
     CHECK(1 == 1, "basic CHECK works");
@@ -20,7 +21,7 @@ bool test_harness_smoke() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ test_error_merr pilot (refactor Step 0.1/0.2/0.3 + CMake pilot 1.1) ═══\n");
 
     bool ok = true;
@@ -29,3 +30,7 @@ int main() {
     std::println("\n--- Results ---");
     return run_pilot_tests();
 }
+}  // namespace aura_issue_error_merr_detail
+
+int aura_issue_error_merr_run() { return aura_issue_error_merr_detail::run_tests(); }
+

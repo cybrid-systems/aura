@@ -36,6 +36,7 @@ import aura.compiler.ffi_primitives;
 
 // ── Test 1: FFIRuntime standalone construction ──────────
 
+namespace aura_issue_131_detail {
 bool test_ffi_runtime_standalone() {
     std::println("\n--- Test: FFIRuntime standalone ---");
     aura::compiler::FFIRuntime ffi;
@@ -114,7 +115,7 @@ bool test_parse_ffi_sig_invalid() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #131 verification tests ═══\n");
     test_ffi_runtime_standalone();
     test_parse_ffi_sig_valid();
@@ -124,3 +125,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_131_detail
+
+int aura_issue_131_run() { return aura_issue_131_detail::run_tests(); }
+

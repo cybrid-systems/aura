@@ -46,6 +46,7 @@ using aura::test::g_failed;
 
 // ── Test 1: shared_ptr keeps FlatAST alive after arena reset ─
 
+namespace aura_issue_224_closure_bridge_detail {
 bool test_shared_ptr_keeps_flat_alive() {
     std::println("\n--- Test 1.1: shared_ptr keeps FlatAST alive after arena reset ---");
     // Construct a ClosureBridgeData with a shared_ptr<>.
@@ -227,7 +228,7 @@ bool test_end_to_end_via_compiler_service() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #224 cycle 2 (shared_ptr bridge ownership) ═══\n");
 
     test_shared_ptr_keeps_flat_alive();
@@ -241,3 +242,7 @@ int main() {
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+}  // namespace aura_issue_224_closure_bridge_detail
+
+int aura_issue_224_closure_bridge_run() { return aura_issue_224_closure_bridge_detail::run_tests(); }
+

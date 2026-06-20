@@ -41,6 +41,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_118_detail {
 struct TypecheckEnv {
     std::unique_ptr<aura::ast::ASTArena> arena;
     std::unique_ptr<aura::core::TypeRegistry> treg;
@@ -250,7 +251,7 @@ bool test_fuzz_gradual_occurrence_linear() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #118 verification tests ═══\n");
     test_solve_result_enum();
     test_timeout_reports_unresolved();
@@ -264,3 +265,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_118_detail
+
+int aura_issue_118_run() { return aura_issue_118_detail::run_tests(); }
+

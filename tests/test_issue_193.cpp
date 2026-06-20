@@ -53,6 +53,7 @@ import aura.compiler.service;
 // AC1: Threshold parameter preserves backward compat (default 0)
 // ═════════════════════════════════════════════════════════════
 
+namespace aura_issue_193_detail {
 bool test_threshold_default_zero() {
     std::println("\n--- Test 1.1: default threshold = 0 (backward compat) ---");
     // The default threshold is 0, which means any hit triggers
@@ -171,7 +172,7 @@ bool test_per_function_not_global() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #193 verification tests ═══\n");
     std::println("AC #1: Threshold parameter preserves backward compat");
     test_threshold_default_zero();
@@ -188,3 +189,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_193_detail
+
+int aura_issue_193_run() { return aura_issue_193_detail::run_tests(); }
+

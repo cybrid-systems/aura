@@ -58,6 +58,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_148_detail {
 #define CHECK_EQ(a, b, msg) do { \
     auto _a = (a); auto _b = (b); \
     if (!(_a == _b)) { \
@@ -322,7 +323,7 @@ void test_null_ast_returns_zero() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #148 incremental type checking tests ═══\n");
 
     std::println("── AC #1: API is exported & callable ──");
@@ -354,3 +355,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_148_detail
+
+int aura_issue_148_run() { return aura_issue_148_detail::run_tests(); }
+

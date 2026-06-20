@@ -67,6 +67,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_190_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -281,7 +282,7 @@ bool test_fuzzer_many_macros() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #190 verification tests ═══\n");
     std::println("AC #1: clone_macro_body takes cloned_marker param");
     test_clone_macro_body_marker_param();
@@ -310,3 +311,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_190_detail
+
+int aura_issue_190_run() { return aura_issue_190_detail::run_tests(); }
+

@@ -48,6 +48,7 @@ import aura.compiler.ir;
 
 
 
+namespace aura_issue_177_detail {
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
 
 // ── Test 1: type_id_ rollback end-to-end ────────────────
@@ -174,7 +175,7 @@ bool test_nested_boundaries() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #213 / #177 — integration smoke test ═══\n");
     std::fprintf(stdout, "  Verifies the full #213 chain end-to-end:\n");
     std::fprintf(stdout, "    - Cycle 1: rollback mechanism\n");
@@ -190,3 +191,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_177_detail
+
+int aura_issue_177_run() { return aura_issue_177_detail::run_tests(); }
+

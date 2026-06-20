@@ -63,6 +63,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_149_detail {
 #define CHECK_EQ(a, b, msg) do { \
     auto _a = (a); auto _b = (b); \
     if (!(_a == _b)) { \
@@ -252,7 +253,7 @@ void test_type_observability() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #149 rich type propagation tests ═══\n");
 
     std::println("── AC #1: IRInstruction new fields default to 0 ──");
@@ -284,3 +285,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_149_detail
+
+int aura_issue_149_run() { return aura_issue_149_detail::run_tests(); }
+

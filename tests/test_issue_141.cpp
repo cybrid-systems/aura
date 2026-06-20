@@ -68,6 +68,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_141_detail {
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
@@ -466,7 +467,7 @@ bool test_node_id_isolation() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #141 verification tests ═══\n");
 
     std::println("── AC #1: Workspace create/switch/list/current ──");
@@ -506,3 +507,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_141_detail
+
+int aura_issue_141_run() { return aura_issue_141_detail::run_tests(); }
+

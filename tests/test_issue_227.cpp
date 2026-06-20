@@ -76,6 +76,7 @@ using aura::test::g_failed;
 // valid status (Ok or Warnings, not NotChecked) for a
 // mutation that touched a predicate-bearing node.
 
+namespace aura_issue_227_detail {
 bool test_invariant_check_runs_after_rebind() {
     std::println("\n--- Test 1: invariant check runs after rebind ---");
     aura::compiler::CompilerService cs;
@@ -200,7 +201,7 @@ bool test_dirty_propagation_marks_predicate_chain() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #227 (Occurrence Typing narrowing + ADT exhaustiveness) ═══\n");
 
     test_invariant_check_runs_after_rebind();
@@ -212,3 +213,7 @@ int main() {
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+}  // namespace aura_issue_227_detail
+
+int aura_issue_227_run() { return aura_issue_227_detail::run_tests(); }
+

@@ -36,6 +36,7 @@ import aura.diag;
 
 // ── Test 1: fresh TypeChecker has hit rate 0.0 ─────────
 
+namespace aura_issue_130_detail {
 bool test_fresh_hit_rate() {
     std::println("\n--- Test: fresh TypeChecker has hit rate 0.0 ---");
 
@@ -125,7 +126,7 @@ bool test_synthetic_hit_rate() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #130 verification tests ═══\n");
     test_fresh_hit_rate();
     test_hit_rate_computation();
@@ -136,3 +137,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_130_detail
+
+int aura_issue_130_run() { return aura_issue_130_detail::run_tests(); }
+

@@ -56,6 +56,7 @@ import aura.compiler.service;
 // Layer 1: Direct C++ tests on EnvFrame + is_env_frame_stale
 // ═══════════════════════════════════════════════════════════
 
+namespace aura_issue_242_detail {
 bool test_alloc_env_frame_stamps_version() {
     std::println("\n--- AC1: alloc_env_frame stamps version_ = current defuse_version_ ---");
     aura::compiler::Evaluator ev;
@@ -215,7 +216,7 @@ bool test_commit_panic_checkpoint_clears_arena_sizes() {
 // Main test runner
 // ═══════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #242 verification tests ═══\n");
 
     std::println("Layer 1: Direct C++ tests on EnvFrame + is_env_frame_stale");
@@ -235,3 +236,6 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_242_detail
+
+int aura_issue_242_run() { return aura_issue_242_detail::run_tests(); }

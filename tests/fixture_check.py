@@ -51,8 +51,10 @@ def check_issues_fast(errors: list[str]) -> None:
         return
     names: list[str] = []
     for i, target in enumerate(targets):
-        if not isinstance(target, str) or not target.startswith("test_issue_"):
-            _fail(errors, f"issues_fast.json[{i}]: target must be test_issue_* name")
+        if not isinstance(target, str) or not (
+            target.startswith("test_issue_") or target.startswith("test_issues_")
+        ):
+            _fail(errors, f"issues_fast.json[{i}]: target must be test_issue_* or test_issues_* name")
             continue
         names.append(target)
     _check_unique_names(errors, "issues_fast.json", names)

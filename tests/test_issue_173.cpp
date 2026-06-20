@@ -29,6 +29,7 @@ using aura::test::g_failed;
 // Forward-declare the type aliases to verify they're
 // at the expected types. The actual definitions are in
 // aura_jit_runtime.cpp (which is linked into the test).
+namespace aura_issue_173_detail {
 namespace aura {
 namespace runtime {
 // Mirror the aliases — this is a compile-time check that
@@ -86,7 +87,7 @@ bool test_types_distinct() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #173 — stable-id type aliases ═══\n");
     std::fprintf(stdout, "  Verifies PairId/CellId/StringId + NULL_X_ID sentinels.\n");
     std::fprintf(stdout, "  Full migration (remap table, resolve_X, GC sweep compact)\n");
@@ -100,3 +101,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_173_detail
+
+int aura_issue_173_run() { return aura_issue_173_detail::run_tests(); }
+

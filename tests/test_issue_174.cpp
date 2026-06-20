@@ -33,6 +33,7 @@ import aura.compiler.value;
 
 
 
+namespace aura_issue_174_detail {
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
 
 // Helper: build an Env, bind a few name→value pairs, and
@@ -190,7 +191,7 @@ bool test_bindings_with_names() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #174 Cycle 1 — Env::bindings_ migration ═══\n");
     std::fprintf(stdout, "  Adds bindings_symid_iter(), bindings_with_names(),\n");
     std::fprintf(stdout, "  and bindings_legacy_uses metric.\n\n");
@@ -205,3 +206,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_174_detail
+
+int aura_issue_174_run() { return aura_issue_174_detail::run_tests(); }
+

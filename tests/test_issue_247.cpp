@@ -40,6 +40,7 @@ import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
+namespace aura_issue_247_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
@@ -207,7 +208,7 @@ bool test_snapshot_no_workspace_zero() {
 // ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
-int main() {
+int run_tests() {
     std::println("═══ Issue #247 — SyntaxMarker observability ═══\n");
 
     std::println("AC #6: snapshot consistency (run first, no set-code)");
@@ -233,3 +234,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_247_detail
+
+int aura_issue_247_run() { return aura_issue_247_detail::run_tests(); }
+

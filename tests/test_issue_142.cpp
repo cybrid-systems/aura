@@ -54,6 +54,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_142_detail {
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
@@ -305,7 +306,7 @@ bool test_query_pipeline_for_llm() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #142 verification tests ═══\n");
 
     std::println("── AC #1: query:where + query:filter ──");
@@ -334,3 +335,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_142_detail
+
+int aura_issue_142_run() { return aura_issue_142_detail::run_tests(); }
+

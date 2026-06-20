@@ -69,6 +69,7 @@ using aura::test::g_failed;
 // always enough — the fiber-spawn overhead + scheduler
 // wakeup can push completion past 2s, causing intermittent
 // flakes. Polling with a deadline is robust.
+namespace aura_issue_226_detail {
 template <typename A>
 bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 5000) {
     auto deadline = std::chrono::steady_clock::now() +
@@ -377,7 +378,7 @@ bool test_doomsday_stress() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #226 cycle 4 (closure-bridge: tests + invariants + TSan) ═══\n");
 
     test_concurrent_mutate_and_invoke();
@@ -389,3 +390,7 @@ int main() {
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+}  // namespace aura_issue_226_detail
+
+int aura_issue_226_run() { return aura_issue_226_detail::run_tests(); }
+

@@ -61,6 +61,7 @@ import aura.compiler.service;
 
 
 // Helper: run a snippet and return the raw EvalValue
+namespace aura_issue_187_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -514,7 +515,7 @@ bool test_contracts_on_allocate_raw() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #187 verification tests ═══\n");
     std::println("AC #1: Arena/StringPool compaction primitives");
     test_arena_compact_estimate_empty();
@@ -558,3 +559,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_187_detail
+
+int aura_issue_187_run() { return aura_issue_187_detail::run_tests(); }
+

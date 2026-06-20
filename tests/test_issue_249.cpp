@@ -49,6 +49,7 @@ import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
+namespace aura_issue_249_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
@@ -236,7 +237,7 @@ bool test_out_of_range() {
 // ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
-int main() {
+int run_tests() {
     std::println("═══ Issue #249 — StableNodeRef ergonomics ═══\n");
 
     std::println("AC #5: bad arg types");
@@ -262,3 +263,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_249_detail
+
+int aura_issue_249_run() { return aura_issue_249_detail::run_tests(); }
+

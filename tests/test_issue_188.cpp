@@ -66,6 +66,7 @@ import aura.compiler.service;
 
 
 // Helper: run a snippet and return the raw EvalValue
+namespace aura_issue_188_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -350,7 +351,7 @@ bool test_fuzzer_multi_mutation() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #188 verification tests ═══\n");
     std::println("AC #1: Fine-grained per-node dirty bitmask");
     test_dirty_bitmask_constants();
@@ -380,3 +381,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_188_detail
+
+int aura_issue_188_run() { return aura_issue_188_detail::run_tests(); }
+

@@ -43,6 +43,7 @@
 using aura::test::g_passed;
 using aura::test::g_failed;
 
+namespace aura_issue_182_detail {
 namespace eda {
 
 // ═══════════════════════════════════════════════════════════
@@ -496,7 +497,7 @@ bool test_end_to_end_counter() {
 // Main
 // ═══════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #182 — Hardware IR + Verilog Backend (Cycle 1, C++) ═══\n");
     std::fprintf(stdout, "  Issue #182 is 100%% stdlib work; the Aura binary's\n");
     std::fprintf(stdout, "  top-level `define` has upstream bugs that block the\n");
@@ -518,3 +519,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_182_detail
+
+int aura_issue_182_run() { return aura_issue_182_detail::run_tests(); }
+

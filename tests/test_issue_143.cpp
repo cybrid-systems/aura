@@ -52,6 +52,7 @@ import aura.compiler.pass_manager;
 
 
 
+namespace aura_issue_143_detail {
 using aura::ir::IROpcode;
 using aura::ir::IRFunction;
 using aura::ir::IRModule;
@@ -263,7 +264,7 @@ bool test_fixpoint_propagation() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #143 verification tests (escape analysis) ═══\n");
 
     std::println("── AC #1: Wrap integrates as a pass ──");
@@ -295,3 +296,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_143_detail
+
+int aura_issue_143_run() { return aura_issue_143_detail::run_tests(); }
+

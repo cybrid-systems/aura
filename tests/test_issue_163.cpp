@@ -39,6 +39,7 @@ import aura.diag;
 
 
 
+namespace aura_issue_163_detail {
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
 
 // ── Test 1: concept AnalysisPass exists and is satisfied by analysis passes
@@ -230,7 +231,7 @@ bool test_coercion_marker_struct() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #163 — Expand Pass concept usage ═══\n");
 
     test_analysis_pass_concept();
@@ -246,3 +247,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_163_detail
+
+int aura_issue_163_run() { return aura_issue_163_detail::run_tests(); }
+

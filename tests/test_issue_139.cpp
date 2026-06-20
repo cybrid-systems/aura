@@ -54,6 +54,7 @@ import aura.parser.parser;
 
 
 
+namespace aura_issue_139_detail {
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
@@ -368,7 +369,7 @@ bool test_extract_type_correctness() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #139 verification tests ═══\n");
 
     std::println("── AC #1: Structural refactor operators ──");
@@ -395,3 +396,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_139_detail
+
+int aura_issue_139_run() { return aura_issue_139_detail::run_tests(); }
+

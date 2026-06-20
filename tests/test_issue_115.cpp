@@ -35,6 +35,7 @@ using aura::test::g_failed;
 
 
 
+namespace aura_issue_115_detail {
 bool test_parallel_speedup() {
     std::println("\n--- Test: parallel speedup (Issue #115 — criterion #1) ---");
 
@@ -200,7 +201,7 @@ bool test_long_running_stability() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #115 verification tests ═══\n");
     test_parallel_speedup();
     test_long_running_stability();
@@ -209,3 +210,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_115_detail
+
+int aura_issue_115_run() { return aura_issue_115_detail::run_tests(); }
+

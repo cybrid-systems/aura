@@ -45,6 +45,7 @@ import aura.compiler.service;
 
 
 
+namespace aura_issue_194_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
     auto r = cs.eval(src);
@@ -184,7 +185,7 @@ bool test_primitives_non_destructive() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #194 verification tests ═══\n");
     std::println("AC #1: (jit:intrinsic-count) primitive");
     test_intrinsic_count_primitive_registered();
@@ -203,3 +204,7 @@ int main() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
+}  // namespace aura_issue_194_detail
+
+int aura_issue_194_run() { return aura_issue_194_detail::run_tests(); }
+

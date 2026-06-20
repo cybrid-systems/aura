@@ -43,6 +43,7 @@ import aura.compiler.compute_kind;
 
 // ── Test 1: cells() const return type is std::span ──────
 
+namespace aura_issue_128_detail {
 bool test_cells_returns_span() {
     std::println("\n--- Test: cells() const returns std::span ---");
 
@@ -148,7 +149,7 @@ bool test_span_size() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #128 verification tests ═══\n");
     test_cells_returns_span();
     test_span_vector_conversion();
@@ -159,3 +160,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_128_detail
+
+int aura_issue_128_run() { return aura_issue_128_detail::run_tests(); }
+

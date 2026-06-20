@@ -30,6 +30,7 @@ import aura.compiler.ir_soa;
 
 
 
+namespace aura_issue_167_detail {
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
 
 // ── Test 1: empty IRModuleV2 ──
@@ -209,7 +210,7 @@ bool test_full_metadata() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::fprintf(stdout, "═══ Issue #167 — IR layer SoA/DOD migration (Phase 1) ═══\n");
 
     test_empty_module();
@@ -223,3 +224,7 @@ int main() {
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_167_detail
+
+int aura_issue_167_run() { return aura_issue_167_detail::run_tests(); }
+

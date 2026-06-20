@@ -43,6 +43,7 @@ import aura.compiler.value;
 
 // ── Test 1: alias type identity ──────────────────────────
 
+namespace aura_issue_127_detail {
 bool test_alias_type_identity() {
     std::println("\n--- Test: Result alias type identity ---");
 
@@ -119,7 +120,7 @@ bool test_monadic_chain() {
     return true;
 }
 
-int main() {
+int run_tests() {
     std::println("═══ Issue #127 verification tests ═══\n");
     test_alias_type_identity();
     test_result_error_channel();
@@ -129,3 +130,7 @@ int main() {
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
+}  // namespace aura_issue_127_detail
+
+int aura_issue_127_run() { return aura_issue_127_detail::run_tests(); }
+
