@@ -1283,6 +1283,14 @@ public:
         ar.run(ir_mod);
         cf.run(ir_mod);
         dce.run(ir_mod);
+        // Issue #253: accumulate linear-move elision count
+        // into the shared metrics so snapshot() + the Aura
+        // primitive (compile:linear-elide-count) read a single
+        // source of truth.
+        if (ts.linear_elide_count() > 0) {
+            metrics_.linear_elide_count.fetch_add(
+                ts.linear_elide_count(), std::memory_order_relaxed);
+        }
 
         if (ar.has_error()) {
             for (auto& d : ar.result().diagnostics) {
@@ -1577,6 +1585,12 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
         }
 
+        // Issue #253: accumulate linear-move elision count.
+        if (ts.linear_elide_count() > 0) {
+            metrics_.linear_elide_count.fetch_add(
+                ts.linear_elide_count(), std::memory_order_relaxed);
+        }
+
         if (cf.folded_count() > 0) {
             std::println(std::cerr, "PM: folded {} instructions", cf.folded_count());
         }
@@ -1722,6 +1736,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             // Issue #163: run_pipeline (Pass concept fold) replaces
             // the 4 individual *.run() calls.
             aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf);
+            // Issue #253: accumulate linear-move elision count.
+            if (ts.linear_elide_count() > 0) {
+                metrics_.linear_elide_count.fetch_add(
+                    ts.linear_elide_count(), std::memory_order_relaxed);
+            }
         }
 
         // ── Run escape analysis pass ───────────────────────
@@ -3479,6 +3498,12 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
         }
 
+        // Issue #253: accumulate linear-move elision count.
+        if (ts.linear_elide_count() > 0) {
+            metrics_.linear_elide_count.fetch_add(
+                ts.linear_elide_count(), std::memory_order_relaxed);
+        }
+
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_);
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
         ir_interp.set_strategy(strategy_);
@@ -3891,6 +3916,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         s.closure_ir_calls = metrics_.closure_ir_calls.load(std::memory_order_relaxed);
         s.closure_bridge_calls = metrics_.closure_bridge_calls.load(std::memory_order_relaxed);
         s.closure_stale_returns = metrics_.closure_stale_returns.load(std::memory_order_relaxed);
+        // Issue #253: linear-move elision count (lifetime total).
+        s.linear_elide_count = metrics_.linear_elide_count.load(std::memory_order_relaxed);
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
         // shared_lock on workspace_mtx_ to keep the flat

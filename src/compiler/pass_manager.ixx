@@ -460,6 +460,37 @@ public:
                         }
                     }
 
+                    // ── Linear-move elision (Issue #253, #149 Phase 3 slice) ──
+                    // When a MoveOp's source is statically known to be
+                    // a linear-typed Owned value (linear_ownership_state
+                    // == 1), the MoveOp is a runtime no-op marker for the
+                    // type checker (linear values are single-use by
+                    // construction). Elide it to Nop so the IR
+                    // interpreter / JIT don't pay the dispatch cost.
+                    //
+                    // Safe because:
+                    //   - linear_ownership_state == 1 (Owned) means
+                    //     the value is statically known to be linear.
+                    //   - Linear values are guaranteed single-use by
+                    //     the M4 Linear typing (OwnershipEnv).
+                    //   - The MoveOp was already a no-op at runtime;
+                    //     we're just removing the dispatch.
+                    //
+                    // Counted in linear_elide_count_ (exposed via
+                    // CompilerMetrics::linear_elide_count + the
+                    // (compile:linear-elide-count) Aura primitive).
+                    if (instr.opcode == aura::ir::IROpcode::MoveOp) {
+                        auto src_slot = ops[1];
+                        if (src_slot < block.instructions.size()) {
+                            auto& src_instr = block.instructions[src_slot];
+                            if (src_instr.linear_ownership_state == 1 /*Owned*/) {
+                                block.instructions[i].opcode = aura::ir::IROpcode::Nop;
+                                block.instructions[i].operands = {0, 0, 0, 0};
+                                ++linear_elide_count_;
+                            }
+                        }
+                    }
+
                     ++i;
                 }
             }
@@ -489,10 +520,16 @@ public:
     bool has_error() const { return false; }
     std::string_view name() const { return "type-specialize"; }
     std::size_t specialized_count() const { return removed_count_; }
+    // Issue #253: linear-move elision counter (per-run).
+    // Service.ixx reads this after each ts.run() and
+    // accumulates into metrics_.linear_elide_count.
+    std::size_t linear_elide_count() const { return linear_elide_count_; }
 
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
     std::size_t removed_count_ = 0;
+    // Issue #253: linear-move elision accumulator.
+    std::size_t linear_elide_count_ = 0;
 };
 
 // ── mark_coercions — mark nodes needing coercion (Issue #163) ───

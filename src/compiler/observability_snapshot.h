@@ -55,6 +55,11 @@ struct CompilerSnapshot {
     std::uint64_t closure_bridge_calls = 0;
     std::uint64_t closure_ir_calls = 0;
     std::uint64_t closure_stale_returns = 0;
+    // Issue #253: lifetime total of MoveOp instructions elided
+    // by TypeSpecializationWrap (when source has
+    // linear_ownership_state == Owned). Mirrors
+    // CompilerMetrics::linear_elide_count.
+    std::uint64_t linear_elide_count = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).
