@@ -282,8 +282,8 @@ Runtime canonical list: `(api-reference)`.
 - `json-encode` — `src/compiler/evaluator_primitives_json.cpp`
 - `json-get-string` — `src/compiler/evaluator_primitives_json.cpp`
 - `json-parse` — `src/compiler/evaluator_primitives_json.cpp`
-- `keyword->string` — `src/compiler/evaluator_impl.cpp`
-- `keyword?` — `src/compiler/evaluator_impl.cpp`
+- `keyword->string` — `src/compiler/evaluator_primitives_reflect.cpp`
+- `keyword?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `lcm` — `src/compiler/evaluator_primitives_math.cpp`
 - `length` — `src/compiler/evaluator_primitives_list.cpp`
 - `list` — `src/compiler/evaluator_primitives_list.cpp`
@@ -333,9 +333,9 @@ Runtime canonical list: `(api-reference)`.
 - `read-file` — `src/compiler/evaluator_impl.cpp`
 - `read-line` — `src/compiler/evaluator_impl.cpp`
 - `recv` — `src/compiler/evaluator_impl.cpp`
-- `reflect-members` — `src/compiler/evaluator_impl.cpp`
-- `reflect-module-exports` — `src/compiler/evaluator_impl.cpp`
-- `reflect-type` — `src/compiler/evaluator_impl.cpp`
+- `reflect-members` — `src/compiler/evaluator_primitives_reflect.cpp`
+- `reflect-module-exports` — `src/compiler/evaluator_primitives_reflect.cpp`
+- `reflect-type` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `regex-find` — `src/compiler/evaluator_primitives_math.cpp`
 - `regex-match?` — `src/compiler/evaluator_primitives_math.cpp`
 - `regex-replace` — `src/compiler/evaluator_primitives_math.cpp`
@@ -383,10 +383,10 @@ Runtime canonical list: `(api-reference)`.
 - `tcp-connect` — `src/compiler/evaluator_impl.cpp`
 - `tcp-recv` — `src/compiler/evaluator_impl.cpp`
 - `tcp-send` — `src/compiler/evaluator_impl.cpp`
-- `type-of` — `src/compiler/evaluator_impl.cpp`
+- `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` — `src/compiler/evaluator_impl.cpp`
 - `type-registry-stats` — `src/compiler/evaluator_impl.cpp`
-- `type?` — `src/compiler/evaluator_impl.cpp`
+- `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `typecheck-current` — `src/compiler/evaluator_impl.cpp`
 - `typecheck-incremental` — `src/compiler/evaluator_impl.cpp`
 - `typecheck-status` — `src/compiler/evaluator_impl.cpp`

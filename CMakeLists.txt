@@ -14,6 +14,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_json.cpp
     src/compiler/evaluator_primitives_vector.cpp
     src/compiler/evaluator_primitives_math.cpp
+    src/compiler/evaluator_primitives_reflect.cpp
 )
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
