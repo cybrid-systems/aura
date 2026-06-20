@@ -48,6 +48,27 @@ function(aura_issue_test_link_llvm_jit TARGET)
     target_link_libraries(${TARGET} PRIVATE ${llvm_libs})
 endfunction()
 
+# LLVM JIT without observability headers (light JIT API tests).
+function(aura_issue_test_link_llvm_jit_minimal TARGET)
+    target_include_directories(${TARGET} PRIVATE src/compiler)
+    target_sources(${TARGET} PRIVATE
+        src/compiler/aura_jit.cpp
+        src/compiler/aura_jit_runtime.cpp
+        src/compiler/aura_jit_bridge.cpp
+    )
+    set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    target_include_directories(${TARGET} PRIVATE ${LLVM_INCLUDE_DIRS})
+    target_compile_definitions(${TARGET} PRIVATE AURA_HAVE_LLVM=1)
+    target_link_libraries(${TARGET} PRIVATE ${llvm_libs})
+endfunction()
+
+# LLVM JIT + observability + contract stub.
+function(aura_issue_test_link_llvm_jit_contract TARGET)
+    aura_issue_test_link_llvm_jit(${TARGET})
+    target_sources(${TARGET} PRIVATE src/core/contract_stub.cpp)
+endfunction()
+
 # LLVM JIT + tests/ include (closure-bridge issue tests).
 function(aura_issue_test_link_llvm_jit_tests TARGET)
     target_include_directories(${TARGET} PRIVATE tests)

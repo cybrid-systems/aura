@@ -18,6 +18,7 @@ Usage:
   ./build.py docs --check      # 校验生成文档未过期（CI）
   ./build.py lint              # Ruff lint + format check（Python）
   ./build.py lint --fix        # 自动修复可修复项并格式化
+  ./build.py fixtures --check  # 校验 tests/fixtures/*.json schema
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
@@ -107,6 +108,21 @@ def cmd_lint():
         return r
     ok("lint OK")
     return 0
+
+
+def cmd_fixtures():
+    """Validate tests/fixtures/*.json schema and baseline sync."""
+    print(f"{B}═══ Fixtures (check) ═══{N}")
+    script = ROOT / "tests" / "fixture_check.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r == 0:
+        ok("fixtures OK")
+    else:
+        fail("fixture validation failed")
+    return r
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1102,8 +1118,15 @@ def main():
     commands = {
         "build": cmd_build,
         "clean": cmd_clean,
-        "check": lambda: cmd_docs() or cmd_lint() or cmd_build() or cmd_test(CI_CORE + CI_SAFETY + CI_FUZZ + CI_ISSUES),
+        "check": lambda: (
+            cmd_docs()
+            or cmd_lint()
+            or cmd_fixtures()
+            or cmd_build()
+            or cmd_test(CI_CORE + CI_SAFETY + CI_FUZZ + CI_ISSUES)
+        ),
         "docs": cmd_docs,
+        "fixtures": cmd_fixtures,
         "lint": cmd_lint,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,

@@ -204,13 +204,43 @@ def save_baseline(suite: BenchSuiteResult):
     print(f"Baseline saved to {BASELINE_FILE}")
 
 
-def check_regression(suite: BenchSuiteResult) -> bool:
-    """Compare current results against stored baseline."""
+def validate_baseline_names(suite: BenchSuiteResult) -> bool:
+    """Ensure baseline case names match the benchmark fixture set."""
     baseline = load_baseline()
     if not baseline.cases:
         print("No baseline found. Run with --update first.")
-        return True
+        return False
 
+    fixture_names = {c.name for c in load_benchmark_cases()}
+    baseline_names = {c["name"] for c in baseline.cases}
+    missing = sorted(fixture_names - baseline_names)
+    extra = sorted(baseline_names - fixture_names)
+
+    ok = True
+    if missing:
+        ok = False
+        print(f"⚠️  BASELINE OUT OF SYNC: {len(missing)} fixture case(s) missing from baseline:")
+        for name in missing:
+            print(f"  + {name}")
+    if extra:
+        ok = False
+        print(f"⚠️  BASELINE OUT OF SYNC: {len(extra)} stale baseline case(s) not in fixture:")
+        for name in extra:
+            print(f"  - {name}")
+    if baseline.total_cases != len(fixture_names):
+        ok = False
+        print(f"⚠️  BASELINE total_cases={baseline.total_cases} but fixture has {len(fixture_names)} cases")
+    if not ok:
+        print("Run: python3 tests/benchmark.py --update")
+    return ok
+
+
+def check_regression(suite: BenchSuiteResult) -> bool:
+    """Compare current results against stored baseline."""
+    if not validate_baseline_names(suite):
+        return False
+
+    baseline = load_baseline()
     bmap = {c["name"]: c for c in baseline.cases}
     cmap = {c["name"]: c for c in suite.cases}
 

@@ -436,28 +436,7 @@ endfunction()
 # can be run independently of test_concurrent's other suites.
 # Phase 2 pilot-43: converted using early helper. Light serve-only (4 files; helper base + small delta for include and serve sources).
 aura_add_issue_test(test_issue_115)
-target_include_directories(test_issue_115 PRIVATE src)
-target_sources(test_issue_115 PRIVATE
-    # Same dep as test_issue_205: aura_set_current_fiber_id_fn
-    # (defined in aura_jit_runtime.cpp) is called from
-    # fiber.cpp's static init in libaura_test_objects.a.
-    # Plus aura_jit.cpp (defines emit_native_object, called
-    # from aura_jit_bridge.cpp) and the contract / dispatch
-    # stubs (test binaries don't have CompilerService or
-    # aura.compiler.constant_folding's libaura_test_objects
-    # symbol export).
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit.cpp
-    src/core/contract_stub.cpp
-    src/compiler/aura_jit_prim_dispatch_stub.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_115 PRIVATE src src/compiler)
-target_compile_definitions(test_issue_115 PRIVATE AURA_HAVE_LLVM=1)
-target_include_directories(test_issue_115 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_link_libraries(test_issue_115 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_fiber_stubs(test_issue_115)
 
 # Issue #116 verification: deferred CoercionNode insertion
 # (TypeChecker no longer mutates FlatAST in-place). Standalone
@@ -632,57 +611,21 @@ src/compiler/observability_snapshot.h
 # (rest parameters on hygienic macros).
 # Phase 2 pilot-7: converted using early helper. Base covers core + value/diag/value_impl; append the heavy parser/serve/evaluator/JIT/LLVM specifics + rtti flags + LLVM bits.
 aura_add_issue_test(test_issue_137)
-target_sources(test_issue_137 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_137 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_137 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_137 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_137)
 
 # Issue #158 verification: quasiquote should expand inner macro
 # calls in code positions. Standalone binary so the qq-in-macro
 # tests run in isolation.
 # Phase 2 pilot-8: converted using early helper. Base covers core + value/diag/value_impl; append the parser/serve/evaluator/JIT/LLVM specifics + rtti flags + LLVM bits.
 aura_add_issue_test(test_issue_158)
-target_sources(test_issue_158 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_158 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_158 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_158 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_158)
 
 # Issue #159 Phase 1 verification: (typecheck-incremental)
 # primitive wires up the partial re-inference path. Standalone
 # binary so the new primitive dispatch is tested in isolation.
 # Phase 2 pilot-9: converted using early helper. Base covers core + value/diag/value_impl; append the parser/serve/evaluator/JIT/LLVM specifics + rtti flags + LLVM bits.
 aura_add_issue_test(test_issue_159)
-target_sources(test_issue_159 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_159 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_159 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_159 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_159)
 
 # Issue #161 Phase 2 verification: parser is a pure function. The
 # test only needs the parser (no evaluator/IR/JIT) — the
@@ -790,17 +733,7 @@ aura_issue_test_link_llvm_jit(test_issue_169)
 # Phase 2 pilot-18: converted using early helper (light JIT AOT test).
 # Base covers core + value/diag/value_impl; append the jit + messaging + spec_jit specifics + LLVM bits.
 aura_add_issue_test(test_issue_170)
-target_include_directories(test_issue_170 PRIVATE src/compiler)
-target_sources(test_issue_170 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_170 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_170 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_170 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit_minimal(test_issue_170)
 
 # Issue #159 Phase 4: incremental compilation benchmark
 # harness. Measures eval_current latency across 4 scenarios
@@ -853,21 +786,7 @@ aura_issue_test_link_llvm_jit(test_issue_141)
 # MutationRecord are added in this PR.
 # Phase 2 pilot-23: converted using early helper. Base covers core + value/diag/value_impl; append the heavy parser/serve/evaluator/JIT/LLVM + query/mutate specifics + observability headers + rtti/LLVM bits (heavy like 141/140).
 aura_add_issue_test(test_issue_142)
-target_include_directories(test_issue_142 PRIVATE src src/compiler)
-target_sources(test_issue_142 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_142 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_142 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_142 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_142)
 
 # ── GC ↔ Evaluator integration tests (Issue #113) ─────────
 # Verifies the Evaluator root source registration API surface
@@ -1098,44 +1017,14 @@ target_link_libraries(aura PRIVATE linenoise)
 # the basic analysis correctness on hand-crafted IRFunctions.
 # Phase 2 pilot-24: converted using early helper. Base covers core + value/diag/value_impl; append heavy parser/serve/evaluator/JIT/LLVM + observability headers + rtti/LLVM bits.
 aura_add_issue_test(test_issue_143)
-target_include_directories(test_issue_143 PRIVATE src src/compiler)
-target_sources(test_issue_143 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_143 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_143 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_143 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_143)
 
 # Issue #144 verification: C++26 contracts integration. Tests
 # the 13 contract_assert sites added in this PR, plus the
 # hook-based violation integration (AC #2).
 # Phase 2 pilot-25: converted using early helper. Base + append for heavy (parser/serve/eval + jit + llvm + contract_handler.cpp + shape_profiler + observability). Note traditional headers in .cpp (shape.h before modules).
 aura_add_issue_test(test_issue_144)
-target_include_directories(test_issue_144 PRIVATE src src/compiler)
-target_sources(test_issue_144 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/core/contract_handler.cpp
-    src/core/contract_stub.cpp
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_144 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_144 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_144 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit_contract(test_issue_144)
 
 # Issue #145 verification (partial): DOD/SoA Phase 1. Tests
 # Closure::params SoA migration + EnvView/ClosureView new
@@ -1143,24 +1032,7 @@ target_link_libraries(test_issue_144 PRIVATE ${llvm_libs})
 # 2-3 weeks; this PR ships the highest-impact slice.
 # Phase 2 pilot-26: converted using early helper. Consolidated split config (bare early decl + late full block) to aura_add + deltas. Heavy (jit, serve, shape, lowering etc.; note rtti comment shared with 146).
 aura_add_issue_test(test_issue_145)
-target_include_directories(test_issue_145 PRIVATE src src/compiler)
-target_sources(test_issue_145 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h
-)
-# Issue #145: aura_jit.cpp uses LLVM and pimpl over an Impl
-# forward declaration. Needs -fno-rtti to match the aura binary
-# configuration (shared note with 146).
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_145 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_145 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_145 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_145)
 
 # Issue #146 verification: pure-function + monadic Result
 # extraction for Evaluator core. Tests the first extract
@@ -1169,70 +1041,20 @@ target_link_libraries(test_issue_145 PRIVATE ${llvm_libs})
 # PR ships the first slice of the 6-8 target functions.
 # Phase 2 pilot-27: converted using early helper. Leverages new evaluator_pure module (modernization). Heavy (jit, serve etc.).
 aura_add_issue_test(test_issue_146)
-target_include_directories(test_issue_146 PRIVATE src src/compiler)
-target_sources(test_issue_146 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-)
-# Issue #146: aura_jit.cpp uses LLVM and pimpl over an Impl
-# forward declaration. Needs -fno-rtti (shared with 145).
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_146 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_146 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_146 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit_minimal(test_issue_146)
 # Phase 2 pilot-28: converted using early helper (heavy like 146/145).
 aura_add_issue_test(test_issue_147)
-target_include_directories(test_issue_147 PRIVATE src src/compiler)
-target_sources(test_issue_147 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_147 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_147 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_147 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit_minimal(test_issue_147)
 # Issue #148 verification: mutation-aware incremental type checking with constraint
 # delta solving. 
 # Phase 2 pilot-29: converted using early helper. Heavy (full parser/serve/eval/jit/LLVM + type_checker).
 aura_add_issue_test(test_issue_148)
-target_include_directories(test_issue_148 PRIVATE src src/compiler)
-target_sources(test_issue_148 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_148 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_148 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_148 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit_minimal(test_issue_148)
 # Issue #149 verification: propagate rich inferred types for specialization,
 # monomorphization and improved deopt guards.
 # Phase 2 pilot-30: converted using early helper. Heavy (jit, serve, type etc.).
 aura_add_issue_test(test_issue_149)
-target_include_directories(test_issue_149 PRIVATE src src/compiler)
-target_sources(test_issue_149 PRIVATE
- # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_149 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_149 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_149 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit_minimal(test_issue_149)
 
 # Issue #171 verification: Function Inliner (Priority 2) +
 # TCO (Priority 3). Verifies the InlinePass actually inlines
@@ -1306,20 +1128,7 @@ target_include_directories(test_issue_182 PRIVATE src src/compiler)
 # Phase 2 pilot-N: full evaluator+JIT build (matches test_issue_137 pattern;
 # the primitives being tested are registered in evaluator_impl.cpp).
 aura_add_issue_test(test_issue_187)
-target_include_directories(test_issue_187 PRIVATE src src/compiler)
-target_sources(test_issue_187 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_187 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_187 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_187 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_187)
 
 # Issue #188 verification: Fine-grained incremental type checking +
 # dirty propagation + Occurrence Typing re-validation. P5 issue.
@@ -1330,20 +1139,7 @@ target_link_libraries(test_issue_187 PRIVATE ${llvm_libs})
 # observability primitives ((dirty:reasons), (dirty:counts)).
 # Phase 2 pilot-N: matches test_issue_140 pattern (light eval, no JIT).
 aura_add_issue_test(test_issue_188)
-target_include_directories(test_issue_188 PRIVATE src src/compiler)
-target_sources(test_issue_188 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_188 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_188 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_188 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_188)
 
 # Issue #189 verification: race condition fix + observability
 # (P0 concurrency). Tests the memory-ordering fix (26 callsites
@@ -1351,20 +1147,7 @@ target_link_libraries(test_issue_188 PRIVATE ${llvm_libs})
 # and the 3 new observability primitives.
 # Phase 2 pilot-N: matches test_issue_140 pattern (light eval).
 aura_add_issue_test(test_issue_189)
-target_include_directories(test_issue_189 PRIVATE src src/compiler)
-target_sources(test_issue_189 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_189 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_189 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_189 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_189)
 
 # Issue #190 verification: SyntaxMarker::MacroIntroduced full
 # pipeline integration (P0 hygiene). Tests the cloned_marker
@@ -1373,20 +1156,7 @@ target_link_libraries(test_issue_189 PRIVATE ${llvm_libs})
 # observability primitives.
 # Phase 2 pilot-N: matches test_issue_140 pattern (light eval).
 aura_add_issue_test(test_issue_190)
-target_include_directories(test_issue_190 PRIVATE src src/compiler)
-target_sources(test_issue_190 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_190 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_190 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_190 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_190)
 
 # Issue #191 verification: StableNodeRef + generation bump on
 # structural mutate (P0 EDSL). Tests the StableNodeRef struct,
@@ -1395,40 +1165,14 @@ target_link_libraries(test_issue_190 PRIVATE ${llvm_libs})
 # Phase 2 pilot-N: matches test_issue_190 pattern (light eval +
 # LLVM/JIT for the structural primitives).
 aura_add_issue_test(test_issue_191)
-target_include_directories(test_issue_191 PRIVATE src src/compiler)
-target_sources(test_issue_191 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_191 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_191 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_191 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_191)
 
 # Issue #192 verification: atomic batch mutate (P0 EDSL).
 # Tests the mutate:atomic-batch primitive and
 # atomic-batch:stats observability. Phase 2 pilot-N:
 # matches test_issue_191 pattern.
 aura_add_issue_test(test_issue_192)
-target_include_directories(test_issue_192 PRIVATE src src/compiler)
-target_sources(test_issue_192 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_192 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_192 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_192 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_192)
 
 # Issue #193 verification: per-function unhandled-opcode
 # threshold for SpecJITController (jit). The threshold
@@ -1436,20 +1180,7 @@ target_link_libraries(test_issue_192 PRIVATE ${llvm_libs})
 # backward-compat + production-safe threshold behaviors.
 # Phase 2 pilot-N: matches test_issue_140 pattern (light eval).
 aura_add_issue_test(test_issue_193)
-target_include_directories(test_issue_193 PRIVATE src src/compiler)
-target_sources(test_issue_193 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_193 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_193 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_193 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_193)
 
 # Issue #194 verification: per-lowering runtime→intrinsic
 # migration observability (jit, #170 follow-up). The
@@ -1459,20 +1190,7 @@ target_link_libraries(test_issue_193 PRIVATE ${llvm_libs})
 # unhandled-opcode count for observability.
 # Phase 2 pilot-N: matches test_issue_193 pattern.
 aura_add_issue_test(test_issue_194)
-target_include_directories(test_issue_194 PRIVATE src src/compiler)
-target_sources(test_issue_194 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_194 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_194 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_194 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_194)
 
 # Issue #195 verification: structured EH (#170 follow-up).
 # The full LLVM-native replacement (invoke + landingpad +
@@ -1483,20 +1201,7 @@ target_link_libraries(test_issue_194 PRIVATE ${llvm_libs})
 # limitation.
 # Phase 2 pilot-N: matches test_issue_193 pattern.
 aura_add_issue_test(test_issue_195)
-target_include_directories(test_issue_195 PRIVATE src src/compiler)
-target_sources(test_issue_195 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_195 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_195 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_195 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_195)
 
 # Issue #196 verification: incremental recompilation
 # observability primitives (compile:cache-size, dirty-count,
@@ -1504,20 +1209,7 @@ target_link_libraries(test_issue_195 PRIVATE ${llvm_libs})
 # dirty tracking is a larger follow-up.
 # Phase 2 pilot-N: matches test_issue_194 pattern.
 aura_add_issue_test(test_issue_196)
-target_include_directories(test_issue_196 PRIVATE src src/compiler)
-target_sources(test_issue_196 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_196 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_196 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_196 PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_196)
 
 # Issue #224: per-block re-lower consumer (cycle 2 of the
 # smarter-re-lower follow-up to #196). The helper
@@ -1556,61 +1248,19 @@ target_include_directories(test_issue_246 PRIVATE src/compiler)
 # (CompilerSnapshot marker fields + query:marker-stats primitive).
 # Integration test (uses CompilerService).
 aura_add_issue_test(test_issue_247)
-target_include_directories(test_issue_247 PRIVATE src src/compiler)
-target_sources(test_issue_247 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_247 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_247 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_247 PRIVATE ${llvm_libs})
-add_test(NAME issue_247_marker_observability_verification COMMAND ./test_issue_247)
+aura_issue_test_link_llvm_jit(test_issue_247)
 
 # Issue #248 verification: query:schema-of-marker primitive.
 # Observability side of macro-type-tracking. Integration test
 # (uses CompilerService).
 aura_add_issue_test(test_issue_248)
-target_include_directories(test_issue_248 PRIVATE src src/compiler)
-target_sources(test_issue_248 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_248 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_248 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_248 PRIVATE ${llvm_libs})
-add_test(NAME issue_248_schema_of_marker_verification COMMAND ./test_issue_248)
+aura_issue_test_link_llvm_jit(test_issue_248)
 
 # Issue #249 verification: StableNodeRef ergonomics.
 # Children/parent stable accessors + Aura primitives.
 # Integration test (uses CompilerService).
 aura_add_issue_test(test_issue_249)
-target_include_directories(test_issue_249 PRIVATE src src/compiler)
-target_sources(test_issue_249 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_249 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_249 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_249 PRIVATE ${llvm_libs})
-add_test(NAME issue_249_stable_node_ref_ergonomics_verification COMMAND ./test_issue_249)
+aura_issue_test_link_llvm_jit(test_issue_249)
 
 # Issue #252 verification: closure dual-path observability.
 # Scope-limited close: 5 counters + closure:stats primitive.
@@ -1619,21 +1269,7 @@ add_test(NAME issue_249_stable_node_ref_ergonomics_verification COMMAND ./test_i
 # test_issue_250's per-test source setup (uses CompilerService
 # which pulls in JIT + observability + the TLarena globals).
 aura_add_issue_test(test_issue_252)
-target_include_directories(test_issue_252 PRIVATE src src/compiler)
-target_sources(test_issue_252 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h
-    src/core/contract_stub.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_252 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_252 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_252 PRIVATE ${llvm_libs})
-add_test(NAME issue_252_closure_observability_verification COMMAND ./test_issue_252)
+aura_issue_test_link_llvm_jit_contract(test_issue_252)
 
 # Issue #253 verification: linear-move elision in TypeSpecializationWrap
 # (Phase 3 slice of #149 roadmap). Scope-limited close.
@@ -1642,21 +1278,7 @@ add_test(NAME issue_252_closure_observability_verification COMMAND ./test_issue_
 # via CompilerMetrics / CompilerSnapshot + the
 # (compile:linear-elide-count) Aura primitive.
 aura_add_issue_test(test_issue_253)
-target_include_directories(test_issue_253 PRIVATE src src/compiler)
-target_sources(test_issue_253 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h
-    src/core/contract_stub.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_253 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_253 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_253 PRIVATE ${llvm_libs})
-add_test(NAME issue_253_linear_move_elision_verification COMMAND ./test_issue_253)
+aura_issue_test_link_llvm_jit_contract(test_issue_253)
 
 # Issue #254 verification: IR SoA dual-emit foundation
 # (Phase 2 slice of the #254 SoA migration roadmap). Scope-limited
@@ -1667,21 +1289,7 @@ add_test(NAME issue_253_linear_move_elision_verification COMMAND ./test_issue_25
 # path (lower_to_ir / lower_to_ir_with_cache) does NOT opt into
 # dual-emit yet — that's a follow-up.
 aura_add_issue_test(test_issue_254)
-target_include_directories(test_issue_254 PRIVATE src src/compiler)
-target_sources(test_issue_254 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h
-    src/core/contract_stub.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_254 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_254 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_254 PRIVATE ${llvm_libs})
-add_test(NAME issue_254_ir_soa_dual_emit_foundation_verification COMMAND ./test_issue_254)
+aura_issue_test_link_llvm_jit_contract(test_issue_254)
 
 # Issue #255 verification: reference stability observability
 # foundation. Tests the 4 atomic counters on FlatAST
@@ -1690,21 +1298,7 @@ add_test(NAME issue_254_ir_soa_dual_emit_foundation_verification COMMAND ./test_
 # the (compile:invalidations-stats) Aura primitive.
 # Integration test (uses CompilerService).
 aura_add_issue_test(test_issue_255)
-target_include_directories(test_issue_255 PRIVATE src src/compiler)
-target_sources(test_issue_255 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h
-    src/core/contract_stub.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_255 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_255 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_255 PRIVATE ${llvm_libs})
-add_test(NAME issue_255_reference_stability_observability_verification COMMAND ./test_issue_255)
+aura_issue_test_link_llvm_jit_contract(test_issue_255)
 
 # Issue #256 verification: AST operation observability
 # foundation. Tests the 4 atomic counters on FlatAST
@@ -1713,21 +1307,7 @@ add_test(NAME issue_255_reference_stability_observability_verification COMMAND .
 # plus the (compile:ast-ops-stats) Aura primitive.
 # Integration test (uses CompilerService).
 aura_add_issue_test(test_issue_256)
-target_include_directories(test_issue_256 PRIVATE src src/compiler)
-target_sources(test_issue_256 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h
-    src/core/contract_stub.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_256 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_256 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_256 PRIVATE ${llvm_libs})
-add_test(NAME issue_256_ast_ops_observability_verification COMMAND ./test_issue_256)
+aura_issue_test_link_llvm_jit_contract(test_issue_256)
 
 # Issue #258 verification: multi-mutation incremental
 # typecheck observability foundation. Tests the 4 atomic
@@ -1736,21 +1316,7 @@ add_test(NAME issue_256_ast_ops_observability_verification COMMAND ./test_issue_
 # plus the derived multi_mutation_recompute_ratio_bp + the
 # (compile:multi-mutation-stats) Aura primitive.
 aura_add_issue_test(test_issue_258)
-target_include_directories(test_issue_258 PRIVATE src src/compiler)
-target_sources(test_issue_258 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h
-    src/core/contract_stub.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_258 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_258 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_258 PRIVATE ${llvm_libs})
-add_test(NAME issue_258_multi_mutation_typecheck_observability_verification COMMAND ./test_issue_258)
+aura_issue_test_link_llvm_jit_contract(test_issue_258)
 
 # Issue #259 verification: type metadata propagation
 # observability foundation. Tests the 2 atomic counters on
@@ -1759,112 +1325,38 @@ add_test(NAME issue_258_multi_mutation_typecheck_observability_verification COMM
 # type_propagation_coverage_bp + the
 # (compile:type-propagation-stats) Aura primitive.
 aura_add_issue_test(test_issue_259)
-target_include_directories(test_issue_259 PRIVATE src src/compiler)
-target_sources(test_issue_259 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-    src/compiler/observability_snapshot.h
-    src/core/contract_stub.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_259 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_259 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_259 PRIVATE ${llvm_libs})
-add_test(NAME issue_259_type_propagation_observability_verification COMMAND ./test_issue_259)
+aura_issue_test_link_llvm_jit_contract(test_issue_259)
 
 # Issue #250 verification: atomic-batch truly atomic.
 # Integration test (uses CompilerService).
 aura_add_issue_test(test_issue_250)
-target_include_directories(test_issue_250 PRIVATE src src/compiler)
-target_sources(test_issue_250 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_250 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_250 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_250 PRIVATE ${llvm_libs})
-add_test(NAME issue_250_atomic_batch_truly_atomic_verification COMMAND ./test_issue_250)
+aura_issue_test_link_llvm_jit(test_issue_250)
 
 # Issue #197 observability: (compile:inline-pass-stats)
 # Aura primitive. Tests the Aura-level hook + hash return
 # shape. Pattern matches test_issue_194 (small Aura-level
 # observability test).
 aura_add_issue_test(test_issue_197_observability)
-target_include_directories(test_issue_197_observability PRIVATE src src/compiler)
-target_sources(test_issue_197_observability PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_197_observability PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_197_observability PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_197_observability PRIVATE ${llvm_libs})
+aura_issue_test_link_llvm_jit(test_issue_197_observability)
 
 # Issue #206 verification: GC sweep compact + remap +
 # resolve_X helpers. Tests the compact_pairs() and
 # resolve_pair() API on the Evaluator.
 aura_add_issue_test(test_issue_206)
-target_include_directories(test_issue_206 PRIVATE src src/compiler)
-target_sources(test_issue_206 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-src/compiler/aura_jit_bridge.cpp
-)
-target_include_directories(test_issue_206 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_206 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_206 PRIVATE ${llvm_libs})
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+aura_issue_test_link_llvm_jit_minimal(test_issue_206)
 
 # Issue #174 Cycle 1 verification: Env::bindings_ migration
 # scaffold. Tests bindings_symid_iter(), bindings_with_names(),
 # and the bindings_legacy_uses metric.
 aura_add_issue_test(test_issue_174)
-target_include_directories(test_issue_174 PRIVATE src src/compiler)
-target_sources(test_issue_174 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-src/compiler/aura_jit_bridge.cpp
-)
-target_include_directories(test_issue_174 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_174 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_174 PRIVATE ${llvm_libs})
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+aura_issue_test_link_llvm_jit_minimal(test_issue_174)
 
 # Issue #208 Cycle 2 verification: bindings_legacy_uses
 # metric in the integration path. Tests the metric +
 # accessors; the full 25-site migration is a separate
 # multi-day effort.
 aura_add_issue_test(test_issue_208)
-target_include_directories(test_issue_208 PRIVATE src src/compiler)
-target_sources(test_issue_208 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-src/compiler/aura_jit_bridge.cpp
-)
-target_include_directories(test_issue_208 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_208 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_208 PRIVATE ${llvm_libs})
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+aura_issue_test_link_llvm_jit_minimal(test_issue_208)
 
 # Issue #210 Cycle 4 verification: env cleanup-readiness
 # tests. The actual `drop bindings_` commit is deferred
@@ -1872,36 +1364,14 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 # plan in #208). This test exercises the post-migration
 # invariants.
 aura_add_issue_test(test_issue_210)
-target_include_directories(test_issue_210 PRIVATE src src/compiler)
-target_sources(test_issue_210 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-src/compiler/aura_jit_bridge.cpp
-)
-target_include_directories(test_issue_210 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_210 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_210 PRIVATE ${llvm_libs})
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+aura_issue_test_link_llvm_jit_minimal(test_issue_210)
 
 # Issue #211 verification: (tag, arity) index for
 # query:pattern primitive. Verifies the index is built
 # on demand, used for fast lookup, and invalidated on
 # workspace changes.
 aura_add_issue_test(test_issue_211)
-target_include_directories(test_issue_211 PRIVATE src src/compiler)
-target_sources(test_issue_211 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-src/compiler/aura_jit_bridge.cpp
-)
-target_include_directories(test_issue_211 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_211 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_211 PRIVATE ${llvm_libs})
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+aura_issue_test_link_llvm_jit_minimal(test_issue_211)
 
 # Issue #212 verification: pure-function extraction of
 # constant_folding (Cycle 1). Verifies the new
@@ -1928,27 +1398,9 @@ aura_add_issue_test(test_issue_212)
 # static libraries do not export. We work around this by
 # providing a default-visibility stub at the bottom of
 # test_issue_212.cpp.
-target_sources(test_issue_212 PRIVATE
-    # aura_alloc_float / aura_float_ref are defined in
-    # aura_jit.cpp (LLVM-emitted extern "C" helpers used
-    # by the runtime float pool). test_212 calls
-    # types::make_float / types::as_float, which reference
-    # these symbols. The libaura_test_objects.a archive
-    # does not include aura_jit.cpp (per-binary compile
-    # flag constraint), so the test must include it as a
-    # per-target source. We also need aura_jit_runtime.cpp
-    # (Impl definition for AuraJIT's pImpl) and LLVM libs
-    # since aura_jit.cpp pulls in LLVM headers.
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_212 PRIVATE src src/compiler)
-target_compile_definitions(test_issue_212 PRIVATE AURA_HAVE_LLVM=1)
-target_include_directories(test_issue_212 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_link_libraries(test_issue_212 PRIVATE ${llvm_libs})
+# aura_alloc_float / aura_float_ref live in aura_jit.cpp; per-target
+# JIT sources are wired via aura_issue_test_link_llvm_jit_minimal.
+aura_issue_test_link_llvm_jit_minimal(test_issue_212)
 
 # Issue #212 Phase 4: pure-function path benchmark.
 # Measures the perf cost of the pure-function extraction
@@ -2015,18 +1467,7 @@ add_test(NAME issue_212_bench COMMAND ./issue_212_bench)
 # so the MutationBoundaryGuard + workspace_flat_ + workspace_pool_
 # are available, matching the test_issue_210 / 211 pattern.
 aura_add_issue_test(test_issue_213)
-target_include_directories(test_issue_213 PRIVATE src src/compiler)
-target_sources(test_issue_213 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-src/compiler/aura_jit_bridge.cpp
-)
-target_include_directories(test_issue_213 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_213 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_213 PRIVATE ${llvm_libs})
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+aura_issue_test_link_llvm_jit_minimal(test_issue_213)
 add_test(NAME issue_213_verification COMMAND ./test_issue_213)
 
 # Issue #213 verification: integration-level smoke test for
@@ -2039,18 +1480,7 @@ add_test(NAME issue_213_verification COMMAND ./test_issue_213)
 # + serve + parser + JIT runtime) so the MutationBoundaryGuard
 # + workspace_flat_ + workspace_pool_ APIs are all available.
 aura_add_issue_test(test_issue_177)
-target_include_directories(test_issue_177 PRIVATE src src/compiler)
-target_sources(test_issue_177 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-src/compiler/aura_jit_bridge.cpp
-)
-target_include_directories(test_issue_177 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_177 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_177 PRIVATE ${llvm_libs})
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+aura_issue_test_link_llvm_jit_minimal(test_issue_177)
 add_test(NAME issue_177_verification COMMAND ./test_issue_177)
 
 # Companion to tests/test_issue_213.cpp (unit-level) and
@@ -2064,18 +1494,7 @@ add_test(NAME issue_177_verification COMMAND ./test_issue_177)
 # Same heavy target pattern as test_issue_177 — needs the
 # scheduler + fiber APIs.
 aura_add_issue_test(test_issue_213_panic_fiber)
-target_include_directories(test_issue_213_panic_fiber PRIVATE src src/compiler)
-target_sources(test_issue_213_panic_fiber PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-src/compiler/aura_jit_bridge.cpp
-)
-target_include_directories(test_issue_213_panic_fiber PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_213_panic_fiber PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_213_panic_fiber PRIVATE ${llvm_libs})
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+aura_issue_test_link_llvm_jit_minimal(test_issue_213_panic_fiber)
 add_test(NAME issue_213_panic_fiber_verification COMMAND ./test_issue_213_panic_fiber)
 
 # Issue #214 Cycle 1: reflect_module_exports + stdlib source
@@ -2197,21 +1616,8 @@ add_test(NAME issue_237_verification COMMAND ./test_issue_237)
 # Full per-node epoch tracking + recursive free_vars staleness
 # check is a separate follow-up (the issue's Recommended Fix #1-2).
 aura_add_issue_test(test_issue_227)
-target_include_directories(test_issue_227 PRIVATE src src/compiler tests)
-target_sources(test_issue_227 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_227 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_227 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_227 PRIVATE ${llvm_libs})
-add_test(NAME issue_227_occurrence_narrowing_verification COMMAND ./test_issue_227)
+target_include_directories(test_issue_227 PRIVATE tests)
+aura_issue_test_link_llvm_jit(test_issue_227)
 
 # Issue #240: per-node occurrence-dirty bit (fine-grained scoping
 # for find_occurrence_contexts). Tests the new Aura primitives
@@ -2221,21 +1627,8 @@ add_test(NAME issue_227_occurrence_narrowing_verification COMMAND ./test_issue_2
 # general-dirty fallback. Uses CompilerService + FlatAST dirty
 # bitmask (from #188) — no JIT needed.
 aura_add_issue_test(test_issue_240)
-target_include_directories(test_issue_240 PRIVATE src src/compiler tests)
-target_sources(test_issue_240 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_240 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_240 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_240 PRIVATE ${llvm_libs})
-add_test(NAME issue_240_per_node_occurrence_dirty_verification COMMAND ./test_issue_240)
+target_include_directories(test_issue_240 PRIVATE tests)
+aura_issue_test_link_llvm_jit(test_issue_240)
 
 # Issue #242: EnvFrame/EnvId SoA dual-path consistency +
 # version stamping + arena rollback hardening. Tests Phase 1
@@ -2245,21 +1638,8 @@ add_test(NAME issue_240_per_node_occurrence_dirty_verification COMMAND ./test_is
 # for layer 2 (closure capture + mutate + consistency); direct
 # C++ tests for layers 1+3.
 aura_add_issue_test(test_issue_242)
-target_include_directories(test_issue_242 PRIVATE src src/compiler tests)
-target_sources(test_issue_242 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_242 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_242 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_242 PRIVATE ${llvm_libs})
-add_test(NAME issue_242_envframe_version_stamping_verification COMMAND ./test_issue_242)
+target_include_directories(test_issue_242 PRIVATE tests)
+aura_issue_test_link_llvm_jit(test_issue_242)
 
 # Issue #243: AOT bridge enhancement (mangle versioning + AOT
 # observability). Phase 1 (mangle with defuse_version suffix)
@@ -2289,21 +1669,7 @@ add_test(NAME issue_243_aot_bridge_enhancement_verification COMMAND ./test_issue
 #   - (query:macro-introduced) shortcut
 # Deferred: mutate:* guards for MacroIntroduced nodes.
 aura_add_issue_test(test_issue_244)
-target_include_directories(test_issue_244 PRIVATE src src/compiler)
-target_sources(test_issue_244 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_244 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_244 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_244 PRIVATE ${llvm_libs})
-add_test(NAME issue_244_syntax_marker_query_verification COMMAND ./test_issue_244)
+aura_issue_test_link_llvm_jit(test_issue_244)
 
 # Issue #228: Hardware IR Dependent Type System for Agentic EDA.
 # Phase 1 minimum viable — tests the Aura-level dependent type
@@ -2311,21 +1677,8 @@ add_test(NAME issue_244_syntax_marker_query_verification COMMAND ./test_issue_24
 # ClockDomain, ResetType, TypedSignal + compatibility checks).
 # Phases 2-5 are deferred to follow-up issues.
 aura_add_issue_test(test_issue_228)
-target_include_directories(test_issue_228 PRIVATE src src/compiler tests)
-target_sources(test_issue_228 PRIVATE
-    src/compiler/aura_jit.cpp
-    src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/aura_jit_bridge.cpp
-    src/compiler/observability_metrics.h
-src/compiler/observability_snapshot.h
-)
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_include_directories(test_issue_228 PRIVATE ${LLVM_INCLUDE_DIRS})
-target_compile_definitions(test_issue_228 PRIVATE AURA_HAVE_LLVM=1)
-target_link_libraries(test_issue_228 PRIVATE ${llvm_libs})
-add_test(NAME issue_228_dependent_type_system_verification COMMAND ./test_issue_228)
+target_include_directories(test_issue_228 PRIVATE tests)
+aura_issue_test_link_llvm_jit(test_issue_228)
 
 # Issue #178 Cycle 5: production NodeView migration to
 # reflect_members + auto_serialize.
