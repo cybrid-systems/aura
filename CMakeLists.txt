@@ -9,6 +9,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/AuraIssueBundles.cmake)
 set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_impl.cpp
     src/compiler/evaluator_primitives_core.cpp
+    src/compiler/evaluator_primitives_pair.cpp
 )
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
