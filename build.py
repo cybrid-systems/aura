@@ -107,7 +107,7 @@ def cmd_lint():
     print(f"{B}═══ Lint {'(fix)' if fix else '(check)'} ═══{N}")
     ruff = shutil.which("ruff")
     if not ruff:
-        fail("ruff not found — pip install ruff")
+        fail("ruff not found — pip install -r requirements-dev.txt")
         return 1
     if fix:
         r = run([ruff, "check", ".", "--fix", "--unsafe-fixes"], cwd=ROOT)
@@ -1029,7 +1029,7 @@ def test_repl():
     try:
         import pexpect  # noqa: F401
     except ImportError:
-        print(f"  {'⚠️':4s} pexpect not installed (pip install pexpect)")
+        print(f"  {'⚠️':4s} pexpect not installed (pip install -r requirements-dev.txt)")
         return 0
     r = subprocess.run([sys.executable, "tests/repl_test.py"], cwd=ROOT)
     if r.returncode:
