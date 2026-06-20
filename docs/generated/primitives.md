@@ -279,9 +279,9 @@ Runtime canonical list: `(api-reference)`.
 - `intend` — `src/compiler/evaluator_impl.cpp`
 - `intend-analytics` — `src/compiler/evaluator_impl.cpp`
 - `intend-history` — `src/compiler/evaluator_impl.cpp`
-- `json-encode` — `src/compiler/evaluator_impl.cpp`
-- `json-get-string` — `src/compiler/evaluator_impl.cpp`
-- `json-parse` — `src/compiler/evaluator_impl.cpp`
+- `json-encode` — `src/compiler/evaluator_primitives_json.cpp`
+- `json-get-string` — `src/compiler/evaluator_primitives_json.cpp`
+- `json-parse` — `src/compiler/evaluator_primitives_json.cpp`
 - `keyword->string` — `src/compiler/evaluator_impl.cpp`
 - `keyword?` — `src/compiler/evaluator_impl.cpp`
 - `lcm` — `src/compiler/evaluator_impl.cpp`
