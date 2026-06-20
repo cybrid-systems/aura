@@ -10048,6 +10048,73 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         };
         return build_hash(kv);
     });
+
+    // (compile:type-propagation-stats) — Issue #259: observability
+    // for the IR type metadata propagation path. Hash with 3
+    // fields:
+    //   - ir-instructions-total: lifetime total IR instructions
+    //     executed by the IR interpreter
+    //   - ir-instructions-with-type-total: lifetime total where
+    //     the lowering pass populated type_id (the propagation
+    //     landed)
+    //   - type-propagation-coverage-bp: derived ratio (with_type
+    //     * 10000 / total) in basis points (0-10000). 0 = no
+    //     propagation, 10000 = all instructions carry type info.
+    //     The AC from #259 is "increase coverage" — today most
+    //     lowering sites don't call emit_with_type(), so coverage
+    //     is low. This primitive lets users measure the baseline
+    //     + see the impact of follow-up wiring.
+    primitives_.add("compile:type-propagation-stats", [this](const auto&) -> EvalValue {
+        // Re-use the build_hash pattern from above primitives.
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                // Issue #258: defensive bump if fp lands on
+                // HASH_EMPTY sentinel (FNV-1a top bits collision).
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t total = 0, with_type = 0;
+        if (compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            total = m->ir_instructions_total.load(std::memory_order_relaxed);
+            with_type = m->ir_instructions_with_type_total.load(std::memory_order_relaxed);
+        }
+        std::uint64_t coverage_bp = (total > 0) ? (with_type * 10000u / total) : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"ir-instructions-total", make_int(static_cast<std::int64_t>(total))},
+            {"ir-instructions-with-type-total", make_int(static_cast<std::int64_t>(with_type))},
+            {"type-propagation-coverage-bp", make_int(static_cast<std::int64_t>(coverage_bp))},
+        };
+        return build_hash(kv);
+    });
 }
 
 

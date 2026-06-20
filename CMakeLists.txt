@@ -2199,6 +2199,29 @@ target_compile_definitions(test_issue_258 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_258 PRIVATE ${llvm_libs})
 add_test(NAME issue_258_multi_mutation_typecheck_observability_verification COMMAND ./test_issue_258)
 
+# Issue #259 verification: type metadata propagation
+# observability foundation. Tests the 2 atomic counters on
+# CompilerMetrics (ir_instructions_total,
+# ir_instructions_with_type_total) plus the derived
+# type_propagation_coverage_bp + the
+# (compile:type-propagation-stats) Aura primitive.
+aura_add_issue_test(test_issue_259)
+target_include_directories(test_issue_259 PRIVATE src src/compiler)
+target_sources(test_issue_259 PRIVATE
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+    src/compiler/observability_snapshot.h
+    src/core/contract_stub.cpp
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_259 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_259 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_259 PRIVATE ${llvm_libs})
+add_test(NAME issue_259_type_propagation_observability_verification COMMAND ./test_issue_259)
+
 # Issue #250 verification: atomic-batch truly atomic.
 # Integration test (uses CompilerService).
 aura_add_issue_test(test_issue_250)

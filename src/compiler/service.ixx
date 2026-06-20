@@ -3988,6 +3988,17 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         } else {
             s.multi_mutation_recompute_ratio_bp = 0;
         }
+        // Issue #259: type metadata propagation observability.
+        // Read lifetime totals from CompilerMetrics, compute
+        // the derived coverage (basis points: 0-10000).
+        s.ir_instructions_total = metrics_.ir_instructions_total.load(std::memory_order_relaxed);
+        s.ir_instructions_with_type_total = metrics_.ir_instructions_with_type_total.load(std::memory_order_relaxed);
+        if (s.ir_instructions_total > 0) {
+            s.type_propagation_coverage_bp =
+                (s.ir_instructions_with_type_total * 10000u) / s.ir_instructions_total;
+        } else {
+            s.type_propagation_coverage_bp = 0;
+        }
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
         // shared_lock on workspace_mtx_ to keep the flat

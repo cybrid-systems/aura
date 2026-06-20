@@ -202,6 +202,19 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             auto& instr = block.instructions[ii];
             auto& ops = instr.operands;
 
+            // Issue #259: track type propagation coverage.
+            // Bump total for every instruction; bump with_type
+            // only when type_id was populated by lowering.
+            // The ratio gives the propagation coverage %.
+            if (context_.metrics) {
+                context_.metrics->ir_instructions_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                if (instr.type_id != 0) {
+                    context_.metrics->ir_instructions_with_type_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+
              // ── Operand validation via lookup_opcode ────────
             // Issue #217 Cycle 4: replaced direct kOpcodeInfo[idx]
             // access with the bounds-checked lookup_opcode helper
