@@ -76,6 +76,29 @@ struct CompilerMetrics {
     // observability into how often the bridge_epoch_ field
     // is bumped across the lifetime of the service.
     std::atomic<std::uint64_t> bridge_invalidations_count{0};
+    // Issue #252: closure dual-path observability. The
+    // counters live on CompilerMetrics (shared by all
+    // dispatch paths) rather than on Evaluator, so the
+    // IR's IROpcode::Call / Apply can bump them too. The
+    // Evaluator's apply_closure also bumps calls_total +
+    // the FFI / TW / bridge-specific counters (only the
+    // TW / FFI / bridge-specific paths use apply_closure).
+    // - closure_calls_total: every closure dispatch
+    //   (sum of ffi_calls + tw_calls + ir_calls + bridge_calls)
+    // - closure_ffi_calls: FFI-dispatched (in apply_closure)
+    // - closure_tw_calls: tree-walker closures_ map hit
+    //   (in apply_closure)
+    // - closure_ir_calls: IR interpreter path (runtime_closures_)
+    // - closure_bridge_calls: closure_bridge_ (IR/JIT bridge
+    //   callback) — when a CompilerService has a bridge set
+    // - closure_stale_returns: stale-bridge nullopt returns
+    //   (Issue #223, in apply_closure)
+    std::atomic<std::uint64_t> closure_calls_total{0};
+    std::atomic<std::uint64_t> closure_ffi_calls{0};
+    std::atomic<std::uint64_t> closure_tw_calls{0};
+    std::atomic<std::uint64_t> closure_ir_calls{0};
+    std::atomic<std::uint64_t> closure_bridge_calls{0};
+    std::atomic<std::uint64_t> closure_stale_returns{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
