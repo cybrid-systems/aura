@@ -101,10 +101,11 @@ set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS 
  
 
 
-# GCC 16 has an ICE in ealias pass at -O3 on x86_64 for cache_impl.cpp (memcpy-heavy)
-# see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=nonnull_arg_p_ice
+# GCC 16 has an ICE in ealias pass at -O2/-O3 on x86_64 for memcpy-heavy TU's
+# (cache_impl.cpp, ast.ixx). see nonnull_arg_p ICE in tree-ssa-structalias.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16")
     set_source_files_properties(src/compiler/cache_impl.cpp PROPERTIES COMPILE_FLAGS "-O0")
+    set_source_files_properties(src/core/ast.ixx PROPERTIES COMPILE_FLAGS "-O0")
 endif()
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)

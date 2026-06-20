@@ -108,7 +108,8 @@ jobs:
     - name: Build with ASAN
       run: |
         cd build_asan
-        cmake --build . --target aura test_ir -j "$(nproc)"
+        cmake --build . --target aura -j "$(nproc)"
+        cmake --build . --target test_ir -j "$(nproc)"
 
     - name: Upload ASAN binaries
       uses: actions/upload-artifact@v4
