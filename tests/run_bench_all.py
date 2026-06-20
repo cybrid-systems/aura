@@ -10,7 +10,6 @@ Usage:
 import concurrent.futures
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -56,11 +55,11 @@ def run_model(cfg):
     result_file = RESULTS_DIR / f"{name.lower()}.json"
     log_file = RESULTS_DIR / f"{name.lower()}.log"
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Running: {name} ({model})")
     print(f"  Key:     {key[:12]}...{key[-4:]}")
     print(f"  URL:     {base_url}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     env = os.environ.copy()
     env["LLM_MODEL"] = model
@@ -72,14 +71,14 @@ def run_model(cfg):
     for i, other in enumerate(MODELS):
         if other["name"] == name or other["model"] == model:
             continue  # skip self
-        n = 2 + (i % 2)  # alternate: 2, 2 (if same level) or 2, 3
+        2 + (i % 2)  # alternate: 2, 2 (if same level) or 2, 3
         # Actually, just use position-based assignment
         pos = MODELS.index(other)
         if pos == 0:
             continue  # position 0 is already primary
-        env[f"LLM_MODEL_{pos+1}"] = other["model"]
-        env[f"LLM_API_KEY_{pos+1}"] = other["key_file"].read_text().strip()
-        env[f"LLM_BASE_URL_{pos+1}"] = other["base_url"] + "/v1"
+        env[f"LLM_MODEL_{pos + 1}"] = other["model"]
+        env[f"LLM_API_KEY_{pos + 1}"] = other["key_file"].read_text().strip()
+        env[f"LLM_BASE_URL_{pos + 1}"] = other["base_url"] + "/v1"
 
     cmd = [sys.executable, str(BENCH), "--json"] + EXTRA_ARGS
 
@@ -103,7 +102,7 @@ def run_model(cfg):
     elapsed = time.time() - t0
 
     # Parse the final JSON from output (edsl_benchmark outputs JSON at end with --json)
-    combined_text = "".join(all_output)
+    "".join(all_output)
     results = None
     # Find last JSON block (summary JSON at end)
     for line in reversed(all_output):
@@ -167,6 +166,7 @@ def main():
         except Exception as e:
             print(f"  ERROR: {cfg['name']} failed: {e}")
             import traceback
+
             traceback.print_exc()
             return cfg["name"], {
                 "name": cfg["name"],
@@ -206,7 +206,7 @@ def main():
         print("  (No task details available)")
         for cfg in MODELS:
             data = all_results.get(cfg["name"], {})
-            print(f"  {cfg['name']}: {data.get('passed','?')}/{data.get('total','?')}")
+            print(f"  {cfg['name']}: {data.get('passed', '?')}/{data.get('total', '?')}")
         return
 
     # Header

@@ -13,10 +13,8 @@ Usage:
 """
 
 import json
-import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 AURA = Path(__file__).resolve().parent.parent / "build" / "aura"
@@ -28,9 +26,7 @@ def run(cmd, input_data="", timeout=10):
         print(f"  ERROR: {AURA} not found — run 'python3 build.py build' first")
         return "", "", 1
     try:
-        r = subprocess.run(
-            cmd, input=input_data, capture_output=True, text=True, timeout=timeout
-        )
+        r = subprocess.run(cmd, input=input_data, capture_output=True, text=True, timeout=timeout)
         return r.stdout.strip(), r.stderr.strip(), r.returncode
     except subprocess.TimeoutExpired:
         print(f"  ERROR: command timed out after {timeout}s: {' '.join(cmd)}")
@@ -70,7 +66,7 @@ def run_serve_multi(commands, timeout=15):
                     results.append({"raw": line})
         return results
     except subprocess.TimeoutExpired:
-        print(f"  ERROR: serve session timed out")
+        print("  ERROR: serve session timed out")
         return [{"status": "timeout"}]
     except FileNotFoundError as e:
         print(f"  ERROR: {e}")
@@ -92,7 +88,7 @@ def demo_query():
     code = "(+ 1 2)"
     stdout, _, rc = run([str(AURA), "--query", "(node-type LiteralInt)"], code)
     print(f"  Code:    {code}")
-    print(f"  Query:   (node-type LiteralInt)")
+    print("  Query:   (node-type LiteralInt)")
     print(f"  Result:  {stdout[:80] if stdout else '(empty)'}")
     print(f"  Status:  {'OK' if rc == 0 else 'FAIL'}")
 
@@ -100,7 +96,7 @@ def demo_query():
     code = "(list 1 2 3)"
     stdout, _, rc = run([str(AURA), "--query", "(node-type Call)"], code)
     print(f"\n  Code:    {code}")
-    print(f"  Query:   (node-type Call)")
+    print("  Query:   (node-type Call)")
     print(f"  Result:  {stdout[:80] if stdout else '(empty)'}")
     print(f"  Status:  {'OK' if rc == 0 else 'FAIL'}")
 
@@ -137,7 +133,7 @@ def demo_fix():
                 except json.JSONDecodeError:
                     pass
         if not had_output:
-            print(f"    (no structured output)")
+            print("    (no structured output)")
         if stderr:
             print(f"    stderr: {stderr[:60]}")
 
@@ -153,8 +149,8 @@ def demo_transform():
         code,
     )
     print(f"  Before:     {code}")
-    print(f"  Query:      (node-type LiteralInt)")
-    print(f"  Replace:    (LiteralInt 99)")
+    print("  Query:      (node-type LiteralInt)")
+    print("  Replace:    (LiteralInt 99)")
     print(f"  After:      {stdout.strip()[:80]}")
 
     # Transform 2: Replace + with *
@@ -164,8 +160,8 @@ def demo_transform():
         code,
     )
     print(f"\n  Before:     {code}")
-    print(f"  Query:      (call-callee-name +)")
-    print(f"  Replace:    (call-callee-name *)")
+    print("  Query:      (call-callee-name +)")
+    print("  Replace:    (call-callee-name *)")
     print(f"  After:      {stdout.strip()[:80]}")
 
 
@@ -218,7 +214,7 @@ def demo_serve():
     ]
 
     results = run_serve_multi(commands)
-    for (_, desc), resp in zip(commands, results):
+    for (_, desc), resp in zip(commands, results, strict=False):
         status = resp.get("status", resp.get("raw", "?"))
         value = resp.get("value", resp.get("name", ""))
         if isinstance(status, str) and status == "ok":
@@ -247,7 +243,7 @@ def demo_hot_swap():
     ]
 
     results = run_serve_multi(commands)
-    for (_, desc), resp in zip(commands, results):
+    for (_, desc), resp in zip(commands, results, strict=False):
         status = resp.get("status", resp.get("raw", "?"))
         value = resp.get("value", resp.get("name", ""))
         if status == "ok":
@@ -261,13 +257,13 @@ def demo_hot_swap():
 def demo_all():
     """完整演示"""
     print(f"\n{'=' * 60}")
-    print(f"  Aura Agent Demo - Full Pipeline")
+    print("  Aura Agent Demo - Full Pipeline")
     print(f"  Binary: {AURA}")
     print(f"{'=' * 60}")
 
     if not AURA.exists():
         print(f"\n  ERROR: {AURA} not found!")
-        print(f"  Run 'python3 build.py build' first.")
+        print("  Run 'python3 build.py build' first.")
         return
 
     try:
@@ -301,7 +297,7 @@ def demo_all():
         print(f"  [hot-swap demo failed: {e}]")
 
     print(f"\n{'=' * 60}")
-    print(f"  Demo complete!")
+    print("  Demo complete!")
     print(f"{'=' * 60}")
 
 

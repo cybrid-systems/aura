@@ -25,8 +25,6 @@ Wired into:
 """
 
 import argparse
-import json
-import os
 import subprocess
 import sys
 import time
@@ -78,7 +76,9 @@ def discover_test_issue_targets() -> list[str]:
     try:
         r = subprocess.run(
             ["ninja", "-C", str(BUILD), "-t", "targets", "all"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
     except subprocess.TimeoutExpired:
         return []
@@ -104,6 +104,7 @@ def parse_pass_fail_count(stdout: str) -> tuple[int, int]:
         CHECK macros that already count)
     """
     import re
+
     for line in stdout.splitlines():
         # "Total: 30 passed, 0 failed" or "Results: 30 passed, 0 failed"
         m = re.search(r"(?:Total|Results):\s+(\d+)\s+passed,\s+(\d+)\s+failed", line)
@@ -132,8 +133,7 @@ def build_targets(targets: list[str]) -> int:
     if r.returncode != 0:
         # Some targets failed. Print a brief summary; full
         # output is in the build log.
-        print(f"{Y}Some targets failed to build (pre-existing). "
-              f"Continuing with what built.{N}")
+        print(f"{Y}Some targets failed to build (pre-existing). Continuing with what built.{N}")
     return 0  # don't propagate failure — we want to run what built
 
 
@@ -143,8 +143,13 @@ def run_one(bin_name: str, timeout: int) -> tuple[int, int, int, str]:
     if not bin_path.is_file():
         return 0, 0, 127, f"binary not found: {bin_path}"
     try:
-        r = subprocess.run([str(bin_path)], capture_output=True, text=True,
-                          timeout=timeout, errors="replace")
+        r = subprocess.run(
+            [str(bin_path)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            errors="replace",
+        )
     except subprocess.TimeoutExpired:
         return 0, 0, 124, f"timeout after {timeout}s"
     passed, failed = parse_pass_fail_count(r.stdout)
@@ -218,8 +223,7 @@ def main():
         # to run what built successfully. Pre-existing build
         # failures are tracked separately.
         if rc != 0:
-            print(f"{Y}Some targets failed to build (pre-existing). "
-                  f"Continuing with what built.{N}")
+            print(f"{Y}Some targets failed to build (pre-existing). Continuing with what built.{N}")
 
     print(f"{B}═══ Running {len(bins)} test_issue_* binaries ═══{N}\n")
     total_passed = 0
@@ -228,7 +232,7 @@ def main():
     pre_existing_failures = []
     skipped = []
     t0 = time.time()
-    for i, b in enumerate(bins, 1):
+    for _i, b in enumerate(bins, 1):
         # Quick existence check; skip if not built
         bin_path = BUILD / b
         if not bin_path.is_file():
@@ -245,19 +249,20 @@ def main():
             # runner. The test is documented as failing on
             # main; new failures are caught separately.
             pre_existing_failures.append((b, passed, failed, rc, err))
-            print(f"  {Y}⚠{N} {b} ({passed} passed, {failed} failed, rc={rc}) "
-                  f"[pre-existing]")
+            print(f"  {Y}⚠{N} {b} ({passed} passed, {failed} failed, rc={rc}) [pre-existing]")
         else:
             failures.append((b, passed, failed, rc, err))
             print(f"  {R}✗{N} {b} ({passed} passed, {failed} failed, rc={rc})")
     elapsed = time.time() - t0
 
     print(f"\n{B}════════════════════════════════════════{N}")
-    print(f"Tests: {G}{len(bins) - len(failures) - len(skipped)}{N} ran, "
-          f"{G}{total_passed} passed{N}, "
-          f"{R}{total_failed} failed{N}, "
-          f"{Y}{len(skipped)} skipped{N}, "
-          f"{Y}{len(pre_existing_failures)} pre-existing{N}")
+    print(
+        f"Tests: {G}{len(bins) - len(failures) - len(skipped)}{N} ran, "
+        f"{G}{total_passed} passed{N}, "
+        f"{R}{total_failed} failed{N}, "
+        f"{Y}{len(skipped)} skipped{N}, "
+        f"{Y}{len(pre_existing_failures)} pre-existing{N}"
+    )
     print(f"Time: {elapsed:.1f}s")
     if failures:
         print(f"\n{R}NEW Failures (will fail CI):{N}")
@@ -267,7 +272,7 @@ def main():
                 print(f"      {err[:200]}")
     if pre_existing_failures:
         print(f"\n{Y}Pre-existing Failures (NOT failing CI, tracked separately):{N}")
-        for b, p, f, rc, err in pre_existing_failures:
+        for b, p, f, rc, _err in pre_existing_failures:
             print(f"  - {b}: rc={rc}, {p} passed, {f} failed")
     return 0 if not failures else 1
 

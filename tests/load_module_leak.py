@@ -21,6 +21,7 @@ After the fix:
 Usage:
   python3 tests/load_module_leak.py [--iterations N] [--gc-module]
 """
+
 import argparse
 import os
 import re
@@ -32,8 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 AURA = ROOT / "build" / "aura"
 
 
-def build_program(iters: int, call_gc_module: bool, modules: list[str],
-                  with_synthetic_bindings: bool) -> str:
+def build_program(iters: int, call_gc_module: bool, modules: list[str], with_synthetic_bindings: bool) -> str:
     """Build an aura program that imports `modules` `iters` times, optionally
     calling gc-module to release per-module arenas. Optionally binds a
     function in each module to force closure retention."""
@@ -72,18 +72,25 @@ def parse_arena_stats(s: str) -> dict[str, tuple[float, float]]:
 
 def run(args) -> int:
     if not AURA.exists():
-        print(f"ERROR: {AURA} not found; run 'python3 build.py build' first",
-              file=sys.stderr)
+        print(
+            f"ERROR: {AURA} not found; run 'python3 build.py build' first",
+            file=sys.stderr,
+        )
         return 1
 
     env = os.environ.copy()
     env["AURA_PATH"] = str(ROOT / "lib")
 
-    program = build_program(args.iterations, args.gc_module, args.modules,
-                            args.with_synthetic_bindings)
+    program = build_program(args.iterations, args.gc_module, args.modules, args.with_synthetic_bindings)
     try:
-        r = subprocess.run([str(AURA)], input=program, capture_output=True,
-                           text=True, timeout=args.timeout, env=env)
+        r = subprocess.run(
+            [str(AURA)],
+            input=program,
+            capture_output=True,
+            text=True,
+            timeout=args.timeout,
+            env=env,
+        )
     except subprocess.TimeoutExpired:
         print("ERROR: aura timed out", file=sys.stderr)
         return 2
@@ -94,7 +101,7 @@ def run(args) -> int:
             print(f"stderr: {r.stderr[:500]}", file=sys.stderr)
         return 4
 
-    lines = [l for l in r.stdout.splitlines() if l.strip()]
+    lines = [line for line in r.stdout.splitlines() if line.strip()]
     if len(lines) < 1:
         print("FAIL: no output from aura", file=sys.stderr)
         return 5
@@ -119,8 +126,10 @@ def run(args) -> int:
     got = set(k for k in arenas if k != "main")
     missing = expected - got
     if missing:
-        print(f"FAIL: expected per-module arenas for {missing}, got {got}",
-              file=sys.stderr)
+        print(
+            f"FAIL: expected per-module arenas for {missing}, got {got}",
+            file=sys.stderr,
+        )
         return 6
     print(f"per-module arenas: {sorted(got)}")
 
@@ -129,9 +138,11 @@ def run(args) -> int:
     # closure primitives), while each module lives in its own arena.
     main_used_mb = arenas.get("main", (0, 0))[0]
     if main_used_mb > args.max_main_mb:
-        print(f"FAIL: main arena at {main_used_mb}MB (limit {args.max_main_mb}MB) — "
-              f"module state likely leaked into the main arena",
-              file=sys.stderr)
+        print(
+            f"FAIL: main arena at {main_used_mb}MB (limit {args.max_main_mb}MB) — "
+            f"module state likely leaked into the main arena",
+            file=sys.stderr,
+        )
         return 7
 
     if args.gc_module:
@@ -140,8 +151,10 @@ def run(args) -> int:
             if name == "main":
                 continue
             if used > 0.01:
-                print(f"FAIL: per-module arena {name} still at {used}MB after gc-module",
-                      file=sys.stderr)
+                print(
+                    f"FAIL: per-module arena {name} still at {used}MB after gc-module",
+                    file=sys.stderr,
+                )
                 return 8
         print("per-module arenas: all 0.0MB after gc-module ✓")
 
@@ -152,17 +165,26 @@ def run(args) -> int:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--iterations", type=int, default=20)
-    p.add_argument("--gc-module", action="store_true",
-                   help="Call gc-module periodically to release per-module arenas")
-    p.add_argument("--with-synthetic-bindings", action="store_true",
-                   help="Bind a function in each module to force closure retention")
-    p.add_argument("--modules", nargs="+",
-                   default=["std/json", "std/list", "std/algorithm"])
+    p.add_argument(
+        "--gc-module",
+        action="store_true",
+        help="Call gc-module periodically to release per-module arenas",
+    )
+    p.add_argument(
+        "--with-synthetic-bindings",
+        action="store_true",
+        help="Bind a function in each module to force closure retention",
+    )
+    p.add_argument("--modules", nargs="+", default=["std/json", "std/list", "std/algorithm"])
     p.add_argument("--timeout", type=int, default=60)
-    p.add_argument("--max-main-mb", type=float, default=5.0,
-                   help="Fail if main arena usage exceeds this (MB). Pre-fix the "
-                        "main arena would grow with every import; post-fix module "
-                        "state lives in per-module arenas, so main should stay small.")
+    p.add_argument(
+        "--max-main-mb",
+        type=float,
+        default=5.0,
+        help="Fail if main arena usage exceeds this (MB). Pre-fix the "
+        "main arena would grow with every import; post-fix module "
+        "state lives in per-module arenas, so main should stay small.",
+    )
     args = p.parse_args()
     return run(args)
 

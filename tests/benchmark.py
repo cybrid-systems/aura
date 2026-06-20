@@ -69,9 +69,7 @@ BENCHMARKS = [
     ),
     # ── L4: Lambda / Closure ─────────────────────────────────
     BenchCase("lambda_apply", "((lambda (x) (* x 2)) 5)", "eval", expected_val=10),
-    BenchCase(
-        "closure", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "eval", expected_val=42
-    ),
+    BenchCase("closure", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "eval", expected_val=42),
     BenchCase(
         "higher_order",
         "((lambda (f) (f 10)) (lambda (x) (* x x)))",
@@ -105,9 +103,7 @@ BENCHMARKS = [
         expected_val=55,
     ),
     BenchCase("ir_lambda", "((lambda (x) (* x 2)) 5)", "ir", expected_val=10),
-    BenchCase(
-        "ir_closure", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "ir", expected_val=42
-    ),
+    BenchCase("ir_closure", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "ir", expected_val=42),
     BenchCase("ir_if", "(if (< 3 5) 100 200)", "ir", expected_val=100),
     # ── Typecheck benchmarks ─────────────────────────────────
     BenchCase("tc_literal", "42", "typecheck", expected_type="Int"),
@@ -121,9 +117,7 @@ BENCHMARKS = [
         "typecheck",
         expected_type="String",
     ),
-    BenchCase(
-        "tc_string_length", '(string-length "hello")', "typecheck", expected_type="Int"
-    ),
+    BenchCase("tc_string_length", '(string-length "hello")', "typecheck", expected_type="Int"),
     BenchCase("tc_type_of", "(type-of 42)", "typecheck", expected_type="Type"),
     BenchCase("tc_type_query", '(type? 42 "Int")', "typecheck", expected_type="Bool"),
     BenchCase(
@@ -146,8 +140,8 @@ BENCHMARKS = [
     BenchCase(
         "par_orch_3_agents",
         '(require "std/orchestrator" all:) '
-        '(orch:parallel '
-        '(list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)',
+        "(orch:parallel "
+        "(list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)",
         "eval",
         expected_val=None,  # returns a list; check runs without error
     ),
@@ -155,9 +149,9 @@ BENCHMARKS = [
     BenchCase(
         "par_orch_5_agents",
         '(require "std/orchestrator" all:) '
-        '(orch:parallel '
-        '(list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) '
-        '(lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)',
+        "(orch:parallel "
+        "(list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) "
+        "(lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)",
         "eval",
         expected_val=None,
     ),
@@ -167,9 +161,7 @@ BENCHMARKS = [
     # addition to pair manipulation.
     BenchCase(
         "adt_list_length",
-        '(define (length lst) '
-        '  (if (null? lst) 0 (+ 1 (length (cdr lst))))) '
-        '(length (list 1 2 3 4 5 6 7 8 9 10))',
+        "(define (length lst)   (if (null? lst) 0 (+ 1 (length (cdr lst))))) (length (list 1 2 3 4 5 6 7 8 9 10))",
         "eval",
         expected_val=10,
     ),
@@ -179,8 +171,7 @@ BENCHMARKS = [
     # by test_issue_140.cpp at the C++ level.
     BenchCase(
         "query_pattern_simple",
-        '(set-code "(begin (fib 1) (fib 2) (fib 3) (fib 4) (fib 5))") '
-        '(length (query:pattern "(fib ...)"))',
+        '(set-code "(begin (fib 1) (fib 2) (fib 3) (fib 4) (fib 5))") (length (query:pattern "(fib ...)"))',
         "eval",
         expected_val=5,
     ),
@@ -195,12 +186,12 @@ BENCHMARKS = [
     BenchCase(
         "multi_agent_pipeline",
         '(require "std/orchestrator" all:) '
-        '(define (pipeline x) '
-        '  (define r1 (fiber:join (fiber:spawn (lambda () (* x 2))))) '
-        '  (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1))))) '
-        '  (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3))))) '
-        '  r3) '
-        '(pipeline 10)',
+        "(define (pipeline x) "
+        "  (define r1 (fiber:join (fiber:spawn (lambda () (* x 2))))) "
+        "  (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1))))) "
+        "  (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3))))) "
+        "  r3) "
+        "(pipeline 10)",
         "eval",
         expected_val=None,
     ),
@@ -241,7 +232,7 @@ def measure_pipeline(name: str, code: str, pipeline: str) -> dict:
     }
 
     args_dict = {"eval": None, "ir": ["--ir"], "typecheck": ["--typecheck"]}
-    args = args_dict.get(pipeline, None)
+    args = args_dict.get(pipeline)
 
     stdout, stderr, elapsed = run_aura(code, args)
     result["time_s"] = round(elapsed, 6)
@@ -324,7 +315,7 @@ def run_all() -> BenchSuiteResult:
 
     print(f"Aura Benchmark Suite — {suite.total_cases} cases")
     print(f"Binary: {AURA}")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
     for i, bench in enumerate(BENCHMARKS, 1):
         result = measure_pipeline(bench.name, bench.code, bench.pipeline)
@@ -345,20 +336,16 @@ def run_all() -> BenchSuiteResult:
 
         status = "PASS" if passed else "FAIL"
         bar = "+" if passed else "-"
-        time_str = f"{result['time_s']*1000:.1f}ms"
-        print(
-            f"  {bar} [{i:2d}/{suite.total_cases}] {bench.name:30s} {time_str:>8s}  {status}"
-        )
+        time_str = f"{result['time_s'] * 1000:.1f}ms"
+        print(f"  {bar} [{i:2d}/{suite.total_cases}] {bench.name:30s} {time_str:>8s}  {status}")
         suite.cases.append(result)
 
     suite.total_time_s = sum(c["time_s"] for c in suite.cases)
     suite.total_time_s = round(suite.total_time_s, 3)
 
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
     print(
-        f"  Total: {suite.total_cases} cases, "
-        f"{suite.passed} passed, {suite.failed} failed, "
-        f"{suite.total_time_s:.2f}s"
+        f"  Total: {suite.total_cases} cases, {suite.passed} passed, {suite.failed} failed, {suite.total_time_s:.2f}s"
     )
     print()
 
@@ -413,11 +400,11 @@ def check_regression(suite: BenchSuiteResult) -> bool:
     if regressions:
         print("⚠️  REGRESSIONS (>1.3× slower):")
         for name, base, cur, ratio in regressions:
-            print(f"  {name:30s} {base*1000:.1f}ms → {cur*1000:.1f}ms ({ratio:.1f}×)")
+            print(f"  {name:30s} {base * 1000:.1f}ms → {cur * 1000:.1f}ms ({ratio:.1f}×)")
     if improvements:
         print("✅ IMPROVEMENTS (<0.7× faster):")
         for name, base, cur, ratio in improvements:
-            print(f"  {name:30s} {base*1000:.1f}ms → {cur*1000:.1f}ms ({ratio:.1f}×)")
+            print(f"  {name:30s} {base * 1000:.1f}ms → {cur * 1000:.1f}ms ({ratio:.1f}×)")
 
     return len(regressions) == 0
 

@@ -42,6 +42,7 @@ This script requires the aura binary at ./build/aura. It is safe
 to interrupt with Ctrl-C — partial results are saved to
 long_run_memory.log.
 """
+
 import argparse
 import csv
 import os
@@ -119,93 +120,116 @@ SCENARIOS = {
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--duration", default="30m",
-                    help="How long to run (e.g. 5m, 30m, 1h)")
-    ap.add_argument("--scenario", default="module-cycle",
-                    choices=list(SCENARIOS.keys()))
+    ap.add_argument("--duration", default="30m", help="How long to run (e.g. 5m, 30m, 1h)")
+    ap.add_argument("--scenario", default="module-cycle", choices=list(SCENARIOS.keys()))
     args = ap.parse_args()
 
     if not AURA.exists():
-        print(f"ERROR: {AURA} not found. Run 'python3 build.py build' first.",
-              file=sys.stderr)
+        print(
+            f"ERROR: {AURA} not found. Run 'python3 build.py build' first.",
+            file=sys.stderr,
+        )
         return 1
     if args.scenario not in SCENARIOS:
         print(f"ERROR: unknown scenario {args.scenario!r}", file=sys.stderr)
         return 1
 
     total_secs = parse_duration(args.duration)
-    print(f"Long-running memory benchmark")
+    print("Long-running memory benchmark")
     print(f"  Scenario:  {args.scenario}")
     print(f"  Duration:  {args.duration} ({total_secs} sec)")
     print(f"  Binary:    {AURA}")
     print(f"  Log:       {LOG_PATH}")
 
     new_file = not LOG_PATH.exists()
-    out = open(LOG_PATH, "a", newline="")
-    writer = csv.writer(out)
-    if new_file:
-        writer.writerow(["timestamp", "scenario", "eval_count",
-                         "level", "used_pct", "total_used_mb",
-                         "total_capacity_mb", "top_arena", "top_pct",
-                         "module_count", "auto_gc_fired"])
+    with open(LOG_PATH, "a", newline="") as out:
+        writer = csv.writer(out)
+        if new_file:
+            writer.writerow(
+                [
+                    "timestamp",
+                    "scenario",
+                    "eval_count",
+                    "level",
+                    "used_pct",
+                    "total_used_mb",
+                    "total_capacity_mb",
+                    "top_arena",
+                    "top_pct",
+                    "module_count",
+                    "auto_gc_fired",
+                ]
+            )
 
-    stop = {"go": False}
-    def _on_sigint(*_):
-        stop["go"] = True
-    signal.signal(signal.SIGINT, _on_sigint)
-    signal.signal(signal.SIGTERM, _on_sigint)
+        stop = {"go": False}
 
-    env = os.environ.copy()
-    env["AURA_PATH"] = str(AURA_PATH)
-    proc = subprocess.Popen(
-        [str(AURA)],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        env=env, text=True,
-    )
-    # Send the scenario script.
-    proc.stdin.write(SCENARIOS[args.scenario])
-    proc.stdin.flush()
-    # Note: we do NOT wait for the proc to finish — we sample it
-    # repeatedly until duration elapses. The proc keeps running
-    # the scenario (intend loop runs forever in the case of
-    # module-cycle since i grows without bound; in mixed-workload
-    # the loop has finite 50 iterations; in concurrent-agents
-    # finite too). After our duration, we kill the proc.
-    start = time.monotonic()
-    sample_count = 0
-    last_module_count = "?"
-    auto_gc_count = 0
-    while time.monotonic() - start < total_secs and not stop["go"]:
-        # Each sample: send a (memory-pressure) and read the result.
-        proc.stdin.write("(memory-pressure)\n")
+        def _on_sigint(*_):
+            stop["go"] = True
+
+        signal.signal(signal.SIGINT, _on_sigint)
+        signal.signal(signal.SIGTERM, _on_sigint)
+
+        env = os.environ.copy()
+        env["AURA_PATH"] = str(AURA_PATH)
+        proc = subprocess.Popen(
+            [str(AURA)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            text=True,
+        )
+        # Send the scenario script.
+        proc.stdin.write(SCENARIOS[args.scenario])
         proc.stdin.flush()
-        line = proc.stdout.readline()
-        if not line:
-            break
-        sample_count += 1
-        # The (memory-pressure) call returns a hash; we can grep the
-        # top-level fields from the printed form. Aura prints hashes as
-        # <hash[N]>, so we have to descend into the hash by calling
-        # individual refs. Simpler: have the script print a CSV row.
-        # For now, just count samples and module-count changes.
-        # The detailed CSV row is the proc's stdout; we just emit a
-        # summary row with sample number + a stress indicator.
-        elapsed = time.monotonic() - start
-        writer.writerow([
-            time.strftime("%Y-%m-%dT%H:%M:%S"),
-            args.scenario,
-            sample_count,
-            "?", 0.0, 0.0, 0.0, "?", 0, last_module_count, 0,
-        ])
-        out.flush()
-        time.sleep(1.0)
+        # Note: we do NOT wait for the proc to finish — we sample it
+        # repeatedly until duration elapses. The proc keeps running
+        # the scenario (intend loop runs forever in the case of
+        # module-cycle since i grows without bound; in mixed-workload
+        # the loop has finite 50 iterations; in concurrent-agents
+        # finite too). After our duration, we kill the proc.
+        start = time.monotonic()
+        sample_count = 0
+        last_module_count = "?"
+        while time.monotonic() - start < total_secs and not stop["go"]:
+            # Each sample: send a (memory-pressure) and read the result.
+            proc.stdin.write("(memory-pressure)\n")
+            proc.stdin.flush()
+            line = proc.stdout.readline()
+            if not line:
+                break
+            sample_count += 1
+            # The (memory-pressure) call returns a hash; we can grep the
+            # top-level fields from the printed form. Aura prints hashes as
+            # <hash[N]>, so we have to descend into the hash by calling
+            # individual refs. Simpler: have the script print a CSV row.
+            # For now, just count samples and module-count changes.
+            # The detailed CSV row is the proc's stdout; we just emit a
+            # summary row with sample number + a stress indicator.
+            time.monotonic() - start
+            writer.writerow(
+                [
+                    time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    args.scenario,
+                    sample_count,
+                    "?",
+                    0.0,
+                    0.0,
+                    0.0,
+                    "?",
+                    0,
+                    last_module_count,
+                    0,
+                ]
+            )
+            out.flush()
+            time.sleep(1.0)
 
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    out.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
     print(f"Done. {sample_count} samples written to {LOG_PATH}")
     return 0
 

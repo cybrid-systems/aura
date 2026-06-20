@@ -16,11 +16,11 @@ Environment (same as bench.aura):
   BENCH_ATTEMPTS    Max attempts (default: 3)
   BENCH_WORKERS     Worker fibers (default: 4)
 """
+
 import json
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -67,15 +67,15 @@ def main():
     env = os.environ.copy()
     env["AURA"] = AURA
 
-    print(f"=== Aura Parallel Benchmark ===", flush=True)
+    print("=== Aura Parallel Benchmark ===", flush=True)
     print(f"  Binary: {AURA}", flush=True)
-    print(f"  Mode: --serve-async (fiber parallel)", flush=True)
+    print("  Mode: --serve-async (fiber parallel)", flush=True)
     print(f"  Workers: {WORKERS}", flush=True)
     print(f"  Model: {MODEL}", flush=True)
     print(f"  Base URL: {BASE_URL}", flush=True)
     print(f"  Tasks: limit={LIMIT}, offset={OFFSET}", flush=True)
     print(f"  Rounds: {ROUNDS}, attempts: {ATTEMPTS}", flush=True)
-    print(f"", flush=True)
+    print("", flush=True)
 
     proc = subprocess.Popen(
         [AURA, "--serve-async"],

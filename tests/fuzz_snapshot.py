@@ -12,11 +12,11 @@ Usage:
   python3 tests/fuzz_snapshot.py [--quick] [--seed N]
 """
 
+import contextlib
 import datetime
 import json
 import os
 import random
-import re
 import subprocess
 import sys
 import time
@@ -62,11 +62,22 @@ PROGRAMS = [
 """,
 ]
 
-FN_NAMES = ["f", "g", "add", "fact", "map", "process", "compose", "add1", "double", "main"]
+FN_NAMES = [
+    "f",
+    "g",
+    "add",
+    "fact",
+    "map",
+    "process",
+    "compose",
+    "add1",
+    "double",
+    "main",
+]
 MUTATIONS = [
-    lambda: f'(mutate:rebind "{rng.choice(FN_NAMES)}" "(lambda (x) (* x {rng.randint(1,10)}))" "fuzz")',
-    lambda: f'(mutate:tweak-literal {rng.randint(0,3)} {rng.choice([1,-1,5])} "fuzz")',
-    lambda: f'(mutate:replace-value {rng.randint(0,3)} {rng.randint(1,100)} "fuzz")',
+    lambda: f'(mutate:rebind "{rng.choice(FN_NAMES)}" "(lambda (x) (* x {rng.randint(1, 10)}))" "fuzz")',
+    lambda: f'(mutate:tweak-literal {rng.randint(0, 3)} {rng.choice([1, -1, 5])} "fuzz")',
+    lambda: f'(mutate:replace-value {rng.randint(0, 3)} {rng.randint(1, 100)} "fuzz")',
 ]
 
 
@@ -91,7 +102,7 @@ def send(proc, cmd):
     json_part = stripped[brace:] if brace >= 0 else stripped
     try:
         return json.loads(json_part)
-    except:
+    except Exception:
         return None
 
 
@@ -109,7 +120,9 @@ def parse_display(line):
 def run_session(n_cycles):
     proc = subprocess.Popen(
         [AURA, "--serve"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
     time.sleep(0.15)
@@ -119,21 +132,17 @@ def run_session(n_cycles):
     program = rng.choice(PROGRAMS)
     resp = send(proc, f'set-code "{escaped(program)}"')
     if not resp or resp.get("status") != "ok":
-        try:
+        with contextlib.suppress(Exception):
             proc.kill()
-        except:
-            pass
         stats["crash"] += 1
         return stats
 
     # Snapshot initial state
-    resp = send(proc, f'(display (ast:snapshot "initial"))')
+    resp = send(proc, '(display (ast:snapshot "initial"))')
     if resp is None:
         stats["crash"] += 1
-        try:
+        with contextlib.suppress(Exception):
             proc.kill()
-        except:
-            pass
         return stats
 
     # Store snapshot IDs for restore verification
@@ -160,14 +169,12 @@ def run_session(n_cycles):
                 stats["error"] += 1
 
             # Diff vs initial snapshot
-            resp = send(proc, f'(display (ast:diff {snapshot_ids[0]}))')
+            resp = send(proc, f"(display (ast:diff {snapshot_ids[0]}))")
             if resp is None:
                 stats["crash"] += 1
                 break
             if resp.get("status") in ("ok", "closure"):
-                display = parse_display(
-                    f'{resp.get("_display", "")}'
-                )
+                display = parse_display(f"{resp.get('_display', '')}")
                 stats["ok"] += 1
 
         elif phase == 3:
@@ -192,7 +199,7 @@ def run_session(n_cycles):
 
         elif phase == 4:
             # List snapshots
-            resp = send(proc, f'(display (ast:list-snapshots))')
+            resp = send(proc, "(display (ast:list-snapshots))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -200,7 +207,7 @@ def run_session(n_cycles):
 
         else:
             # Restore to initial snapshot
-            resp = send(proc, f'(display (ast:restore {snapshot_ids[0]}))')
+            resp = send(proc, f"(display (ast:restore {snapshot_ids[0]}))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -210,13 +217,13 @@ def run_session(n_cycles):
                 stats["restore_pass"] += 1
 
                 # Verify: query def-use should still work after restore
-                resp = send(proc, f'(display (query:def-use "display"))')
+                resp = send(proc, '(display (query:def-use "display"))')
                 if resp is None:
                     stats["crash"] += 1
                     break
 
                 # Verify diff is now empty (restored to snapshot)
-                resp = send(proc, f'(display (ast:diff {snapshot_ids[0]}))')
+                resp = send(proc, f"(display (ast:diff {snapshot_ids[0]}))")
                 if resp is None:
                     stats["crash"] += 1
                     break
@@ -232,7 +239,7 @@ def run_session(n_cycles):
             resp = send(proc, f'set-code "{escaped(program)}"')
             if resp and resp.get("status") == "ok":
                 # Snapshot the new state
-                resp = send(proc, f'(display (ast:snapshot "initial"))')
+                resp = send(proc, '(display (ast:snapshot "initial"))')
                 if resp and resp.get("status") in ("ok", "closure"):
                     try:
                         d = resp.get("_display", "")
@@ -252,7 +259,7 @@ def run_session(n_cycles):
         proc.stdin.close()
         proc.kill()
         proc.wait(timeout=3)
-    except:
+    except Exception:
         pass
     return stats
 
@@ -271,17 +278,19 @@ def main():
     total = {"ok": 0, "error": 0, "crash": 0, "restore_pass": 0, "restore_fail": 0}
 
     for s in range(n_sessions):
-        print(f"\n  Session {s+1}/{n_sessions} ... ", end="", flush=True)
+        print(f"\n  Session {s + 1}/{n_sessions} ... ", end="", flush=True)
         st = run_session(n_cycles // n_sessions)
         for k in total:
             total[k] += st[k]
         ops = st["ok"] + st["error"] + st["crash"]
         pct = st["ok"] / max(ops, 1) * 100
-        print(f"{st['ok']}/{ops} ok ({pct:.0f}%) "
-              f"[restore={st['restore_pass']}P/{st['restore_fail']}F "
-              f"err={st['error']} crash={st['crash']}]")
+        print(
+            f"{st['ok']}/{ops} ok ({pct:.0f}%) "
+            f"[restore={st['restore_pass']}P/{st['restore_fail']}F "
+            f"err={st['error']} crash={st['crash']}]"
+        )
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Total:   {total['ok']} ok, {total['error']} error, {total['crash']} crash")
     print(f"  Restore: {total['restore_pass']}P / {total['restore_fail']}F")
     ops = total["ok"] + total["error"] + total["crash"]
@@ -289,7 +298,7 @@ def main():
     print(f"  Rate:    {rate:.1f}%")
 
     if total["crash"]:
-        print(f"\n  💥 CRASH detected!")
+        print("\n  💥 CRASH detected!")
         sys.exit(1)
 
 

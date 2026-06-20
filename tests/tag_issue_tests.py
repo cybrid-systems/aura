@@ -51,9 +51,7 @@ REASON_LINE_RE = re.compile(r"^//\s*@reason:.*$", re.MULTILINE)
 
 def has_compiler_service(content: str) -> bool:
     """True if the file imports or uses aura::compiler::CompilerService."""
-    if "aura.compiler.service" in content or "CompilerService" in content:
-        return True
-    return False
+    return bool("aura.compiler.service" in content or "CompilerService" in content)
 
 
 def evals_aura_source(content: str) -> bool:
@@ -66,9 +64,7 @@ def evals_aura_source(content: str) -> bool:
         return True
     if re.search(r"\brun_on\s*\(\s*cs\s*,", content):
         return True
-    if re.search(r"CompilerService\s+cs[;\s]", content):
-        return True
-    return False
+    return bool(re.search(r"CompilerService\s+cs[;\s]", content))
 
 
 def has_regression_keyword(content: str, filename: str) -> bool:
@@ -88,10 +84,8 @@ def categorize(content: str, filename: str) -> tuple[str, str]:
     is_unit = not has_compiler_service(content)
     is_integration = has_compiler_service(content) and evals_aura_source(content)
     is_regression = has_regression_keyword(content, filename)
-    if is_unit and not has_compiler_service(content):
-        # Verify: no CompilerService references at all
-        if "CompilerService" not in content:
-            return ("unit", "no CompilerService usage; pure C++ test")
+    if is_unit and "CompilerService" not in content:
+        return ("unit", "no CompilerService usage; pure C++ test")
     if is_integration:
         return ("integration", "uses CompilerService to eval Aura source")
     if is_regression:

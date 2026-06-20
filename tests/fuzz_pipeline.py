@@ -9,7 +9,6 @@ Usage:
 """
 
 import datetime
-import json
 import os
 import random
 import subprocess
@@ -40,7 +39,6 @@ PIPELINES = [
       (synthesize:fill "add" "ints")
       (synthesize:fill "mul" "floats"))
     """,
-
     # 3-step: fill + mutate
     """
     (require "std/pipeline" all:)
@@ -51,7 +49,6 @@ PIPELINES = [
       (synthesize:fill "double" "val")
       (set-code "(define z 42)"))
     """,
-
     # Single step
     """
     (require "std/pipeline" all:)
@@ -81,7 +78,9 @@ def send(proc, cmd):
 def run_session(n_cycles):
     proc = subprocess.Popen(
         [AURA, "--serve"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
     time.sleep(0.2)
@@ -106,7 +105,7 @@ def run_session(n_cycles):
     try:
         proc.kill()
         proc.wait(timeout=3)
-    except:
+    except Exception:
         pass
     return stats
 
@@ -125,7 +124,7 @@ def main():
     total = {"ok": 0, "error": 0, "crash": 0}
 
     for s in range(n_sessions):
-        print(f"\n  Session {s+1}/{n_sessions} ... ", end="", flush=True)
+        print(f"\n  Session {s + 1}/{n_sessions} ... ", end="", flush=True)
         st = run_session(n_cycles // n_sessions)
         for k in total:
             total[k] += st[k]
@@ -133,13 +132,13 @@ def main():
         pct = st["ok"] / max(ops, 1) * 100
         print(f"{st['ok']}/{ops} ({pct:.0f}%) [err={st['error']} crash={st['crash']}]")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     rate = total["ok"] / max(total["ok"] + total["error"] + total["crash"], 1) * 100
     print(f"  Total: {total['ok']} ok, {total['error']} error, {total['crash']} crash")
     print(f"  Rate:  {rate:.1f}%")
 
     if total["crash"]:
-        print(f"\n  💥 CRASH detected!")
+        print("\n  💥 CRASH detected!")
         sys.exit(1)
 
 

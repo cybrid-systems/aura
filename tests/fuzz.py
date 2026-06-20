@@ -33,7 +33,6 @@ Output:
 import datetime
 import os
 import random
-import signal
 import string
 import subprocess
 import sys
@@ -50,12 +49,6 @@ SEED = None
 for i, a in enumerate(sys.argv):
     if a == "--seed" and i + 1 < len(sys.argv):
         SEED = int(sys.argv[i + 1])
-if "--list" in sys.argv:
-    print("Fuzz dimensions:")
-    for d in DIMENSIONS:
-        print(f"  {d['name']:20s} {d['desc']}")
-    sys.exit(0)
-
 rng = random.Random(SEED if SEED is not None else None)
 
 # ── Results ────────────────────────────────────────────────
@@ -119,17 +112,57 @@ def register(fn):
 
 # ── 1. Random token sequences ──────────────────────────
 TOKENS = [
-    "(", ")", "'", "`", ",", ",@",
-    '"', '"',        # mismatched quotes
-    ";", "#", "|", "[", "]", "{", "}",
-    "+", "-", "*", "/", "=", "<", ">",
-    "0", "1", "42", "-1", "3.14",
-    "define", "lambda", "let", "if", "cond",
-    "display", "+", "car", "cdr", "cons",
-    "begin", "quote", "set!", "and", "or",
-    "match", "datatype", "require", "import",
+    "(",
+    ")",
+    "'",
+    "`",
+    ",",
+    ",@",
+    '"',
+    '"',  # mismatched quotes
+    ";",
+    "#",
+    "|",
+    "[",
+    "]",
+    "{",
+    "}",
+    "+",
+    "-",
+    "*",
+    "/",
+    "=",
+    "<",
+    ">",
+    "0",
+    "1",
+    "42",
+    "-1",
+    "3.14",
+    "define",
+    "lambda",
+    "let",
+    "if",
+    "cond",
+    "display",
+    "+",
+    "car",
+    "cdr",
+    "cons",
+    "begin",
+    "quote",
+    "set!",
+    "and",
+    "or",
+    "match",
+    "datatype",
+    "require",
+    "import",
     ":",
-    "\x00", "\x01", "\x1f", "\x7f",  # control chars
+    "\x00",
+    "\x01",
+    "\x1f",
+    "\x7f",  # control chars
 ]
 
 
@@ -150,8 +183,21 @@ def gen_random_tokens():
 
 # ── 2. Random structurally valid s-expressions ────────
 SEXPR_ATOMS = [
-    "0", "1", "42", "-1", "3.14", "#t", "#f",
-    "x", "y", "f", "g", "nil", "+", "foo", "bar",
+    "0",
+    "1",
+    "42",
+    "-1",
+    "3.14",
+    "#t",
+    "#f",
+    "x",
+    "y",
+    "f",
+    "g",
+    "nil",
+    "+",
+    "foo",
+    "bar",
 ]
 
 
@@ -254,7 +300,7 @@ VALID_BASES = [
     "(let ((x 1) (y 2)) (display (+ x y)))",
     "(if #t (display 1) (display 0))",
     "(begin (define x 10) (display x))",
-    '((lambda (x) (display x)) 42)',
+    "((lambda (x) (display x)) 42)",
     "(display (car '(1 2 3)))",
     "(display (cons 1 '(2 3)))",
 ]
@@ -304,14 +350,13 @@ def gen_pathological():
         # Overflow via recursion
         "(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))) (display (fact 100000))",
         # Huge let binding chain
-        "(" + " ".join(f"((lambda (x) {{}})" for _ in range(500)) + " 1" + ")" * 500,
+        "(" + " ".join("((lambda (x) {})" for _ in range(500)) + " 1" + ")" * 500,
         # Huge lambda nesting
         "(display " + "".join(f"(lambda (x{i}) " for i in range(500)) + "1" + ")" * 500,
         # Quasiquote depth
         "`" * 50 + "(1 2 3)",
     ]
-    for c in cases:
-        yield c
+    yield from cases
 
 
 # ── 8. Binding edge cases ────────────────────────────
@@ -409,7 +454,7 @@ def run_group(name, gen_fn):
 
         if total % 100 == 0:
             elapsed = time.time() - start
-            eta = (elapsed / total) * (total + 1) if total else 0
+            (elapsed / total) * (total + 1) if total else 0
             print(
                 f"    {name:20s} {total:5d} cases  "
                 f"[{len(results['crash'])} crashes, {results['fail']} fails]"
@@ -421,8 +466,7 @@ def run_group(name, gen_fn):
     new_crashes = len(results["crash"]) - crashes_before
     status = "💥 CRASH" if new_crashes else "✅"
     print(
-        f"  {status} {name:20s} {total:5d} cases  "
-        f"{elapsed:.1f}s  ({new_crashes} crashes)",
+        f"  {status} {name:20s} {total:5d} cases  {elapsed:.1f}s  ({new_crashes} crashes)",
         flush=True,
     )
 
@@ -442,30 +486,36 @@ def main():
         ("serve-fuzz", gen_serve_fuzz, "Protocol: malformed JSON"),
     ]
 
-    print(f"=" * 60)
-    print(f"Aura Fuzz Suite")
+    if "--list" in sys.argv:
+        print("Fuzz dimensions:")
+        for name, _, desc in DIMENSIONS:
+            print(f"  {name:20s} {desc}")
+        return
+
+    print("=" * 60)
+    print("Aura Fuzz Suite")
     print(f"  Date:    {datetime.date.today().isoformat()}")
     print(f"  Seed:    {SEED if SEED is not None else 'random'}")
     print(f"  Binary:  {AURA}")
     print(f"  Timeout: {TIMEOUT}s per case")
     print(f"  Mode:    {'QUICK' if QUICK else 'FULL'}")
-    print(f"=" * 60)
+    print("=" * 60)
 
     total_start = time.time()
 
     for name, gen_fn, desc in DIMENSIONS:
-        print(f"\n{'─'*60}")
+        print(f"\n{'─' * 60}")
         print(f"  {name}")
         print(f"  {desc}")
-        print(f"{'─'*60}")
+        print(f"{'─' * 60}")
         run_group(name, gen_fn)
 
     # Summary
     elapsed = time.time() - total_start
     total = results["pass"] + results["fail"]
-    print(f"\n{'='*60}")
-    print(f"  Fuzz Summary")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("  Fuzz Summary")
+    print(f"{'=' * 60}")
     print(f"  Total cases:  {total}")
     print(f"  Pass:         {results['pass']}")
     print(f"  Fail:         {results['fail']}")
@@ -474,7 +524,7 @@ def main():
     print(f"  Elapsed:      {elapsed:.1f}s")
 
     if results["crash"]:
-        print(f"\n  💥 CRASHES:")
+        print("\n  💥 CRASHES:")
         for sig, code in results["crash"][:10]:
             print(f"    {sig:15s} {code[:80]}")
         if len(results["crash"]) > 10:

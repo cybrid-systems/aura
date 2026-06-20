@@ -13,11 +13,11 @@ Usage:
   python3 tests/fuzz_workspace.py [--quick] [--seed N]
 """
 
+import contextlib
 import datetime
 import json
 import os
 import random
-import re
 import subprocess
 import sys
 import time
@@ -72,14 +72,16 @@ def send(proc, cmd):
     json_part = stripped[brace:] if brace >= 0 else stripped
     try:
         return json.loads(json_part)
-    except:
+    except Exception:
         return None
 
 
 def run_session(n_cycles):
     proc = subprocess.Popen(
         [AURA, "--serve"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
     time.sleep(0.15)
@@ -89,13 +91,12 @@ def run_session(n_cycles):
     program = rng.choice(PROGRAMS)
     resp = send(proc, f'set-code "{escaped(program)}"')
     if not resp or resp.get("status") != "ok":
-        try: proc.kill()
-        except: pass
+        with contextlib.suppress(Exception):
+            proc.kill()
         stats["crash"] = 1
         return stats
 
     # Store the original source for verification
-    orig_source = program
 
     workspace_ids = [0]  # root is always 0
 
@@ -113,8 +114,7 @@ def run_session(n_cycles):
                 stats["ok"] += 1
                 # Try to extract ID
                 try:
-                    id_str = (resp.get("_display", "") or
-                             json.dumps(resp.get("value", ""))).strip()
+                    id_str = (resp.get("_display", "") or json.dumps(resp.get("value", ""))).strip()
                     wid = int(id_str)
                     if wid >= 0:
                         workspace_ids.append(wid)
@@ -126,7 +126,7 @@ def run_session(n_cycles):
         elif phase < 4 and len(workspace_ids) > 1:
             # Switch to a random child workspace and mutate
             wid = rng.choice(workspace_ids[1:])
-            resp = send(proc, f'(display (workspace:switch {wid}))')
+            resp = send(proc, f"(display (workspace:switch {wid}))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -134,11 +134,13 @@ def run_session(n_cycles):
             # Apply mutation in child
             fn = rng.choice(SYMBOLS)
             new_val = rng.randint(1, 100)
-            mut = rng.choice([
-                f'(mutate:rebind "{fn}" "(lambda (x) (* x {new_val}))" "fuzz")',
-                f'(mutate:tweak-literal {rng.randint(0,3)} {rng.choice([1,-1])} "fuzz")',
-                f'(mutate:set-body "{fn}" "(* x {new_val})")',
-            ])
+            mut = rng.choice(
+                [
+                    f'(mutate:rebind "{fn}" "(lambda (x) (* x {new_val}))" "fuzz")',
+                    f'(mutate:tweak-literal {rng.randint(0, 3)} {rng.choice([1, -1])} "fuzz")',
+                    f'(mutate:set-body "{fn}" "(* x {new_val})")',
+                ]
+            )
             resp = send(proc, mut)
             if resp is None:
                 stats["crash"] += 1
@@ -155,14 +157,14 @@ def run_session(n_cycles):
 
         elif phase == 4:
             # Switch to root and verify isolation
-            resp = send(proc, f'(display (workspace:switch 0))')
+            resp = send(proc, "(display (workspace:switch 0))")
             if resp is None:
                 stats["crash"] += 1
                 break
             stats["ok"] += 1
 
             # Verify root still has its original state
-            resp = send(proc, f'(display (current-source))')
+            resp = send(proc, "(display (current-source))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -180,24 +182,24 @@ def run_session(n_cycles):
             # Lock/unlock test
             if len(workspace_ids) > 1:
                 wid = rng.choice(workspace_ids[1:])
-                resp = send(proc, f'(display (workspace:lock {wid} #t))')
+                resp = send(proc, f"(display (workspace:lock {wid} #t))")
                 if resp is None:
                     stats["crash"] += 1
                     break
                 # Verify can-write returns false
-                resp = send(proc, f'(display (workspace:can-write? {wid}))')
+                resp = send(proc, f"(display (workspace:can-write? {wid}))")
                 if resp is None:
                     stats["crash"] += 1
                     break
                 # Unlock
-                resp = send(proc, f'(display (workspace:lock {wid} #f))')
+                resp = send(proc, f"(display (workspace:lock {wid} #f))")
                 if resp is None:
                     stats["crash"] += 1
                     break
                 stats["ok"] += 3
 
             # Verify root is still writable
-            resp = send(proc, f'(display (workspace:can-write? 0))')
+            resp = send(proc, "(display (workspace:can-write? 0))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -208,7 +210,7 @@ def run_session(n_cycles):
             deletable = [wid for wid in workspace_ids if wid > 0]
             if deletable:
                 wid = rng.choice(deletable)
-                resp = send(proc, f'(display (workspace:delete {wid}))')
+                resp = send(proc, f"(display (workspace:delete {wid}))")
                 if resp is None:
                     stats["crash"] += 1
                     break
@@ -217,7 +219,7 @@ def run_session(n_cycles):
                     stats["ok"] += 1
 
             # Verify workspace list is still valid
-            resp = send(proc, f'(display (workspace:list))')
+            resp = send(proc, "(display (workspace:list))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -225,7 +227,7 @@ def run_session(n_cycles):
 
             # After deleting, switch to root and verify
             if rng.random() < 0.5:
-                resp = send(proc, f'(display (workspace:switch 0))')
+                resp = send(proc, "(display (workspace:switch 0))")
                 if resp is None:
                     stats["crash"] += 1
                     break
@@ -238,7 +240,7 @@ def run_session(n_cycles):
         proc.stdin.close()
         proc.kill()
         proc.wait(timeout=3)
-    except:
+    except Exception:
         pass
     return stats
 
@@ -257,7 +259,7 @@ def main():
     total = {"ok": 0, "error": 0, "crash": 0}
 
     for s in range(n_sessions):
-        print(f"\n  Session {s+1}/{n_sessions} ... ", end="", flush=True)
+        print(f"\n  Session {s + 1}/{n_sessions} ... ", end="", flush=True)
         st = run_session(n_cycles // n_sessions)
         for k in total:
             total[k] += st[k]
@@ -265,13 +267,13 @@ def main():
         pct = st["ok"] / max(ops, 1) * 100
         print(f"{st['ok']}/{ops} ({pct:.0f}%) [err={st['error']} crash={st['crash']}]")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Total: {total['ok']} ok, {total['error']} error, {total['crash']} crash")
     rate = total["ok"] / max(total["ok"] + total["error"] + total["crash"], 1) * 100
     print(f"  Rate:  {rate:.1f}%")
 
     if total["crash"]:
-        print(f"\n  💥 CRASH detected!")
+        print("\n  💥 CRASH detected!")
         sys.exit(1)
 
 

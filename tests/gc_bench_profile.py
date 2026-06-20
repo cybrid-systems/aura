@@ -10,12 +10,12 @@ GC Benchmark Profile — 模拟 benchmark 内存压力，采集 gc-stats 曲线
 用法: python3 tests/gc_bench_profile.py
 """
 
-import subprocess
-import sys
+import contextlib
 import os
-import re
+import subprocess
 
 AURA = os.path.join(os.path.dirname(__file__), "..", "build", "aura")
+
 
 def aura(cmd: str) -> str:
     """Run a single Aura expression, return stdout."""
@@ -33,6 +33,7 @@ def aura(cmd: str) -> str:
             return f"ERROR:{stderr}"
     return output
 
+
 def aura_stats(cmd: str) -> dict:
     """Run an Aura expression and return gc-stats as dict."""
     # gc-stats returns a string like "string:N/pairs:N/cells:N/..."
@@ -49,17 +50,16 @@ def aura_stats(cmd: str) -> dict:
         for part in raw.split("/"):
             if ":" in part:
                 k, v = part.split(":", 1)
-                try:
+                with contextlib.suppress(ValueError):
                     stats[k] = int(v)
-                except ValueError:
-                    pass
     return stats
+
 
 def main():
     TASKS = 135
     ROUNDS = 3
     LOG_INTERVAL = 10
-    TOTAL = TASKS * ROUNDS
+    TASKS * ROUNDS
 
     print("=== GC Benchmark Profile ===")
     print(f"Tasks: {TASKS}  Rounds: {ROUNDS}  Log interval: {LOG_INTERVAL}")
@@ -71,10 +71,12 @@ def main():
     # Init
     stats = aura_stats("(gc-freeze)")
     if stats:
-        print(f"0,0,0,init,{stats.get('string',0)},{stats.get('pairs',0)},"
-              f"{stats.get('cells',0)},{stats.get('err',0)},{stats.get('hash',0)},"
-              f"{stats.get('vec',0)},{stats.get('opq',0)},{stats.get('cls',0)},"
-              f"{stats.get('root',0)}")
+        print(
+            f"0,0,0,init,{stats.get('string', 0)},{stats.get('pairs', 0)},"
+            f"{stats.get('cells', 0)},{stats.get('err', 0)},{stats.get('hash', 0)},"
+            f"{stats.get('vec', 0)},{stats.get('opq', 0)},{stats.get('cls', 0)},"
+            f"{stats.get('root', 0)}"
+        )
 
     iter_num = 1
     for round_num in range(1, ROUNDS + 1):
@@ -87,23 +89,29 @@ def main():
 (json-parse "{{\\"status\\":\\"ok\\",\\"task\\":{task_id}}}")
 """
             # Collect pre-gc stats every LOG_INTERVAL
-            log_this = (task_id % LOG_INTERVAL == 0)
+            log_this = task_id % LOG_INTERVAL == 0
             if log_this:
                 pre = aura_stats(script)
                 if pre:
-                    print(f"{iter_num},{round_num},{task_id},pre-gc,"
-                          f"{pre.get('string',0)},{pre.get('pairs',0)},"
-                          f"{pre.get('cells',0)},{pre.get('err',0)},{pre.get('hash',0)},"
-                          f"{pre.get('vec',0)},{pre.get('opq',0)},{pre.get('cls',0)},"
-                          f"{pre.get('root',0)}", flush=True)
+                    print(
+                        f"{iter_num},{round_num},{task_id},pre-gc,"
+                        f"{pre.get('string', 0)},{pre.get('pairs', 0)},"
+                        f"{pre.get('cells', 0)},{pre.get('err', 0)},{pre.get('hash', 0)},"
+                        f"{pre.get('vec', 0)},{pre.get('opq', 0)},{pre.get('cls', 0)},"
+                        f"{pre.get('root', 0)}",
+                        flush=True,
+                    )
                 # gc-heap
                 post = aura_stats("(gc-heap)")
                 if post:
-                    print(f"{iter_num},{round_num},{task_id},post-gc,"
-                          f"{post.get('string',0)},{post.get('pairs',0)},"
-                          f"{post.get('cells',0)},{post.get('err',0)},{post.get('hash',0)},"
-                          f"{post.get('vec',0)},{post.get('opq',0)},{post.get('cls',0)},"
-                          f"{post.get('root',0)}", flush=True)
+                    print(
+                        f"{iter_num},{round_num},{task_id},post-gc,"
+                        f"{post.get('string', 0)},{post.get('pairs', 0)},"
+                        f"{post.get('cells', 0)},{post.get('err', 0)},{post.get('hash', 0)},"
+                        f"{post.get('vec', 0)},{post.get('opq', 0)},{post.get('cls', 0)},"
+                        f"{post.get('root', 0)}",
+                        flush=True,
+                    )
             else:
                 # Run task + gc-heap without logging
                 aura(f"""
@@ -116,18 +124,21 @@ def main():
 
             iter_num += 1
 
-        print(f"--- Round {round_num} complete (iter {iter_num-1}) ---", flush=True)
+        print(f"--- Round {round_num} complete (iter {iter_num - 1}) ---", flush=True)
 
     # Final stats
     final = aura_stats("")
-    print(f"\nFinal gc-stats: "
-          f"string={final.get('string','?')} pairs={final.get('pairs','?')} "
-          f"cells={final.get('cells','?')} hash={final.get('hash','?')} "
-          f"cls={final.get('cls','?')} root={final.get('root','?')}")
-    if final.get('cls', 0) < 200:
+    print(
+        f"\nFinal gc-stats: "
+        f"string={final.get('string', '?')} pairs={final.get('pairs', '?')} "
+        f"cells={final.get('cells', '?')} hash={final.get('hash', '?')} "
+        f"cls={final.get('cls', '?')} root={final.get('root', '?')}"
+    )
+    if final.get("cls", 0) < 200:
         print("✅ PASS: closures_ stable (< 200)")
     else:
         print(f"⚠️  REVIEW: closures_ = {final.get('cls', 0)} (expected < 200)")
+
 
 if __name__ == "__main__":
     main()

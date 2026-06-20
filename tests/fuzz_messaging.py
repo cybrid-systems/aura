@@ -12,8 +12,8 @@ Usage:
   python3 tests/fuzz_messaging.py [--quick] [--seed N]
 """
 
+import contextlib
 import datetime
-import json
 import os
 import random
 import subprocess
@@ -35,9 +35,14 @@ rng = random.Random(SEED if SEED is not None else None)
 N_SESSIONS = 3 if QUICK else 5
 
 MESSAGES = [
-    "hello", "ping", "pong", "ack", "data", "request",
-    "{\"type\":\"query\",\"sym\":\"fib\"}",
-    "{\"type\":\"result\",\"value\":42}",
+    "hello",
+    "ping",
+    "pong",
+    "ack",
+    "data",
+    "request",
+    '{"type":"query","sym":"fib"}',
+    '{"type":"result","value":42}',
     "long message " + "x" * 100,
     "!@#$%^&*() special chars",
 ]
@@ -61,7 +66,9 @@ def send(proc, cmd):
 def run_session():
     proc = subprocess.Popen(
         [AURA, "--serve"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
     time.sleep(0.15)
@@ -82,8 +89,8 @@ def run_session():
         time.sleep(0.03)
 
     if stats["crash"]:
-        try: proc.kill()
-        except: pass
+        with contextlib.suppress(Exception):
+            proc.kill()
         return stats
 
     n_ops = 150 if QUICK else 500
@@ -99,7 +106,7 @@ def run_session():
                     stats["crash"] += 1
                     break
                 time.sleep(0.01)
-                resp = send(proc, '(display (my-id))')
+                resp = send(proc, "(display (my-id))")
                 if resp is None:
                     stats["crash"] += 1
                     break
@@ -143,7 +150,7 @@ def run_session():
             time.sleep(0.01)
 
             # Try to recv (with short timeout)
-            resp = send(proc, '(display (recv 50))')
+            resp = send(proc, "(display (recv 50))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -161,7 +168,7 @@ def run_session():
     try:
         proc.kill()
         proc.wait(timeout=3)
-    except:
+    except Exception:
         pass
     return stats
 
@@ -179,22 +186,21 @@ def main():
     total = {"ok": 0, "error": 0, "crash": 0}
 
     for s in range(n_sessions):
-        print(f"\n  Session {s+1}/{n_sessions} ... ", end="", flush=True)
+        print(f"\n  Session {s + 1}/{n_sessions} ... ", end="", flush=True)
         st = run_session()
         for k in total:
             total[k] += st[k]
         ops = st["ok"] + st["error"] + st["crash"]
         pct = st["ok"] / max(ops, 1) * 100
-        print(f"{st['ok']}/{ops} ({pct:.0f}%) "
-              f"[err={st['error']} crash={st['crash']}]")
+        print(f"{st['ok']}/{ops} ({pct:.0f}%) [err={st['error']} crash={st['crash']}]")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Total:  {total['ok']} ok, {total['error']} error, {total['crash']} crash")
     rate = total["ok"] / max(total["ok"] + total["error"] + total["crash"], 1) * 100
     print(f"  Rate:   {rate:.1f}%")
 
     if total["crash"]:
-        print(f"\n  💥 CRASH detected!")
+        print("\n  💥 CRASH detected!")
         sys.exit(1)
 
 

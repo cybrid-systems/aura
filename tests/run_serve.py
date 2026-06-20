@@ -15,6 +15,7 @@ Environment:
   BENCH_ROUNDS      Number of rounds (default: 1)
   BENCH_ATTEMPTS    Max LLM attempts per task (default: 3)
 """
+
 import concurrent.futures
 import json
 import os
@@ -98,7 +99,7 @@ class ServeClient:
         try:
             self.proc.terminate()
             self.proc.wait(timeout=2)
-        except:
+        except Exception:
             self.proc.kill()
 
 
@@ -122,11 +123,11 @@ def run_worker_tasks(wid, tasks):
         code = (
             f'(require "std/bench" all:)\n'
             f'(require "std/extract" all:)\n'
-            f'(define result\n'
-            f'  (run-one (list {name_j} {goal_j} {expects_s} {depend_j} {hints_s})\n'
-            f'           {model_j}\n'
-            f'           {ATTEMPTS}))\n'
-            f'(display (car result))\n'
+            f"(define result\n"
+            f"  (run-one (list {name_j} {goal_j} {expects_s} {depend_j} {hints_s})\n"
+            f"           {model_j}\n"
+            f"           {ATTEMPTS}))\n"
+            f"(display (car result))\n"
         )
 
         ok, out, err = client.exec(code, timeout=300)
@@ -156,7 +157,7 @@ def main():
 
         # Partition tasks among workers
         chunk = max(1, len(tasks) // WORKERS)
-        parts = [tasks[i:i+chunk] for i in range(0, len(tasks), chunk)]
+        parts = [tasks[i : i + chunk] for i in range(0, len(tasks), chunk)]
 
         all_r = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
@@ -173,10 +174,10 @@ def main():
         for name, passed, _ in all_r:
             print(f"  {'OK' if passed else 'FAIL':4s} {name}")
         if rp + rf > 0:
-            print(f"  Round {rnd}: {rp}/{rp+rf} ({rp/(rp+rf)*100:.0f}%)")
+            print(f"  Round {rnd}: {rp}/{rp + rf} ({rp / (rp + rf) * 100:.0f}%)")
 
     if total_p + total_f > 0:
-        print(f"\n=== Total: {total_p}/{total_p+total_f} ({total_p/(total_p+total_f)*100:.0f}%) ===")
+        print(f"\n=== Total: {total_p}/{total_p + total_f} ({total_p / (total_p + total_f) * 100:.0f}%) ===")
     print("Done")
 
 
