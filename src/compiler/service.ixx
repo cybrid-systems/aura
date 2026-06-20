@@ -3921,6 +3921,18 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // Issue #254: IR SoA dual-emit counters (lifetime total).
         s.ir_soa_instructions_emitted = metrics_.ir_soa_instructions_emitted.load(std::memory_order_relaxed);
         s.ir_soa_functions_emitted = metrics_.ir_soa_functions_emitted.load(std::memory_order_relaxed);
+        // Issue #255: reference stability observability. Read
+        // the live counters from the workspace FlatAST (they
+        // live on FlatAST, not on CompilerMetrics — the bump
+        // sites are in ast.ixx where they have direct access
+        // to the generation_ + node_gen_ state). If no
+        // workspace is set (e.g. pre-init), all counts stay 0.
+        if (auto* ws_flat = evaluator_.workspace_flat()) {
+            s.bump_generation_count = ws_flat->bump_generation_count();
+            s.is_valid_check_count = ws_flat->is_valid_check_count();
+            s.stable_ref_invalidations = ws_flat->stable_ref_invalidations();
+            s.atomic_batch_commits = ws_flat->atomic_batch_commits_v();
+        }
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
         // shared_lock on workspace_mtx_ to keep the flat

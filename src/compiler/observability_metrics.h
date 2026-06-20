@@ -115,6 +115,31 @@ struct CompilerMetrics {
     // a single source of truth.
     std::atomic<std::uint64_t> ir_soa_instructions_emitted{0};
     std::atomic<std::uint64_t> ir_soa_functions_emitted{0};
+    // Issue #255: reference stability observability. The
+    // FlatAST reference stability mechanism (generation_ +
+    // node_gen_ + StableNodeRef) is a candidate for a
+    // std::meta-based refactor once P2996 lands in a compiler.
+    // Until then, these counters let us audit how often the
+    // mechanism fires in real workloads:
+    // - bump_generation_count: total generation bumps
+    //   (from bump_generation() / commit_atomic_batch()).
+    //   Counts actual bumps, not suppressed ones (the
+    //   bump_generation_suppressed_ flag is for #250 atomic
+    //   batches and is observed separately).
+    // - is_valid_check_count: total is_valid() calls
+    //   (both NodeId and StableNodeRef overloads).
+    // - stable_ref_invalidations: how many StableNodeRef
+    //   is_valid() calls returned false (i.e. a captured
+    //   ref went stale — the whole point of StableNodeRef).
+    // - atomic_batch_commits: how many atomic batches
+    //   committed (one bump per batch, vs N bumps for N
+    //   individual mutates — the savings show up as
+    //   bump_generation_count / atomic_batch_commits being
+    //   much lower than the mutate count).
+    std::atomic<std::uint64_t> bump_generation_count{0};
+    std::atomic<std::uint64_t> is_valid_check_count{0};
+    std::atomic<std::uint64_t> stable_ref_invalidations{0};
+    std::atomic<std::uint64_t> atomic_batch_commits{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

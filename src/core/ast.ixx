@@ -639,6 +639,21 @@ private:
     std::uint64_t next_mutation_id_ = 1;
     std::uint16_t generation_ = 1;
     std::pmr::vector<std::uint16_t> node_gen_;
+    // Issue #255: reference stability observability counters.
+    // The reference stability mechanism (generation_ + node_gen_
+    // + StableNodeRef) is a candidate for std::meta-based
+    // refactor (P2996); until that lands in a compiler, these
+    // counters let users audit how often the mechanism fires.
+    // Atomic so concurrent mutates (lockless path) and reader
+    // is_valid checks don't race. Exposed via accessors below
+    // for service.ixx to accumulate into CompilerMetrics.
+    // Mutable so const is_valid() overloads can bump them
+    // (the increment is observability, not a logical state
+    // change — the validation result is the same).
+    mutable std::atomic<std::uint64_t> bump_generation_count_{0};
+    mutable std::atomic<std::uint64_t> is_valid_check_count_{0};
+    mutable std::atomic<std::uint64_t> stable_ref_invalidations_{0};
+    mutable std::atomic<std::uint64_t> atomic_batch_commits_{0};
 
 private:
 
@@ -664,6 +679,153 @@ private:
     // IRFunction::region accordingly.
     std::pmr::unordered_map<SymId, std::uint8_t> region_by_sym_;
     std::pmr::unordered_map<NodeId, std::uint8_t> region_by_lambda_id_;
+    // Issue #255: explicit custom move constructor. The
+    // 4 std::atomic observability members (added for #255)
+    // make the implicit move ctor deleted by some compiler
+    // versions — the default move tries to copy-construct
+    // each atomic, which is deleted. We implement a custom
+    // move ctor that does a memberwise move: std::pmr vectors
+    // + unordered_maps move naturally; std::atomic values are
+    // std::move'd (which on libstdc++ does an rcu-style value
+    // transfer). The user-declared destructor would otherwise
+    // inhibit implicit move generation, so this is mandatory.
+    FlatAST(FlatAST&& other) noexcept
+        : tag_(std::move(other.tag_))
+        , int_val_(std::move(other.int_val_))
+        , float_val_(std::move(other.float_val_))
+        , sym_id_(std::move(other.sym_id_))
+        , children_(std::move(other.children_))
+        , parent_(std::move(other.parent_))
+        , param_begin_(std::move(other.param_begin_))
+        , param_count_(std::move(other.param_count_))
+        , cap_require_count_(std::move(other.cap_require_count_))
+        , param_data_(std::move(other.param_data_))
+        , param_annot_data_(std::move(other.param_annot_data_))
+        , line_(std::move(other.line_))
+        , col_(std::move(other.col_))
+        , type_id_(std::move(other.type_id_))
+        , error_kind_(std::move(other.error_kind_))
+        , node_gen_(std::move(other.node_gen_))
+        , value_cache_(std::move(other.value_cache_))
+        , mutation_log_(std::move(other.mutation_log_))
+        , node_first_mutation_(std::move(other.node_first_mutation_))
+        , next_mutation_id_(other.next_mutation_id_)
+        , generation_(other.generation_)
+        , bump_generation_count_(other.bump_generation_count_.load())
+        , is_valid_check_count_(other.is_valid_check_count_.load())
+        , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
+        , atomic_batch_commits_(other.atomic_batch_commits_.load())
+        , match_info_(std::move(other.match_info_))
+        , region_by_sym_(std::move(other.region_by_sym_))
+        , region_by_lambda_id_(std::move(other.region_by_lambda_id_))
+        , bump_generation_suppressed_(other.bump_generation_suppressed_)
+        , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
+    FlatAST& operator=(FlatAST&& other) noexcept {
+        if (this != &other) {
+            tag_ = std::move(other.tag_);
+            int_val_ = std::move(other.int_val_);
+            float_val_ = std::move(other.float_val_);
+            sym_id_ = std::move(other.sym_id_);
+            children_ = std::move(other.children_);
+            parent_ = std::move(other.parent_);
+            param_begin_ = std::move(other.param_begin_);
+            param_count_ = std::move(other.param_count_);
+            cap_require_count_ = std::move(other.cap_require_count_);
+            param_data_ = std::move(other.param_data_);
+            param_annot_data_ = std::move(other.param_annot_data_);
+            line_ = std::move(other.line_);
+            col_ = std::move(other.col_);
+            type_id_ = std::move(other.type_id_);
+            error_kind_ = std::move(other.error_kind_);
+            node_gen_ = std::move(other.node_gen_);
+            value_cache_ = std::move(other.value_cache_);
+            mutation_log_ = std::move(other.mutation_log_);
+            node_first_mutation_ = std::move(other.node_first_mutation_);
+            next_mutation_id_ = other.next_mutation_id_;
+            generation_ = other.generation_;
+            bump_generation_count_.store(other.bump_generation_count_.load());
+            is_valid_check_count_.store(other.is_valid_check_count_.load());
+            stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
+            atomic_batch_commits_.store(other.atomic_batch_commits_.load());
+            match_info_ = std::move(other.match_info_);
+            region_by_sym_ = std::move(other.region_by_sym_);
+            region_by_lambda_id_ = std::move(other.region_by_lambda_id_);
+            bump_generation_suppressed_ = other.bump_generation_suppressed_;
+            atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+        }
+        return *this;
+    }
+    // Issue #255: explicit copy constructor + copy assignment.
+    // Declaring a move ctor/assignment implicitly deletes the
+    // copy versions, but evaluator_impl.cpp has 3 copy-assign
+    // sites (workspace COW, local-flat initialization, etc.).
+    // Copy is rare in hot paths but must compile.
+    FlatAST(const FlatAST& other)
+        : tag_(other.tag_)
+        , int_val_(other.int_val_)
+        , float_val_(other.float_val_)
+        , sym_id_(other.sym_id_)
+        , children_(other.children_)
+        , parent_(other.parent_)
+        , param_begin_(other.param_begin_)
+        , param_count_(other.param_count_)
+        , cap_require_count_(other.cap_require_count_)
+        , param_data_(other.param_data_)
+        , param_annot_data_(other.param_annot_data_)
+        , line_(other.line_)
+        , col_(other.col_)
+        , type_id_(other.type_id_)
+        , error_kind_(other.error_kind_)
+        , node_gen_(other.node_gen_)
+        , value_cache_(other.value_cache_)
+        , mutation_log_(other.mutation_log_)
+        , node_first_mutation_(other.node_first_mutation_)
+        , next_mutation_id_(other.next_mutation_id_)
+        , generation_(other.generation_)
+        , bump_generation_count_(other.bump_generation_count_.load())
+        , is_valid_check_count_(other.is_valid_check_count_.load())
+        , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
+        , atomic_batch_commits_(other.atomic_batch_commits_.load())
+        , match_info_(other.match_info_)
+        , region_by_sym_(other.region_by_sym_)
+        , region_by_lambda_id_(other.region_by_lambda_id_)
+        , bump_generation_suppressed_(other.bump_generation_suppressed_)
+        , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
+    FlatAST& operator=(const FlatAST& other) {
+        if (this != &other) {
+            tag_ = other.tag_;
+            int_val_ = other.int_val_;
+            float_val_ = other.float_val_;
+            sym_id_ = other.sym_id_;
+            children_ = other.children_;
+            parent_ = other.parent_;
+            param_begin_ = other.param_begin_;
+            param_count_ = other.param_count_;
+            cap_require_count_ = other.cap_require_count_;
+            param_data_ = other.param_data_;
+            param_annot_data_ = other.param_annot_data_;
+            line_ = other.line_;
+            col_ = other.col_;
+            type_id_ = other.type_id_;
+            error_kind_ = other.error_kind_;
+            node_gen_ = other.node_gen_;
+            value_cache_ = other.value_cache_;
+            mutation_log_ = other.mutation_log_;
+            node_first_mutation_ = other.node_first_mutation_;
+            next_mutation_id_ = other.next_mutation_id_;
+            generation_ = other.generation_;
+            bump_generation_count_.store(other.bump_generation_count_.load());
+            is_valid_check_count_.store(other.is_valid_check_count_.load());
+            stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
+            atomic_batch_commits_.store(other.atomic_batch_commits_.load());
+            match_info_ = other.match_info_;
+            region_by_sym_ = other.region_by_sym_;
+            region_by_lambda_id_ = other.region_by_lambda_id_;
+            bump_generation_suppressed_ = other.bump_generation_suppressed_;
+            atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+        }
+        return *this;
+    }
     explicit FlatAST(std::pmr::polymorphic_allocator<std::byte> alloc = {})
         : tag_(alloc)
         , int_val_(alloc)
@@ -1996,6 +2158,8 @@ private:
 
     // Check if a NodeId is valid (in-bounds and from the current generation).
     bool is_valid(NodeId id) const {
+        // Issue #255: bump the check counter (lifetime total).
+        is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
         return id < tag_.size() && id < node_gen_.size() && node_gen_[id] == generation_;
     }
 
@@ -2051,11 +2215,21 @@ private:
     // they differ, the ref is stale (a structural mutation
     // happened in between).
     [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept {
-        return ref.id != NULL_NODE
+        // Issue #255: bump the check counter (lifetime total).
+        is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
+        bool ok = ref.id != NULL_NODE
             && ref.id < tag_.size()
             && ref.id < node_gen_.size()
             && node_gen_[ref.id] == ref.gen
             && ref.gen == generation_;  // gen must also match current
+        if (!ok) {
+            // Stale ref — bump the invalidations counter.
+            // The whole point of StableNodeRef is to detect
+            // this case; counting it tells us how often the
+            // mechanism actually catches a stale handle.
+            stable_ref_invalidations_.fetch_add(1, std::memory_order_relaxed);
+        }
+        return ok;
     }
     [[nodiscard]] std::optional<NodeView> get_safe(const StableNodeRef& ref) const noexcept {
         if (!is_valid(ref))
@@ -2081,6 +2255,9 @@ private:
         }
         ++generation_;
         if (generation_ == 0) generation_ = 1;
+        // Issue #255: only count actual bumps (suppressed
+        // ones are accounted for via atomic_batch_commits_).
+        bump_generation_count_.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Issue #250: atomic-batch API. When begin_atomic_batch()
@@ -2119,6 +2296,13 @@ private:
         // will trigger the regular mark_dirty_upward path.
         // The single bump + single future dirty sweep is
         // still much cheaper than N bumps + N dirty sweeps.
+        // Issue #255: bump the actual gen + the batch counter.
+        // commit_atomic_batch() does its own generation bump
+        // (not via bump_generation() — that would respect the
+        // suppression flag we just cleared, and we want the
+        // bump to happen unconditionally). Count it here.
+        bump_generation_count_.fetch_add(1, std::memory_order_relaxed);
+        atomic_batch_commits_.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Roll back the batch. No bump (the changes were never
@@ -2143,6 +2327,23 @@ private:
     // a batch (the commit path handles it).
     bool atomic_batch_active() const noexcept {
         return bump_generation_suppressed_;
+    }
+    // Issue #255: reference stability observability accessors.
+    // Read by CompilerService::snapshot() (service.ixx) to
+    // accumulate into CompilerMetrics for the
+    // (compile:invalidations-stats) Aura primitive and the
+    // --evo-explain output.
+    std::uint64_t bump_generation_count() const noexcept {
+        return bump_generation_count_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t is_valid_check_count() const noexcept {
+        return is_valid_check_count_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t stable_ref_invalidations() const noexcept {
+        return stable_ref_invalidations_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t atomic_batch_commits_v() const noexcept {
+        return atomic_batch_commits_.load(std::memory_order_relaxed);
     }
 
     bool rollback(std::uint64_t mutation_id) {

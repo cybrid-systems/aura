@@ -2130,6 +2130,29 @@ target_compile_definitions(test_issue_254 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_254 PRIVATE ${llvm_libs})
 add_test(NAME issue_254_ir_soa_dual_emit_foundation_verification COMMAND ./test_issue_254)
 
+# Issue #255 verification: reference stability observability
+# foundation. Tests the 4 atomic counters on FlatAST
+# (bump_generation_count_ / is_valid_check_count_ /
+# stable_ref_invalidations_ / atomic_batch_commits_) plus
+# the (compile:invalidations-stats) Aura primitive.
+# Integration test (uses CompilerService).
+aura_add_issue_test(test_issue_255)
+target_include_directories(test_issue_255 PRIVATE src src/compiler)
+target_sources(test_issue_255 PRIVATE
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+    src/compiler/observability_snapshot.h
+    src/core/contract_stub.cpp
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_255 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_255 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_255 PRIVATE ${llvm_libs})
+add_test(NAME issue_255_reference_stability_observability_verification COMMAND ./test_issue_255)
+
 # Issue #250 verification: atomic-batch truly atomic.
 # Integration test (uses CompilerService).
 aura_add_issue_test(test_issue_250)
