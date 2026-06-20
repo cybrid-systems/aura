@@ -2096,6 +2096,31 @@ target_compile_definitions(test_issue_253 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_253 PRIVATE ${llvm_libs})
 add_test(NAME issue_253_linear_move_elision_verification COMMAND ./test_issue_253)
 
+# Issue #254 verification: IR SoA dual-emit foundation
+# (Phase 2 slice of the #254 SoA migration roadmap). Scope-limited
+# close. LoweringState gets an opt-in dual-emit path: emit() +
+# alloc_block() + set_cur_function() write to both AoS and SoA
+# when dual_emit_soa is enabled. The (compile:ir-soa-stats) Aura
+# primitive exposes the dual-emit counters. The real lowering
+# path (lower_to_ir / lower_to_ir_with_cache) does NOT opt into
+# dual-emit yet — that's a follow-up.
+aura_add_issue_test(test_issue_254)
+target_include_directories(test_issue_254 PRIVATE src src/compiler)
+target_sources(test_issue_254 PRIVATE
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+    src/compiler/observability_snapshot.h
+    src/core/contract_stub.cpp
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_254 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_254 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_254 PRIVATE ${llvm_libs})
+add_test(NAME issue_254_ir_soa_dual_emit_foundation_verification COMMAND ./test_issue_254)
+
 # Issue #250 verification: atomic-batch truly atomic.
 # Integration test (uses CompilerService).
 aura_add_issue_test(test_issue_250)

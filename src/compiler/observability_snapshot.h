@@ -60,6 +60,11 @@ struct CompilerSnapshot {
     // linear_ownership_state == Owned). Mirrors
     // CompilerMetrics::linear_elide_count.
     std::uint64_t linear_elide_count = 0;
+    // Issue #254: IR SoA dual-emit counters (lifetime total).
+    // Mirrors CompilerMetrics::ir_soa_instructions_emitted +
+    // CompilerMetrics::ir_soa_functions_emitted.
+    std::uint64_t ir_soa_instructions_emitted = 0;
+    std::uint64_t ir_soa_functions_emitted = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).
