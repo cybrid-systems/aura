@@ -1356,7 +1356,7 @@ namespace {
 
 // Centralized make_merr (refactor Step 0.1, 3.1 query cluster in progress).
 // Replaces duplicated local `auto merr = ...` lambdas (orig ~14-15 in mutate + query).
-// See evaluator.ixx private decl, docs/developer/evaluator.md §3.2, and query_edsl.md §0.
+// See evaluator.ixx private decl and docs/contributing.md §3.
 EvalValue Evaluator::make_merr(const std::string& k, const std::string& m) {
     auto mi = string_heap_.size(); string_heap_.push_back(m);
     auto ki = string_heap_.size(); string_heap_.push_back(k);
