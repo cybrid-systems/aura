@@ -42,6 +42,22 @@ def _load_array(path: Path) -> list[dict]:
     return data
 
 
+def check_issues_fast(errors: list[str]) -> None:
+    path = FIXTURES / "issues_fast.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    targets = data.get("targets")
+    if not isinstance(targets, list) or not targets:
+        _fail(errors, f"{path.name}: 'targets' must be a non-empty array")
+        return
+    names: list[str] = []
+    for i, target in enumerate(targets):
+        if not isinstance(target, str) or not target.startswith("test_issue_"):
+            _fail(errors, f"issues_fast.json[{i}]: target must be test_issue_* name")
+            continue
+        names.append(target)
+    _check_unique_names(errors, "issues_fast.json", names)
+
+
 def check_benchmark(errors: list[str]) -> set[str]:
     path = FIXTURES / "benchmark_tests.json"
     items = _load_array(path)
@@ -155,6 +171,7 @@ def check_benchmark_baseline_sync(errors: list[str], fixture_names: set[str]) ->
 def run_check() -> int:
     errors: list[str] = []
     fixture_names = check_benchmark(errors)
+    check_issues_fast(errors)
     check_integ(errors)
     check_regression(errors)
     check_smoke(errors)

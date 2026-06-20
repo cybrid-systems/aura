@@ -30,7 +30,8 @@ Test suites:
   core        核心管线 (unit + integ + typecheck + smoke + bash + suite)
   safety      安全回归 (gradual + regression + p0)
   fuzz        Fuzz 测试 (fuzz-equiv + fuzz-corpus)
-  issues      Issue #226 — unified test_issue_* runner (all per-issue tests)
+  issues      Issue #226 — unified test_issue_* runner (tier via AURA_ISSUES_TIER)
+  issues-fast 同上，强制 fast 档（PR CI 子集 + git 变更 issue）
   check       构建 + core + safety + fuzz + issues（CI 默认）
 """
 
@@ -44,6 +45,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
 from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn
 from integ_cases import load_integ_cases
+from issue_tier import issues_tier, load_fast_targets, resolve_issue_targets
 from smoke_cases import load_smoke_cases
 from typecheck_cases import load_typecheck_cases
 
@@ -149,14 +151,20 @@ def cmd_build():
             fail(f"build {target} failed")
             return r
 
-    # Build the test_issue_* aggregate target. Use -k 0 to
-    # continue past pre-existing build failures (missing
-    # modules, missing JIT headers in test_issue_170 et al).
-    # The runner handles the partial-build case by skipping
-    # binaries that don't exist. Without -k 0, a single
-    # pre-existing failure halts the entire aggregate build,
-    # leaving most test_issue_* binaries unbuilt.
-    r = run(["ninja", "-C", str(BUILD), "-k", "0", "all_test_issue_targets"], cwd=ROOT)
+    # Build test_issue_* targets. Full tier uses the aggregate;
+    # fast tier builds a representative subset plus any issue
+    # tests touched in the current branch (see issue_tier.py).
+    tier = issues_tier()
+    if tier == "full":
+        issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", "all_test_issue_targets"]
+        info("issue tests: tier=full (all targets)")
+    else:
+        targets = resolve_issue_targets("fast")
+        issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", *targets]
+        changed = [t for t in targets if t not in set(load_fast_targets())]
+        extra = f", +{len(changed)} git-changed" if changed else ""
+        info(f"issue tests: tier=fast ({len(targets)} targets{extra})")
+    r = run(issue_cmd, cwd=ROOT)
     if r != 0:
         # Don't fail cmd_build on partial-build errors —
         # the runner will skip the unbuilt binaries.
@@ -701,27 +709,26 @@ def test_issue_146():
 
 
 def test_issues():
-    """Run all test_issue_* binaries (Issue #226 cycle 1).
+    """Run test_issue_* binaries (Issue #226 unified runner).
 
-    Unified runner. Discovers all test_issue_*.cpp-built
-    binaries in build/ and runs them in sequence,
-    aggregating pass/fail counts. Wired into CI.
-
-    Passes --build to the runner so the test_issue_*
-    binaries are built first. Without this, CI fails
-    with "No test_issue_* binaries found" because
-    `build.py check` doesn't build every per-issue
-    test target.
+    Tier controlled by AURA_ISSUES_TIER: full = all binaries,
+    fast = issues_fast.json subset + git-changed issue tests.
     """
-    print(f"{B}═══ All Issue Tests (unified runner, Issue #226) ═══{N}")
-    # Note: --build is now a no-op because cmd_build (run earlier
-    # in `build.py check`) compiles the all_test_issue_targets
-    # aggregate. The runner is now a pure execution step.
+    tier = issues_tier()
+    jobs = os.environ.get("AURA_ISSUES_JOBS") or str(min(8, os.cpu_count() or 4))
+    print(f"{B}═══ Issue Tests (tier={tier}, jobs={jobs}) ═══{N}")
     r = subprocess.run(
-        [sys.executable, str(ROOT / "tests" / "run_issue_tests.py")],
+        [
+            sys.executable,
+            str(ROOT / "tests" / "run_issue_tests.py"),
+            "--tier",
+            tier,
+            "--jobs",
+            jobs,
+        ],
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=900 if tier == "full" else 300,
     )
     print(r.stdout)
     if r.stderr:
@@ -813,14 +820,11 @@ CI_CORE = [
 ]
 CI_SAFETY = ["gradual", "regression", "p0"]
 CI_FUZZ = ["fuzz-equiv", "fuzz-corpus"]
-# Issue #226 cycle 1: unified test_issue_* runner.
-# All per-issue test binaries (test_issue_115.cpp through
-# test_issue_224.cpp) are discovered and run by
-# tests/run_issue_tests.py. The runner aggregates pass/fail
-# counts across all 80+ binaries and exits non-zero on
-# any failure. Wired into CI's build job so every per-issue
-# test runs on every push to main.
+# Issue #226: unified test_issue_* runner (tests/run_issue_tests.py).
+# AURA_ISSUES_TIER=fast on PR CI (~18 targets + changed issues);
+# AURA_ISSUES_TIER=full on main (all ~90+ binaries).
 CI_ISSUES = ["issues"]
+CI_ISSUES_FAST = ["issues-fast"]
 
 SUITES = {
     "unit": test_unit,
@@ -842,6 +846,7 @@ SUITES = {
     "repl": test_repl,
     "concurrent": test_concurrent,
     "issues": test_issues,
+    "issues-fast": test_issues,
 }
 
 
@@ -849,6 +854,9 @@ def cmd_test(suite_names: list[str]):
     """Run test suites."""
     if not suite_names or "all" in suite_names:
         suite_names = list(SUITES.keys())
+
+    if "issues-fast" in suite_names:
+        os.environ["AURA_ISSUES_TIER"] = "fast"
 
     results = {}
     for name in suite_names:
@@ -884,7 +892,8 @@ def cmd_list():
     print(f"  {'core':12s} CI核心管线 (unit + integ + typecheck + smoke + bash + suite)")
     print(f"  {'safety':12s} CI安全回归 (gradual + regression + p0)")
     print(f"  {'fuzz':12s} CI fuzz (fuzz-equiv + fuzz-corpus)")
-    print(f"  {'check':12s} CI默认: build + core + safety + fuzz")
+    print(f"  {'check':12s} CI默认: build + core + safety + fuzz + issues")
+    print(f"  {'issues-fast':12s} issue tests (AURA_ISSUES_TIER=fast)")
     print()
     for name, func in sorted(SUITES.items()):
         print(f"  {name:12s} {func.__doc__}")
