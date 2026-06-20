@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
 from _aura_harness import BUILD, B, G, N, R, Y
-from issue_tier import issues_tier, resolve_issue_targets
+from issue_tier import _member_to_bundle, issues_tier, resolve_issue_targets
 
 # Pre-existing test failures (NOT caused by recent PRs).
 PRE_EXISTING_FAILURES: set[str] = set()
@@ -39,8 +39,14 @@ PRE_EXISTING_FAILURES: set[str] = set()
 _print_lock = Lock()
 
 
+def _bundled_standalone_members() -> set[str]:
+    """Issue members linked into bundles — skip stale standalone binaries."""
+    return set(_member_to_bundle().keys())
+
+
 def discover_test_issue_binaries() -> list[str]:
     """Find issue bundle + standalone test binaries in build/."""
+    bundled = _bundled_standalone_members()
     bins = []
     if not BUILD.is_dir():
         return bins
@@ -48,7 +54,8 @@ def discover_test_issue_binaries() -> list[str]:
         if not entry.is_file():
             continue
         name = entry.name
-        if name.startswith("test_issues_") or name.startswith("test_issue_"):
+        if (name.startswith("test_issues_")
+                or (name.startswith("test_issue_") and name not in bundled)):
             bins.append(name)
     return bins
 
@@ -91,14 +98,20 @@ def parse_pass_fail_count(stdout: str) -> tuple[int, int]:
     """Parse a test binary's stdout for pass/fail counts."""
     import re
 
+    # Prefer the final summary line (bundle drivers print member Results first).
+    last: tuple[int, int] | None = None
     for line in stdout.splitlines():
         m = re.search(r"(?:Total|Results):\s+(\d+)\s+passed,\s+(\d+)\s+failed", line)
         if m:
-            return int(m.group(1)), int(m.group(2))
-        m = re.search(r"(?:Total|Results):\s+(\d+)/(\d+)\s+passed,\s+(\d+)/(\d+)\s+failed", line)
+            last = (int(m.group(1)), int(m.group(2)))
+            continue
+        m = re.search(
+            r"(?:Total|Results):\s+(\d+)/(\d+)\s+passed,\s+(\d+)/(\d+)\s+failed",
+            line,
+        )
         if m:
-            return int(m.group(1)), int(m.group(3))
-    return 0, 0
+            last = (int(m.group(1)), int(m.group(3)))
+    return last if last is not None else (0, 0)
 
 
 def build_targets(targets: list[str]) -> int:
