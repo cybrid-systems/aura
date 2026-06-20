@@ -2206,8 +2206,25 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // node. Coarse but provably correct for the stale-cache
         // bug class.
         tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
+        // Issue #258: plumb metrics so solve_delta timing
+        // accumulates into CompilerMetrics::delta_solve_time_us.
+        tc.set_metrics(&metrics_);
 
         auto result = tc.infer_flat(flat, pool, pr.root, diag);
+
+        // Issue #258: accumulate incremental typecheck stats
+        // into CompilerMetrics (lifetime totals). The per-call
+        // TypeChecker is short-lived, so without this
+        // accumulation multi-mutation workloads would have
+        // nowhere to surface the cache hit/miss ratio.
+        // Wire the metrics pointer so ConstraintSystem::solve_delta
+        // can also accumulate time (see type_checker_impl.cpp).
+        metrics_.typecheck_cache_hits_total.fetch_add(
+            tc.stats().cache_hits, std::memory_order_relaxed);
+        metrics_.typecheck_cache_misses_total.fetch_add(
+            tc.stats().cache_misses, std::memory_order_relaxed);
+        metrics_.typecheck_stale_cache_total.fetch_add(
+            tc.stats().stale_cache, std::memory_order_relaxed);
 
         // Issue #116: the typecheck command doesn't proceed to
         // IR lowering (it just reports types + diagnostics), so
@@ -2259,8 +2276,20 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // Issue #168: gate by global mutation epoch (same as
         // the typecheck() path).
         tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
-        return tc.infer_flat_partial(
+        // Issue #258: plumb metrics for solve_delta timing.
+        tc.set_metrics(&metrics_);
+        auto n = tc.infer_flat_partial(
             *current_ast_, *current_pool_, rec, diag);
+        // Issue #258: accumulate incremental typecheck stats
+        // into CompilerMetrics (lifetime totals) — the
+        // multi-mutation perf signal.
+        metrics_.typecheck_cache_hits_total.fetch_add(
+            tc.stats().cache_hits, std::memory_order_relaxed);
+        metrics_.typecheck_cache_misses_total.fetch_add(
+            tc.stats().cache_misses, std::memory_order_relaxed);
+        metrics_.typecheck_stale_cache_total.fetch_add(
+            tc.stats().stale_cache, std::memory_order_relaxed);
+        return n;
     }
 
     // ---- Multi-module arena support ----------------------------------
@@ -3939,6 +3968,25 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             s.parent_of_call_count = ws_flat->parent_of_call_count();
             s.mark_dirty_upward_call_count = ws_flat->mark_dirty_upward_call_count();
             s.mark_dirty_total_nodes = ws_flat->mark_dirty_total_nodes();
+        }
+        // Issue #258: multi-mutation incremental typecheck
+        // observability. Read lifetime totals from
+        // CompilerMetrics, compute the derived
+        // multi_mutation_recompute_ratio (basis points:
+        // cache_misses / (hits + misses + stale) * 10000).
+        s.typecheck_cache_hits_total = metrics_.typecheck_cache_hits_total.load(std::memory_order_relaxed);
+        s.typecheck_cache_misses_total = metrics_.typecheck_cache_misses_total.load(std::memory_order_relaxed);
+        s.typecheck_stale_cache_total = metrics_.typecheck_stale_cache_total.load(std::memory_order_relaxed);
+        s.delta_solve_time_us = metrics_.delta_solve_time_us.load(std::memory_order_relaxed);
+        const std::uint64_t total =
+            s.typecheck_cache_hits_total +
+            s.typecheck_cache_misses_total +
+            s.typecheck_stale_cache_total;
+        if (total > 0) {
+            s.multi_mutation_recompute_ratio_bp =
+                (s.typecheck_cache_misses_total * 10000u) / total;
+        } else {
+            s.multi_mutation_recompute_ratio_bp = 0;
         }
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a

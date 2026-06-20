@@ -150,6 +150,32 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> parent_of_call_count{0};
     std::atomic<std::uint64_t> mark_dirty_upward_call_count{0};
     std::atomic<std::uint64_t> mark_dirty_total_nodes{0};
+    // Issue #258: multi-mutation incremental type checking
+    // observability. The IncrementalStats on TypeChecker
+    // are per-call (TypeChecker is short-lived). These 4
+    // lifetime totals accumulate the stats across every
+    // typecheck_full() / incremental_infer() call so users
+    // can see how the typecheck cache is performing across
+    // multi-mutation workloads:
+    // - typecheck_cache_hits_total: clean nodes with valid
+    //   cached types (skipped re-inference)
+    // - typecheck_cache_misses_total: nodes that were
+    //   re-inferred (dirty or no cache)
+    // - typecheck_stale_cache_total: cached types that
+    //   contained free type vars (rejected — pre-solve
+    //   cache pollution)
+    // - delta_solve_time_us: cumulative microseconds spent
+    //   in ConstraintSystem::solve_delta() (Issue #148
+    //   Phase 2). Useful for profiling the multi-mutation
+    //   cost.
+    // The derived metric multi_mutation_recompute_ratio is
+    // computed at snapshot read time as
+    //   cache_misses / (hits + misses + stale)
+    // — the AC1 metric from #258.
+    std::atomic<std::uint64_t> typecheck_cache_hits_total{0};
+    std::atomic<std::uint64_t> typecheck_cache_misses_total{0};
+    std::atomic<std::uint64_t> typecheck_stale_cache_total{0};
+    std::atomic<std::uint64_t> delta_solve_time_us{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
