@@ -19,27 +19,14 @@ jobs:
 
     - name: Install Python CI deps
       run: |
-        pip install --break-system-packages pexpect ruff
-        python3 -c "import pexpect; print('✅ pexpect installed for', pexpect.__file__)"
+        pip install --break-system-packages -r requirements-dev.txt
+        python3 -c "import pexpect; print('✅ pexpect', pexpect.__version__)"
         ruff --version
 
-    # build.py check runs docs --check, lint, then build + core/safety/fuzz/issue tests
-    - name: Build & Core Tests
+    # Single CI gate: docs --check, lint, build, core + safety (regression) +
+    # fuzz + issues. Do not duplicate suites in separate steps below.
+    - name: Build & Test (check)
       run: python3 build.py check
-
-    # Issue #226 cycle 1: unified test_issue_* runner.
-    # All 80+ per-issue test binaries (test_issue_*.cpp)
-    # are discovered and run via tests/run_issue_tests.py.
-    # Aggregated pass/fail counts; non-zero exit on any
-    # failure. Wired into CI's build job.
-    - name: Issue Tests (unified, #226)
-      run: python3 build.py test issues
-
-    - name: Full Fuzz (--quick)
-      run: python3 build.py test fuzz
-
-    - name: Regression
-      run: python3 build.py test regression
 
   # Shared ASAN build. Both downstream jobs (memory + asan-tests)
   # need the same ASAN-instrumented binaries (aura + test_ir) — without
@@ -57,8 +44,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install pexpect for CI
-      run: pip install --break-system-packages pexpect
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
 
     - name: Configure ASAN build
       run: |
