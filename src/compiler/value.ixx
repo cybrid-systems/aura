@@ -10,7 +10,7 @@
 // the tagged-value encoding.
 
 // Re-export is_truthy from aura::compiler::evaluator_pure for
-// the legacy types::is_truthy callers in evaluator_impl.cpp.
+// the legacy types::is_truthy callers in evaluator partition TUs.
 // (Issue #146 Phase 3: is_truthy moved to the pure module.)
 // export import aura.compiler.evaluator_pure;  // REMOVED: caused
 // circular import (evaluator_pure → value → evaluator_pure).
@@ -296,7 +296,7 @@ export inline std::uint64_t as_keyword_idx(const EvalValue& v) noexcept {
 // (the pure-function module). Callers that previously used
 // `types::is_truthy` should use `aura::compiler::pure::is_truthy`
 // (import aura.compiler.evaluator_pure). Legacy callers in
-// evaluator_impl.cpp use a `using` declaration at the top of
+// evaluator partition TUs use a `using` declaration at the top of
 // the file to keep the unqualified `is_truthy` call sites
 // working without code churn.
 

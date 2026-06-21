@@ -2337,7 +2337,7 @@ private:
 // instead of O(recursion_depth).
 //
 // The evaluator's TCO is at the tree-walking level
-// (evaluator_impl.cpp:16786-17847, the TCO loop). This pass
+// (evaluator_eval_flat.cpp eval_flat, the TCO loop). This pass
 // brings TCO to the IR level, so the JIT can benefit.
 //
 // Pattern detected (the only one this minimal version handles):

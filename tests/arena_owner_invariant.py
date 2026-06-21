@@ -153,28 +153,28 @@ def main():
         )
         print("  Possible leak sources:", file=sys.stderr)
         print(
-            "    - src/compiler/evaluator_impl.cpp:2842 (suite check form)",
+            "    - evaluator_primitives_test.cpp (run-tests check forms)",
             file=sys.stderr,
         )
         print(
-            "    - src/compiler/evaluator_impl.cpp:4142 (set-code 2nd path)",
+            "    - evaluator_primitives_eval.cpp (set-code)",
             file=sys.stderr,
         )
-        print("    - src/compiler/evaluator_impl.cpp:4180 (eval-expr)", file=sys.stderr)
+        print("    - evaluator_primitives_eval.cpp (eval-expr)", file=sys.stderr)
         print(
-            "    - src/compiler/evaluator_impl.cpp:5174 (query:pattern)",
-            file=sys.stderr,
-        )
-        print(
-            "    - src/compiler/evaluator_impl.cpp:5526 (mutate:replace-pattern)",
+            "    - evaluator_primitives_query_workspace.cpp (query:pattern)",
             file=sys.stderr,
         )
         print(
-            "    - src/compiler/evaluator_impl.cpp:13347 (require dynamic import)",
+            "    - evaluator_primitives_mutate.cpp (mutate:replace-pattern)",
             file=sys.stderr,
         )
         print(
-            "    - src/compiler/evaluator_impl.cpp:13932 (functor instantiation)",
+            "    - evaluator_eval_flat.cpp (require builtin)",
+            file=sys.stderr,
+        )
+        print(
+            "    - evaluator_eval_flat.cpp (functor instantiation)",
             file=sys.stderr,
         )
         return 6

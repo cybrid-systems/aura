@@ -1,5 +1,5 @@
 // runtime_shared.h — Shared types for Aura runtime (JIT + evaluator + native)
-// Used by aura_jit_runtime.cpp, evaluator_impl.cpp, runtime.c
+// Used by aura_jit_runtime.cpp, evaluator partition TUs, runtime.c
 #pragma once
 
 #include <cstdint>

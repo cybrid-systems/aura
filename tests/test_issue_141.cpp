@@ -25,7 +25,7 @@
 //
 // The WorkspaceTree and WorkspaceNode structs (with COW, read-only,
 // parent traversal, generation, per-workspace memory budget) are
-// at evaluator_impl.cpp.
+// in evaluator_primitives_workspace.cpp.
 //
 // IMPORTANT: Workspace state is reset per-eval (like set-code).
 // Multi-step scenarios must be bundled in a single cs.eval() call.

@@ -369,7 +369,7 @@ NodeId parse_list(ParserState& s) {
         if (kw == "datatype")
             return parse_datatype(s);
         // Note: 'drop' is intentionally NOT a parser special form.
-        // It's a C++ primitive (list drop) defined in evaluator_impl.cpp.
+        // It's a C++ primitive (list drop) defined in evaluator_primitives_list.cpp.
         // The linear-type drop is accessible via a different name if needed.
         if (kw == "export") {
             s.lex.consume(); // consume 'export'

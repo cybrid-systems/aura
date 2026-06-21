@@ -165,7 +165,7 @@ extern GCCollectFn g_gc_collect;
 // serve_async.cpp's g_gc_sweep callback back to the GC collector.
 // Both the Evaluator's compact_sweep and serve_async.cpp define
 // a local struct with the same layout (verified by static_assert
-// in evaluator_impl.cpp). We use void* in the function signature
+// in evaluator_fiber_mutation.cpp). We use void* in the function signature
 // so the messaging bridge can be a non-module .h and the layout
 // stays an implementation detail.
 
@@ -179,7 +179,7 @@ extern GCCollectFn g_gc_collect;
 //
 // Return is an opaque `void*` — heap-allocated by the callback
 // (an `aura::messaging::GCSweepResultMsg*` per the layout in
-// evaluator_impl.cpp), owned and `delete`-d by the caller. We
+// evaluator_gc.cpp), owned and `delete`-d by the caller. We
 // use `void*` for the return type so the messaging bridge can
 // be a non-module .h and the layout stays an implementation
 // detail.

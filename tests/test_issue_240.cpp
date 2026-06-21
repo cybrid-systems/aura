@@ -53,8 +53,8 @@
 //   - src/core/ast.ixx:1766           — clear_dirty_for(id, uint8_t reason_mask)
 //   - src/compiler/evaluator.ixx:651  — SetOccurrenceDirtyFn typedef
 //   - src/compiler/service.ixx:478    — hook wiring
-//   - src/compiler/evaluator_impl.cpp:16321 — mark-narrowing-dirty! primitive
-//   - src/compiler/evaluator_impl.cpp:16342 — narrowing-dirty? primitive
+//   - src/compiler/evaluator_primitives_compile.cpp — compile:mark-narrowing-dirty! primitive
+//   - src/compiler/evaluator_primitives_compile.cpp — compile:narrowing-dirty? primitive
 //   - src/compiler/type_checker_impl.cpp:3383 — find_occurrence_contexts
 //     per-node kOccurrenceDirty filter
 

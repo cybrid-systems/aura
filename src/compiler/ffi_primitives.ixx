@@ -1,5 +1,5 @@
 // ffi_primitives.ixx — C FFI primitives extracted from
-// the monolithic evaluator_impl.cpp (Issue #131).
+// the monolithic evaluator TU (Issue #131).
 //
 // This module owns the FFI state (loaded libraries and
 // registered C functions) and provides a single
@@ -9,9 +9,9 @@
 // once during init.
 //
 // The FFI state was previously file-scope statics in
-// evaluator_impl.cpp. Moving it here is the first step
+// the evaluator monolith. Moving it here is the first step
 // of the Issue #131 refactor: reduce the size of
-// evaluator_impl.cpp by extracting focused modules.
+// the evaluator partition by extracting focused modules.
 
 export module aura.compiler.ffi_primitives;
 

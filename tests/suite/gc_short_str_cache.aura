@@ -53,7 +53,7 @@
 
 ; ── 2. Cache boundary: every cached string length (1, 2, 3, 4, 5, 6)
 ; and the first uncached length (7). The cache triggers for
-; raw.size() <= 6 (evaluator_impl.cpp:13193).
+; raw.size() <= 6 (evaluator_eval_flat.cpp short_str_cache_).
 (flood 50)
 (define (gen s) (lambda () s))
 (define a      (gen "a"))       ; 1 byte

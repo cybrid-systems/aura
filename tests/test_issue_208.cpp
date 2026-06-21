@@ -4,7 +4,7 @@
 // scaffold: bindings_legacy_uses metric + bindings_symid_iter
 // migration pattern.
 //
-// Cycle 2 migrates 25 sites in evaluator_impl.cpp from the
+// Cycle 2 migrates 25 sites in evaluator partition TUs from the
 // legacy string-keyed bindings_ to the SymId-keyed
 // bindings_symid_ array. The full migration is a 3-5 day
 // effort (per the issue body). This test verifies:

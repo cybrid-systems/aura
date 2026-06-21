@@ -355,7 +355,7 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 #
 # Why: 40-44 of 55 test_issue_* binaries list the same ~25 .cpp
 # source files (ast_impl/type_impl/value_impl + serve/* + parser/*
-# + evaluator_impl + cache/lowering/ir_executor + type_checker/arity/
+# + evaluator partition TUs + cache/lowering/ir_executor + type_checker/arity/
 # messaging_bridge + ffi_primitives/adt_runtime/lowering_linear_types).
 # Pre-Fix #1, each test_issue_* binary compiled these sources
 # independently, generating ~1950 MB of duplicated .o files (the

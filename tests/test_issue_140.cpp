@@ -6,7 +6,7 @@
 //
 // Issue #140 is about the `query:pattern` EDSL primitive for
 // structural search. Most of the work is already shipped:
-//   - query:pattern primitive at evaluator_impl.cpp:6326
+//   - query:pattern primitive in evaluator_primitives_query_workspace.cpp
 //   - Ellipsis `...` wildcard support
 //   - Recursive subtree matching
 //   - Tag-based and literal-based matching

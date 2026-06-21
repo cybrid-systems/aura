@@ -568,7 +568,7 @@ bool test_result_struct_bundles_stats() {
 // These are the most-called hot paths in the evaluator
 // (every arithmetic expression). The pure versions let
 // callers compose with Result monadically; the existing
-// evaluator_impl.cpp table_["-"] / table_["*"] / table_["/"]
+// evaluator_primitives_builtins.cpp table_["-"] / table_["*"] / table_["/"]
 // are now thin forwarders.
 
 // ── Test 15: arithmetic_sub_pure (variadic) ──

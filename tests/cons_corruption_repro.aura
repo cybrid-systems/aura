@@ -18,7 +18,7 @@
 ;;
 ;; === FIX (commit pending) ===
 ;;
-; Reorder display checks in io_print_val (evaluator_impl.cpp) and
+; Reorder display checks in io_print_val (evaluator_primitives_runtime.cpp) and
 ; format_value (evaluator.ixx) so is_string is checked BEFORE is_keyword.
 ; For overlapping values, the string interpretation wins (and in
 ; practice, no real RefKeyword has such a huge index).
