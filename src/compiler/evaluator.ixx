@@ -440,6 +440,8 @@ void register_policy_primitives(std::function<void(std::string, PrimFn)> add, Ev
 void register_eval_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
                               std::function<EvalValue(const std::string&, const std::string&)> mev,
                               std::function<void()> destroy_defuse_index);
+void register_type_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_hot_swap_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 }
 
 // Workspace layering (P13) — shared by evaluator_impl + workspace primitives TU.
@@ -516,6 +518,10 @@ export class Evaluator {
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<EvalValue(const std::string&, const std::string&)> mev,
         std::function<void()> destroy_defuse_index);
+    friend void primitives_detail::register_type_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_hot_swap_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 
 public:
     Evaluator();
