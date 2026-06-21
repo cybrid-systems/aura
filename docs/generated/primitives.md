@@ -65,20 +65,20 @@ Runtime canonical list: `(api-reference)`.
 
 ## Ast: (14)
 
-- `ast:defs` — `src/compiler/evaluator_impl.cpp`
-- `ast:diff` — `src/compiler/evaluator_impl.cpp`
-- `ast:generation` — `src/compiler/evaluator_impl.cpp`
-- `ast:list-snapshots` — `src/compiler/evaluator_impl.cpp`
-- `ast:nodes` — `src/compiler/evaluator_impl.cpp`
-- `ast:ref-get` — `src/compiler/evaluator_impl.cpp`
-- `ast:ref-valid?` — `src/compiler/evaluator_impl.cpp`
-- `ast:restore` — `src/compiler/evaluator_impl.cpp`
-- `ast:snapshot` — `src/compiler/evaluator_impl.cpp`
-- `ast:stable-ref` — `src/compiler/evaluator_impl.cpp`
-- `ast:summary` — `src/compiler/evaluator_impl.cpp`
-- `ast:validate-nodes` — `src/compiler/evaluator_impl.cpp`
-- `ast:validate-ownership` — `src/compiler/evaluator_impl.cpp`
-- `ast:version` — `src/compiler/evaluator_impl.cpp`
+- `ast:defs` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:diff` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:list-snapshots` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:nodes` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-get` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-valid?` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:restore` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:stable-ref` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:summary` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:version` — `src/compiler/evaluator_primitives_ast.cpp`
 
 ## Workspace: (19)
 
