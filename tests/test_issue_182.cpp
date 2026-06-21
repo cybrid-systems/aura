@@ -1,7 +1,8 @@
 // @category: unit
 // @reason: no CompilerService usage; pure C++ test
 // test_issue_182.cpp — Issue #182: Hardware IR + Verilog Backend
-// (Cycle 1: IR + accessors + display + query helpers, C++ verification).
+// (Cycle 1-2: IR + accessors + display + query/mutate helpers,
+// C++ verification).
 //
 // Issue #182 (Hardware EDA + Verilog) is by design 100% stdlib work
 // (`lib/std/eda.aura`). However, the Aura binary's top-level
@@ -279,6 +280,152 @@ std::size_t query_port_count(IrNode const& m) {
     return module_ports(m).size();
 }
 
+std::vector<std::string> collect_symbols(IrNode const& e) {
+    if (expr_op(e) == "symbol") return {expr_symbol_name(e)};
+    std::vector<std::string> result;
+    for (auto const& arg : expr_args(e)) {
+        auto sub = collect_symbols(arg);
+        result.insert(result.end(), sub.begin(), sub.end());
+    }
+    return result;
+}
+
+bool expr_mentions(IrNode const& e, std::string_view sym) {
+    for (auto const& s : collect_symbols(e)) {
+        if (s == sym) return true;
+    }
+    return false;
+}
+
+int64_t query_bit_width(std::string_view name, IrNode const& m) {
+    for (auto const& p : module_ports(m)) {
+        if (port_name(p) == name) return port_width(p);
+    }
+    for (auto const& w : query_wires(m)) {
+        if (wire_name(w) == name) return wire_width(w);
+    }
+    return 0;
+}
+
+std::vector<std::string> query_dependencies(std::string_view sig, IrNode const& m) {
+    std::vector<std::string> result;
+    for (auto const& a : query_assigns(m)) {
+        if (expr_mentions(assign_lhs(a), sig)) {
+            auto deps = collect_symbols(assign_rhs(a));
+            result.insert(result.end(), deps.begin(), deps.end());
+        }
+    }
+    return result;
+}
+
+std::vector<std::string> query_dependents(std::string_view sig, IrNode const& m) {
+    std::vector<std::string> result;
+    for (auto const& a : query_assigns(m)) {
+        if (expr_mentions(assign_rhs(a), sig)) {
+            result.push_back(expr_symbol_name(assign_lhs(a)));
+        }
+    }
+    return result;
+}
+
+IrNode expr_rename_sym(IrNode e, std::string_view old_name, std::string_view new_name) {
+    if (expr_op(e) == "symbol") {
+        if (expr_symbol_name(e) == old_name)
+            return expr_symbol(std::string(new_name));
+        return e;
+    }
+    if (expr_op(e) == "int") return e;
+    std::vector<IrNode> new_args;
+    for (auto const& arg : expr_args(e))
+        new_args.push_back(expr_rename_sym(arg, old_name, new_name));
+    return make_expr(expr_op(e), std::move(new_args));
+}
+
+IrNode port_rename_sym(IrNode p, std::string_view old_name, std::string_view new_name) {
+    if (port_name(p) == old_name)
+        return make_port(std::string(new_name), port_direction(p), port_width(p));
+    return p;
+}
+
+IrNode wire_rename_sym(IrNode w, std::string_view old_name, std::string_view new_name) {
+    if (wire_name(w) == old_name)
+        return make_wire(std::string(new_name), wire_width(w));
+    return w;
+}
+
+IrNode assign_rename_sym(IrNode a, std::string_view old_name, std::string_view new_name) {
+    return make_assign(
+        expr_rename_sym(assign_lhs(a), old_name, new_name),
+        expr_rename_sym(assign_rhs(a), old_name, new_name));
+}
+
+IrNode body_item_rename_sym(IrNode item, std::string_view old_name,
+                            std::string_view new_name) {
+    if (is_wire(item)) return wire_rename_sym(item, old_name, new_name);
+    if (is_assign(item)) return assign_rename_sym(item, old_name, new_name);
+    return item;
+}
+
+IrNode mutate_rename_symbol(std::string_view old_name, std::string_view new_name,
+                            IrNode m) {
+    std::vector<IrNode> ports;
+    for (auto const& p : module_ports(m))
+        ports.push_back(port_rename_sym(p, old_name, new_name));
+    std::vector<IrNode> body;
+    for (auto const& item : module_body(m))
+        body.push_back(body_item_rename_sym(item, old_name, new_name));
+    return make_module(module_name(m), std::move(ports), std::move(body));
+}
+
+IrNode mutate_insert_clock_gating(IrNode m, std::string_view clk,
+                                  std::string_view en) {
+    std::vector<IrNode> body = module_body(m);
+    body.insert(body.begin(), make_wire("clk_gated", 1));
+    body.insert(body.begin() + 1,
+                make_assign(
+                    expr_symbol("clk_gated"),
+                    make_expr("&", {expr_symbol(std::string(clk)),
+                                    expr_symbol(std::string(en))})));
+    return make_module(module_name(m), module_ports(m), std::move(body));
+}
+
+bool expr_equal(IrNode const& e1, IrNode const& e2) {
+    if (expr_op(e1) != expr_op(e2)) return false;
+    if (expr_op(e1) == "symbol") return expr_symbol_name(e1) == expr_symbol_name(e2);
+    if (expr_op(e1) == "int") return expr_int_value(e1) == expr_int_value(e2);
+    auto const& a1 = expr_args(e1);
+    auto const& a2 = expr_args(e2);
+    if (a1.size() != a2.size()) return false;
+    for (std::size_t i = 0; i < a1.size(); ++i) {
+        if (!expr_equal(a1[i], a2[i])) return false;
+    }
+    return true;
+}
+
+IrNode mutate_extract_common_expr(IrNode m) {
+    auto assigns = query_assigns(m);
+    if (assigns.size() < 2) return m;
+    for (std::size_t i = 0; i + 1 < assigns.size(); ++i) {
+        for (std::size_t j = i + 1; j < assigns.size(); ++j) {
+            if (!expr_equal(assign_rhs(assigns[i]), assign_rhs(assigns[j])))
+                continue;
+            auto const& common_rhs = assign_rhs(assigns[i]);
+            std::vector<IrNode> body;
+            body.push_back(make_wire("common_expr", 8));
+            body.push_back(make_assign(expr_symbol("common_expr"), common_rhs));
+            for (auto const& item : module_body(m)) {
+                if (is_assign(item) && expr_equal(assign_rhs(item), common_rhs)) {
+                    body.push_back(make_assign(assign_lhs(item), expr_symbol("common_expr")));
+                } else {
+                    body.push_back(item);
+                }
+            }
+            return make_module(module_name(m), module_ports(m), std::move(body));
+        }
+    }
+    return m;
+}
+
 } // namespace eda
 
 // ═══════════════════════════════════════════════════════════
@@ -464,6 +611,94 @@ bool test_nested_expr() {
     return true;
 }
 
+bool test_cycle2_dependency_queries() {
+    PRINTLN("\n--- Test 8: Cycle 2 query (dependencies / dependents / bit-width) ---");
+    using namespace eda;
+
+    std::vector<IrNode> ports = {
+        make_port("clk", "input", 1),
+        make_port("q", "output", 8),
+    };
+    std::vector<IrNode> body = {
+        make_wire("q_next", 8),
+        make_assign(expr_symbol("q"), expr_symbol("q_next")),
+    };
+    auto m = make_module("counter", ports, body);
+
+    CHECK(query_bit_width("q", m) == 8, "bit-width of port q is 8");
+    CHECK(query_bit_width("q_next", m) == 8, "bit-width of wire q_next is 8");
+
+    auto deps = query_dependencies("q", m);
+    CHECK(deps.size() == 1, "q has 1 dependency");
+    if (!deps.empty()) CHECK(deps[0] == "q_next", "q depends on q_next");
+
+    auto dents = query_dependents("q_next", m);
+    CHECK(dents.size() == 1, "q_next has 1 dependent");
+    if (!dents.empty()) CHECK(dents[0] == "q", "q_next drives q");
+
+    return true;
+}
+
+bool test_cycle2_mutate_rename() {
+    PRINTLN("\n--- Test 9: Cycle 2 mutate:rename-symbol ---");
+    using namespace eda;
+
+    std::vector<IrNode> body = {
+        make_wire("q_next", 8),
+        make_assign(expr_symbol("q"), expr_symbol("q_next")),
+    };
+    auto m = make_module("m", {make_port("q", "output", 8)}, body);
+    auto renamed = mutate_rename_symbol("q_next", "next_val", m);
+
+    CHECK(query_wires(renamed).size() == 1, "still 1 wire after rename");
+    if (!query_wires(renamed).empty())
+        CHECK(wire_name(query_wires(renamed)[0]) == "next_val", "wire renamed");
+    auto assigns = query_assigns(renamed);
+    CHECK(!assigns.empty(), "assign preserved");
+    if (!assigns.empty())
+        CHECK(expr_symbol_name(assign_rhs(assigns[0])) == "next_val",
+              "assign rhs references renamed symbol");
+    return true;
+}
+
+bool test_cycle2_mutate_clock_gating() {
+    PRINTLN("\n--- Test 10: Cycle 2 mutate:insert-clock-gating ---");
+    using namespace eda;
+
+    auto m = make_module("gated", {make_port("clk", "input", 1)}, {});
+    auto gated = mutate_insert_clock_gating(m, "clk", "en");
+
+    CHECK(query_wires(gated).size() == 1, "inserted gated wire");
+    CHECK(query_assigns(gated).size() == 1, "inserted gate assign");
+    auto gated_assigns = query_assigns(gated);
+    if (!gated_assigns.empty()) {
+        auto const& a = gated_assigns[0];
+        CHECK(expr_op(assign_rhs(a)) == "&", "gate uses AND");
+        CHECK(expr_args(assign_rhs(a)).size() == 2, "AND has 2 operands");
+    }
+    return true;
+}
+
+bool test_cycle2_mutate_extract_common() {
+    PRINTLN("\n--- Test 11: Cycle 2 mutate:extract-common-expr ---");
+    using namespace eda;
+
+    auto common = make_expr("+", {expr_symbol("a"), expr_symbol("b")});
+    std::vector<IrNode> body = {
+        make_assign(expr_symbol("x"), common),
+        make_assign(expr_symbol("y"), common),
+    };
+    auto m = make_module("dup", {}, body);
+    auto extracted = mutate_extract_common_expr(m);
+
+    CHECK(query_wires(extracted).size() == 1, "common wire extracted");
+    CHECK(query_assigns(extracted).size() == 3, "common assign + 2 refs");
+    if (!query_wires(extracted).empty())
+        CHECK(wire_name(query_wires(extracted)[0]) == "common_expr",
+              "common wire name");
+    return true;
+}
+
 bool test_end_to_end_counter() {
     PRINTLN("\n--- Test 7: end-to-end counter module ---");
     using namespace eda;
@@ -498,14 +733,11 @@ bool test_end_to_end_counter() {
 // ═══════════════════════════════════════════════════════════
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #182 — Hardware IR + Verilog Backend (Cycle 1, C++) ═══\n");
-    std::fprintf(stdout, "  Issue #182 is 100%% stdlib work; the Aura binary's\n");
-    std::fprintf(stdout, "  top-level `define` has upstream bugs that block the\n");
-    std::fprintf(stdout, "  Aura stdlib port. This test verifies the same IR\n");
-    std::fprintf(stdout, "  concepts in C++ (the C++ evaluator path is unaffected).\n");
-    std::fprintf(stdout, "  When Aura's macro/hygiene bugs are fixed, the stdlib\n");
-    std::fprintf(stdout, "  version (lib/std/eda.aura) can be ported from this C++\n");
-    std::fprintf(stdout, "  prototype.\n\n");
+    std::fprintf(stdout,
+                 "═══ Issue #182 — Hardware IR + Verilog Backend (Cycle 1-2, C++) ═══\n");
+    std::fprintf(stdout, "  Cycle 1: IR + display + basic query.\n");
+    std::fprintf(stdout, "  Cycle 2: dependency query + mutate helpers.\n");
+    std::fprintf(stdout, "  Aura stdlib mirror: lib/std/eda.aura (#229-#231 fixed).\n\n");
 
     test_ir_construction();
     test_ir_accessors();
@@ -513,6 +745,10 @@ int run_tests() {
     test_query_helpers();
     test_predicate_disjoint();
     test_nested_expr();
+    test_cycle2_dependency_queries();
+    test_cycle2_mutate_rename();
+    test_cycle2_mutate_clock_gating();
+    test_cycle2_mutate_extract_common();
     test_end_to_end_counter();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
