@@ -718,7 +718,8 @@ void register_synthesize_primitives(PrimRegistrar add, Evaluator& ev,
                         auto* tree = static_cast<aura::compiler::WorkspaceTree*>(ev.workspace_tree_);
                         // Create a temporary workspace, set-code the variant,
                         // find a LiteralInt node, replace it with one from other
-                        auto ws_id = tree->create_child("xover", ev.workspace_flat_, ev.workspace_pool_);
+                        auto ws_id = tree->create_child("xover", tree->active_idx(), ev.workspace_flat_,
+                                                        ev.workspace_pool_);
                         if (ws_id > 0) {
                             tree->ensure_local_flat(ws_id);
                             auto& ws = tree->nodes_[ws_id];
@@ -841,7 +842,8 @@ void register_synthesize_primitives(PrimRegistrar add, Evaluator& ev,
                     // Use child workspace for isolation
                     auto* tree = static_cast<aura::compiler::WorkspaceTree*>(ev.workspace_tree_);
                     auto ws_id =
-                        tree->create_child("evolve-variant", ev.workspace_flat_, ev.workspace_pool_);
+                        tree->create_child("evolve-variant", tree->active_idx(), ev.workspace_flat_,
+                                           ev.workspace_pool_);
                     // Switch to child and try the variant
                     if (ws_id > 0) {
                         tree->ensure_local_flat(ws_id);

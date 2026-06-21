@@ -349,5 +349,84 @@ export MutationRecord wire_read_mutation_record(const std::vector<char>& buf, st
     return r;
 }
 
+// Issue #276: per-layer NodeId remapping for WorkspaceTree COW layers.
+export class NodeIdRemapTable {
+public:
+    void reset_identity(std::uint32_t parent_layer, std::uint64_t cow_epoch, std::size_t node_count) {
+        parent_layer_ = parent_layer;
+        cow_epoch_ = cow_epoch;
+        node_count_ = node_count;
+        parent_to_local_.clear();
+        local_to_parent_.clear();
+        remap_hits_ = 0;
+        remap_misses_ = 0;
+    }
+
+    [[nodiscard]] std::uint32_t parent_layer() const noexcept { return parent_layer_; }
+    [[nodiscard]] std::uint64_t cow_epoch() const noexcept { return cow_epoch_; }
+    [[nodiscard]] std::size_t node_count() const noexcept { return node_count_; }
+    [[nodiscard]] std::size_t explicit_entry_count() const noexcept {
+        return parent_to_local_.size();
+    }
+    [[nodiscard]] std::uint64_t remap_hits() const noexcept { return remap_hits_; }
+    [[nodiscard]] std::uint64_t remap_misses() const noexcept { return remap_misses_; }
+
+    void record_parent_local(NodeId parent_id, NodeId local_id) {
+        if (parent_id == local_id) {
+            parent_to_local_.erase(parent_id);
+            local_to_parent_.erase(local_id);
+            return;
+        }
+        parent_to_local_[parent_id] = local_id;
+        local_to_parent_[local_id] = parent_id;
+    }
+
+    void record_local_remap(NodeId old_local, NodeId new_local) {
+        if (old_local == new_local)
+            return;
+        const NodeId parent_id = resolve_to_parent(old_local);
+        parent_to_local_[parent_id] = new_local;
+        local_to_parent_.erase(old_local);
+        local_to_parent_[new_local] = parent_id;
+    }
+
+    [[nodiscard]] NodeId resolve_from_parent(NodeId parent_id) const noexcept {
+        if (parent_id == NULL_NODE)
+            return NULL_NODE;
+        if (auto it = parent_to_local_.find(parent_id); it != parent_to_local_.end()) {
+            ++remap_hits_;
+            return it->second;
+        }
+        ++remap_misses_;
+        return parent_id;
+    }
+
+    [[nodiscard]] NodeId resolve_to_parent(NodeId local_id) const noexcept {
+        if (local_id == NULL_NODE)
+            return NULL_NODE;
+        if (auto it = local_to_parent_.find(local_id); it != local_to_parent_.end()) {
+            ++remap_hits_;
+            return it->second;
+        }
+        ++remap_misses_;
+        return local_id;
+    }
+
+private:
+    std::uint32_t parent_layer_ = 0;
+    std::uint64_t cow_epoch_ = 0;
+    std::size_t node_count_ = 0;
+    std::unordered_map<NodeId, NodeId> parent_to_local_;
+    std::unordered_map<NodeId, NodeId> local_to_parent_;
+    mutable std::uint64_t remap_hits_ = 0;
+    mutable std::uint64_t remap_misses_ = 0;
+};
+
+export struct LayerStableRef {
+    NodeId id = NULL_NODE;
+    std::uint16_t gen = 0;
+    std::uint32_t layer_id = 0;
+};
+
 } // namespace mutation
 } // namespace aura::ast
