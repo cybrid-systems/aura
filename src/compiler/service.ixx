@@ -5898,6 +5898,16 @@ public:
             [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->yield_mutation_boundary(); },
             static_cast<void*>(&evaluator_));
 
+        // Issue #272 Cycle 5: TopCellLoad reads evaluator_.cells() live.
+        aura_set_top_cell_getter(
+            [](void* e, int64_t idx) -> int64_t {
+                auto* ev = static_cast<aura::compiler::Evaluator*>(e);
+                if (idx < 0 || static_cast<std::size_t>(idx) >= ev->cells().size())
+                    return 0;
+                return ev->cells()[static_cast<std::size_t>(idx)].val;
+            },
+            static_cast<void*>(&evaluator_));
+
 // Register the dispatcher with JIT runtime
 #ifdef AURA_HAVE_LLVM
         // aura_jit_prim_dispatch is defined at file scope (after imports)

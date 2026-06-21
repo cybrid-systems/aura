@@ -5,6 +5,7 @@
 // Cycle 1: cache_define / eval. Cycle 2: compile_module + invalidate.
 // Cycle 3: value defines + TopCellLoad references.
 // Cycle 4: compile_module disk IR cache round-trip.
+// Cycle 5: JIT TopCellLoad + evaluator cells bridge.
 
 #include <iostream>
 #include <memory>
@@ -171,6 +172,20 @@ bool test_compile_module_disk_cache_hit() {
     return true;
 }
 
+bool test_jit_top_cell_load() {
+    std::println("\n--- AC11: JIT TopCellLoad via evaluator cells bridge ---");
+#ifndef AURA_HAVE_LLVM
+    std::println("  SKIP: LLVM JIT not built");
+    return true;
+#else
+    aura::compiler::CompilerService cs;
+    CHECK(run_ok(cs, "(define y (+ 1 2))"), "value define for TopCellLoad");
+    CHECK(run_ok(cs, "(define (add-y x) (+ x y))"), "function refs value define");
+    CHECK(run_int(cs, "(add-y 10)") == 13, "(add-y 10) => 13 via JIT TopCellLoad");
+    return true;
+#endif
+}
+
 bool test_nested_define_calls() {
     std::println("\n--- AC4: helper + caller both IR-bound ---");
     aura::compiler::CompilerService cs;
@@ -198,6 +213,7 @@ int run_tests() {
     test_value_define_no_tree_walker_fallback();
     test_fn_define_no_tree_walker_fallback();
     test_compile_module_disk_cache_hit();
+    test_jit_top_cell_load();
     test_nested_define_calls();
     std::println("\nResults: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
