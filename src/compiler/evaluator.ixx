@@ -427,6 +427,7 @@ void register_compile_primitives(std::function<void(std::string, PrimFn)> add, E
 void register_eval_observability_primitives(std::function<void(std::string, PrimFn)> add,
                                             Evaluator& ev);
 void register_jit_arena_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_messaging_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 }
 
 // Workspace layering (P13) — shared by evaluator_impl + workspace primitives TU.
@@ -480,6 +481,8 @@ export class Evaluator {
     friend void primitives_detail::register_eval_observability_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_jit_arena_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_messaging_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 
 public:

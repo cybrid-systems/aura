@@ -104,13 +104,13 @@ Runtime canonical list: `(api-reference)`.
 
 ## Fiber: (3)
 
-- `fiber:join` — `src/compiler/evaluator_impl.cpp`
-- `fiber:spawn` — `src/compiler/evaluator_impl.cpp`
-- `fiber:yield` — `src/compiler/evaluator_impl.cpp`
+- `fiber:join` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:yield` — `src/compiler/evaluator_primitives_messaging.cpp`
 
 ## Session: (1)
 
-- `session:create` — `src/compiler/evaluator_impl.cpp`
+- `session:create` — `src/compiler/evaluator_primitives_messaging.cpp`
 
 ## Synthesize: (5)
 
@@ -176,7 +176,7 @@ Runtime canonical list: `(api-reference)`.
 - `auto-evolve-total-fixed` — `src/compiler/evaluator_impl.cpp`
 - `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_observability.cpp`
 - `boolean?` — `src/compiler/evaluator_primitives_core.cpp`
-- `broadcast` — `src/compiler/evaluator_impl.cpp`
+- `broadcast` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `caaar` — `src/compiler/evaluator_primitives_pair.cpp`
 - `caadr` — `src/compiler/evaluator_primitives_pair.cpp`
 - `caar` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -298,7 +298,7 @@ Runtime canonical list: `(api-reference)`.
 - `m4-borrow` — `src/compiler/evaluator_primitives_math.cpp`
 - `m4-move` — `src/compiler/evaluator_primitives_math.cpp`
 - `m4-return!` — `src/compiler/evaluator_primitives_math.cpp`
-- `mailbox-count` — `src/compiler/evaluator_impl.cpp`
+- `mailbox-count` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `make-vector` — `src/compiler/evaluator_primitives_vector.cpp`
 - `map` — `src/compiler/evaluator_primitives_list.cpp`
 - `max` — `src/compiler/evaluator_primitives_math.cpp`
@@ -312,7 +312,7 @@ Runtime canonical list: `(api-reference)`.
 - `modulo` — `src/compiler/evaluator_primitives_math.cpp`
 - `mutation-count` — `src/compiler/evaluator_impl.cpp`
 - `mutation-history` — `src/compiler/evaluator_impl.cpp`
-- `my-id` — `src/compiler/evaluator_impl.cpp`
+- `my-id` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `newline` — `src/compiler/evaluator_impl.cpp`
 - `null?` — `src/compiler/evaluator_primitives_list.cpp`
 - `number->string` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -332,7 +332,7 @@ Runtime canonical list: `(api-reference)`.
 - `read` — `src/compiler/evaluator_impl.cpp`
 - `read-file` — `src/compiler/evaluator_impl.cpp`
 - `read-line` — `src/compiler/evaluator_impl.cpp`
-- `recv` — `src/compiler/evaluator_impl.cpp`
+- `recv` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `reflect-members` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `reflect-module-exports` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `reflect-type` — `src/compiler/evaluator_primitives_reflect.cpp`
@@ -342,14 +342,14 @@ Runtime canonical list: `(api-reference)`.
 - `regex-split` — `src/compiler/evaluator_primitives_math.cpp`
 - `register-strategy!` — `src/compiler/evaluator_impl.cpp`
 - `remainder` — `src/compiler/evaluator_primitives_math.cpp`
-- `reply` — `src/compiler/evaluator_impl.cpp`
+- `reply` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `reverse` — `src/compiler/evaluator_primitives_list.cpp`
 - `rollback` — `src/compiler/evaluator_impl.cpp`
 - `rollback-since` — `src/compiler/evaluator_impl.cpp`
 - `round` — `src/compiler/evaluator_primitives_math.cpp`
 - `run-tests` — `src/compiler/evaluator_impl.cpp`
-- `send` — `src/compiler/evaluator_impl.cpp`
-- `session-active?` — `src/compiler/evaluator_impl.cpp`
+- `send` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `session-active?` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `set-car!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-cdr!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-memory-policy` — `src/compiler/evaluator_impl.cpp`
@@ -407,8 +407,8 @@ Runtime canonical list: `(api-reference)`.
 
 ## _Agent: (2)
 
-- `_agent:list` — `src/compiler/evaluator_impl.cpp`
-- `_agent:spawn` — `src/compiler/evaluator_impl.cpp`
+- `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `_agent:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
 
 ## Arena: (6)
 
@@ -425,11 +425,11 @@ Runtime canonical list: `(api-reference)`.
 
 ## Channel: (5)
 
-- `channel:close` — `src/compiler/evaluator_impl.cpp`
-- `channel:create` — `src/compiler/evaluator_impl.cpp`
-- `channel:recv` — `src/compiler/evaluator_impl.cpp`
-- `channel:send` — `src/compiler/evaluator_impl.cpp`
-- `channel:try-recv` — `src/compiler/evaluator_impl.cpp`
+- `channel:close` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:create` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:recv` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:send` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:try-recv` — `src/compiler/evaluator_primitives_messaging.cpp`
 
 ## Closure: (1)
 
@@ -469,12 +469,12 @@ Runtime canonical list: `(api-reference)`.
 
 ## Orch: (2)
 
-- `orch:metrics` — `src/compiler/evaluator_impl.cpp`
-- `orch:reset-metrics` — `src/compiler/evaluator_impl.cpp`
+- `orch:metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `orch:reset-metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
 
 ## Scheduler: (1)
 
-- `scheduler:pin` — `src/compiler/evaluator_impl.cpp`
+- `scheduler:pin` — `src/compiler/evaluator_primitives_messaging.cpp`
 
 ## String-Pool: (2)
 
@@ -483,4 +483,4 @@ Runtime canonical list: `(api-reference)`.
 
 ## Thread_Pool: (1)
 
-- `thread_pool:enqueue` — `src/compiler/evaluator_impl.cpp`
+- `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
