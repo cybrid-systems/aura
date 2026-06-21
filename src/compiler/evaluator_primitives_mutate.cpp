@@ -497,6 +497,7 @@ void register_mutate_primitives(
                 aura::messaging::g_fiber_yield_mutation_boundary();
 
             int replaced = 0;
+            std::vector<aura::ast::NodeId> replaced_roots;
             for (auto match_id : matches) {
                 std::vector<std::string> capture_sources;
                 capture_sources.push_back(node_to_source(match_id));
@@ -549,7 +550,7 @@ void register_mutate_primitives(
                     continue;
 
                 flat.set_child(parent_id, static_cast<std::uint32_t>(child_idx), repl_pr.root);
-                flat.mark_dirty_upward(repl_pr.root);
+                replaced_roots.push_back(repl_pr.root);
                 flat.add_mutation(repl_pr.root, "query-and-replace", "matched", "template",
                                   summary);
                 ++replaced;
@@ -558,10 +559,40 @@ void register_mutate_primitives(
             if (replaced == 0)
                 return make_bool(false);
 
-            destroy_defuse_index();
-            ev.defuse_affected_syms_.clear();
-            if (ev.mark_all_defines_dirty_fn_)
-                ev.mark_all_defines_dirty_fn_();
+            // Issue #262: precise dirty + incremental defuse refresh
+            // instead of destroying the index and marking all defines.
+            const auto structural_reasons = aura::ast::FlatAST::kGeneralDirty |
+                                            aura::ast::FlatAST::kStructDirty;
+            flat.mark_dirty_defuse_entries(replaced_roots, structural_reasons);
+
+            std::unordered_set<std::string> affected_names;
+            auto collect_def_syms = [&](aura::ast::NodeId id, auto& self) -> void {
+                if (id >= flat.size())
+                    return;
+                auto v = flat.get(id);
+                if (v.tag == aura::ast::NodeTag::Define || v.tag == aura::ast::NodeTag::Let ||
+                    v.tag == aura::ast::NodeTag::LetRec) {
+                    auto n = pool.resolve(v.sym_id);
+                    if (!n.empty())
+                        affected_names.insert(std::string(n));
+                }
+                for (auto c : v.children) {
+                    if (c != aura::ast::NULL_NODE)
+                        self(c, self);
+                }
+            };
+            for (auto root : replaced_roots)
+                collect_def_syms(root, collect_def_syms);
+
+            for (auto& n : affected_names) {
+                ev.defuse_affected_syms_.insert(n);
+                if (ev.mark_define_dirty_fn_)
+                    ev.mark_define_dirty_fn_(n);
+                auto s = pool.intern(n);
+                if (ev.defuse_touch_fn_ && s != aura::ast::INVALID_SYM)
+                    ev.defuse_touch_fn_(ev.defuse_index_, s);
+            }
+
             if (ev.pre_cache_workspace_defines_fn_)
                 ev.pre_cache_workspace_defines_fn_();
 
@@ -791,22 +822,10 @@ void register_mutate_primitives(
         // need re-inference + re-constraint-solve. Coercion markers
         // are NOT touched (rebinds don't change type annotations),
         // so we use kGeneralDirty | kConstraintDirty (not Coercion).
-        for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
-            if (dep_callers[ui] < flat.size())
-                flat.mark_dirty_upward(dep_callers[ui], aura::ast::FlatAST::kGeneralDirty |
-                                                            aura::ast::FlatAST::kConstraintDirty);
-        }
-
-        // Record affected sym for incremental DefUseIndex update
-        ev.defuse_affected_syms_.insert(name);
-        // Per-sym version (Issue #107 part 5): touch the sym in the
-        // index itself so the staleness state is co-located with the
-        // data. Uses the ev.defuse_touch_fn_ callback to avoid a forward
-        // declaration on DefUseIndex (which is defined later in this
-        // translation unit). When ev.defuse_index_ is null, this is a
-        // no-op — next ensure_defuse() will build from scratch.
-        if (ev.defuse_touch_fn_)
-            ev.defuse_touch_fn_(ev.defuse_index_, sym);
+        // Issue #262: precise def-use dirty on caller entry nodes.
+        ev.propagate_defuse_dirty(sym, name, dep_callers,
+                                  aura::ast::FlatAST::kGeneralDirty |
+                                      aura::ast::FlatAST::kConstraintDirty);
 
         // Phase 2: mark this define's IR cache entry dirty so the next
         // (eval-current) re-lowers it.
@@ -1033,21 +1052,10 @@ void register_mutate_primitives(
                 // kGeneralDirty | kConstraintDirty. No occurrence/
                 // ownership bits — body change doesn't add new
                 // narrowing or affect Linear state directly.
-                for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
-                    if (dep_callers[ui] < flat.size())
-                        flat.mark_dirty_upward(dep_callers[ui],
-                                               aura::ast::FlatAST::kGeneralDirty |
-                                                   aura::ast::FlatAST::kConstraintDirty);
-                }
-
-                // Record affected sym for incremental DefUseIndex update
-                ev.defuse_affected_syms_.insert(name);
-                // Per-sym version (Issue #107 part 5): see mutate:rebind
-                // above for rationale. Co-locates staleness with the
-                // data so ensure_defuse() can skip when no syms are
-                // actually stale.
-                if (ev.defuse_touch_fn_)
-                    ev.defuse_touch_fn_(ev.defuse_index_, sym);
+                // Issue #262: precise def-use dirty on caller entry nodes.
+                ev.propagate_defuse_dirty(sym, name, dep_callers,
+                                          aura::ast::FlatAST::kGeneralDirty |
+                                              aura::ast::FlatAST::kConstraintDirty);
 
                 // ── Auto-typecheck (Issue #107 part 3.5) ────────────
                 // Run the typecheck inline WITHOUT going through the

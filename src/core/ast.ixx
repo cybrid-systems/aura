@@ -2230,6 +2230,10 @@ public:
         kOccurrenceDirty = 0x04, // occurrence-narrowing affected
         kOwnershipDirty = 0x08,  // Linear/Move/Borrow state changed
         kCoercionDirty = 0x10,   // deferred coercion needs re-apply
+        // Issue #262: infra dirty bits for precise incremental paths.
+        kStructDirty = 0x20,     // structural shape changed (children/parent)
+        kDefUseDirty = 0x40,     // def-use / caller graph may be stale
+        kPpaHintDirty = 0x80,    // PPA-hint metadata needs refresh
     };
 
     // Issue #188: mark a node dirty for one or more specific reasons.
@@ -2369,6 +2373,32 @@ public:
                 queue.push_back(p);
         }
         mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+    }
+
+    // Issue #262: propagate dirty upward but stop at `stop_at` (exclusive).
+    // Marks `id` and ancestors until (but not including) `stop_at`.
+    // If `stop_at` is NULL_NODE, behaves like mark_dirty_upward.
+    void mark_dirty_upward_until(NodeId id, std::uint8_t reasons, NodeId stop_at) {
+        mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+        std::uint64_t touched = 0;
+        auto cur = id;
+        while (cur != NULL_NODE && cur != stop_at) {
+            mark_dirty(cur, reasons);
+            ++touched;
+            cur = parent_[cur];
+        }
+        mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+    }
+
+    // Issue #262: mark def-use entry nodes and propagate the combined
+    // reason mask (including kDefUseDirty) upward through ancestors.
+    // Used when a mutation affects a known set of caller/use sites.
+    void mark_dirty_defuse_entries(std::span<const NodeId> entries, std::uint8_t reasons) {
+        auto combined = static_cast<std::uint8_t>(reasons | kDefUseDirty);
+        for (auto entry : entries) {
+            if (entry < size())
+                mark_dirty_upward(entry, combined);
+        }
     }
 
     // Check if any node in a subtree (including the root) is dirty
