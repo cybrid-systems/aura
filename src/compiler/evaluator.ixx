@@ -1271,6 +1271,7 @@ private:
     Env* copy_env(const Env& env, ast::ASTArena* target = nullptr)
         pre(target != nullptr); // arena_ is private; impl also asserts via contract_assert
     void init_pair_primitives();
+    void install_defuse_subsystem();
     void build_primitive_slots();
     // Callback passed to primitives_detail::register_* helpers.
     [[nodiscard]] std::function<void(std::string, PrimFn)> prim_registrar() {
