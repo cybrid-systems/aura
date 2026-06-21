@@ -122,25 +122,25 @@ Runtime canonical list: `(api-reference)`.
 
 ## Compile: (19)
 
-- `compile:ast-ops-stats` — `src/compiler/evaluator_impl.cpp`
-- `compile:block-dirty-count` — `src/compiler/evaluator_impl.cpp`
-- `compile:block-dirty?` — `src/compiler/evaluator_impl.cpp`
-- `compile:cache-size` — `src/compiler/evaluator_impl.cpp`
-- `compile:clear-block-dirty!` — `src/compiler/evaluator_impl.cpp`
-- `compile:dep-edges` — `src/compiler/evaluator_impl.cpp`
-- `compile:dirty-count` — `src/compiler/evaluator_impl.cpp`
-- `compile:epoch` — `src/compiler/evaluator_impl.cpp`
-- `compile:func-block-dirty-count` — `src/compiler/evaluator_impl.cpp`
-- `compile:inline-pass-stats` — `src/compiler/evaluator_impl.cpp`
-- `compile:invalidations-stats` — `src/compiler/evaluator_impl.cpp`
-- `compile:ir-soa-stats` — `src/compiler/evaluator_impl.cpp`
-- `compile:linear-elide-count` — `src/compiler/evaluator_impl.cpp`
-- `compile:mark-block-dirty!` — `src/compiler/evaluator_impl.cpp`
-- `compile:mark-narrowing-dirty!` — `src/compiler/evaluator_impl.cpp`
-- `compile:multi-mutation-stats` — `src/compiler/evaluator_impl.cpp`
-- `compile:narrowing-dirty?` — `src/compiler/evaluator_impl.cpp`
-- `compile:status` — `src/compiler/evaluator_impl.cpp`
-- `compile:type-propagation-stats` — `src/compiler/evaluator_impl.cpp`
+- `compile:ast-ops-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:cache-size` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dep-edges` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:epoch` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:inline-pass-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:invalidations-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:ir-soa-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:linear-elide-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-narrowing-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:multi-mutation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:status` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:type-propagation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## C FFI (10)
 
@@ -375,8 +375,8 @@ Runtime canonical list: `(api-reference)`.
 - `suggest-annotation-at` — `src/compiler/evaluator_impl.cpp`
 - `symbol-append` — `src/compiler/evaluator_impl.cpp`
 - `symbol?` — `src/compiler/evaluator_primitives_core.cpp`
-- `syntax-marker` — `src/compiler/evaluator_impl.cpp`
-- `syntax-marker-counts` — `src/compiler/evaluator_impl.cpp`
+- `syntax-marker` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax-marker-counts` — `src/compiler/evaluator_primitives_compile.cpp`
 - `take` — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` — `src/compiler/evaluator_primitives_math.cpp`
 - `tcp-close` — `src/compiler/evaluator_impl.cpp`
@@ -437,9 +437,9 @@ Runtime canonical list: `(api-reference)`.
 
 ## Concurrency: (3)
 
-- `concurrency:stats` — `src/compiler/evaluator_impl.cpp`
-- `concurrency:version-current?` — `src/compiler/evaluator_impl.cpp`
-- `concurrency:version-snapshot` — `src/compiler/evaluator_impl.cpp`
+- `concurrency:stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `concurrency:version-current?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `concurrency:version-snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## Dirty: (2)
 
