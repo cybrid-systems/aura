@@ -12,13 +12,13 @@ module;
 export module aura.core.ast;
 import std;
 import aura.core.type;
+import aura.core.mutation;
+export import aura.core.mutation;
 
 namespace aura::ast {
 
 // ── Common type aliases ──────────────────────────────────────
-export using NodeId = std::uint32_t;
-export constexpr NodeId NULL_NODE = ~0u;
-export using SymId = std::uint32_t;
+// NodeId / NULL_NODE / SymId come from aura.core.mutation (#275).
 export constexpr SymId INVALID_SYM = ~0u;
 
 // ── Issue #217 Cycle 5/7: AST types are reflection-ready ─────
@@ -407,66 +407,7 @@ export struct NodeView {
     NodeId child(std::uint32_t i) const { return children[i]; }
 };
 
-// ── MutationRecord — typed mutation audit log ─────────────────
-export enum class MutationStatus : std::uint8_t {
-    Committed,
-    RolledBack,
-};
-
-// Issue #147: post-mutation invariant check status.
-//   NotChecked  — check has not yet been run (default after add_mutation_*).
-//   Ok          — check ran, no warnings or violations found.
-//   Warnings    — check ran, OwnershipNotes emitted under WarningsOnly mode
-//                 (does not block execution).
-//   Violations  — check ran, OwnershipNotes emitted under Strict mode
-//                 (typed_mutate returns failure with diagnostics).
-//
-// Diagnostics themselves are surfaced via MutationResult in service.ixx
-// (to keep this struct serializable without depending on type_checker.ixx).
-export enum class InvariantStatus : std::uint8_t {
-    NotChecked = 0,
-    Ok = 1,
-    Warnings = 2,
-    Violations = 3,
-};
-
-export struct MutationRecord {
-    std::uint64_t mutation_id;
-    std::uint64_t timestamp_ms;
-    NodeId target_node;
-    std::string operator_name; // "replace-type", "replace-value", ...
-    std::string old_type_str;  // format_type(old_type) at mutation time
-    std::string new_type_str;  // format_type(new_type) at mutation time
-    std::string summary;       // human-readable change description
-    MutationStatus status;
-    // Rollback data: for apply_patches-style rollback
-    std::uint32_t field_offset; // which SoA column was modified
-    std::uint64_t old_value;    // original value before mutation
-    std::uint64_t new_value;    // value after mutation
-    bool has_rollback_data;     // true if rollback is available
-    // Issue #142: extended rollback data for subtree-level mutations
-    // (mutate:replace-subtree). When set, rollback re-parses old_subtree_source
-    // and re-attaches the resulting root at (parent_id, child_idx).
-    NodeId parent_id = NULL_NODE;      // parent of the replaced subtree slot
-    std::uint32_t child_idx = 0;       // child index in parent.children
-    std::string old_subtree_source;    // source of the original subtree
-    bool has_subtree_rollback = false; // true if old_subtree_source is valid
-    // Issue #147: post-mutation invariant check status. Default NotChecked
-    // so audit log records the actual state of the check, not a
-    // synthetic "always-OK" claim.
-    InvariantStatus invariant_status = InvariantStatus::NotChecked;
-};
-
-// Issue #266: SoA column identifiers for add_mutation_with_rollback.
-// Structural child ops (set/insert/remove) store child_idx in
-// field_offset and are recognized by operator_name prefix
-// "structural-" instead of these enum values.
-export enum class MutationSoAField : std::uint32_t {
-    IntVal = 0,
-    TypeId = 1,
-    SymId = 2,
-    FloatVal = 3,
-};
+// MutationRecord / rollback types live in aura.core.mutation (#275).
 
 // ── Patch — AI mutation descriptor ─────────────────────────────
 export struct Patch {
@@ -2077,37 +2018,6 @@ public:
         }
     }
 
-    static void wire_write_mutation_record(std::vector<char>& buf,
-                                           const MutationRecord& r) {
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.mutation_id),
-                   reinterpret_cast<const char*>(&r.mutation_id) + 8);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.timestamp_ms),
-                   reinterpret_cast<const char*>(&r.timestamp_ms) + 8);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.target_node),
-                   reinterpret_cast<const char*>(&r.target_node) + 4);
-        wire_write_string(buf, r.operator_name);
-        wire_write_string(buf, r.old_type_str);
-        wire_write_string(buf, r.new_type_str);
-        wire_write_string(buf, r.summary);
-        auto status = static_cast<std::uint8_t>(r.status);
-        buf.push_back(static_cast<char>(status));
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.field_offset),
-                   reinterpret_cast<const char*>(&r.field_offset) + 4);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.old_value),
-                   reinterpret_cast<const char*>(&r.old_value) + 8);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.new_value),
-                   reinterpret_cast<const char*>(&r.new_value) + 8);
-        buf.push_back(r.has_rollback_data ? '\1' : '\0');
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.parent_id),
-                   reinterpret_cast<const char*>(&r.parent_id) + 4);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.child_idx),
-                   reinterpret_cast<const char*>(&r.child_idx) + 4);
-        wire_write_string(buf, r.old_subtree_source);
-        buf.push_back(r.has_subtree_rollback ? '\1' : '\0');
-        auto inv = static_cast<std::uint8_t>(r.invariant_status);
-        buf.push_back(static_cast<char>(inv));
-    }
-
     static void wire_write_match_clause_info(std::vector<char>& buf,
                                              const MatchClauseInfo& m) {
         wire_write_vec_u32(buf, m.used_constructors);
@@ -2149,38 +2059,6 @@ public:
             pos += sz * sizeof(SymId);
         }
         return v;
-    }
-
-    static MutationRecord wire_read_mutation_record(const std::vector<char>& buf,
-                                                    std::size_t& pos) {
-        MutationRecord r;
-        std::memcpy(&r.mutation_id, &buf[pos], 8);
-        pos += 8;
-        std::memcpy(&r.timestamp_ms, &buf[pos], 8);
-        pos += 8;
-        std::memcpy(&r.target_node, &buf[pos], 4);
-        pos += 4;
-        r.operator_name = wire_read_string(buf, pos);
-        r.old_type_str = wire_read_string(buf, pos);
-        r.new_type_str = wire_read_string(buf, pos);
-        r.summary = wire_read_string(buf, pos);
-        r.status = static_cast<MutationStatus>(static_cast<std::uint8_t>(buf[pos++]));
-        std::memcpy(&r.field_offset, &buf[pos], 4);
-        pos += 4;
-        std::memcpy(&r.old_value, &buf[pos], 8);
-        pos += 8;
-        std::memcpy(&r.new_value, &buf[pos], 8);
-        pos += 8;
-        r.has_rollback_data = buf[pos++] != 0;
-        std::memcpy(&r.parent_id, &buf[pos], 4);
-        pos += 4;
-        std::memcpy(&r.child_idx, &buf[pos], 4);
-        pos += 4;
-        r.old_subtree_source = wire_read_string(buf, pos);
-        r.has_subtree_rollback = buf[pos++] != 0;
-        r.invariant_status =
-            static_cast<InvariantStatus>(static_cast<std::uint8_t>(buf[pos++]));
-        return r;
     }
 
     static MatchClauseInfo wire_read_match_clause_info(const std::vector<char>& buf,
@@ -2292,7 +2170,7 @@ public:
             buf.insert(buf.end(), reinterpret_cast<char*>(&log_count),
                        reinterpret_cast<char*>(&log_count) + 4);
             for (const auto& rec : mutation_log_)
-                wire_write_mutation_record(buf, rec);
+                mutation::wire_write_mutation_record(buf, rec);
         }
         {
             std::uint32_t mi_count = static_cast<std::uint32_t>(match_info_.size());
@@ -2402,7 +2280,7 @@ public:
             ast.mutation_log_.clear();
             ast.mutation_log_.reserve(log_count);
             for (std::uint32_t i = 0; i < log_count; ++i)
-                ast.mutation_log_.push_back(wire_read_mutation_record(buf, pos));
+                ast.mutation_log_.push_back(mutation::wire_read_mutation_record(buf, pos));
 
             std::uint32_t mi_count;
             std::memcpy(&mi_count, &buf[pos], 4);
@@ -2678,22 +2556,23 @@ public:
                                              std::uint32_t field_offset, std::uint64_t old_value,
                                              std::uint64_t new_value, bool has_rollback)
         pre(node < tag_.size()) post(r: r >= 1) {
-        std::uint64_t mid = next_mutation_id_++;
-        auto now =
-            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                           std::chrono::system_clock::now().time_since_epoch())
-                                           .count());
-        mutation_log_.push_back({mid, now, node, std::string(op_name), std::string(old_type),
-                                 std::string(new_type), std::string(summary), status, field_offset,
-                                 old_value, new_value, has_rollback, NULL_NODE, 0, "", false});
-        // Auto-mark node AND ancestors dirty on mutation
+        const std::uint64_t mid = next_mutation_id_++;
+        mutation_log_.push_back(mutation::create_mutation_record({
+            .mutation_id = mid,
+            .target_node = node,
+            .operator_name = op_name,
+            .old_type_str = old_type,
+            .new_type_str = new_type,
+            .summary = summary,
+            .status = status,
+            .field_offset = field_offset,
+            .old_value = old_value,
+            .new_value = new_value,
+            .has_rollback_data = has_rollback,
+        }));
         mark_dirty_upward(node);
-
-        // Update node_first_mutation_ index
-        if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0) {
+        if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0)
             node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());
-        }
-        // If node index doesn't exist yet, we'll set it on next get
         return mid;
     }
 
@@ -2704,21 +2583,22 @@ public:
     std::uint64_t add_mutation_subtree(NodeId target_node, NodeId parent_id,
                                        std::uint32_t child_idx, std::string_view old_subtree_source,
                                        std::string_view op_name, std::string_view summary) {
-        std::uint64_t mid = next_mutation_id_++;
-        auto now =
-            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                           std::chrono::system_clock::now().time_since_epoch())
-                                           .count());
-        mutation_log_.push_back({mid, now, target_node, std::string(op_name), "", "",
-                                 std::string(summary), MutationStatus::Committed, 0, 0, 0, false,
-                                 parent_id, child_idx, std::string(old_subtree_source), true});
+        const std::uint64_t mid = next_mutation_id_++;
+        mutation_log_.push_back(mutation::create_subtree_mutation_record({
+            .mutation_id = mid,
+            .target_node = target_node,
+            .parent_id = parent_id,
+            .child_idx = child_idx,
+            .old_subtree_source = old_subtree_source,
+            .operator_name = op_name,
+            .summary = summary,
+        }));
         if (target_node != NULL_NODE)
             mark_dirty_upward(target_node);
         if (parent_id != NULL_NODE)
             mark_dirty_upward(parent_id);
-        if (target_node < node_first_mutation_.size() && node_first_mutation_[target_node] == 0) {
+        if (target_node < node_first_mutation_.size() && node_first_mutation_[target_node] == 0)
             node_first_mutation_[target_node] = static_cast<std::uint32_t>(mutation_log_.size());
-        }
         return mid;
     }
 
@@ -3008,136 +2888,115 @@ public:
         return mark_dirty_total_nodes_.load(std::memory_order_relaxed);
     }
 
-    // Issue #266: inverse a logged structural child mutation.
-    bool rollback_structural_child_op(MutationRecord& rec) {
-        if (!rec.operator_name.starts_with("structural-"))
-            return false;
-        NodeId parent = rec.target_node;
-        if (parent >= children_.size())
-            return false;
-        auto idx = rec.field_offset;
-        auto old_child = static_cast<NodeId>(rec.old_value);
-        auto new_child = static_cast<NodeId>(rec.new_value);
-        auto& list = children_[parent];
-        if (rec.operator_name == "structural-set-child") {
-            if (idx >= list.size())
-                return false;
-            if (new_child != NULL_NODE && new_child < parent_.size())
-                parent_[new_child] = NULL_NODE;
-            children_[parent] = list.with_set(idx, old_child);
-            if (old_child != NULL_NODE && old_child < parent_.size())
-                parent_[old_child] = parent;
-        } else if (rec.operator_name == "structural-insert-child") {
-            if (idx > list.size())
-                return false;
-            if (new_child != NULL_NODE && new_child < parent_.size())
-                parent_[new_child] = NULL_NODE;
-            children_[parent] = list.with_erase(idx);
-        } else if (rec.operator_name == "structural-remove-child") {
-            if (idx > list.size())
-                return false;
-            children_[parent] = list.with_insert(idx, old_child);
-            if (old_child != NULL_NODE && old_child < parent_.size())
-                parent_[old_child] = parent;
-        } else {
-            return false;
+    // Issue #275: std::expected rollback entry point.
+    [[nodiscard]] std::expected<void, MutationError> try_rollback_record(MutationRecord& rec) {
+        if (auto valid = mutation::validate_rollback_record(rec, tag_.size()); !valid)
+            return valid;
+        auto kind = mutation::classify_rollback(rec);
+        if (!kind)
+            return std::unexpected(kind.error());
+
+        switch (*kind) {
+            case RollbackKind::SubtreeMark:
+                rec.status = MutationStatus::RolledBack;
+                bump_generation_on_rollback();
+                if (rec.parent_id < tag_.size())
+                    mark_dirty_upward(rec.parent_id);
+                return {};
+
+            case RollbackKind::Structural:
+                return try_rollback_structural_child_op(rec);
+
+            case RollbackKind::ScalarInt:
+                if (rec.target_node >= int_val_.size())
+                    return std::unexpected(MutationError::OutOfRange);
+                int_val_[rec.target_node] = mutation::scalar_int_old_value(rec);
+                break;
+            case RollbackKind::ScalarTypeId:
+                if (rec.target_node >= type_id_.size())
+                    return std::unexpected(MutationError::OutOfRange);
+                type_id_[rec.target_node] = mutation::scalar_type_old_value(rec);
+                break;
+            case RollbackKind::ScalarSymId:
+                if (rec.target_node >= sym_id_.size())
+                    return std::unexpected(MutationError::OutOfRange);
+                sym_id_[rec.target_node] = mutation::scalar_sym_old_value(rec);
+                break;
+            case RollbackKind::ScalarFloat:
+                if (rec.target_node >= float_val_.size())
+                    return std::unexpected(MutationError::OutOfRange);
+                float_val_[rec.target_node] = mutation::scalar_float_old_value(rec);
+                break;
         }
+
         rec.status = MutationStatus::RolledBack;
-        ++generation_;
-        if (generation_ == 0)
-            generation_ = 1;
-        mark_dirty_upward(parent);
-        return true;
+        bump_generation_on_rollback();
+        return {};
     }
 
     bool rollback(std::uint64_t mutation_id) pre(mutation_id != 0) {
         for (auto& rec : mutation_log_) {
-            if (rec.mutation_id == mutation_id) {
-                if (rec.status != MutationStatus::Committed)
-                    return false;
-                // Issue #142: subtree rollback path. Re-parse the
-                // old_subtree_source and re-attach it at (parent_id, child_idx).
-                if (rec.has_subtree_rollback) {
-                    if (rec.parent_id == NULL_NODE || rec.parent_id >= tag_.size())
-                        return false;
-                    // Use the workspace's StringPool if available; otherwise
-                    // the caller should not have created a subtree record.
-                    // We don't have direct access to the pool here, so the
-                    // primitive layer (rollback primitive) handles re-parsing
-                    // and re-attachment via a higher-level API. This branch
-                    // just marks the record as rolled back and bumps generation.
-                    rec.status = MutationStatus::RolledBack;
-                    ++generation_;
-                    if (generation_ == 0)
-                        generation_ = 1;
-                    if (rec.parent_id < tag_.size())
-                        mark_dirty_upward(rec.parent_id);
-                    return true;
-                }
-                if (!rec.has_rollback_data)
-                    return false;
-                // Structural child ops store child_idx in field_offset;
-                // detect them before the scalar SoA switch.
-                if (rec.operator_name.starts_with("structural-"))
-                    return rollback_structural_child_op(rec);
-                // Apply old value back to the SoA column
-                if (rec.target_node < tag_.size()) {
-                    switch (rec.field_offset) {
-                        case static_cast<std::uint32_t>(MutationSoAField::IntVal):
-                            if (rec.target_node < int_val_.size()) {
-                                int_val_[rec.target_node] =
-                                    static_cast<std::int64_t>(rec.old_value);
-                                rec.status = MutationStatus::RolledBack;
-                                ++generation_;
-                                if (generation_ == 0)
-                                    generation_ = 1; // wrap around
-                                return true;
-                            }
-                            break;
-                        case static_cast<std::uint32_t>(MutationSoAField::TypeId):
-                            if (rec.target_node < type_id_.size()) {
-                                type_id_[rec.target_node] =
-                                    static_cast<std::uint32_t>(rec.old_value);
-                                rec.status = MutationStatus::RolledBack;
-                                ++generation_;
-                                if (generation_ == 0)
-                                    generation_ = 1; // wrap around
-                                return true;
-                            }
-                            break;
-                        case static_cast<std::uint32_t>(MutationSoAField::SymId):
-                            if (rec.target_node < sym_id_.size()) {
-                                sym_id_[rec.target_node] =
-                                    static_cast<SymId>(rec.old_value);
-                                rec.status = MutationStatus::RolledBack;
-                                ++generation_;
-                                if (generation_ == 0)
-                                    generation_ = 1;
-                                return true;
-                            }
-                            break;
-                        case static_cast<std::uint32_t>(MutationSoAField::FloatVal): {
-                            if (rec.target_node < float_val_.size()) {
-                                double old_f = 0.0;
-                                std::memcpy(&old_f, &rec.old_value, sizeof(old_f));
-                                float_val_[rec.target_node] = old_f;
-                                rec.status = MutationStatus::RolledBack;
-                                ++generation_;
-                                if (generation_ == 0)
-                                    generation_ = 1;
-                                return true;
-                            }
-                            break;
-                        }
-                        default:
-                            return false;
-                    }
-                }
-                return false;
-            }
+            if (rec.mutation_id == mutation_id)
+                return try_rollback_record(rec).has_value();
         }
         return false;
     }
+
+private:
+    void bump_generation_on_rollback() {
+        ++generation_;
+        if (generation_ == 0)
+            generation_ = 1;
+    }
+
+    [[nodiscard]] std::expected<void, MutationError> try_rollback_structural_child_op(
+        MutationRecord& rec) {
+        auto op = mutation::structural_rollback_op(rec.operator_name);
+        if (!op)
+            return std::unexpected(op.error());
+
+        NodeId parent = rec.target_node;
+        if (parent >= children_.size())
+            return std::unexpected(MutationError::InvalidParent);
+
+        const auto idx = rec.field_offset;
+        const auto old_child = static_cast<NodeId>(rec.old_value);
+        const auto new_child = static_cast<NodeId>(rec.new_value);
+        auto& list = children_[parent];
+
+        switch (*op) {
+            case StructuralRollbackOp::SetChild:
+                if (idx >= list.size())
+                    return std::unexpected(MutationError::OutOfRange);
+                if (new_child != NULL_NODE && new_child < parent_.size())
+                    parent_[new_child] = NULL_NODE;
+                children_[parent] = list.with_set(idx, old_child);
+                if (old_child != NULL_NODE && old_child < parent_.size())
+                    parent_[old_child] = parent;
+                break;
+            case StructuralRollbackOp::InsertChild:
+                if (idx > list.size())
+                    return std::unexpected(MutationError::OutOfRange);
+                if (new_child != NULL_NODE && new_child < parent_.size())
+                    parent_[new_child] = NULL_NODE;
+                children_[parent] = list.with_erase(idx);
+                break;
+            case StructuralRollbackOp::RemoveChild:
+                if (idx > list.size())
+                    return std::unexpected(MutationError::OutOfRange);
+                children_[parent] = list.with_insert(idx, old_child);
+                if (old_child != NULL_NODE && old_child < parent_.size())
+                    parent_[old_child] = parent;
+                break;
+        }
+
+        rec.status = MutationStatus::RolledBack;
+        bump_generation_on_rollback();
+        mark_dirty_upward(parent);
+        return {};
+    }
+
+public:
 
     // Rollback all mutations since (and including) the given ID.
     std::size_t rollback_since(std::uint64_t since_id) {

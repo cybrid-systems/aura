@@ -71,7 +71,7 @@ add_executable(aura)
 set_property(TARGET aura PROPERTY CXX_MODULE_STD ON)
 
 target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/arena.ixx src/core/mutation.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
@@ -245,7 +245,7 @@ AT(step15_letrec_fact10
 add_executable(test_ir tests/test_ir.cpp)
 set_property(TARGET test_ir PROPERTY CXX_MODULE_STD ON)
 target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/arena.ixx src/core/mutation.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
@@ -429,7 +429,7 @@ set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
 # necessary to make aura_test_objects compile.
 target_sources(aura_test_objects PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/reflect/reflect.ixx
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/arena.ixx src/core/mutation.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
@@ -931,6 +931,7 @@ aura_add_issue_test(test_issue_272)
 aura_issue_test_link_llvm_jit(test_issue_272)
 aura_add_issue_test_standalone(test_issue_273)
 aura_add_issue_test_standalone(test_issue_274)
+aura_add_issue_test_standalone(test_issue_275)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
 target_sources(test_issue_264 PRIVATE
     src/serve/fiber.cpp
