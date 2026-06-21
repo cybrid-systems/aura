@@ -11,6 +11,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_adt.cpp
     src/compiler/evaluator_defuse_index.cpp
     src/compiler/evaluator_eval_flat.cpp
+    src/compiler/macro_expansion.cpp
     src/compiler/evaluator_primitives_registry.cpp
     src/compiler/evaluator_env.cpp
     src/compiler/evaluator_module_loader.cpp
@@ -75,6 +76,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
+    src/compiler/macro_expansion.ixx
     src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/cache.ixx
     src/compiler/value.ixx
@@ -248,6 +250,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
+    src/compiler/macro_expansion.ixx
     src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
@@ -429,6 +432,7 @@ target_sources(aura_test_objects PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
+    src/compiler/macro_expansion.ixx
     src/compiler/adt_runtime.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
@@ -891,6 +895,7 @@ aura_add_issue_test(test_issue_263)
 aura_issue_test_link_llvm_jit(test_issue_263)
 aura_add_issue_test(test_issue_264)
 aura_issue_test_link_llvm_jit_minimal(test_issue_264)
+aura_add_issue_test(test_issue_265)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
 target_sources(test_issue_264 PRIVATE
     src/serve/fiber.cpp
