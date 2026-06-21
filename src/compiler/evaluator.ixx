@@ -418,6 +418,11 @@ void register_mutate_primitives(std::function<void(std::string, PrimFn)> add, Ev
                                 std::function<void()> destroy_defuse_index);
 void register_workspace_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
                                  std::function<void()> destroy_defuse_index);
+void register_ast_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+                              std::function<void()> destroy_defuse_index,
+                              std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t,
+                                                                      std::uint64_t>>()>
+                                  defuse_summary_stats);
 }
 
 // Workspace layering (P13) — shared by evaluator_impl + workspace primitives TU.
@@ -461,6 +466,11 @@ export class Evaluator {
     friend void primitives_detail::register_workspace_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<void()> destroy_defuse_index);
+    friend void primitives_detail::register_ast_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+        std::function<void()> destroy_defuse_index,
+        std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>()>
+            defuse_summary_stats);
 
 public:
     Evaluator();
