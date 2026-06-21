@@ -481,10 +481,21 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->dirty_reasons(id)));
     });
-    // (dirty:counts) — Issue #188/#262: aggregate per-reason dirty counts
-    // across the workspace. Returns hash with 8 integer fields:
+    // (dirty:ppa-reasons node-id) — Issue #277: return the per-node
+    // PPA dirty bitmask from the orthogonal ppa_dirty_ column.
+    //   0x01 = timing, 0x02 = power, 0x04 = area, 0x08 = backend-hint.
+    add("dirty:ppa-reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_int(0);
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->ppa_dirty_reasons(id)));
+    });
+    // (dirty:counts) — Issue #188/#262/#277: aggregate per-reason dirty counts
+    // across the workspace. Returns hash with integer fields:
     //   general, constraint, occurrence, ownership, coercion,
-    //   struct, defuse, ppa-hint, total
+    //   struct, defuse, ppa-hint, timing, power, area, backend-hint, total
     //   (total is the number of dirty nodes, not the sum of bits).
     // Built inline using the same hash-build pattern as gc-arena-info.
     add("dirty:counts", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
@@ -492,10 +503,14 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return make_void();
         std::size_t gen = 0, con = 0, occ = 0, own = 0, coe = 0;
         std::size_t str = 0, def = 0, ppa = 0, total = 0;
+        std::size_t timing = 0, power = 0, area = 0, backend_hint = 0;
         const auto& dirty = ev.workspace_flat_->dirty_column();
-        for (std::size_t i = 0; i < dirty.size(); ++i) {
-            auto b = dirty[i];
-            if (b == 0)
+        const auto& ppa_dirty = ev.workspace_flat_->ppa_dirty_column();
+        const auto n = std::max(dirty.size(), ppa_dirty.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            auto b = i < dirty.size() ? dirty[i] : 0;
+            auto pb = i < ppa_dirty.size() ? ppa_dirty[i] : 0;
+            if (b == 0 && pb == 0)
                 continue;
             ++total;
             if (b & 0x01)
@@ -514,9 +529,18 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 ++def;
             if (b & 0x80)
                 ++ppa;
+            if (pb & 0x01)
+                ++timing;
+            if (pb & 0x02)
+                ++power;
+            if (pb & 0x04)
+                ++area;
+            if (pb & 0x08)
+                ++backend_hint;
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
+            // Issue #277: 13 fields — need capacity > 13 (power of 2).
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -563,6 +587,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             {"struct", make_int(static_cast<std::int64_t>(str))},
             {"defuse", make_int(static_cast<std::int64_t>(def))},
             {"ppa-hint", make_int(static_cast<std::int64_t>(ppa))},
+            {"timing", make_int(static_cast<std::int64_t>(timing))},
+            {"power", make_int(static_cast<std::int64_t>(power))},
+            {"area", make_int(static_cast<std::int64_t>(area))},
+            {"backend-hint", make_int(static_cast<std::int64_t>(backend_hint))},
             {"total", make_int(static_cast<std::int64_t>(total))},
         };
         return build_hash(kv);

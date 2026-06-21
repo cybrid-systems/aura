@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**33** `export module` declarations in `src/**/*.ixx`.
+**34** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -16,6 +16,7 @@
 | `aura.compiler.evaluator` | `src/compiler/evaluator.ixx` |
 | `aura.compiler.evaluator_pure` | `src/compiler/evaluator_pure.ixx` |
 | `aura.compiler.ffi_primitives` | `src/compiler/ffi_primitives.ixx` |
+| `aura.compiler.hardware_backend` | `src/compiler/hardware_backend.ixx` |
 | `aura.compiler.ir` | `src/compiler/ir.ixx` |
 | `aura.compiler.ir_cache_pure` | `src/compiler/ir_cache_pure.ixx` |
 | `aura.compiler.ir_executor` | `src/compiler/ir_executor.ixx` |

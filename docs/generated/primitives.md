@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**408** registrations scanned from `src/**/*.cpp`.
+**409** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -447,9 +447,10 @@ Runtime canonical list: `(api-reference)`.
 - `concurrency:version-current?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `concurrency:version-snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
 
-## Dirty: (2)
+## Dirty: (3)
 
 - `dirty:counts` — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:ppa-reasons` — `src/compiler/evaluator_primitives_memory.cpp`
 - `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
 
 ## Eval: (1)
