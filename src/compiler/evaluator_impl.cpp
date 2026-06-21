@@ -188,6 +188,12 @@ void register_hot_swap_primitives(std::function<void(std::string, PrimFn)> add, 
 void register_diagnostic_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_module_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_file_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_runtime_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_test_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_misc_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_control_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_char_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_mutation_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_defuse_query_primitives(
     std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
     aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
@@ -1252,185 +1258,6 @@ struct Pair;
 // body is in scope (defuse_index_ is set/reset in set-code and
 // workspace-switching code that comes early in the TU).
 static void defuse_index_destroy(void** slot);
-namespace {
-    // Check if value is the end of a list (void is the proper sentinel)
-    // Note: int 0 is ALSO used as the empty list sentinel in some contexts,
-    // but we only treat it as end-of-list in cdr chain position.
-    static bool is_end_of_list(const EvalValue& v) {
-        return is_void(v) || (is_int(v) && as_int(v) == 0);
-    }
-    // Format a value to string (same formatting as io_print_val but returns string)
-    static std::string fmt_val_to_string(const EvalValue& v, std::span<const std::string> heap,
-                                         std::span<const Pair> pairs, bool quote, int depth = 0) {
-        std::string out;
-        auto app = [&](const auto&... args) { (out += ... += args); };
-        if (depth > 64)
-            return "...";
-        if (is_void(v))
-            return "()";
-        if (is_bool(v))
-            return as_bool(v) ? "#t" : "#f";
-        if (is_float(v))
-            return std::to_string(as_float(v));
-        if (is_int(v))
-            return std::to_string(as_int(v));
-        if (is_string(v)) {
-            auto idx = as_string_idx(v);
-            if (idx < heap.size()) {
-                if (quote)
-                    return "\"" + heap[idx] + "\"";
-                return heap[idx];
-            }
-            return "";
-        }
-        if (is_pair(v)) {
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs.size())
-                return "<pair>";
-            out = "(";
-            out += fmt_val_to_string(pairs[idx].car, heap, pairs, quote, depth + 1);
-            auto cdr = pairs[idx].cdr;
-            while (is_pair(cdr)) {
-                out += " ";
-                auto nidx = as_pair_idx(cdr);
-                if (nidx >= pairs.size()) {
-                    out += "<pair>";
-                    break;
-                }
-                out += fmt_val_to_string(pairs[nidx].car, heap, pairs, quote, depth + 1);
-                cdr = pairs[nidx].cdr;
-            }
-            if (!is_end_of_list(cdr)) {
-                out += " . ";
-                out += fmt_val_to_string(cdr, heap, pairs, quote, depth + 1);
-            }
-            out += ")";
-            return out;
-        }
-        if (is_vector(v))
-            return std::format("<vector[{}]>", as_vector_idx(v));
-        if (is_hash(v))
-            return std::format("<hash[{}]>", as_hash_idx(v));
-        if (is_closure(v))
-            return "#<procedure>";
-        return "<unknown>";
-    }
-
-    static void io_print_val(const EvalValue& v, std::span<const std::string> heap,
-                             std::span<const Pair> pairs, bool quote, int depth = 0,
-                             std::span<const std::string> keywords = {}) {
-        if (depth > 64) {
-            std::fprintf(stdout, "...");
-            return;
-        }
-        if (is_void(v)) {
-            std::fprintf(stdout, "()");
-            return;
-        }
-        if (is_bool(v)) {
-            std::fprintf(stdout, "%s", as_bool(v) ? "#t" : "#f");
-            return;
-        }
-        // IMPORTANT: Check is_string BEFORE is_keyword (Issue #96 bug fix;
-        // pre-#181 encoding rationale). The v2 encoding (Issue #181)
-        // uses (v & 3) == 2 as the dedicated string tag, so this is
-        // no longer a correctness concern — but the ordering is kept
-        // for semantic clarity (a string at idx N is never a keyword
-        // at the same value).
-        if (is_string(v) && !heap.empty()) {
-            auto idx = as_string_idx(v);
-            if (idx < heap.size()) {
-                if (quote)
-                    std::fprintf(stdout, "\"%s\"", heap[idx].c_str());
-                else
-                    std::fprintf(stdout, "%s", heap[idx].c_str());
-                return;
-            }
-        }
-        if (is_keyword(v)) {
-            auto kidx = as_keyword_idx(v);
-            if (!keywords.empty() && kidx < keywords.size()) {
-                auto kname = keywords[kidx];
-                std::fprintf(stdout, "%s", kname.c_str());
-            } else {
-                std::fprintf(stdout, ":%zu", (size_t)kidx);
-            }
-            return;
-        }
-        if (is_float(v)) {
-            std::fprintf(stdout, "%g", as_float(v));
-            return;
-        }
-        if (is_int(v)) {
-            std::fprintf(stdout, "%ld", (long)as_int(v));
-            return;
-        }
-        if (is_pair(v) && !pairs.empty()) {
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs.size()) {
-                std::fprintf(stdout, "<pair[%zu]>", (size_t)idx);
-                return;
-            }
-            // Check if it's a proper list (cdr chain ends in void or int 0 sentinel)
-            auto cdr = pairs[idx].cdr;
-            if (is_end_of_list(cdr) && !quote) {
-                // Single-element list: (x)
-                std::fprintf(stdout, "(");
-                io_print_val(pairs[idx].car, heap, pairs, quote, depth + 1, keywords);
-                std::fprintf(stdout, ")");
-                return;
-            }
-            // Walk the chain to see if it's a proper list
-            std::vector<EvalValue> elements;
-            elements.push_back(pairs[idx].car);
-            auto next = cdr;
-            bool proper = true;
-            while (!is_end_of_list(next)) {
-                if (!is_pair(next)) {
-                    proper = false;
-                    break;
-                }
-                auto nidx = as_pair_idx(next);
-                if (nidx >= pairs.size()) {
-                    proper = false;
-                    break;
-                }
-                elements.push_back(pairs[nidx].car);
-                next = pairs[nidx].cdr;
-            }
-            std::fprintf(stdout, "(");
-            for (std::size_t i = 0; i < elements.size(); ++i) {
-                if (i > 0)
-                    std::fprintf(stdout, " ");
-                io_print_val(elements[i], heap, pairs, quote, depth + 1, keywords);
-            }
-            if (!is_end_of_list(next)) {
-                std::fprintf(stdout, " . ");
-                io_print_val(next, heap, pairs, quote, depth + 1, keywords);
-            }
-            std::fprintf(stdout, ")");
-            return;
-        }
-        if (is_vector(v)) {
-            std::fprintf(stdout, "<vector[%zu]>", (size_t)as_vector_idx(v));
-            return;
-        }
-        if (is_hash(v)) {
-            std::fprintf(stdout, "<hash[%zu]>", (size_t)as_hash_idx(v));
-            return;
-        }
-        if (is_closure(v)) {
-            std::fprintf(stdout, "#<procedure>");
-            std::fprintf(stderr, "⚠ program returned an uncalled function\n");
-            return;
-        }
-        if (is_cell(v)) {
-            std::fprintf(stdout, "<cell[%zu]>", (size_t)as_cell_id(v));
-            return;
-        }
-        std::fprintf(stdout, "<unknown>");
-    }
-} // namespace
 
 // Centralized make_merr (refactor Step 0.1, 3.1 query cluster in progress).
 // Replaces duplicated local `auto merr = ...` lambdas (orig ~14-15 in mutate + query).
@@ -1532,483 +1359,39 @@ void Evaluator::init_pair_primitives() {
         pairs_, string_heap_, type_registry_,
         [this](const std::string& path) { return resolve_module_path(path); });
 
-    // ── ADT registration now delegated to adt_runtime_ (Step 2.3) ───
-    // The old "adt:register-constructors" and "adt:reset-constructors"
-    // (which mutated the removed global g_adt_constructors) have been
-    // removed from here. The adt_runtime_ will provide equivalent
-    // (or improved) registration in the full wiring.
-    // Parser's parse_datatype still emits the call; for now it will
-    // be unbound until the primitive is re-provided via adt_runtime
-    // (or kept as compatibility stub in future step).
-    //
-    // The ctor PrimitiveFn creation logic (the big lambda above)
-    // will live inside adt_runtime.register_primitives in the
-    // complete extraction.
-
-    primitives_.add("equal?", [this](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_bool(true);
-
-        struct EqCheck {
-            Evaluator& e;
-            bool operator()(const EvalValue& x, const EvalValue& y, int depth) const {
-                if (depth > 64)
-                    return true;
-                if (x == y)
-                    return true;
-                if (is_int(x) && is_int(y))
-                    return as_int(x) == as_int(y);
-                if (is_float(x) && is_float(y))
-                    return as_float(x) == as_float(y);
-                if (is_bool(x) && is_bool(y))
-                    return as_bool(x) == as_bool(y);
-                if (is_string(x) && is_string(y)) {
-                    auto xi = as_string_idx(x), yi = as_string_idx(y);
-                    if (xi < e.string_heap_.size() && yi < e.string_heap_.size())
-                        return e.string_heap_[xi] == e.string_heap_[yi];
-                    return false;
-                }
-                if (is_pair(x) && is_pair(y)) {
-                    auto xi = as_pair_idx(x), yi = as_pair_idx(y);
-                    if (xi < e.pairs_.size() && yi < e.pairs_.size())
-                        return (*this)(e.pairs_[xi].car, e.pairs_[yi].car, depth + 1) &&
-                               (*this)(e.pairs_[xi].cdr, e.pairs_[yi].cdr, depth + 1);
-                    return false;
-                }
-                if (is_vector(x) && is_vector(y)) {
-                    auto xi = as_vector_idx(x), yi = as_vector_idx(y);
-                    if (xi < e.vector_heap_.size() && yi < e.vector_heap_.size()) {
-                        auto& vx = e.vector_heap_[xi];
-                        auto& vy = e.vector_heap_[yi];
-                        if (vx.size() != vy.size())
-                            return false;
-                        for (std::size_t i = 0; i < vx.size(); ++i)
-                            if (!(*this)(vx[i], vy[i], depth + 1))
-                                return false;
-                        return true;
-                    }
-                    return false;
-                }
-                // Empty list sentinel: void or int 0
-                if ((is_void(x) || (is_int(x) && as_int(x) == 0)) &&
-                    (is_void(y) || (is_int(y) && as_int(y) == 0)))
-                    return true;
-                return false;
-            }
-        };
-
-        return make_bool(EqCheck{*this}(a[0], a[1], 0));
-    });
-
-    // (gensym)  → "G__0"
-    // (gensym "prefix") → "prefix__1"
-    // (gensym "prefix" n) → "prefix__n" (n is an int suffix)
-    // Issue #121: extended to take an optional prefix argument.
-    // The prefix is a string; the suffix is a global atomic
-    // counter (monotonically increasing for the process).
-    // Useful for quasiquote templates that need to generate
-    // unique binding names at macro-expansion time.
-    primitives_.add("gensym", [this](std::span<const EvalValue> a) -> EvalValue {
-        static std::atomic<std::int64_t> gs_counter_{0};
-        auto id = gs_counter_.fetch_add(1, std::memory_order_relaxed);
-        std::string prefix = "G__";
-        if (a.size() >= 1 && is_string(a[0])) {
-            auto idx = as_string_idx(a[0]);
-            if (idx < string_heap_.size()) {
-                prefix = string_heap_[idx] + "__";
-            }
-        }
-        std::string name = prefix + std::to_string(id);
-        auto sid = string_heap_.size();
-        string_heap_.push_back(name);
-        return make_string(sid);
-    });
-    primitives_.add("symbol-append", [this](std::span<const EvalValue> a) -> EvalValue {
-        std::string result;
-        for (auto& v : a) {
-            if (is_string(v)) {
-                auto idx = as_string_idx(v);
-                if (idx < string_heap_.size())
-                    result += string_heap_[idx];
-            } else if (is_int(v)) {
-                result += std::to_string(as_int(v));
-            }
-        }
-        auto sid = string_heap_.size();
-        string_heap_.push_back(result);
-        return make_string(sid);
-    });
-
-    // (apply fn list) — call fn with list elements as individual args
-    primitives_.add("apply", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2)
-            return make_void();
-        auto& fn = a[0];
-        auto& arg_list = a[1];
-        std::vector<EvalValue> args;
-        auto current = arg_list;
-        while (is_pair(current)) {
-            auto idx = as_pair_idx(current);
-            if (idx >= pairs_.size())
-                break;
-            args.push_back(pairs_[idx].car);
-            current = pairs_[idx].cdr;
-        }
-        if (is_primitive(fn)) {
-            auto slot = as_primitive_slot(fn);
-            auto pfn = primitives_.lookup(primitives_.name_for_slot(slot));
-            if (pfn)
-                return (*pfn)(args);
-        }
-        if (is_closure(fn)) {
-            auto cid = as_closure_id(fn);
-            auto result = apply_closure(cid, args);
-            if (result)
-                return *result;
-        }
-        return make_void();
-    });
-
-    primitives_.add("display", [this](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_void();
-        io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
-        std::fflush(stdout);
-        return make_void();
-    });
-    primitives_.add("write", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty())
-            return make_void();
-        io_print_val(a[0], string_heap_, pairs_, true, 0, keyword_table_);
-        std::fflush(stdout);
-        return make_void();
-    });
-    primitives_.add("newline", [](const auto&) -> EvalValue {
-        std::fprintf(stdout, "\n");
-        std::fflush(stdout);
-        return make_void();
-    });
-    // (format template args...) — Simple string formatting (SRFI-28 subset)
-    // ~a  display arg    ~s  write arg    ~%  newline    ~~  literal ~
-    primitives_.add("format", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_bool(false);
-        auto tidx = as_string_idx(a[0]);
-        if (tidx >= string_heap_.size())
-            return make_bool(false);
-        auto& tmpl = string_heap_[tidx];
-        std::string result;
-        std::size_t arg_idx = 1; // first arg in a[1..]
-        for (std::size_t i = 0; i < tmpl.size(); ++i) {
-            if (tmpl[i] == '~' && i + 1 < tmpl.size()) {
-                switch (tmpl[i + 1]) {
-                    case 'a': // display arg
-                        if (arg_idx < a.size()) {
-                            auto val = a[arg_idx++];
-                            result += fmt_val_to_string(val, string_heap_, pairs_, false);
-                        }
-                        ++i;
-                        break;
-                    case 's': // write arg (quoted)
-                        if (arg_idx < a.size()) {
-                            auto val = a[arg_idx++];
-                            result += fmt_val_to_string(val, string_heap_, pairs_, true);
-                        }
-                        ++i;
-                        break;
-                    case '%': // newline
-                        result += '\n';
-                        ++i;
-                        break;
-                    case '~': // literal ~
-                        result += '~';
-                        ++i;
-                        break;
-                    default:
-                        result += tmpl[i];
-                        break;
-                }
-            } else {
-                result += tmpl[i];
-            }
-        }
-        auto sidx = string_heap_.size();
-        string_heap_.push_back(result);
-        return make_string(sidx);
-    });
-    // (error msg) — Create an error value (no longer throws C++ exception)
-    primitives_.add("error", [this](std::span<const EvalValue> a) -> EvalValue {
-        // Ensure error_values_[0] always exists for default errors
-        if (error_values_.empty())
-            error_values_.push_back(make_void());
-        types::EvalValue cause = make_string(0); // default
-        if (!a.empty())
-            cause = a[0];
-        auto eidx = error_values_.size();
-        error_values_.push_back(cause);
-        return make_error(eidx);
-    });
-
-    // (assert expr msg) — Assertion, returns error on failure
-    primitives_.add("assert", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (!a.empty() && is_truthy(a[0]))
-            return make_int(1);
-        // Assertion failed — return error
-        types::EvalValue cause = make_string(0);
-        if (a.size() > 1)
-            cause = a[1];
-        auto eidx = error_values_.size();
-        error_values_.push_back(cause);
-        return make_error(eidx);
-    });
-
-    // (raise val) — Create an error with arbitrary cause value
-    primitives_.add("raise", [this](std::span<const EvalValue> a) -> EvalValue {
-        auto cause = a.empty() ? make_void() : a[0];
-        auto eidx = error_values_.size();
-        error_values_.push_back(cause);
-        return make_error(eidx);
-    });
-
-    // (error? val) — Type predicate for error values
-    primitives_.add("error?", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty())
-            return make_bool(false);
-        // Guard against encoding collision: strings can accidentally pass is_error()
-        return make_bool(is_error(a[0]) && !is_string(a[0]));
-    });
+    primitives_detail::register_runtime_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        *this);
 
 
-    // (check expr) — Test assertion, returns #t or error on failure
-    primitives_.add("check", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty())
-            return make_error(0);
-        if (is_truthy(a[0]))
-            return make_int(1);
-        // Store failing value as error cause
-        auto eidx = error_values_.size();
-        error_values_.push_back(a[0]);
-        return make_error(eidx);
-    });
 
-    // (check= expected actual) — Test equality, returns #t or error
-    primitives_.add("check=", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2)
-            return make_bool(false);
-        if (types::is_void(a[0]) && types::is_void(a[1]))
-            return make_int(1);
-        if (types::is_int(a[0]) && types::is_int(a[1])) {
-            if (types::as_int(a[0]) == types::as_int(a[1]))
-                return make_int(1);
-            auto eidx = error_values_.size();
-            error_values_.push_back(a[0]);
-            return make_error(eidx);
-        }
-        if (types::is_float(a[0]) && types::is_float(a[1])) {
-            if (types::as_float(a[0]) == types::as_float(a[1]))
-                return make_int(1);
-            auto eidx = error_values_.size();
-            error_values_.push_back(a[0]);
-            return make_error(eidx);
-        }
-        if (types::is_string(a[0]) && types::is_string(a[1])) {
-            auto i0 = types::as_string_idx(a[0]);
-            auto i1 = types::as_string_idx(a[1]);
-            if (i0 < string_heap_.size() && i1 < string_heap_.size() &&
-                string_heap_[i0] == string_heap_[i1])
-                return make_int(1);
-            auto eidx = error_values_.size();
-            error_values_.push_back(a[0]);
-            return make_error(eidx);
-        }
-        return make_bool(false);
-    });
 
-    // (check-success output expected-list) — Flexible substring matching
-    // Returns #t if any expected keyword is found in output.
-    // Guards against false positives from error messages that happen to
-    // contain expected keywords (uses word-boundary for short keys in error output).
-    primitives_.add("check-success", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_pair(a[1]))
-            return make_bool(false);
-        // Get normalized output (strip quotes)
-        auto out_idx = as_string_idx(a[0]);
-        if (out_idx >= string_heap_.size())
-            return make_bool(false);
-        auto norm_out = string_heap_[out_idx];
-        // Strip surrounding quotes
-        if (!norm_out.empty() && (norm_out[0] == '"' || norm_out[0] == '\''))
-            norm_out = norm_out.substr(1);
-        if (!norm_out.empty() && (norm_out.back() == '"' || norm_out.back() == '\''))
-            norm_out.pop_back();
-        // Detect if output looks like an error message
-        auto lower = norm_out;
-        for (auto& c : lower)
-            c = std::tolower(static_cast<unsigned char>(c));
-        bool is_error_like = lower.find("error:") != std::string::npos ||
-                             lower.find("parse error") != std::string::npos ||
-                             lower.find("unbound variable") != std::string::npos ||
-                             lower.find("type error") != std::string::npos ||
-                             lower.find("syntax error") != std::string::npos ||
-                             lower.find("invalid syntax") != std::string::npos ||
-                             lower.find("expected expression") != std::string::npos ||
-                             (norm_out.size() > 1 && norm_out[0] == '(' && norm_out[1] == '"');
-        // Iterate expected list
-        auto pair_idx = as_pair_idx(a[1]);
-        while (pair_idx < pairs_.size()) {
-            auto& p = pairs_[pair_idx];
-            if (is_string(p.car)) {
-                auto kw_idx = as_string_idx(p.car);
-                if (kw_idx < string_heap_.size()) {
-                    auto& kw = string_heap_[kw_idx];
-                    if (!kw.empty() && norm_out.find(kw) != std::string::npos) {
-                        // Guard: for error-like output with short keywords
-                        if (is_error_like && kw.size() <= 5) {
-                            // Generic error words that should never match in error output
-                            static const std::unordered_set<std::string> generic_words = {
-                                "error", "type", "parse", "syntax", "kind"};
-                            if (generic_words.count(kw)) {
-                                // Skip — too generic, likely part of error message
-                                if (is_pair(p.cdr)) {
-                                    pair_idx = as_pair_idx(p.cdr);
-                                    continue;
-                                }
-                                break;
-                            }
-                            // Word boundary check for other short keywords
-                            auto pos = norm_out.find(kw);
-                            bool word_boundary = true;
-                            if (pos > 0) {
-                                char prev = norm_out[pos - 1];
-                                if (std::isalnum(static_cast<unsigned char>(prev)) || prev == '_')
-                                    word_boundary = false;
-                            }
-                            if (pos + kw.size() < norm_out.size()) {
-                                char next = norm_out[pos + kw.size()];
-                                if (std::isalnum(static_cast<unsigned char>(next)) || next == '_')
-                                    word_boundary = false;
-                            }
-                            if (!word_boundary) {
-                                // Move to next keyword
-                                if (is_pair(p.cdr)) {
-                                    pair_idx = as_pair_idx(p.cdr);
-                                    continue;
-                                }
-                                break;
-                            }
-                        }
-                        return make_bool(true);
-                    }
-                }
-            }
-            if (is_pair(p.cdr))
-                pair_idx = as_pair_idx(p.cdr);
-            else
-                break;
-        }
-        return make_bool(false);
-    });
+
+
+
+
+
+
+
+
+
+
+
+
+    primitives_detail::register_test_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        *this);
 
     primitives_detail::register_diagnostic_primitives(
         [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
         *this);
 
-    // (run-tests) — Find all test:* bindings in top_ env, report summary
-    primitives_.add("run-tests", [this](const auto&) -> EvalValue {
-        auto& bindings = top_.bindings();
-        int total_suites = 0, total_passed = 0, total_failed = 0;
 
-        for (auto& [name, val] : bindings) {
-            if (name.size() <= 5 || name.substr(0, 5) != "test:")
-                continue;
 
-            // Dereference cell if needed (define stores via cell)
-            auto actual = val;
-            if (is_cell(val) && as_cell_id(val) < cells_.size())
-                actual = cells_[as_cell_id(val)];
-            if (!is_pair(actual))
-                continue;
 
-            total_suites++;
-            auto idx = as_pair_idx(actual);
-            if (idx >= pairs_.size()) {
-                total_failed++;
-                continue;
-            }
-
-            // Suite name
-            std::string suite_name;
-            if (is_string(pairs_[idx].car)) {
-                auto sid = as_string_idx(pairs_[idx].car);
-                if (sid < string_heap_.size())
-                    suite_name = string_heap_[sid];
-            }
-
-            // Walk and evaluate each stored check form
-            auto forms = pairs_[idx].cdr;
-            int sp = 0, sf = 0;
-
-            while (is_pair(forms)) {
-                auto fi = as_pair_idx(forms);
-                if (fi >= pairs_.size())
-                    break;
-                auto check_form = pairs_[fi].car;
-                forms = pairs_[fi].cdr;
-
-                // Convert check_form data back to AST and evaluate.
-                // Use temp_arena_ so (gc-temp) reclaims parse state after
-                // each check clause (was: arena_ = monotonic = leaked).
-                if (!arena_) {
-                    sf++;
-                    continue;
-                }
-                auto alloc = temp_arena_->allocator();
-                auto* cf_pool = temp_arena_->create<aura::ast::StringPool>(alloc);
-                auto* cf_flat = temp_arena_->create<aura::ast::FlatAST>(alloc);
-                auto ast_root = data_to_flat(check_form, *cf_flat, *cf_pool, 0);
-                if (ast_root == aura::ast::NULL_NODE) {
-                    sf++;
-                    continue;
-                }
-                cf_flat->root = ast_root;
-
-                auto result = eval_flat(*cf_flat, *cf_pool, ast_root, top_);
-                if (!result) {
-                    sf++;
-                    continue;
-                }
-
-                bool ok = is_int(*result) && as_int(*result) == 1;
-                if (ok) {
-                    sp++;
-                    total_passed++;
-                } else {
-                    sf++;
-                    total_failed++;
-                }
-            }
-
-            std::fprintf(stderr, "  Suite '%s': %d/%d passed\n", suite_name.c_str(), sp, sp + sf);
-        }
-
-        std::string summary = std::to_string(total_suites) +
-                              " suites: " + std::to_string(total_passed) + " passed, " +
-                              std::to_string(total_failed) + " failed";
-        auto sidx = string_heap_.size();
-        string_heap_.push_back(summary);
-        return make_string(sidx);
-    });
-
-    // (current-time) → integer epoch seconds
-    primitives_.add("current-time", [](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(std::time(nullptr)));
-    });
-
-    // (arena-offset) → integer (current TL arena offset in bytes, 0 = disabled)
-    primitives_.add("arena-offset", [](const auto&) -> EvalValue {
-        // g_tl_arena is thread-local TLarena declared in runtime_shared.h
-        return make_int(static_cast<int64_t>(g_tl_arena.offset));
-    });
+    primitives_detail::register_misc_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        *this);
 
     primitives_detail::register_file_primitives(
         [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
@@ -2022,153 +1405,29 @@ void Evaluator::init_pair_primitives() {
         [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
         *this);
 
-    // (while pred body) — Iterative loop with zero C++ stack growth.
-    // pred: closure returning bool (#t to continue, #f to stop).
-    // body: closure — evaluated each iteration.
-    primitives_.add("while", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !types::is_closure(a[0]) || !types::is_closure(a[1]))
-            return make_void();
-        auto pred_cid = types::as_closure_id(a[0]);
-        auto body_cid = types::as_closure_id(a[1]);
-        for (;;) {
-            auto pred_result = apply_closure(pred_cid, {});
-            if (!pred_result)
-                break;
-            auto& val = *pred_result;
-            bool cont = types::is_bool(val)  ? types::as_bool(val)
-                        : types::is_int(val) ? types::as_int(val) != 0
-                                             : false;
-            if (!cont)
-                break;
-            (void)apply_closure(body_cid, {});
-        }
-        return make_void();
-    });
-
-    // ── Character + I/O extensions ────────────────────────────────
-
-    // char?: (char? v) → true if is_int(v) (chars represented as ints)
-    primitives_.add("char?", [](const auto& a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_int(a[0]));
-    });
-    // char->integer: (char->integer c) → integer value
-    primitives_.add("char->integer", [](const auto& a) {
-        if (a.empty() || !is_int(a[0]))
-            return make_int(0);
-        return a[0];
-    });
-    // integer->char: (integer->char n) → identity
-    primitives_.add("integer->char", [](const auto& a) {
-        if (a.empty() || !is_int(a[0]))
-            return make_int(0);
-        return a[0];
-    });
-    // string->list: (string->list s) → list of char codes
-    primitives_.add("string->list", [this](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_void();
-        std::string s;
-        if (is_string(a[0])) {
-            auto idx = as_string_idx(a[0]);
-            if (idx < string_heap_.size())
-                s = string_heap_[idx];
-        } else if (is_int(a[0])) {
-            s = std::to_string(as_int(a[0]));
-        }
-        EvalValue result = make_void();
-        for (auto it = s.rbegin(); it != s.rend(); ++it) {
-            auto pid = pairs_.size();
-            pairs_.push_back(
-                {make_int(static_cast<std::int64_t>(static_cast<unsigned char>(*it))), result});
-            result = make_pair(pid);
-        }
-        return result;
-    });
-    // list->string: (list->string lst) → string from char codes
-    primitives_.add("list->string", [this](std::span<const EvalValue> a) {
-        if (a.empty() || (!is_pair(a[0]) && !is_void(a[0])))
-            return make_int(0);
-        std::string result;
-        auto v = a[0];
-        while (is_pair(v)) {
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs_.size())
-                break;
-            auto car = pairs_[idx].car;
-            if (is_int(car))
-                result.push_back(static_cast<char>(as_int(car)));
-            v = pairs_[idx].cdr;
-        }
-        auto sid = string_heap_.size();
-        string_heap_.push_back(std::move(result));
-        return make_string(sid);
-    });
-    // read-line: (read-line) → read a line from stdin as string
-    primitives_.add("read-line", [this](const auto&) {
-        std::string line;
-        std::getline(std::cin, line);
-        if (line.empty())
-            return make_void();
-        auto id = string_heap_.size();
-        string_heap_.push_back(std::move(line));
-        return make_string(id);
-    });
-    // eof-object?: (eof-object? v) → check if value represents EOF
-    primitives_.add("eof-object?", [](const auto& a) {
-        if (a.empty())
-            return make_bool(false);
-        // EOF is represented as void (the same as when read-line returns empty)
-        return make_bool(is_void(a[0]));
-    });
-
-    // ── List utility primitives ────────────────────────────────────
+    primitives_detail::register_control_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        *this);
 
 
-    // (mutation-count)
-    primitives_.add("mutation-count", [this](const auto&) {
-        if (!workspace_flat_)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(workspace_flat_->mutation_count()));
-    });
-
-    // (mutation-history node-id) → list of summary strings
-    primitives_.add("mutation-history", [this](std::span<const EvalValue> a) {
-        if (a.empty() || !is_int(a[0]) || !workspace_flat_)
-            return make_int(0);
-        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto hist = workspace_flat_->mutation_history(node);
-        EvalValue result = make_void();
-        for (auto it = hist.rbegin(); it != hist.rend(); ++it) {
-            auto& rec = *it;
-            auto sid = string_heap_.size();
-            string_heap_.push_back(std::format(
-                "[{}] {}: {}{}", rec.mutation_id, rec.operator_name, rec.summary,
-                rec.status == aura::ast::MutationStatus::RolledBack ? " [rolled-back]" : ""));
-            auto pair_id = pairs_.size();
-            pairs_.push_back({make_string(sid), result});
-            result = make_pair(pair_id);
-        }
-        return result;
-    });
-
-    // (rollback mutation-id) → true if successful
-    primitives_.add("rollback", [this](std::span<const EvalValue> a) {
-        if (a.empty() || !is_int(a[0]) || !workspace_flat_)
-            return make_bool(false);
-        auto mid = static_cast<std::uint64_t>(as_int(a[0]));
-        return make_bool(workspace_flat_->rollback(mid));
-    });
 
 
-    // (rollback-since mutation-id) → count of rolled-back mutations
-    primitives_.add("rollback-since", [this](std::span<const EvalValue> a) {
-        if (a.empty() || !is_int(a[0]) || !workspace_flat_)
-            return make_int(0);
-        auto mid = static_cast<std::uint64_t>(as_int(a[0]));
-        return make_int(static_cast<std::int64_t>(workspace_flat_->rollback_since(mid)));
-    });
+
+
+
+
+
+
+
+
+
+    primitives_detail::register_char_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        *this);
+
+    primitives_detail::register_mutation_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        *this);
 
     primitives_detail::register_auto_evolve_primitives(
         [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
