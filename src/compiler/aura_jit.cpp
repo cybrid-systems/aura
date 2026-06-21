@@ -184,6 +184,9 @@ enum Op : uint32_t {
     // Issue #61 Iter 3: lazy-deopt guard. Same encoding as
     // aura::ir::IROpcode::GuardShape (52).
     OpGuardShape = 52,
+    // Issue #272 Cycle 5: load top-level value-define cell from
+    // evaluator_.cells() via aura_top_cell_get runtime bridge.
+    OpTopCellLoad = 53,
 };
 
 // LLVM IR Builder
@@ -252,6 +255,7 @@ struct LLVMBuilder {
     llvm::Function* fn_new_cell = nullptr;
     llvm::Function* fn_cell_get = nullptr;
     llvm::Function* fn_cell_set = nullptr;
+    llvm::Function* fn_top_cell_get = nullptr;
     llvm::Function* fn_alloc_pair = nullptr;
     llvm::Function* fn_alloc_pair_arena = nullptr;
     llvm::Function* fn_pair_car = nullptr;
@@ -348,6 +352,10 @@ struct LLVMBuilder {
 
         fn_cell_set = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64}, false),
                                              llvm::Function::ExternalLinkage, "aura_cell_set", mod);
+
+        fn_top_cell_get = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
+                                                 llvm::Function::ExternalLinkage, "aura_top_cell_get",
+                                                 mod);
 
         fn_alloc_pair =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
@@ -972,6 +980,12 @@ struct LLVMBuilder {
             case OpCellSet: {
                 irb->CreateCall(llvm::FunctionCallee(fn_cell_set),
                                 llvm::ArrayRef<llvm::Value*>{load(inst.ops[0]), load(inst.ops[1])});
+                return true;
+            }
+            case OpTopCellLoad: {
+                auto call = irb->CreateCall(llvm::FunctionCallee(fn_top_cell_get),
+                                            llvm::ArrayRef<llvm::Value*>{c64(inst.ops[1])});
+                store(inst.ops[0], call);
                 return true;
             }
 
@@ -1905,6 +1919,7 @@ int64_t aura_closure_call(int64_t, int64_t*, int64_t);
 int64_t aura_new_cell();
 int64_t aura_cell_get(int64_t);
 void aura_cell_set(int64_t, int64_t);
+int64_t aura_top_cell_get(int64_t);
 int64_t aura_alloc_pair(int64_t, int64_t);
 int64_t aura_alloc_pair_arena(int64_t, int64_t);
 int64_t aura_pair_car(int64_t);
@@ -2228,6 +2243,7 @@ struct AuraJIT::Impl {
         reg("aura_new_cell", (void*)aura_new_cell);
         reg("aura_cell_get", (void*)aura_cell_get);
         reg("aura_cell_set", (void*)aura_cell_set);
+        reg("aura_top_cell_get", (void*)aura_top_cell_get);
         reg("aura_alloc_pair", (void*)aura_alloc_pair);
         reg("aura_alloc_pair_arena", (void*)aura_alloc_pair_arena);
         reg("aura_pair_car", (void*)aura_pair_car);

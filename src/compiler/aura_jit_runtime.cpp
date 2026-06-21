@@ -645,6 +645,28 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     return result;
 }
 
+// === Top-level value-define cells (Issue #272 Cycle 5) ===
+// IR TopCellLoad reads evaluator_.cells(), not g_cell_heap (NewCell/CellGet).
+// CompilerService registers a getter callback so JIT-compiled code can load
+// value-define bindings live (survives cell slot updates on redefine).
+using TopCellGetFn = int64_t (*)(void* user_data, int64_t index);
+static TopCellGetFn g_top_cell_get = nullptr;
+static void* g_top_cell_user_data = nullptr;
+
+extern "C" void aura_set_top_cell_getter(int64_t (*fn)(void*, int64_t), void* user_data) {
+    g_top_cell_get = fn;
+    g_top_cell_user_data = user_data;
+}
+
+extern "C" int64_t aura_top_cell_get(int64_t cell_index) {
+    aura_lock_workspace_read();
+    int64_t result = 0;
+    if (g_top_cell_get && cell_index >= 0)
+        result = g_top_cell_get(g_top_cell_user_data, cell_index);
+    aura_unlock_workspace_read();
+    return result;
+}
+
 // === Cell runtime ===
 static std::vector<int64_t> g_cell_heap;
 

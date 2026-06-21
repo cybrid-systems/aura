@@ -92,6 +92,9 @@ extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read
                                     void (*lock_write)(void*), void (*unlock_write)(void*),
                                     std::uint64_t (*get_version)(void*),
                                     void (*yield_boundary)(void*), void* user_data);
+// Issue #272 Cycle 5: TopCellLoad bridge to evaluator_.cells().
+extern "C" void aura_set_top_cell_getter(int64_t (*fn)(void*, int64_t), void* user_data);
+extern "C" std::int64_t aura_top_cell_get(std::int64_t cell_index);
 extern "C" std::size_t aura_jit_pool_size();
 extern "C" const char* aura_jit_pool_string(std::size_t idx);
 
