@@ -524,10 +524,78 @@ private:
     std::unique_ptr<std::shared_mutex> ptr_;
 };
 
+// Issue #261: observability POD for NodeId lifecycle / fragmentation.
+export struct NodeLifecycleStats {
+    std::size_t total_slots = 0;
+    std::size_t live_nodes = 0;
+    std::size_t free_slots = 0;
+    double fragmentation_ratio = 0.0;
+};
+
 // ── FlatAST — SoA flat index-based AST ─────────────────────────
 export class FlatAST {
 private:
+    // Issue #261: node_gen_[id] == 0 marks a recycled (free-list) slot.
+    // Live slots always carry the generation_ active when the slot was
+    // last allocated or reset.
+    [[nodiscard]] bool is_free_slot(NodeId id) const noexcept {
+        return id >= node_gen_.size() || node_gen_[id] == 0;
+    }
+
+    void reset_node_slot(NodeId id, NodeTag tag, SyntaxMarker m) {
+        tag_[id] = tag;
+        int_val_[id] = 0;
+        float_val_[id] = 0.0;
+        sym_id_[id] = INVALID_SYM;
+        children_[id] = PersistentChildVector<NodeId>{};
+        param_begin_[id] = 0;
+        param_count_[id] = 0;
+        cap_require_count_[id] = 0;
+        line_[id] = 0;
+        col_[id] = 0;
+        marker_[id] = m;
+        type_id_[id] = 0;
+        dirty_[id] = 0;
+        error_kind_[id] = 0;
+        if (id < value_cache_.size())
+            value_cache_[id] = kNotCached;
+        node_first_mutation_[id] = 0;
+        parent_[id] = NULL_NODE;
+        node_gen_[id] = generation_;
+    }
+
+    [[nodiscard]] std::vector<bool> mark_live_nodes() const {
+        std::vector<bool> live(size(), false);
+        if (size() == 0)
+            return live;
+        std::vector<NodeId> queue;
+        auto visit = [&](NodeId id) {
+            if (id == NULL_NODE || id >= size() || is_free_slot(id) || live[id])
+                return;
+            live[id] = true;
+            queue.push_back(id);
+        };
+        if (root != NULL_NODE)
+            visit(root);
+        for (const auto& [lid, _] : region_by_lambda_id_)
+            visit(lid);
+        for (std::size_t qi = 0; qi < queue.size(); ++qi) {
+            for (auto cid : children(queue[qi])) {
+                if (cid != NULL_NODE)
+                    visit(cid);
+            }
+        }
+        return live;
+    }
+
     [[nodiscard]] NodeId add_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
+        if (!free_list_.empty()) {
+            auto id = free_list_.back();
+            free_list_.pop_back();
+            reset_node_slot(id, tag, m);
+            node_slot_reuse_count_.fetch_add(1, std::memory_order_relaxed);
+            return id;
+        }
         auto id = static_cast<NodeId>(tag_.size());
         tag_.push_back(tag);
         int_val_.push_back(0);
@@ -643,6 +711,10 @@ private:
     std::uint64_t next_mutation_id_ = 1;
     std::uint16_t generation_ = 1;
     std::pmr::vector<std::uint16_t> node_gen_;
+    // Issue #261: free-list of recycled NodeId slots. Slots on the
+    // free list have node_gen_[id] == 0 (tombstone). add_node()
+    // pops from here before bump-appending new slots.
+    std::pmr::vector<NodeId> free_list_;
     // Issue #255: reference stability observability counters.
     // The reference stability mechanism (generation_ + node_gen_
     // + StableNodeRef) is a candidate for std::meta-based
@@ -683,6 +755,10 @@ private:
     mutable std::atomic<std::uint64_t> parent_of_call_count_{0};
     mutable std::atomic<std::uint64_t> mark_dirty_upward_call_count_{0};
     mutable std::atomic<std::uint64_t> mark_dirty_total_nodes_{0};
+    // Issue #261: NodeId lifecycle observability counters.
+    mutable std::atomic<std::uint64_t> node_recycle_total_{0};
+    mutable std::atomic<std::uint64_t> node_slot_reuse_count_{0};
+    mutable std::atomic<std::uint64_t> node_compact_total_{0};
 
 private:
 public:
@@ -738,6 +814,7 @@ public:
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
         , node_gen_(std::move(other.node_gen_))
+        , free_list_(std::move(other.free_list_))
         , bump_generation_count_(other.bump_generation_count_.load())
         , is_valid_check_count_(other.is_valid_check_count_.load())
         , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
@@ -746,6 +823,9 @@ public:
         , parent_of_call_count_(other.parent_of_call_count_.load())
         , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
         , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
+        , node_recycle_total_(other.node_recycle_total_.load())
+        , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
+        , node_compact_total_(other.node_compact_total_.load())
         , match_info_(std::move(other.match_info_))
         , region_by_sym_(std::move(other.region_by_sym_))
         , region_by_lambda_id_(std::move(other.region_by_lambda_id_))
@@ -770,6 +850,7 @@ public:
             type_id_ = std::move(other.type_id_);
             error_kind_ = std::move(other.error_kind_);
             node_gen_ = std::move(other.node_gen_);
+            free_list_ = std::move(other.free_list_);
             value_cache_ = std::move(other.value_cache_);
             mutation_log_ = std::move(other.mutation_log_);
             node_first_mutation_ = std::move(other.node_first_mutation_);
@@ -783,6 +864,9 @@ public:
             parent_of_call_count_.store(other.parent_of_call_count_.load());
             mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
             mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
+            node_recycle_total_.store(other.node_recycle_total_.load());
+            node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
+            node_compact_total_.store(other.node_compact_total_.load());
             match_info_ = std::move(other.match_info_);
             region_by_sym_ = std::move(other.region_by_sym_);
             region_by_lambda_id_ = std::move(other.region_by_lambda_id_);
@@ -819,6 +903,7 @@ public:
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
         , node_gen_(other.node_gen_)
+        , free_list_(other.free_list_)
         , bump_generation_count_(other.bump_generation_count_.load())
         , is_valid_check_count_(other.is_valid_check_count_.load())
         , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
@@ -827,6 +912,9 @@ public:
         , parent_of_call_count_(other.parent_of_call_count_.load())
         , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
         , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
+        , node_recycle_total_(other.node_recycle_total_.load())
+        , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
+        , node_compact_total_(other.node_compact_total_.load())
         , match_info_(other.match_info_)
         , region_by_sym_(other.region_by_sym_)
         , region_by_lambda_id_(other.region_by_lambda_id_)
@@ -851,6 +939,7 @@ public:
             type_id_ = other.type_id_;
             error_kind_ = other.error_kind_;
             node_gen_ = other.node_gen_;
+            free_list_ = other.free_list_;
             value_cache_ = other.value_cache_;
             mutation_log_ = other.mutation_log_;
             node_first_mutation_ = other.node_first_mutation_;
@@ -864,6 +953,9 @@ public:
             parent_of_call_count_.store(other.parent_of_call_count_.load());
             mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
             mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
+            node_recycle_total_.store(other.node_recycle_total_.load());
+            node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
+            node_compact_total_.store(other.node_compact_total_.load());
             match_info_ = other.match_info_;
             region_by_sym_ = other.region_by_sym_;
             region_by_lambda_id_ = other.region_by_lambda_id_;
@@ -893,7 +985,8 @@ public:
         , value_cache_(alloc)
         , mutation_log_(alloc)
         , node_first_mutation_(alloc)
-        , node_gen_(alloc) {}
+        , node_gen_(alloc)
+        , free_list_(alloc) {}
 
     // ── Builders ───────────────────────────────────────────────
 
@@ -1619,6 +1712,215 @@ public:
         bump_generation();
     }
 
+    // ── Issue #261: NodeId lifecycle / SoA compaction ────────────
+    //
+    // recycle_dead_nodes() marks unreachable slots (not reachable
+    // from root via children, plus region_by_lambda_id_ roots) as
+    // free (node_gen_=0) and pushes them onto free_list_ for reuse
+    // by add_node(). Does NOT shrink the SoA columns — use
+    // compact_nodes() for densification + cache locality.
+    //
+    // compact_nodes() rebuilds dense 0..live-1 SoA columns,
+    // remaps all NodeId references, clears free_list_, and bumps
+    // generation_ (invalidates all StableNodeRefs).
+    [[nodiscard]] std::size_t recycle_dead_nodes() {
+        auto live = mark_live_nodes();
+        std::size_t recycled = 0;
+        for (NodeId id = 0; id < size(); ++id) {
+            if (is_free_slot(id))
+                continue;
+            if (!live[id]) {
+                node_gen_[id] = 0;
+                free_list_.push_back(id);
+                ++recycled;
+            }
+        }
+        if (recycled > 0)
+            node_recycle_total_.fetch_add(recycled, std::memory_order_relaxed);
+        return recycled;
+    }
+
+    [[nodiscard]] std::size_t compact_nodes() {
+        auto live = mark_live_nodes();
+        std::size_t live_count = 0;
+        for (bool is_live : live) {
+            if (is_live)
+                ++live_count;
+        }
+        const auto old_size = size();
+        if (live_count == 0) {
+            clear();
+            if (old_size > 0)
+                node_compact_total_.fetch_add(old_size, std::memory_order_relaxed);
+            return old_size;
+        }
+        if (live_count == old_size)
+            return 0;
+
+        std::vector<NodeId> old_to_new(old_size, NULL_NODE);
+        NodeId next = 0;
+        for (NodeId id = 0; id < old_size; ++id) {
+            if (live[id])
+                old_to_new[id] = next++;
+        }
+
+        auto remap = [&](NodeId id) -> NodeId {
+            if (id == NULL_NODE || id >= old_to_new.size())
+                return NULL_NODE;
+            return old_to_new[id];
+        };
+
+        StructuralMutationGuard guard(this);
+
+        auto alloc = tag_.get_allocator();
+        std::pmr::vector<NodeTag> new_tag(alloc);
+        std::pmr::vector<std::int64_t> new_int_val(alloc);
+        std::pmr::vector<double> new_float_val(alloc);
+        std::pmr::vector<SymId> new_sym_id(alloc);
+        std::pmr::vector<PersistentChildVector<NodeId>> new_children(alloc);
+        std::pmr::vector<NodeId> new_parent(alloc);
+        std::pmr::vector<std::uint32_t> new_param_begin(alloc);
+        std::pmr::vector<std::uint32_t> new_param_count(alloc);
+        std::pmr::vector<std::uint32_t> new_cap_require_count(alloc);
+        std::pmr::vector<std::uint32_t> new_line(alloc);
+        std::pmr::vector<std::uint32_t> new_col(alloc);
+        std::pmr::vector<SyntaxMarker> new_marker(alloc);
+        std::pmr::vector<std::uint8_t> new_dirty(alloc);
+        std::pmr::vector<std::uint32_t> new_type_id(alloc);
+        std::pmr::vector<std::uint8_t> new_error_kind(alloc);
+        std::pmr::vector<std::uint32_t> new_node_first_mutation(alloc);
+        std::pmr::vector<std::uint16_t> new_node_gen(alloc);
+        std::pmr::vector<std::int64_t> new_value_cache(alloc);
+
+        new_tag.reserve(live_count);
+        new_int_val.reserve(live_count);
+        new_float_val.reserve(live_count);
+        new_sym_id.reserve(live_count);
+        new_children.reserve(live_count);
+        new_parent.reserve(live_count);
+        new_param_begin.reserve(live_count);
+        new_param_count.reserve(live_count);
+        new_cap_require_count.reserve(live_count);
+        new_line.reserve(live_count);
+        new_col.reserve(live_count);
+        new_marker.reserve(live_count);
+        new_dirty.reserve(live_count);
+        new_type_id.reserve(live_count);
+        new_error_kind.reserve(live_count);
+        new_node_first_mutation.reserve(live_count);
+        new_node_gen.reserve(live_count);
+        new_value_cache.reserve(live_count);
+
+        for (NodeId id = 0; id < old_size; ++id) {
+            if (!live[id])
+                continue;
+            new_tag.push_back(tag_[id]);
+            new_int_val.push_back(int_val_[id]);
+            new_float_val.push_back(float_val_[id]);
+            new_sym_id.push_back(sym_id_[id]);
+            std::vector<NodeId> remapped_children;
+            remapped_children.reserve(children_[id].size());
+            for (auto cid : children_[id]) {
+                if (cid != NULL_NODE)
+                    remapped_children.push_back(remap(cid));
+            }
+            new_children.emplace_back(remapped_children.begin(), remapped_children.end());
+            new_parent.push_back(remap(parent_[id]));
+            new_param_begin.push_back(param_begin_[id]);
+            new_param_count.push_back(param_count_[id]);
+            new_cap_require_count.push_back(cap_require_count_[id]);
+            new_line.push_back(line_[id]);
+            new_col.push_back(col_[id]);
+            new_marker.push_back(marker_[id]);
+            new_dirty.push_back(dirty_[id]);
+            new_type_id.push_back(type_id_[id]);
+            new_error_kind.push_back(error_kind_[id]);
+            new_node_first_mutation.push_back(node_first_mutation_[id]);
+            new_node_gen.push_back(generation_);
+            if (id < value_cache_.size())
+                new_value_cache.push_back(value_cache_[id]);
+            else
+                new_value_cache.push_back(kNotCached);
+        }
+
+        tag_ = std::move(new_tag);
+        int_val_ = std::move(new_int_val);
+        float_val_ = std::move(new_float_val);
+        sym_id_ = std::move(new_sym_id);
+        children_ = std::move(new_children);
+        parent_ = std::move(new_parent);
+        param_begin_ = std::move(new_param_begin);
+        param_count_ = std::move(new_param_count);
+        cap_require_count_ = std::move(new_cap_require_count);
+        line_ = std::move(new_line);
+        col_ = std::move(new_col);
+        marker_ = std::move(new_marker);
+        dirty_ = std::move(new_dirty);
+        type_id_ = std::move(new_type_id);
+        error_kind_ = std::move(new_error_kind);
+        node_first_mutation_ = std::move(new_node_first_mutation);
+        node_gen_ = std::move(new_node_gen);
+        value_cache_ = std::move(new_value_cache);
+
+        root = remap(root);
+
+        std::pmr::unordered_map<NodeId, std::uint8_t> new_region_by_lambda(alloc);
+        for (const auto& [lid, region] : region_by_lambda_id_) {
+            auto nlid = remap(lid);
+            if (nlid != NULL_NODE)
+                new_region_by_lambda[nlid] = region;
+        }
+        region_by_lambda_id_ = std::move(new_region_by_lambda);
+
+        std::vector<MatchClauseInfo> new_match_info(live_count);
+        for (NodeId id = 0; id < old_size; ++id) {
+            if (!live[id])
+                continue;
+            auto new_id = old_to_new[id];
+            if (has_match_info(id))
+                new_match_info[new_id] = match_info_[id];
+        }
+        match_info_ = std::move(new_match_info);
+
+        for (auto& rec : mutation_log_) {
+            rec.target_node = remap(rec.target_node);
+            rec.parent_id = remap(rec.parent_id);
+        }
+
+        free_list_.clear();
+
+        const auto reclaimed = old_size - live_count;
+        node_compact_total_.fetch_add(reclaimed, std::memory_order_relaxed);
+        return reclaimed;
+    }
+
+    [[nodiscard]] NodeLifecycleStats node_lifecycle_stats() const noexcept {
+        NodeLifecycleStats stats;
+        stats.total_slots = size();
+        stats.free_slots = free_list_.size();
+        auto live = mark_live_nodes();
+        for (bool is_live : live) {
+            if (is_live)
+                ++stats.live_nodes;
+        }
+        if (stats.total_slots > 0) {
+            const auto dead = stats.total_slots - stats.live_nodes;
+            stats.fragmentation_ratio =
+                static_cast<double>(dead) / static_cast<double>(stats.total_slots);
+        }
+        return stats;
+    }
+
+    std::uint64_t node_recycle_total() const noexcept {
+        return node_recycle_total_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t node_slot_reuse_count() const noexcept {
+        return node_slot_reuse_count_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t node_compact_total() const noexcept {
+        return node_compact_total_.load(std::memory_order_relaxed);
+    }
+
     void clear() {
         tag_.clear();
         int_val_.clear();
@@ -1639,6 +1941,7 @@ public:
         mutation_log_.clear();
         node_first_mutation_.clear();
         node_gen_.clear();
+        free_list_.clear();
         next_mutation_id_ = 1;
         generation_ = 1;
         match_info_.clear();
