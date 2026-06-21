@@ -1272,6 +1272,12 @@ private:
         pre(target != nullptr); // arena_ is private; impl also asserts via contract_assert
     void init_pair_primitives();
     void build_primitive_slots();
+    // Callback passed to primitives_detail::register_* helpers.
+    [[nodiscard]] std::function<void(std::string, PrimFn)> prim_registrar() {
+        return [this](std::string name, PrimFn fn) {
+            primitives_.add(std::move(name), std::move(fn));
+        };
+    }
     // Load a module file, return module object (or void on failure)
     types::EvalValue load_module_file(const std::string& path);
     // Resolve a module path (supports AURA_PATH, .aura extension)

@@ -13,7 +13,7 @@
 ./build.py test integ     # .aura 端到端
 ```
 
-加 primitive 后至少补 `tests/suite/` 或 `tests/regression/` 用例，并运行 `./build.py docs` 更新 `docs/generated/primitives.md`。
+加 primitive 后至少补 `tests/suite/` 或 `tests/regression/` 用例，并运行 **`./build.py docs`**（会写 `docs/generated/*.md`；CI `./build.py gate` 用 `docs --check` 校验，须把生成文件一并提交）。
 
 ## Evaluator 是什么
 
@@ -44,8 +44,31 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 
 ## §2 添加 primitive
 
-注册点：`init_pair_primitives()` 或 `Evaluator()` 构造器（需 `[this]` 时）。
-无状态原语可放入 `evaluator_primitives_*.cpp`（P0：`evaluator_primitives_core.cpp`），经 `PrimRegistrar` 回调注册。需访问 `pairs_` / `string_heap_` 的见 `evaluator_primitives_pair.cpp`；list 高阶原语（`map` / `filter` / `foldl`）见 `evaluator_primitives_list.cpp`（额外传入 `apply_unary` / `apply_pred` / `apply_binary` 回调）；JSON 见 `evaluator_primitives_json.cpp`；vector/hash 见 `evaluator_primitives_vector.cpp`（额外传入 `vector_heap_`）；m4-linear / regex / math / arithmetic 见 `evaluator_primitives_math.cpp`；reflect / type / keyword 见 `evaluator_primitives_reflect.cpp`（额外传入 `keyword_table_` 与 `type_registry_`）；独立 `query:` 原语（`query:module-exports`、`query:schema`）见 `evaluator_primitives_query.cpp`（额外传入 `resolve_module_path` 回调）；workspace AST `query:*` 簇见 `evaluator_primitives_query_workspace.cpp`（`WorkspaceQueryState` + `mev` 回调）；def-use 索引 `query:*` 簇见 `evaluator_primitives_query_defuse.cpp`（`DefUseQueryCallbacks` + `make_merr`）；`mutate:*` 簇见 `evaluator_primitives_mutate.cpp`（`Evaluator&` + `mev` + `destroy_defuse_index` 回调）；`workspace:*` 簇见 `evaluator_primitives_workspace.cpp`（`Evaluator&` friend + `destroy_defuse_index`；`WorkspaceTree` 类型在 `evaluator.ixx`）；`ast:*` 簇见 `evaluator_primitives_ast.cpp`（`Evaluator&` friend + `destroy_defuse_index` + `defuse_summary_stats` 回调）；`compile:*` / `concurrency:*` / `syntax-marker` 簇见 `evaluator_primitives_compile.cpp`（`Evaluator&` friend）；panic / `typecheck-status` / `atomic-batch:stats` / `closure:stats` 与 `jit:*` / `gc-arena-*` 观测原语见 `evaluator_primitives_observability.cpp`（`register_eval_observability_primitives` + `register_jit_arena_primitives`，`Evaluator&` friend）；messaging / `fiber:*` / `channel:*` / `orch:*` 簇见 `evaluator_primitives_messaging.cpp`（`Evaluator&` friend；`FiberResult` 静态状态留在该 TU）；`git:*` 与 `getenv` / `http-*` / `tcp-*` 见 `evaluator_primitives_io.cpp`（`register_git_primitives` + `register_network_primitives`；`CurlAPI` dlopen 留在该 TU）；`auto-evolve:*` / `synthesize:*` / `intend` / `strategy-*` 见 `evaluator_primitives_agent.cpp`（`register_auto_evolve_primitives` + `register_synthesize_primitives` + `register_strategy_primitives`；模板静态存储留在该 TU）；`coverage-report` / `gc*` / `arena:*` / `string-pool:*` / `dirty:*` / `type-registry-*` / `memory-pressure` 见 `evaluator_primitives_memory.cpp`（`register_memory_primitives` + `destroy_defuse_index` 回调）；`set-memory-policy` / `get-memory-policy` / `with-capability` / `capability?` / `check-capability` / `capability-stack` 见 `evaluator_primitives_policy.cpp`（`register_policy_primitives`，`Evaluator&` friend）；`set-code` / `eval` / `eval-current` / `typecheck-current` / `query-type-of` 等 EDSL 求值簇见 `evaluator_primitives_eval.cpp`（`register_eval_primitives` + `mev` + `destroy_defuse_index` 回调）；`declare-type` / `generate-type-sigs` / `check-module-signature` 与 `hot-swap:fn` 见 `evaluator_primitives_types.cpp`（`register_type_primitives` + `register_hot_swap_primitives`）；`diagnose` / `apply-fix` / `check-preconditions` 见 `evaluator_primitives_diagnostic.cpp`（`register_diagnostic_primitives`，`Evaluator&` friend）；`module?` / `module-get` / `module-keys` / `use` / `load-module` / `import` 见 `evaluator_primitives_module.cpp`（`register_module_primitives`，`Evaluator&` friend）；`read` / `read-file` / `write-file` / `file-*` / `shell` / `command-output` / `command-line` / `directory-list` 见 `evaluator_primitives_file.cpp`（`register_file_primitives`，`Evaluator&` friend）；`equal?` / `gensym` / `apply` / `display` / `format` / `error` / `check-*` 见 `evaluator_primitives_runtime.cpp`（`register_runtime_primitives`）；`run-tests` 见 `evaluator_primitives_test.cpp`；`current-time` / `arena-offset` 见 `evaluator_primitives_misc.cpp`；`while` 见 `evaluator_primitives_control.cpp`；`char?` / `string->list` / `read-line` 见 `evaluator_primitives_char.cpp`；`mutation-count` / `rollback*` 见 `evaluator_primitives_mutation.cpp`。
+**P0 已完成**：`init_pair_primitives()` 内无内联 `primitives_.add("...")`；静态原语均在 `evaluator_primitives_*.cpp`（31 个 TU），经 `prim_registrar()` 回调注册。完整列表见 `docs/generated/primitives.md`（`./build.py docs` 生成）。
+
+注册点：`init_pair_primitives()`、`Evaluator()` 构造器（network/type 等），或 `ffi_runtime_` / `adt_runtime_`（外部 runtime 模式）。
+
+| 簇 / 前缀 | 源文件 | 注册函数 | 备注 |
+|-----------|--------|----------|------|
+| 类型谓词 / `not` | `evaluator_primitives_core.cpp` | `register_type_and_char_primitives` | 无状态 |
+| pair / string | `evaluator_primitives_pair.cpp` | `register_pair_and_string_primitives` | `pairs_` / `string_heap_` |
+| list 高阶 | `evaluator_primitives_list.cpp` | `register_list_primitives` | + `apply_unary/pred/binary` |
+| JSON | `evaluator_primitives_json.cpp` | `register_json_primitives` | |
+| vector / hash | `evaluator_primitives_vector.cpp` | `register_vector_and_hash_primitives` | + `vector_heap_` |
+| math / regex | `evaluator_primitives_math.cpp` | `register_math_regex_and_arithmetic_primitives` | |
+| reflect / keyword | `evaluator_primitives_reflect.cpp` | `register_reflect_and_type_primitives` | + `keyword_table_` / `type_registry_` |
+| `query:module-*` | `evaluator_primitives_query.cpp` | `register_query_primitives` | + `resolve_module_path` |
+| `query:*` workspace | `evaluator_primitives_query_workspace.cpp` | `register_workspace_query_primitives` | + `mev` |
+| `query:*` def-use | `evaluator_primitives_query_defuse.cpp` | `register_defuse_query_primitives` | + `DefUseQueryCallbacks` |
+| `mutate:*` | `evaluator_primitives_mutate.cpp` | `register_mutate_primitives` | friend + `mev` + `destroy_defuse_index` |
+| `workspace:*` | `evaluator_primitives_workspace.cpp` | `register_workspace_primitives` | `WorkspaceTree` 在 `evaluator.ixx` |
+| `ast:*` | `evaluator_primitives_ast.cpp` | `register_ast_primitives` | + `defuse_summary_stats` |
+| `compile:*` / JIT 观测 | `evaluator_primitives_compile.cpp` / `observability.cpp` | 各 `register_*` | friend |
+| messaging / fiber | `evaluator_primitives_messaging.cpp` | `register_messaging_primitives` | |
+| git / network | `evaluator_primitives_io.cpp` | `register_git/network_primitives` | |
+| agent / synthesize | `evaluator_primitives_agent.cpp` | `register_auto_evolve/synthesize/strategy` | |
+| memory / policy / eval EDSL | `memory.cpp` / `policy.cpp` / `eval.cpp` | 各 `register_*` | |
+| types / diagnostic / module / file / runtime | `types` … `runtime.cpp` 等 | 各 `register_*` | P0 step 22–31 |
 
 ```cpp
 primitives_.add("my:primitive", [](std::span<const EvalValue> a) -> EvalValue {
@@ -120,8 +143,12 @@ if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 
 | 文件 | 职责 |
 |------|------|
-| `evaluator.ixx` / `evaluator_impl.cpp` | Evaluator、原语、eval_flat、EDSL |
-| `query.ixx` / `query_impl.cpp` | QueryEngine、DefUseIndex |
+| `evaluator.ixx` / `evaluator_impl.cpp` | Evaluator、eval_flat、EDSL 胶水 |
+| `evaluator_defuse_index.cpp` | DefUseIndex 实现（P1 从 impl 抽出） |
+| `evaluator_eval_flat.cpp` | `eval_flat` 求值主循环（P1 从 impl 抽出） |
+| `evaluator_primitives_registry.cpp` | `register_all_primitives` 编排 |
+| `evaluator_primitives_*.cpp` | 各簇原语注册（31 TU） |
+| `query.ixx` / `query_impl.cpp` | QueryEngine、ASTIndex |
 | `adt_runtime.*` | ADT 构造器表（Issue #108 bypass） |
 | `ffi_primitives.*` | C FFI 状态 |
 | `service.ixx` | CompilerService、增量 cache |
