@@ -7,11 +7,13 @@ module;
 #include <string>
 #include <utility>
 #include <vector>
+#include <contracts>
 #include "runtime_shared.h"
 
 module aura.compiler.evaluator;
 
 import std;
+import aura.core.ast;
 import aura.compiler.value;
 
 namespace aura::compiler {
@@ -201,6 +203,27 @@ bool Evaluator::restore_panic_checkpoint() {
         panic_safe_env_frames_size_ = 0;
     }
     return ok;
+}
+
+void Evaluator::update_shared_tree_root() {
+    if (!workspace_tree_)
+        return;
+    auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+    if (wt->size() > 0) {
+        auto active = wt->active_idx();
+        if (active < wt->size()) {
+            wt->nodes_[active].flat = workspace_flat_;
+            wt->nodes_[active].pool = workspace_pool_;
+            if (active > 0)
+                wt->nodes_[active].has_own_flat = true;
+        }
+    }
+}
+
+Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
+    contract_assert(arena_ != nullptr);
+    auto* ar = target ? target : arena_;
+    return ar ? ar->create<Env>(e) : nullptr;
 }
 
 } // namespace aura::compiler

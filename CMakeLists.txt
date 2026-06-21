@@ -7,7 +7,8 @@ include(${CMAKE_SOURCE_DIR}/cmake/AuraIssueBundles.cmake)
 
 # P0: evaluator implementation partitions (same module: aura.compiler.evaluator).
 set(AURA_EVALUATOR_SOURCE_FILES
-    src/compiler/evaluator_impl.cpp
+    src/compiler/evaluator_ctor.cpp
+    src/compiler/evaluator_adt.cpp
     src/compiler/evaluator_defuse_index.cpp
     src/compiler/evaluator_eval_flat.cpp
     src/compiler/evaluator_primitives_registry.cpp
@@ -358,7 +359,7 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 # messaging_bridge + ffi_primitives/adt_runtime/lowering_linear_types).
 # Pre-Fix #1, each test_issue_* binary compiled these sources
 # independently, generating ~1950 MB of duplicated .o files (the
-# largest — evaluator_impl.cpp.o 12.7 MB — alone duplicated 45
+# largest — evaluator partition .o (~12.7 MB) — alone duplicated 45
 # times, wasting 544 MB of compile work and ~5 min of CI build time
 # on a 2-vCPU runner).
 #
