@@ -703,6 +703,7 @@ public:
         ir_cache_bridge_.clear();
         ir_define_env_bindings_.clear();
         ir_define_closure_owner_.clear();
+        ir_value_cell_bindings_.clear();
         // Issue #223: bump mutation_epoch_ so any stale
         // ClosureBridgeData that captured the old epoch is detected
         // by the bridge callback / apply_closure. The bridge_epoch_
@@ -729,53 +730,14 @@ public:
         if (root == aura::ast::NULL_NODE || root >= flat.size())
             return false;
 
-        // Issue #272: function defines at root are IR-native when the lambda
-        // body only references params, self, primitives, or cached functions.
+        // Issue #272: top-level defines are IR-native when the body only
+        // references params, self, primitives, cached functions, or IR value cells.
         auto root_v = flat.get(root);
         if (root_v.tag == aura::ast::NodeTag::Define && !root_v.children.empty()) {
             auto body_id = root_v.child(0);
             if (body_id < flat.size()) {
-                auto body_v = flat.get(body_id);
-                if (body_v.tag == aura::ast::NodeTag::Lambda) {
-                    auto lambda_body =
-                        body_v.children.empty() ? aura::ast::NULL_NODE : body_v.child(0);
-                    auto name_str = std::string(pool.resolve(root_v.sym_id));
-                    std::unordered_set<std::string> param_names;
-                    for (auto pid : body_v.params)
-                        param_names.insert(std::string(pool.resolve(pid)));
-
-                    struct FnDefineWalker {
-                        const aura::ast::FlatAST& f;
-                        const aura::ast::StringPool& p;
-                        const std::string& self_name;
-                        const std::unordered_set<std::string>& param_names;
-                        const Evaluator& eval;
-                        const std::unordered_map<std::string,
-                                                 std::vector<aura::ir::IRFunction>>& ir_cache;
-                        bool needs_fallback = false;
-                        void walk(aura::ast::NodeId id) {
-                            if (needs_fallback || id == aura::ast::NULL_NODE || id >= f.size())
-                                return;
-                            auto nv = f.get(id);
-                            if (nv.tag == aura::ast::NodeTag::Variable) {
-                                auto var_name = std::string(p.resolve(nv.sym_id));
-                                if (param_names.count(var_name) || var_name == self_name)
-                                    return;
-                                if (eval.primitives().slot_for_name(var_name) <
-                                    eval.primitives().slot_count())
-                                    return;
-                                if (ir_cache.count(var_name))
-                                    return;
-                                needs_fallback = true;
-                            }
-                            for (auto c : nv.children)
-                                walk(c);
-                        }
-                    };
-                    FnDefineWalker fdw{flat, pool, name_str, param_names, evaluator_, ir_cache_};
-                    fdw.walk(lambda_body);
-                    return fdw.needs_fallback;
-                }
+                auto name_str = std::string(pool.resolve(root_v.sym_id));
+                return define_body_needs_tree_walker_fallback(flat, pool, body_id, name_str);
             }
         }
 
@@ -911,13 +873,13 @@ public:
                 if (!var_name.empty() && var_name[0] == ':')
                     return true;
                 if (user_bindings_.count(std::string(var_name))) {
-                    // If also in ir_cache_, IR pipeline can handle it
-                    if (ir_cache_.count(std::string(var_name)) == 0)
+                    if (ir_cache_.count(std::string(var_name)) == 0 &&
+                        ir_value_cell_bindings_.count(std::string(var_name)) == 0)
                         return true;
                 }
-                // Unknown variable — IR silently returns 0, tree-walker reports
-                // proper unbound-variable error. Trigger fallback for correct errors.
                 auto vn = std::string(var_name);
+                if (ir_value_cell_bindings_.count(vn))
+                    continue;
                 if (!vn.empty() &&
                     evaluator_.primitives().slot_for_name(vn) >=
                         evaluator_.primitives().slot_count() &&
@@ -1299,19 +1261,25 @@ public:
                 user_bindings_.insert(std::string(name));
                 return EvalResult(types::make_void());
             }
+            // Issue #272 Cycle 3: value define via IR when the body is lowerable.
+            if (!define_body_needs_tree_walker_fallback(*flat_ptr, *pool_ptr, body_id,
+                                                        std::string(name))) {
+                if (bind_value_define_via_ir(*flat_ptr, *pool_ptr, expanded_root,
+                                             std::string(name))) {
+                    auto bound = evaluator_.top_env().lookup_binding(std::string(name));
+                    if (bound && types::is_cell(*bound))
+                        return evaluator_.cells()[types::as_cell_id(*bound)];
+                    return EvalResult(types::make_void());
+                }
+            }
             // Value define: try compile-time constant evaluation
             auto const_val = try_const_eval(*flat_ptr, *pool_ptr, body_id);
             if (const_val) {
-                // Bind via cell at compile time — same as runtime define path,
-                // ensures set! can find the cell via lookup_cell_index
-                auto ci = evaluator_.cells().size();
-                evaluator_.cells().push_back(*const_val);
-                evaluator_.top_env().bind(std::string(name), types::make_cell(ci));
-                user_bindings_.insert(std::string(name));
+                auto ci = bind_define_value_in_env(std::string(name), *const_val);
+                ir_value_cell_bindings_[std::string(name)] = ci;
                 return *const_val;
             }
-            // Value define: send through tree-walker for env persistence,
-            // then track the name for subsequent IR fallback detection.
+            // Fallback: tree-walker for env persistence + subsequent fallback tracking.
             auto result =
                 evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
             user_bindings_.insert(std::string(name));
@@ -1323,7 +1291,7 @@ public:
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             *flat_ptr, *pool_ptr, arena_, cache_ptr, nullptr, &evaluator_.primitives(), nullptr,
-            cache_strings_ptr);
+            cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
 
         // Run passes (silent in default path — use eval_ir for debug)
         TypeSpecializationWrap ts(&type_registry_);
@@ -1412,15 +1380,14 @@ public:
         }
 #endif
 
-        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_);
+        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
+                                      &evaluator_);
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
         ir_interp.set_strategy(strategy_);
         if (!last_escape_maps_.empty())
             ir_interp.set_escape_maps(last_escape_maps_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
-        // Issue #62 Iter 1: attach metrics for hot-path counters.
-        ir_interp.set_metrics(&metrics_);
 
         try {
 
@@ -1613,7 +1580,7 @@ public:
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             *flat_ptr, *pool_ptr, arena_, cache_ptr_local, nullptr, &evaluator_.primitives(),
-            nullptr, cache_strings_ptr);
+            nullptr, cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
 
         TypeSpecializationWrap ts(&type_registry_);
         ComputeKindWrap ck;
@@ -1652,15 +1619,14 @@ public:
         last_ir_mod_ = ir_mod;
         last_escape_maps_ = escape_pass.take_maps();
 
-        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_);
+        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
+                                      &evaluator_);
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
         ir_interp.set_strategy(strategy_);
         if (!last_escape_maps_.empty())
             ir_interp.set_escape_maps(last_escape_maps_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
-        // Issue #62 Iter 1: attach metrics for hot-path counters.
-        ir_interp.set_metrics(&metrics_);
 
         // Set IR closure bridge — enables tree-walker primitives (map/filter/foldl)
         // to call IR-produced closures.
@@ -2514,13 +2480,27 @@ public:
                 auto def_node = flat.get(node_id);
                 if (def_node.children.empty())
                     continue;
-                if (flat.get(def_node.child(0)).tag != aura::ast::NodeTag::Lambda)
-                    continue;
-                if (ir_cache_.count(fname))
+                auto body_id = def_node.child(0);
+                if (body_id >= flat.size())
                     continue;
 
-                auto result = cache_define(source, flat, pool, node_id, fname,
-                                         /*bind_in_env=*/true, name);
+                if (flat.get(body_id).tag == aura::ast::NodeTag::Lambda) {
+                    if (ir_cache_.count(fname))
+                        continue;
+                    auto result = cache_define(source, flat, pool, node_id, fname,
+                                                 /*bind_in_env=*/true, name);
+                    if (!result)
+                        return result;
+                    user_bindings_.insert(fname);
+                    continue;
+                }
+
+                // Issue #272 Cycle 3: value defines via IR when lowerable.
+                if (!define_body_needs_tree_walker_fallback(flat, pool, body_id, fname) &&
+                    bind_value_define_via_ir(flat, pool, node_id, fname)) {
+                    continue;
+                }
+                auto result = evaluator_.eval_flat(flat, pool, node_id, evaluator_.top_env());
                 if (!result)
                     return result;
                 user_bindings_.insert(fname);
@@ -2543,9 +2523,9 @@ public:
         }
 
         // Write disk cache (only when not loaded from cache).
-        // Issue #272 Cycle 2: persist FlatAST only; IR bundle in ir_cache_
-        // is live memory owned by the compiler and may not round-trip through
-        // reflect serialize safely after IRInterpreter env binding.
+        // Issue #272 Cycle 3: FlatAST-only for now. ir_cache_ bundles may be
+        // mutated by IRInterpreter env binding; copying them for disk serialize
+        // is unsafe until we snapshot pre-bind IR (reflect layout is fixed).
         if (!cache_hit) {
             ensure_cache_dir();
             auto cache_path = module_cache_path(name, source);
@@ -3082,7 +3062,7 @@ public:
         std::vector<std::string> cache_hits;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
-            cache_strings_ptr, &name);
+            cache_strings_ptr, &name, &type_registry_, value_cells_for_lowering());
         // Run per-function passes on the new bundle.
         {
             aura::compiler::ComputeKindWrap ck_pass;
@@ -3538,13 +3518,12 @@ public:
                                                   std::memory_order_relaxed);
         }
 
-        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_);
+        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
+                                      &evaluator_);
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
         ir_interp.set_strategy(strategy_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
-        // Issue #62 Iter 1: attach metrics for hot-path counters.
-        ir_interp.set_metrics(&metrics_);
         auto result = ir_interp.execute();
 
         last_cells_ = ir_interp.list_cells();
@@ -3696,7 +3675,7 @@ public:
             std::vector<std::string> cache_hits;
             auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
-                cache_strings_ptr);
+                cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
             flat.root = saved_root; // restore
 
             // Run passes
@@ -3752,15 +3731,90 @@ public:
                 -> std::optional<types::EvalValue> { return dispatch_ir_define_closure(cid, args); });
     }
 
-    void bind_define_value_in_env(const std::string& name, const types::EvalValue& value) {
+    std::size_t bind_define_value_in_env(const std::string& name, const types::EvalValue& value) {
         auto existing = evaluator_.top_env().lookup_binding(name);
         if (existing && types::is_cell(*existing)) {
-            evaluator_.cells()[types::as_cell_id(*existing)] = value;
-            return;
+            auto ci = types::as_cell_id(*existing);
+            evaluator_.cells()[ci] = value;
+            return ci;
         }
         auto ci = evaluator_.cells().size();
         evaluator_.cells().push_back(value);
         evaluator_.top_env().bind(name, types::make_cell(ci));
+        return ci;
+    }
+
+    [[nodiscard]] const std::unordered_map<std::string, std::size_t>* value_cells_for_lowering() {
+        return ir_value_cell_bindings_.empty() ? nullptr : &ir_value_cell_bindings_;
+    }
+
+    [[nodiscard]] bool
+    define_body_needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
+                                           const aura::ast::StringPool& pool,
+                                           aura::ast::NodeId body_id,
+                                           const std::string& self_name = {}) const {
+        if (body_id == aura::ast::NULL_NODE || body_id >= flat.size())
+            return false;
+        std::unordered_set<std::string> param_names;
+        auto body_v = flat.get(body_id);
+        if (body_v.tag == aura::ast::NodeTag::Lambda) {
+            for (auto pid : body_v.params)
+                param_names.insert(std::string(pool.resolve(pid)));
+            body_id = body_v.children.empty() ? aura::ast::NULL_NODE : body_v.child(0);
+        }
+        struct BodyWalker {
+            const aura::ast::FlatAST& f;
+            const aura::ast::StringPool& p;
+            const std::string& self_name;
+            const std::unordered_set<std::string>& param_names;
+            const Evaluator& eval;
+            const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>& ir_cache;
+            const std::unordered_map<std::string, std::size_t>& value_cells;
+            bool needs_fallback = false;
+            void walk(aura::ast::NodeId id) {
+                if (needs_fallback || id == aura::ast::NULL_NODE || id >= f.size())
+                    return;
+                auto nv = f.get(id);
+                if (nv.tag == aura::ast::NodeTag::Variable) {
+                    auto var_name = std::string(p.resolve(nv.sym_id));
+                    if (param_names.count(var_name) || var_name == self_name)
+                        return;
+                    if (eval.primitives().slot_for_name(var_name) < eval.primitives().slot_count())
+                        return;
+                    if (ir_cache.count(var_name) || value_cells.count(var_name))
+                        return;
+                    needs_fallback = true;
+                }
+                for (auto c : nv.children)
+                    walk(c);
+            }
+        };
+        BodyWalker bw{flat,       pool,       self_name, param_names, evaluator_,
+                      ir_cache_,  ir_value_cell_bindings_};
+        bw.walk(body_id);
+        return bw.needs_fallback;
+    }
+
+    bool bind_value_define_via_ir(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                  aura::ast::NodeId expanded_root, const std::string& name_str) {
+        auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+        auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
+        auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
+        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+            flat, pool, arena_, cache_ptr, nullptr, &evaluator_.primitives(), cache_bridge_ptr,
+            cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
+
+        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
+                                      &evaluator_);
+        aura::compiler::IRInterpreter interp(ir_mod, ctx);
+        auto result = interp.execute();
+        if (!result)
+            return false;
+
+        auto ci = bind_define_value_in_env(name_str, *result);
+        ir_value_cell_bindings_[name_str] = ci;
+        metrics_.value_define_ir_env_bind_count.fetch_add(1, std::memory_order_relaxed);
+        return true;
     }
 
     // Issue #272 Cycle 2: bind env from an already-cached define (no cache update).
@@ -3772,7 +3826,7 @@ public:
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             flat, pool, arena_, cache_ptr, nullptr, &evaluator_.primitives(), cache_bridge_ptr,
-            cache_strings_ptr, &name_str);
+            cache_strings_ptr, &name_str, &type_registry_, value_cells_for_lowering());
         return bind_function_define_via_ir(ir_mod, name_str);
     }
 
@@ -3935,7 +3989,7 @@ public:
         // Pass self_name so lowering can emit correct MakeClosure for self-references
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
-            cache_strings_ptr, &name_str);
+            cache_strings_ptr, &name_str, &type_registry_, value_cells_for_lowering());
 
         // Run passes per-function on the new function bundle
         {
@@ -5060,6 +5114,8 @@ private:
 
     // Issue #272: persistent IR runtimes for function-define env bindings.
     std::unordered_map<std::string, std::unique_ptr<IRDefineEnvBinding>> ir_define_env_bindings_;
+    // Issue #272 Cycle 3: top-level value defines bound via IR (name → cell index).
+    std::unordered_map<std::string, std::size_t> ir_value_cell_bindings_;
     std::unordered_map<aura::compiler::ClosureId, std::string> ir_define_closure_owner_;
 
     // Source code for each cached function, used for re-lowering on dependency changes.
@@ -5237,7 +5293,7 @@ private:
             std::vector<std::string> cache_hits;
             auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
-                cache_strings_ptr);
+                cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
 
             // Phase 4: Run passes per-function on the re-lowered function bundle.
             {
@@ -5329,6 +5385,10 @@ public:
     // Issue #272: test/observability accessor.
     [[nodiscard]] std::uint64_t define_ir_env_bind_count() const noexcept {
         return metrics_.define_ir_env_bind_count.load(std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] std::uint64_t value_define_ir_env_bind_count() const noexcept {
+        return metrics_.value_define_ir_env_bind_count.load(std::memory_order_relaxed);
     }
 
     // Issue #272 Cycle 2: test hook for needs_tree_walker_fallback on defines.

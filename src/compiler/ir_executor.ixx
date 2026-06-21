@@ -116,16 +116,19 @@ export struct IRContext {
     Primitives& primitives; // non-const: ConstString mutates string_heap
     const aura::core::TypeRegistry* type_registry = nullptr;
     CompilerMetrics* metrics = nullptr;
+    // Issue #272 Cycle 3: optional evaluator for TopCellLoad (value defines).
+    Evaluator* evaluator = nullptr;
 
     // References must be bound at construction. The caller passes
     // the primitives reference; type_registry and metrics are
     // optional. The IRContext is typically stack-allocated inside
     // cs.eval(), with lifetime matching the IRInterpreter's.
     IRContext(Primitives& p, const aura::core::TypeRegistry* t = nullptr,
-              CompilerMetrics* m = nullptr)
+              CompilerMetrics* m = nullptr, Evaluator* eval = nullptr)
         : primitives(p)
         , type_registry(t)
-        , metrics(m) {}
+        , metrics(m)
+        , evaluator(eval) {}
 };
 
 export class IRInterpreter {
