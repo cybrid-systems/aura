@@ -500,7 +500,7 @@ void register_mutation_primitives(std::function<void(std::string, PrimFn)> add, 
 void defuse_index_destroy(void** slot);
 
 // Workspace layering (P13) — shared by workspace-tree TU + workspace primitives TU.
-struct WorkspaceNode {
+export struct WorkspaceNode {
     std::string name;
     ast::FlatAST* flat = nullptr;
     ast::StringPool* pool = nullptr;
@@ -511,6 +511,9 @@ struct WorkspaceNode {
     std::uint64_t generation = 0;
     // Issue #263: monotonic COW layer id assigned on lazy clone.
     std::uint64_t cow_epoch = 0;
+    // Issue #276: direct parent workspace index + NodeId remap table.
+    std::uint32_t parent_layer_idx = 0;
+    ast::mutation::NodeIdRemapTable remap;
     bool read_only = false;
     bool has_own_flat = false;
     bool is_root = false;
@@ -519,7 +522,7 @@ struct WorkspaceNode {
     std::uint64_t cow_refused_count = 0;
 };
 
-struct WorkspaceTree {
+export struct WorkspaceTree {
     std::vector<WorkspaceNode> nodes_;
     std::uint32_t active_idx_ = 0;
     // Issue #263: global COW epoch counter (bumped on each lazy clone).
@@ -530,12 +533,19 @@ struct WorkspaceTree {
     WorkspaceNode* active() { return active_idx_ < nodes_.size() ? &nodes_[active_idx_] : nullptr; }
 
     bool ensure_local_flat(std::uint32_t idx);
-    std::uint32_t create_child(const std::string& name, ast::FlatAST* parent_flat,
-                               ast::StringPool* parent_pool);
+    std::uint32_t create_child(const std::string& name, std::uint32_t parent_layer_idx,
+                               ast::FlatAST* parent_flat, ast::StringPool* parent_pool);
     bool delete_child(std::uint32_t idx);
     bool set_active(std::uint32_t idx);
     void set_read_only(std::uint32_t idx, bool ro);
     [[nodiscard]] bool can_write(std::uint32_t idx);
+
+    // Issue #276: remap a node id across workspace layers.
+    [[nodiscard]] ast::NodeId remap_node_id(std::uint32_t from_layer, ast::NodeId id,
+                                          std::uint32_t to_layer) const noexcept;
+    [[nodiscard]] std::optional<ast::FlatAST::StableNodeRef> resolve_stable_ref(
+        std::uint32_t from_layer, ast::FlatAST::StableNodeRef ref,
+        std::uint32_t to_layer) const noexcept;
 };
 
 export class Evaluator {
@@ -2835,16 +2845,53 @@ inline bool WorkspaceTree::ensure_local_flat(std::uint32_t idx) {
         n.cow_epoch = ++cow_epoch_;
         n.generation = new_flat->generation();
         n.memory_used = parent_bytes;
+        n.remap.reset_identity(n.parent_layer_idx, n.cow_epoch, new_flat->size());
         return true;
     }
     return false;
 }
 
-inline std::uint32_t WorkspaceTree::create_child(const std::string& name, ast::FlatAST* parent_flat,
+inline ast::NodeId WorkspaceTree::remap_node_id(std::uint32_t from_layer, ast::NodeId id,
+                                                std::uint32_t to_layer) const noexcept {
+    if (from_layer >= nodes_.size() || to_layer >= nodes_.size() || id == ast::NULL_NODE)
+        return ast::NULL_NODE;
+    if (from_layer == to_layer)
+        return id;
+    ast::NodeId cur = id;
+    if (from_layer < to_layer) {
+        for (std::uint32_t layer = from_layer + 1; layer <= to_layer; ++layer)
+            cur = nodes_[layer].remap.resolve_from_parent(cur);
+    } else {
+        for (std::uint32_t layer = from_layer; layer > to_layer; --layer)
+            cur = nodes_[layer].remap.resolve_to_parent(cur);
+    }
+    return cur;
+}
+
+inline std::optional<ast::FlatAST::StableNodeRef> WorkspaceTree::resolve_stable_ref(
+    std::uint32_t from_layer, ast::FlatAST::StableNodeRef ref,
+    std::uint32_t to_layer) const noexcept {
+    if (from_layer >= nodes_.size() || to_layer >= nodes_.size())
+        return std::nullopt;
+    const auto* target_flat = nodes_[to_layer].flat;
+    if (!target_flat)
+        return std::nullopt;
+    if (from_layer == to_layer)
+        return target_flat->is_valid(ref) ? std::optional{ref} : std::nullopt;
+    const auto mapped = remap_node_id(from_layer, ref.id, to_layer);
+    if (!target_flat->is_live_node(mapped))
+        return std::nullopt;
+    return ast::FlatAST::StableNodeRef{mapped, target_flat->generation()};
+}
+
+inline std::uint32_t WorkspaceTree::create_child(const std::string& name,
+                                                 std::uint32_t parent_layer_idx,
+                                                 ast::FlatAST* parent_flat,
                                                  ast::StringPool* parent_pool) {
     auto idx = static_cast<std::uint32_t>(nodes_.size());
     WorkspaceNode node;
     node.name = name;
+    node.parent_layer_idx = parent_layer_idx;
     node.parent_flat_ = parent_flat;
     node.parent_pool_ = parent_pool;
     node.flat = parent_flat;
@@ -2865,6 +2912,9 @@ inline bool WorkspaceTree::delete_child(std::uint32_t idx) {
     n.pool = nullptr;
     n.parent_flat_ = nullptr;
     n.parent_pool_ = nullptr;
+    n.remap = ast::mutation::NodeIdRemapTable{};
+    n.cow_epoch = 0;
+    n.generation = 0;
     return true;
 }
 

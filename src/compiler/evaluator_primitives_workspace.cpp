@@ -113,8 +113,35 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             name = ev.string_heap_[as_string_idx(a[0])];
         if (name.empty())
             name = "ws-" + std::to_string(wt->size());
-        auto id = wt->create_child(name, ev.workspace_flat_, ev.workspace_pool_);
+        auto parent_idx = wt->active_idx();
+        auto id = wt->create_child(name, parent_idx, ev.workspace_flat_, ev.workspace_pool_);
         return make_int(static_cast<std::int64_t>(id));
+    });
+
+    // Issue #276: (workspace:resolve-stable-ref from-layer node-id gen [to-layer])
+    // Remaps a StableNodeRef captured in one workspace layer to the
+    // current (or explicit) target layer. Cross-layer resolution uses
+    // the per-layer NodeIdRemapTable and treats unchanged nodes as live
+    // even when generation advanced after a child-layer mutate.
+    add("workspace:resolve-stable-ref", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
+            !ev.workspace_tree_ || !ev.workspace_flat_)
+            return make_void();
+        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+        auto from_layer = static_cast<std::uint32_t>(as_int(a[0]));
+        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[1]));
+        auto gen = static_cast<std::uint16_t>(as_int(a[2]));
+        auto to_layer = wt->active_idx();
+        if (a.size() >= 4 && is_int(a[3]))
+            to_layer = static_cast<std::uint32_t>(as_int(a[3]));
+        auto resolved = wt->resolve_stable_ref(
+            from_layer, aura::ast::FlatAST::StableNodeRef{node_id, gen}, to_layer);
+        if (!resolved)
+            return make_void();
+        std::size_t pid = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(resolved->id)),
+                             make_int(static_cast<std::int64_t>(resolved->gen))});
+        return make_pair(pid);
     });
 
     // (workspace:switch id) → #t
@@ -467,6 +494,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             ws.pool = ws.parent_pool_;
             ws.has_own_flat = false;
             ws.generation = 0;
+            ws.cow_epoch = 0;
+            ws.remap = aura::ast::mutation::NodeIdRemapTable{};
             ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
             ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
             // If we just discarded the active workspace, sync pointers

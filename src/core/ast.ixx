@@ -2644,6 +2644,11 @@ public:
     // Current FlatAST generation. Incremented on rollback to invalidate stale NodeIds.
     std::uint16_t generation() const { return generation_; }
 
+    // Issue #276: live slot check without generation equality (cross-layer resolve).
+    [[nodiscard]] bool is_live_node(NodeId id) const noexcept {
+        return id != NULL_NODE && id < tag_.size() && id < node_gen_.size() && node_gen_[id] != 0;
+    }
+
     // Check if a NodeId is valid (in-bounds and from the current generation).
     bool is_valid(const NodeId id) const
         post(r: r == (id != NULL_NODE && id < tag_.size() && id < node_gen_.size() &&
@@ -3299,6 +3304,23 @@ public:
 private:
     bool has_error_ = false;
 };
+
+// Issue #276: resolve a captured stable ref across workspace layers.
+export [[nodiscard]] std::optional<FlatAST::StableNodeRef> resolve_across_layer(
+    const FlatAST& target_flat, const mutation::NodeIdRemapTable& layer_remap,
+    FlatAST::StableNodeRef captured, std::uint32_t captured_layer,
+    std::uint32_t target_layer) noexcept {
+    if (captured_layer == target_layer)
+        return target_flat.is_valid(captured) ? std::optional{captured} : std::nullopt;
+    NodeId mapped = captured.id;
+    if (captured_layer < target_layer)
+        mapped = layer_remap.resolve_from_parent(mapped);
+    else
+        mapped = layer_remap.resolve_to_parent(mapped);
+    if (!target_flat.is_live_node(mapped))
+        return std::nullopt;
+    return FlatAST::StableNodeRef{mapped, target_flat.generation()};
+}
 
 // ── Patch application ──────────────────────────────────────────
 export bool apply_patches(FlatAST& ast, std::span<const Patch> patches) pre(!patches.empty());
