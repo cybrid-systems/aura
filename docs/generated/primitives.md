@@ -213,7 +213,7 @@ Runtime canonical list: `(api-reference)`.
 - `command-output` — `src/compiler/evaluator_impl.cpp`
 - `cons` — `src/compiler/evaluator_primitives_pair.cpp`
 - `cos` — `src/compiler/evaluator_primitives_math.cpp`
-- `coverage-report` — `src/compiler/evaluator_impl.cpp`
+- `coverage-report` — `src/compiler/evaluator_primitives_memory.cpp`
 - `current-time` — `src/compiler/evaluator_impl.cpp`
 - `declare-type` — `src/compiler/evaluator_impl.cpp`
 - `define-linear` — `src/compiler/evaluator_primitives_math.cpp`
@@ -239,15 +239,15 @@ Runtime canonical list: `(api-reference)`.
 - `floor` — `src/compiler/evaluator_primitives_math.cpp`
 - `foldl` — `src/compiler/evaluator_primitives_list.cpp`
 - `format` — `src/compiler/evaluator_impl.cpp`
-- `gc` — `src/compiler/evaluator_impl.cpp`
+- `gc` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-arena-info` — `src/compiler/evaluator_primitives_observability.cpp`
 - `gc-arena-stats` — `src/compiler/evaluator_primitives_observability.cpp`
-- `gc-freeze` — `src/compiler/evaluator_impl.cpp`
-- `gc-heap` — `src/compiler/evaluator_impl.cpp`
-- `gc-module` — `src/compiler/evaluator_impl.cpp`
-- `gc-module-count` — `src/compiler/evaluator_impl.cpp`
-- `gc-stats` — `src/compiler/evaluator_impl.cpp`
-- `gc-temp` — `src/compiler/evaluator_impl.cpp`
+- `gc-freeze` — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-heap` — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-module` — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-module-count` — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-temp` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gcd` — `src/compiler/evaluator_primitives_math.cpp`
 - `generate-type-sigs` — `src/compiler/evaluator_impl.cpp`
 - `gensym` — `src/compiler/evaluator_impl.cpp`
@@ -303,7 +303,7 @@ Runtime canonical list: `(api-reference)`.
 - `map` — `src/compiler/evaluator_primitives_list.cpp`
 - `max` — `src/compiler/evaluator_primitives_math.cpp`
 - `member` — `src/compiler/evaluator_primitives_list.cpp`
-- `memory-pressure` — `src/compiler/evaluator_impl.cpp`
+- `memory-pressure` — `src/compiler/evaluator_primitives_memory.cpp`
 - `min` — `src/compiler/evaluator_primitives_math.cpp`
 - `mod` — `src/compiler/evaluator_primitives_math.cpp`
 - `module-get` — `src/compiler/evaluator_impl.cpp`
@@ -384,8 +384,8 @@ Runtime canonical list: `(api-reference)`.
 - `tcp-recv` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-send` — `src/compiler/evaluator_primitives_io.cpp`
 - `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`
-- `type-registry-compact` — `src/compiler/evaluator_impl.cpp`
-- `type-registry-stats` — `src/compiler/evaluator_impl.cpp`
+- `type-registry-compact` — `src/compiler/evaluator_primitives_memory.cpp`
+- `type-registry-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `typecheck-current` — `src/compiler/evaluator_impl.cpp`
 - `typecheck-incremental` — `src/compiler/evaluator_impl.cpp`
@@ -412,12 +412,12 @@ Runtime canonical list: `(api-reference)`.
 
 ## Arena: (6)
 
-- `arena:compact` — `src/compiler/evaluator_impl.cpp`
-- `arena:compact-all` — `src/compiler/evaluator_impl.cpp`
-- `arena:estimate` — `src/compiler/evaluator_impl.cpp`
-- `arena:set-compact-threshold` — `src/compiler/evaluator_impl.cpp`
-- `arena:shrink-to-fit` — `src/compiler/evaluator_impl.cpp`
-- `arena:stats-json` — `src/compiler/evaluator_impl.cpp`
+- `arena:compact` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:compact-all` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:estimate` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:set-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:shrink-to-fit` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:stats-json` — `src/compiler/evaluator_primitives_memory.cpp`
 
 ## Atomic-Batch: (1)
 
@@ -443,8 +443,8 @@ Runtime canonical list: `(api-reference)`.
 
 ## Dirty: (2)
 
-- `dirty:counts` — `src/compiler/evaluator_impl.cpp`
-- `dirty:reasons` — `src/compiler/evaluator_impl.cpp`
+- `dirty:counts` — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
 
 ## Eval: (1)
 
@@ -478,8 +478,8 @@ Runtime canonical list: `(api-reference)`.
 
 ## String-Pool: (2)
 
-- `string-pool:compact` — `src/compiler/evaluator_impl.cpp`
-- `string-pool:stats` — `src/compiler/evaluator_impl.cpp`
+- `string-pool:compact` — `src/compiler/evaluator_primitives_memory.cpp`
+- `string-pool:stats` — `src/compiler/evaluator_primitives_memory.cpp`
 
 ## Thread_Pool: (1)
 
