@@ -1675,6 +1675,14 @@ public:
     }
     void bump_defuse_version_for_test() { defuse_version_.fetch_add(1, std::memory_order_acq_rel); }
 
+    // Issue #266: stats from the most recent boundary exit(false).
+    struct BoundaryRollbackStats {
+        std::size_t field_records_rolled = 0;
+        bool children_column_restored = false;
+        bool sym_id_column_restored = false;
+        bool param_columns_restored = false;
+    };
+
 private:
     // Issue #189: total mutations counter (for observability).
     // Bumped alongside defuse_version_ so dashboards can see
@@ -1696,6 +1704,9 @@ private:
     // sum of (saved per batch) across all successful batches.
     // Exposed via observability snapshot.
     std::atomic<std::uint64_t> atomic_batch_bumps_saved_total_{0};
+    // Issue #266: fine-grained SoA rollback request + stats.
+    bool fine_rollback_for_next_boundary_ = false;
+    BoundaryRollbackStats last_boundary_rollback_stats_{};
     // Issue #164: per-join defuse_version_ snapshot. Set at the
     // start of fiber:join's wait, re-checked at wakeup to detect
     // mutations that happened DURING the join (the "transient
@@ -1940,6 +1951,12 @@ public:
         // std::pmr::vector matches the allocator of FlatAST::children_
         // (so the vector copy doesn't require allocator conversion).
         std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
+        // Issue #266: optional column snapshots for bulk sym/param
+        // mutations (mutate:rename-symbol). Captured only when
+        // fine_rollback is enabled on the boundary.
+        bool fine_rollback = false;
+        std::pmr::vector<aura::ast::SymId> sym_id_snapshot;
+        aura::ast::FlatAST::ParamColumnsSnapshot param_snapshot;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).
@@ -1996,6 +2013,15 @@ public:
     // threads); the version increment is release (publishes any
     // writes the caller will make under the boundary to acquirers
     // on other threads).
+    // Issue #266: request fine-grained column snapshots for the
+    // next boundary entry. Consumed by enter_mutation_boundary().
+    void request_fine_rollback_for_next_boundary() noexcept {
+        fine_rollback_for_next_boundary_ = true;
+    }
+    [[nodiscard]] BoundaryRollbackStats last_boundary_rollback_stats() const noexcept {
+        return last_boundary_rollback_stats_;
+    }
+
     void enter_mutation_boundary() {
         // Issue #233: the workspace_mtx_ lock was previously
         // acquired HERE as a local unique_lock that destructed
@@ -2024,11 +2050,21 @@ public:
         // std::pmr::vector matches the allocator of FlatAST::children_
         // (so the vector copy doesn't require allocator conversion).
         std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
+        bool fine_rollback = fine_rollback_for_next_boundary_;
+        fine_rollback_for_next_boundary_ = false;
+        std::pmr::vector<aura::ast::SymId> sym_id_snapshot;
+        aura::ast::FlatAST::ParamColumnsSnapshot param_snapshot;
         if (workspace_flat_) {
             children_snapshot = workspace_flat_->snapshot_children();
+            if (fine_rollback) {
+                sym_id_snapshot = workspace_flat_->snapshot_sym_id();
+                param_snapshot = workspace_flat_->snapshot_param_columns();
+            }
         }
-        active_mutation_stack().push_back({defuse_version_.load(std::memory_order_acquire),
-                                           log_size, std::move(children_snapshot)});
+        active_mutation_stack().push_back(
+            {defuse_version_.load(std::memory_order_acquire), log_size,
+             std::move(children_snapshot), fine_rollback, std::move(sym_id_snapshot),
+             std::move(param_snapshot)});
         defuse_version_.fetch_add(1, std::memory_order_release);
         // Issue #189: bump the total-mutations counter for
         // observability. Relaxed because it's stats-only.
@@ -2081,13 +2117,24 @@ public:
             // Roll back the mutations that were appended between
             // enter and exit. The log size captured at entry
             // tells us how far to undo.
-            std::size_t rolled = workspace_flat_->rollback_to_size(cp.mutation_log_size);
-            (void)rolled; // count is for debug; not exposed via the API
+            BoundaryRollbackStats stats;
+            stats.field_records_rolled =
+                workspace_flat_->rollback_to_size(cp.mutation_log_size);
             // Issue #221: restore the per-node children_ from the
             // pre-mutation snapshot. The checkpoint's children_snapshot
             // holds shared_ptrs to the pre-mutation PCs (PCV COW),
             // so the restoration is O(1) per node.
             workspace_flat_->restore_children(std::move(cp.children_snapshot));
+            stats.children_column_restored = true;
+            // Issue #266: restore sym_id_ / param columns for bulk
+            // rename operations when fine rollback was requested.
+            if (cp.fine_rollback) {
+                workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+                workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
+                stats.sym_id_column_restored = true;
+                stats.param_columns_restored = true;
+            }
+            last_boundary_rollback_stats_ = stats;
             // Invalidate the def-use index — the workspace state
             // is now different from what the index reflects.
             defuse_index_ = nullptr;
@@ -2253,10 +2300,19 @@ public:
         // (save_panic_checkpoint returns false if no source is loaded
         //  or if (current-source) isn't registered.)
         bool had_panic_checkpoint_ = false;
+        bool fine_rollback_ = false;
 
     public:
-        MutationBoundaryGuard(Evaluator& ev, bool* success_flag) noexcept
+        // Issue #266: enable fine-grained column snapshots for the
+        // next guard on this evaluator (call before construction).
+        static void enable_fine_rollback(Evaluator& ev) noexcept {
+            ev.request_fine_rollback_for_next_boundary();
+        }
+
+        MutationBoundaryGuard(Evaluator& ev, bool* success_flag,
+                              bool fine_rollback = false) noexcept
             : ev_(&ev)
+            , fine_rollback_(fine_rollback)
             , flag_(success_flag)
             ,
             // Issue #233 + #236 follow-up: the unique_lock is
@@ -2295,6 +2351,8 @@ public:
                 ev_->outermost_mutation_success_flag_ = flag_;
                 ev_->bind_yield_hook_evaluator();
             }
+            if (fine_rollback_)
+                ev_->request_fine_rollback_for_next_boundary();
             ev_->enter_mutation_boundary();
             // Issue #241: capture panic checkpoint at the OUTERMOST
             // guard only (nested guards share the outer checkpoint).
@@ -2350,8 +2408,31 @@ public:
         }
         MutationBoundaryGuard(const MutationBoundaryGuard&) = delete;
         MutationBoundaryGuard& operator=(const MutationBoundaryGuard&) = delete;
+        // Issue #266: capture sym_id_/param column snapshots for the
+        // active boundary. Call before mutations when fine_rollback was
+        // not requested at construction time.
+        void enable_fine_rollback() noexcept {
+            if (!ev_ || !ev_->workspace_flat_)
+                return;
+            auto& stack = ev_->active_mutation_stack();
+            if (stack.empty())
+                return;
+            auto& cp = stack.back();
+            if (cp.fine_rollback)
+                return;
+            cp.fine_rollback = true;
+            cp.sym_id_snapshot = ev_->workspace_flat_->snapshot_sym_id();
+            cp.param_snapshot = ev_->workspace_flat_->snapshot_param_columns();
+            fine_rollback_ = true;
+        }
+
+        [[nodiscard]] BoundaryRollbackStats get_rollback_stats() const noexcept {
+            return ev_ ? ev_->last_boundary_rollback_stats() : BoundaryRollbackStats{};
+        }
+
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
             : ev_(o.ev_)
+            , fine_rollback_(o.fine_rollback_)
             , flag_(o.flag_)
             , lock_(std::move(o.lock_)) {
             // Move transfers the lock state (the unique_lock

@@ -180,7 +180,9 @@ void register_mutate_primitives(
                 std::memcpy(&old_bits, &nv.float_value, sizeof(old_bits));
                 auto mid = flat.add_mutation_with_rollback(
                     node, "replace-value", "Float", "Float", ev.string_heap_[sum_idx],
-                    aura::ast::MutationStatus::Committed, 1, old_bits, new_bits, true);
+                    aura::ast::MutationStatus::Committed,
+                    static_cast<std::uint32_t>(aura::ast::MutationSoAField::FloatVal), old_bits,
+                    new_bits, true);
                 flat.set_float(node, new_val);
                 ev.workspace_flat_->mark_dirty_upward(node);
                 return make_int(static_cast<std::int64_t>(mid));
@@ -202,7 +204,9 @@ void register_mutate_primitives(
                 auto new_sym = ev.workspace_pool_->intern(new_name);
                 auto mid = flat.add_mutation_with_rollback(
                     node, "replace-value", "Sym", "Sym", ev.string_heap_[sum_idx],
-                    aura::ast::MutationStatus::Committed, 2, old_val, new_sym, true);
+                    aura::ast::MutationStatus::Committed,
+                    static_cast<std::uint32_t>(aura::ast::MutationSoAField::SymId), old_val,
+                    new_sym, true);
                 flat.set_sym(node, new_sym);
                 ev.workspace_flat_->mark_dirty_upward(node);
                 return make_int(static_cast<std::int64_t>(mid));
@@ -1216,7 +1220,7 @@ void register_mutate_primitives(
     // all error-return paths set ok = false.
     add("mutate:insert-child", [&ev, mev](const auto& a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
         aura::messaging::g_fiber_yield_mutation_boundary
             ? aura::messaging::g_fiber_yield_mutation_boundary()
             : (void)0; // safe point before mutation
@@ -2614,7 +2618,7 @@ void register_mutate_primitives(
     add("mutate:rename-symbol", [&ev](const auto& a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
         // local merr removed; now centralized make_merr (phase complete)
         if (ev.workspace_read_only_) {
             ok = false;
@@ -2689,7 +2693,7 @@ void register_mutate_primitives(
     add("mutate:move-node", [&ev](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
         // local merr removed; now centralized make_merr (phase complete)
         if (ev.workspace_read_only_) {
             ok = false;

@@ -456,6 +456,17 @@ export struct MutationRecord {
     InvariantStatus invariant_status = InvariantStatus::NotChecked;
 };
 
+// Issue #266: SoA column identifiers for add_mutation_with_rollback.
+// Structural child ops (set/insert/remove) store child_idx in
+// field_offset and are recognized by operator_name prefix
+// "structural-" instead of these enum values.
+export enum class MutationSoAField : std::uint32_t {
+    IntVal = 0,
+    TypeId = 1,
+    SymId = 2,
+    FloatVal = 3,
+};
+
 // ── Patch — AI mutation descriptor ─────────────────────────────
 export struct Patch {
     NodeId node = NULL_NODE;
@@ -1720,6 +1731,30 @@ public:
         bump_generation();
     }
 
+    // Issue #266: capture / restore sym_id_ for fine-grained rollback
+    // of bulk rename operations (mutate:rename-symbol).
+    std::pmr::vector<SymId> snapshot_sym_id() const { return sym_id_; }
+    void restore_sym_id(std::pmr::vector<SymId>&& snapshot) {
+        sym_id_ = std::move(snapshot);
+        bump_generation();
+    }
+
+    // Issue #266: Lambda param columns used by rename-symbol.
+    struct ParamColumnsSnapshot {
+        std::pmr::vector<SymId> param_data;
+        std::pmr::vector<std::uint32_t> param_begin;
+        std::pmr::vector<std::uint32_t> param_count;
+    };
+    ParamColumnsSnapshot snapshot_param_columns() const {
+        return {param_data_, param_begin_, param_count_};
+    }
+    void restore_param_columns(ParamColumnsSnapshot&& snapshot) {
+        param_data_ = std::move(snapshot.param_data);
+        param_begin_ = std::move(snapshot.param_begin);
+        param_count_ = std::move(snapshot.param_count);
+        bump_generation();
+    }
+
     // ── Issue #261: NodeId lifecycle / SoA compaction ────────────
     //
     // recycle_dead_nodes() marks unreachable slots (not reachable
@@ -2742,6 +2777,48 @@ public:
         return mark_dirty_total_nodes_.load(std::memory_order_relaxed);
     }
 
+    // Issue #266: inverse a logged structural child mutation.
+    bool rollback_structural_child_op(MutationRecord& rec) {
+        if (!rec.operator_name.starts_with("structural-"))
+            return false;
+        NodeId parent = rec.target_node;
+        if (parent >= children_.size())
+            return false;
+        auto idx = rec.field_offset;
+        auto old_child = static_cast<NodeId>(rec.old_value);
+        auto new_child = static_cast<NodeId>(rec.new_value);
+        auto& list = children_[parent];
+        if (rec.operator_name == "structural-set-child") {
+            if (idx >= list.size())
+                return false;
+            if (new_child != NULL_NODE && new_child < parent_.size())
+                parent_[new_child] = NULL_NODE;
+            children_[parent] = list.with_set(idx, old_child);
+            if (old_child != NULL_NODE && old_child < parent_.size())
+                parent_[old_child] = parent;
+        } else if (rec.operator_name == "structural-insert-child") {
+            if (idx > list.size())
+                return false;
+            if (new_child != NULL_NODE && new_child < parent_.size())
+                parent_[new_child] = NULL_NODE;
+            children_[parent] = list.with_erase(idx);
+        } else if (rec.operator_name == "structural-remove-child") {
+            if (idx > list.size())
+                return false;
+            children_[parent] = list.with_insert(idx, old_child);
+            if (old_child != NULL_NODE && old_child < parent_.size())
+                parent_[old_child] = parent;
+        } else {
+            return false;
+        }
+        rec.status = MutationStatus::RolledBack;
+        ++generation_;
+        if (generation_ == 0)
+            generation_ = 1;
+        mark_dirty_upward(parent);
+        return true;
+    }
+
     bool rollback(std::uint64_t mutation_id) {
         for (auto& rec : mutation_log_) {
             if (rec.mutation_id == mutation_id) {
@@ -2768,10 +2845,14 @@ public:
                 }
                 if (!rec.has_rollback_data)
                     return false;
+                // Structural child ops store child_idx in field_offset;
+                // detect them before the scalar SoA switch.
+                if (rec.operator_name.starts_with("structural-"))
+                    return rollback_structural_child_op(rec);
                 // Apply old value back to the SoA column
                 if (rec.target_node < tag_.size()) {
                     switch (rec.field_offset) {
-                        case 0: // int_val_
+                        case static_cast<std::uint32_t>(MutationSoAField::IntVal):
                             if (rec.target_node < int_val_.size()) {
                                 int_val_[rec.target_node] =
                                     static_cast<std::int64_t>(rec.old_value);
@@ -2782,7 +2863,7 @@ public:
                                 return true;
                             }
                             break;
-                        case 1: // type_id_
+                        case static_cast<std::uint32_t>(MutationSoAField::TypeId):
                             if (rec.target_node < type_id_.size()) {
                                 type_id_[rec.target_node] =
                                     static_cast<std::uint32_t>(rec.old_value);
@@ -2793,6 +2874,30 @@ public:
                                 return true;
                             }
                             break;
+                        case static_cast<std::uint32_t>(MutationSoAField::SymId):
+                            if (rec.target_node < sym_id_.size()) {
+                                sym_id_[rec.target_node] =
+                                    static_cast<SymId>(rec.old_value);
+                                rec.status = MutationStatus::RolledBack;
+                                ++generation_;
+                                if (generation_ == 0)
+                                    generation_ = 1;
+                                return true;
+                            }
+                            break;
+                        case static_cast<std::uint32_t>(MutationSoAField::FloatVal): {
+                            if (rec.target_node < float_val_.size()) {
+                                double old_f = 0.0;
+                                std::memcpy(&old_f, &rec.old_value, sizeof(old_f));
+                                float_val_[rec.target_node] = old_f;
+                                rec.status = MutationStatus::RolledBack;
+                                ++generation_;
+                                if (generation_ == 0)
+                                    generation_ = 1;
+                                return true;
+                            }
+                            break;
+                        }
                         default:
                             return false;
                     }
