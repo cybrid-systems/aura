@@ -1,10 +1,11 @@
 // @category: integration
 // @reason: uses CompilerService to verify IR-native define env binding
 
-// test_issue_272.cpp — Issue #272 Cycle 1: top-level (define (f x) ...)
-// binds env via IRInterpreter instead of eval_flat tree-walker fallback.
+// test_issue_272.cpp — Issue #272: IR-native env binding for function defines.
+// Cycle 1: cache_define / eval path. Cycle 2: compile_module + invalidate cascade.
 
 #include <iostream>
+#include <memory>
 #include <print>
 #include <string>
 
@@ -12,6 +13,9 @@
 using aura::test::g_passed;
 using aura::test::g_failed;
 
+import aura.core.ast;
+import aura.core.arena;
+import aura.parser.parser;
 import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
@@ -70,6 +74,54 @@ bool test_redefine_updates_binding() {
     return true;
 }
 
+bool test_compile_module_ir_bind() {
+    std::println("\n--- AC5: compile_module binds via IR ---");
+    aura::compiler::CompilerService cs;
+    const auto binds_before = cs.define_ir_env_bind_count();
+    auto r = cs.compile_module("mod272", "(define (mod-fn x) (* x 10))");
+    CHECK(static_cast<bool>(r), "compile_module succeeds");
+    CHECK(cs.define_ir_env_bind_count() == binds_before + 1,
+          "compile_module bumps define_ir_env_bind_count");
+    CHECK(run_int(cs, "(mod-fn 3)") == 30, "(mod-fn 3) => 30 after compile_module");
+    return true;
+}
+
+bool test_invalidate_rebinds_dependent() {
+    std::println("\n--- AC6: redefine invalidates and re-binds dependents via IR ---");
+    aura::compiler::CompilerService cs;
+    if (!run_ok(cs, "(define (base x) (+ x 1))")) {
+        ++g_failed;
+        return false;
+    }
+    if (!run_ok(cs, "(define (wrap x) (base x))")) {
+        ++g_failed;
+        return false;
+    }
+    CHECK(run_int(cs, "(wrap 5)") == 6, "wrap uses (+ x 1) base initially");
+
+    if (!run_ok(cs, "(define (base x) (* x 2))")) {
+        ++g_failed;
+        return false;
+    }
+    CHECK(run_int(cs, "(wrap 5)") == 10, "wrap uses re-bound (* x 2) base after redefine");
+    return true;
+}
+
+bool test_fn_define_no_tree_walker_fallback() {
+    std::println("\n--- AC7: pure function define does not need tree-walker fallback ---");
+    aura::compiler::CompilerService cs;
+    auto arena = std::make_unique<aura::ast::ASTArena>();
+    auto alloc = arena->allocator();
+    auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+    auto* pool = arena->create<aura::ast::StringPool>(alloc);
+    auto pr = aura::parser::parse_to_flat("(define (f x) (+ x 1))", *flat, *pool);
+    CHECK(pr.success, "function define parses");
+    flat->root = pr.root;
+    CHECK(!cs.public_needs_tree_walker_fallback(*flat, *pool, pr.root),
+          "needs_tree_walker_fallback false for function define");
+    return true;
+}
+
 bool test_nested_define_calls() {
     std::println("\n--- AC4: helper + caller both IR-bound ---");
     aura::compiler::CompilerService cs;
@@ -88,9 +140,12 @@ bool test_nested_define_calls() {
 
 int run_tests() {
     std::println("Issue #272 (IR-native env binding for function defines)\n");
+    test_compile_module_ir_bind();
     test_define_ir_env_bind_metric();
     test_define_then_call();
     test_redefine_updates_binding();
+    test_invalidate_rebinds_dependent();
+    test_fn_define_no_tree_walker_fallback();
     test_nested_define_calls();
     std::println("\nResults: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
