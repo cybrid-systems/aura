@@ -86,6 +86,10 @@ struct IRInstruction {
     std::array<std::uint32_t, 4> operands = {};
     std::uint32_t source_ast_node_id = 0;
     std::uint32_t type_id = 0;
+    std::uint32_t shape_id = 0;
+    std::uint8_t linear_ownership_state = 0;
+    std::uint32_t adt_variant_id = 0;
+    std::uint32_t narrow_evidence = 0;
 };
 
 struct BasicBlock {

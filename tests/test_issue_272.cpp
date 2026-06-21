@@ -4,6 +4,7 @@
 // test_issue_272.cpp — Issue #272: IR-native env binding for defines.
 // Cycle 1: cache_define / eval. Cycle 2: compile_module + invalidate.
 // Cycle 3: value defines + TopCellLoad references.
+// Cycle 4: compile_module disk IR cache round-trip.
 
 #include <iostream>
 #include <memory>
@@ -149,6 +150,27 @@ bool test_fn_define_no_tree_walker_fallback() {
     return true;
 }
 
+bool test_compile_module_disk_cache_hit() {
+    std::println("\n--- AC10: compile_module disk IR cache hit on second service ---");
+    const std::string mod = "mod272disk";
+    const std::string src = "(define (disk-fn x) (+ x 100))";
+    {
+        aura::compiler::CompilerService cs;
+        CHECK(static_cast<bool>(cs.compile_module(mod, src)), "first compile_module writes disk cache");
+        CHECK(run_int(cs, "(disk-fn 5)") == 105, "(disk-fn 5) => 105 after first compile");
+    }
+    {
+        aura::compiler::CompilerService cs2;
+        const auto binds_before = cs2.define_ir_env_bind_count();
+        CHECK(static_cast<bool>(cs2.compile_module(mod, src)),
+              "second compile_module hits disk IR cache");
+        CHECK(cs2.define_ir_env_bind_count() == binds_before + 1,
+              "disk cache hit still binds via IR");
+        CHECK(run_int(cs2, "(disk-fn 5)") == 105, "(disk-fn 5) => 105 after disk cache hit");
+    }
+    return true;
+}
+
 bool test_nested_define_calls() {
     std::println("\n--- AC4: helper + caller both IR-bound ---");
     aura::compiler::CompilerService cs;
@@ -175,6 +197,7 @@ int run_tests() {
     test_value_define_ir_bind();
     test_value_define_no_tree_walker_fallback();
     test_fn_define_no_tree_walker_fallback();
+    test_compile_module_disk_cache_hit();
     test_nested_define_calls();
     std::println("\nResults: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

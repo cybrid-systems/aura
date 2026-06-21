@@ -704,6 +704,7 @@ public:
         ir_define_env_bindings_.clear();
         ir_define_closure_owner_.clear();
         ir_value_cell_bindings_.clear();
+        ir_disk_snapshots_.clear();
         // Issue #223: bump mutation_epoch_ so any stale
         // ClosureBridgeData that captured the old epoch is detected
         // by the bridge callback / apply_closure. The bridge_epoch_
@@ -2460,16 +2461,16 @@ public:
                 for (auto& func : all_funcs) {
                     if (func.name == fname && func.id != cached.ir_entry()) {
                         ir_cache_[fname] = std::vector<aura::ir::IRFunction>{func};
+                        ir_cache_strings_[fname] = cached.ir_strings();
                         function_sources_[fname] = source;
                         module_functions_[name].push_back(fname);
                         break;
                     }
                 }
-                if (!bind_define_env_only(flat, pool, node_id, fname)) {
-                    auto result = evaluator_.eval_flat(flat, pool, node_id, evaluator_.top_env());
-                    if (!result)
-                        return result;
-                }
+                auto bind_result = cache_define(source, flat, pool, node_id, fname,
+                                                /*bind_in_env=*/true, name);
+                if (!bind_result)
+                    return bind_result;
                 user_bindings_.insert(fname);
             }
         }
@@ -2523,12 +2524,18 @@ public:
         }
 
         // Write disk cache (only when not loaded from cache).
-        // Issue #272 Cycle 3: FlatAST-only for now. ir_cache_ bundles may be
-        // mutated by IRInterpreter env binding; copying them for disk serialize
-        // is unsafe until we snapshot pre-bind IR (reflect layout is fixed).
+        // Issue #272 Cycle 4: use pre-bind snapshots (captured in cache_define).
         if (!cache_hit) {
             ensure_cache_dir();
             auto cache_path = module_cache_path(name, source);
+            aura::ir::IRModule disk_mod;
+            for (auto& [fname, _] : finder) {
+                auto it = ir_disk_snapshots_.find(fname);
+                if (it == ir_disk_snapshots_.end())
+                    continue;
+                for (const auto& func : it->second)
+                    disk_mod.functions.push_back(func);
+            }
             // 生成类型签名数据嵌入 ABF
             std::string sig_embed;
             // 从 export 声明收集已注册的类型签名
@@ -2543,8 +2550,10 @@ public:
                     sig_embed.assign((std::istreambuf_iterator<char>(sf)), {});
                 }
             }
-            aura::compiler::cache::write_cache(cache_path, flat, pool, flat.root, 0, nullptr,
-                                               sig_embed.empty() ? nullptr : &sig_embed);
+            aura::compiler::cache::write_cache(
+                cache_path, flat, pool, flat.root, 0,
+                disk_mod.functions.empty() ? nullptr : &disk_mod,
+                sig_embed.empty() ? nullptr : &sig_embed);
         }
 
         return EvalResult(types::make_void());
@@ -3795,6 +3804,13 @@ public:
         return bw.needs_fallback;
     }
 
+    void snapshot_ir_for_disk(const std::string& name) {
+        auto it = ir_cache_.find(name);
+        if (it == ir_cache_.end() || it->second.empty())
+            return;
+        ir_disk_snapshots_[name] = it->second;
+    }
+
     bool bind_value_define_via_ir(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                   aura::ast::NodeId expanded_root, const std::string& name_str) {
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
@@ -4016,6 +4032,8 @@ public:
                     bridge_bundle.emplace_back();
             }
         }
+        // Issue #272 Cycle 4: snapshot before move + IR env bind for disk serialize.
+        ir_disk_snapshots_[name_str] = bundle;
         ir_cache_[name_str] = std::move(bundle);
         ir_cache_bridge_[name_str] = std::move(bridge_bundle);
         ir_cache_strings_[name_str] = ir_mod.string_pool;
@@ -5107,6 +5125,11 @@ private:
     // preserving func id references across cached calls.
     std::unordered_map<std::string, std::vector<aura::ir::IRFunction>> ir_cache_;
 
+    // Issue #272 Cycle 4: pre-bind IR snapshots for disk cache serialization.
+    // Captured in cache_define immediately after ir_cache_ is populated,
+    // before IRInterpreter env binding can alias/mutate live IR state.
+    std::unordered_map<std::string, std::vector<aura::ir::IRFunction>> ir_disk_snapshots_;
+
     // Bridge data cached alongside ir_cache_ (same keys, parallel indices).
     std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>> ir_cache_bridge_;
     // String pool cached alongside ir_cache_ (same keys).
@@ -5319,6 +5342,7 @@ private:
                 }
             }
             ir_cache_[dep_name] = std::move(bundle);
+            snapshot_ir_for_disk(dep_name);
 
             // Re-record dependencies
             for (auto& called_name : cache_hits) {
