@@ -31,7 +31,7 @@ Agent 自修改路径：`set-code` → `query:*` / `mutate:*` → `eval-current`
 |------|------|------|
 | `aura.parser.*` | `src/parser/` | 词法、语法 → FlatAST |
 | `aura.core.*` | `src/core/` | AST 节点、Arena、类型基础设施 |
-| `aura.compiler.evaluator` | `evaluator.*` | 运行时中枢、原语、eval_flat |
+| `aura.compiler.evaluator` | `evaluator.ixx` + 44 分区 `.cpp` | 运行时中枢、原语、eval_flat（见下节） |
 | `aura.compiler.query` | `query.*` | QueryEngine、DefUseIndex |
 | `aura.compiler.type_checker` | `type_checker.*` | 渐进类型、Let-Poly、线性 |
 | `aura.compiler.lowering` | `lowering.*` | AST → IR |
@@ -41,6 +41,55 @@ Agent 自修改路径：`set-code` → `query:*` / `mutate:*` → `eval-current`
 | `aura.compiler.cache` | `cache.*` | EDSL V2 source-hash cache |
 | JIT | `aura_jit.*` | LLVM ORC、hot-swap、prim bridge |
 | Serve | `src/serve/` | fiber、scheduler、mailbox、GC 协调 |
+
+## Evaluator 分区（`aura.compiler.evaluator`）
+
+原 `evaluator_impl.cpp` 已拆为 **1 接口 + 44 实现 TU**，同属一个 C++26 module partition。接口在 `evaluator.ixx`；实现按职责分文件，原语经 `evaluator_primitives_registry.cpp` 编排（构造器内原语在 `evaluator_ctor.cpp`）。
+
+```mermaid
+flowchart TB
+  subgraph iface["evaluator.ixx"]
+    EV[Evaluator 类 + primitives_detail 前向声明]
+  end
+
+  subgraph core["核心分区"]
+    EVAL[evaluator_eval_flat.cpp<br/>eval_flat / 宏 / require]
+    ENV[evaluator_env.cpp<br/>Env / bind_symid]
+    WS[evaluator_workspace_tree.cpp<br/>workspace tree]
+    MOD[evaluator_module_loader.cpp<br/>load_module]
+    DEF[evaluator_defuse_index.cpp<br/>DefUseIndex]
+    GC[evaluator_gc.cpp<br/>GC roots / sweep]
+    TC[evaluator_typecheck.cpp]
+    FIB[evaluator_fiber_mutation.cpp<br/>mutation boundary]
+    QI[evaluator_query_index.cpp<br/>tag/arity index]
+    ADT[evaluator_adt.cpp<br/>make_merr / ADT ctor]
+    CTOR[evaluator_ctor.cpp<br/>构造 / 析构]
+  end
+
+  subgraph prim["原语分区（31 TU）"]
+    REG[evaluator_primitives_registry.cpp<br/>register_all_primitives]
+    P31[evaluator_primitives_*.cpp]
+    BLT[evaluator_primitives_builtins.cpp<br/>算术 / 布尔]
+  end
+
+  EV --> EVAL & ENV & WS & MOD & DEF & GC & TC & FIB & QI & ADT & CTOR
+  CTOR --> REG
+  REG --> P31 & BLT
+  EVAL --> WS
+  EVAL --> MOD
+  P31 --> WS
+  P31 --> DEF
+```
+
+| 层 | TU | 入口符号 |
+|----|-----|----------|
+| 求值 | `evaluator_eval_flat.cpp` | `eval_flat`、`apply_closure` |
+| 环境 | `evaluator_env.cpp` | `Env::lookup*`、`bind_symid` |
+| 自修改 | `evaluator_workspace_tree.cpp`、`evaluator_primitives_mutate.cpp` | `workspace_mtx_`、`mutate:*` |
+| 查询 | `evaluator_primitives_query_*.cpp`、`evaluator_query_index.cpp` | `query:*`、`build_tag_arity_index` |
+| 原语表 | `evaluator_primitives_registry.cpp` | `init_pair_primitives` → `register_all_primitives` |
+
+完整文件列表见 [contributing.md §文件地图](contributing.md#文件地图)。
 
 ## 自修改 EDSL（C++ 原语）
 

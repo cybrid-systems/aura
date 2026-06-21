@@ -141,23 +141,68 @@ if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 
 ## 文件地图
 
+`aura.compiler.evaluator` 由 `evaluator.ixx`（模块接口）+ 44 个 `.cpp` 分区 TU 组成；原语簇与 `register_*` 对应关系见 §2 表。
+
+### 接口 + 13 核心 `.cpp`
+
 | 文件 | 职责 |
 |------|------|
-| `evaluator.ixx` | 模块接口；`primitives_detail::register_*` 前向声明 hub（P2） |
-| `evaluator_ctor.cpp` | `Evaluator` 构造/析构、post-init 原语注册 |
-| `evaluator_eval_flat.cpp` | `eval_flat`、宏展开、`post_mutation_macro_reexpand` |
-| `evaluator_env.cpp` | `Env` / `EnvFrame` / SoA arena |
-| `evaluator_module_loader.cpp` | `load_module_file` / `resolve_module_path` / `gc_module` |
+| `evaluator.ixx` | 模块接口；`primitives_detail::register_*` 前向声明 hub |
+| `evaluator_ctor.cpp` | `Evaluator` 构造/析构；构造器内原语（memory/messaging/policy/types） |
+| `evaluator_eval_flat.cpp` | `apply_closure`、`eval_flat`、宏展开、`post_mutation_macro_reexpand`、require/functor |
+| `evaluator_env.cpp` | `Env` / `EnvFrame` / `EnvView`、SoA arena、`bind_symid` |
+| `evaluator_module_loader.cpp` | `resolve_module_path`、`load_module_file`、`gc_module` |
 | `evaluator_workspace_tree.cpp` | workspace tree、panic checkpoint、`copy_env` |
-| `evaluator_defuse_index.cpp` | `DefUseIndex`、`install_defuse_subsystem` |
-| `evaluator_gc.cpp` | GC root flush / sweep、`compact_pairs` |
+| `evaluator_defuse_index.cpp` | `DefUseIndex`、`defuse_index_destroy`、`install_defuse_subsystem` |
+| `evaluator_gc.cpp` | `flush_gc_roots`、sweep、`compact_pairs` |
 | `evaluator_typecheck.cpp` | `run_typecheck_no_lock*` |
-| `evaluator_adt.cpp` | 动态 ADT ctor、`make_merr` |
-| `evaluator_primitives_builtins.cpp` | `Primitives` 内置算术/布尔原语 |
-| `evaluator_fiber_mutation.cpp` | per-fiber mutation stack |
-| `evaluator_query_index.cpp` | `build_tag_arity_index` |
-| `evaluator_primitives_registry.cpp` | `register_all_primitives` 编排 |
-| `evaluator_primitives_*.cpp` | 各簇原语注册（31 TU） |
+| `evaluator_adt.cpp` | 动态 ADT ctor 注册、`make_merr` |
+| `evaluator_fiber_mutation.cpp` | per-fiber mutation stack、`yield_mutation_boundary` |
+| `evaluator_query_index.cpp` | `build_tag_arity_index`（`query:pattern` 加速） |
+| `evaluator_primitives_registry.cpp` | `register_all_primitives` 编排（`init_pair_primitives`） |
+| `evaluator_primitives_builtins.cpp` | `Primitives` 内置算术/布尔（`+` `-` `*` `/` 等） |
+
+### 原语分区（31 TU，经 registry 或 ctor 注册）
+
+| 文件 | 簇 / 前缀 |
+|------|-----------|
+| `evaluator_primitives_core.cpp` | 类型谓词、`not` |
+| `evaluator_primitives_pair.cpp` | pair / string heap |
+| `evaluator_primitives_list.cpp` | list 高阶、`drop` |
+| `evaluator_primitives_json.cpp` | JSON encode/parse |
+| `evaluator_primitives_vector.cpp` | vector / hash |
+| `evaluator_primitives_math.cpp` | m4-linear、regex、math |
+| `evaluator_primitives_reflect.cpp` | reflect / type / keyword |
+| `evaluator_primitives_query.cpp` | `query:module-*` |
+| `evaluator_primitives_query_workspace.cpp` | workspace AST `query:*` |
+| `evaluator_primitives_query_defuse.cpp` | def-use `query:*` |
+| `evaluator_primitives_mutate.cpp` | `mutate:*` |
+| `evaluator_primitives_workspace.cpp` | `workspace:*` |
+| `evaluator_primitives_ast.cpp` | `ast:*` |
+| `evaluator_primitives_compile.cpp` | `compile:*`、concurrency、syntax-marker |
+| `evaluator_primitives_observability.cpp` | panic / stats / jit / gc-arena |
+| `evaluator_primitives_messaging.cpp` | messaging / fiber / channel（ctor） |
+| `evaluator_primitives_io.cpp` | git:*、network |
+| `evaluator_primitives_agent.cpp` | auto-evolve / synthesize / strategy |
+| `evaluator_primitives_memory.cpp` | coverage / gc / arena / dirty（ctor） |
+| `evaluator_primitives_policy.cpp` | memory-policy / capability（ctor） |
+| `evaluator_primitives_eval.cpp` | `set-code` / `eval-current` / `api-reference` |
+| `evaluator_primitives_types.cpp` | declare-type / hot-swap（ctor） |
+| `evaluator_primitives_diagnostic.cpp` | diagnose / apply-fix |
+| `evaluator_primitives_module.cpp` | module? / use / load-module |
+| `evaluator_primitives_file.cpp` | read / write-file / shell |
+| `evaluator_primitives_runtime.cpp` | equal? / display / format / `io_print_val` |
+| `evaluator_primitives_test.cpp` | `run-tests` |
+| `evaluator_primitives_misc.cpp` | current-time / arena-offset |
+| `evaluator_primitives_control.cpp` | `while` |
+| `evaluator_primitives_char.cpp` | char? / string->list / read-line |
+| `evaluator_primitives_mutation.cpp` | mutation-count / rollback |
+
+### 相邻模块
+
+| 文件 | 职责 |
+|------|------|
+| `evaluator_pure.ixx` | 无 `Evaluator` 状态的纯函数（`coerce_value_pure` 等） |
 | `query.ixx` / `query_impl.cpp` | QueryEngine、ASTIndex |
 | `adt_runtime.*` | ADT 构造器表（Issue #108 bypass） |
 | `ffi_primitives.*` | C FFI 状态 |
