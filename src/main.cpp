@@ -169,8 +169,31 @@ invariant_diagnostics_to_json(const std::vector<aura::compiler::OwnershipNote>& 
         if (!first)
             out += ",";
         first = false;
-        out += std::format(R"({{"node":{},"kind":"{}","message":"{}"}})", n.node,
+        out += std::format(R"({{"node":{},"kind":"{}","message":"{}")", n.node,
                            json_escape(n.kind), json_escape(n.message));
+        if (n.source_mutation_id)
+            out += std::format(R"(,"mutation_id":{})", *n.source_mutation_id);
+        if (n.blame) {
+            const char* party = "implicit";
+            switch (n.blame->party) {
+                case aura::diag::BlameParty::Caller:
+                    party = "caller";
+                    break;
+                case aura::diag::BlameParty::Annotation:
+                    party = "annotation";
+                    break;
+                case aura::diag::BlameParty::System:
+                    party = "system";
+                    break;
+                case aura::diag::BlameParty::Implicit:
+                default:
+                    break;
+            }
+            out += std::format(R"(,"blame":{{"party":"{}","annotation_src":"{}","phase":"{}"}})",
+                               party, json_escape(n.blame->annotation_src),
+                               json_escape(n.blame->phase));
+        }
+        out += "}";
     }
     out += "]";
     return out;

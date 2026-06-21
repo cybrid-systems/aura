@@ -5,7 +5,7 @@
 // (fine-grained scoping for find_occurrence_contexts).
 //
 // Pre-#240: post_mutation_invariant_check flagged every if-context
-// in the dirty scope as "invalidated-occurrence-narrowing" — too
+// in the dirty scope as "StaleOccurrenceRefinement" — too
 // noisy under WarningsOnly mode (any mutation that touched a
 // function's body fired notes for every nested if, even if the
 // mutation didn't touch the predicate).
@@ -423,7 +423,7 @@ bool test_per_node_scoping_in_post_mutation_check() {
     // ── Case A: kOccurrenceDirty set on the if-node ────
     // Mark the IfExpr node with kOccurrenceDirty and clear
     // other bits. Post-mutation check should emit a precise
-    // note with kind == "invalidated-occurrence-narrowing".
+    // note with kind == "StaleOccurrenceRefinement".
     const auto kOccBit = static_cast<std::uint8_t>(
         aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
     const auto kGeneral = static_cast<std::uint8_t>(
@@ -438,8 +438,8 @@ bool test_per_node_scoping_in_post_mutation_check() {
     bool found_precise = false;
     bool found_conservative = false;
     for (auto& n : notes) {
-        if (n.kind == "invalidated-occurrence-narrowing") found_precise = true;
-        if (n.kind == "invalidated-occurrence-narrowing-conservative") found_conservative = true;
+        if (n.kind == "StaleOccurrenceRefinement") found_precise = true;
+        if (n.kind == "StaleOccurrenceRefinement-conservative") found_conservative = true;
     }
     CHECK(found_precise,
           "Case A: precise note emitted for kOccurrenceDirty-tagged node");
@@ -458,8 +458,8 @@ bool test_per_node_scoping_in_post_mutation_check() {
     found_precise = false;
     found_conservative = false;
     for (auto& n : notes) {
-        if (n.kind == "invalidated-occurrence-narrowing") found_precise = true;
-        if (n.kind == "invalidated-occurrence-narrowing-conservative") found_conservative = true;
+        if (n.kind == "StaleOccurrenceRefinement") found_precise = true;
+        if (n.kind == "StaleOccurrenceRefinement-conservative") found_conservative = true;
     }
     CHECK(!found_precise,
           "Case B: precise note NOT emitted when only general bit is set");
@@ -478,8 +478,8 @@ bool test_per_node_scoping_in_post_mutation_check() {
     found_precise = false;
     found_conservative = false;
     for (auto& n : notes) {
-        if (n.kind == "invalidated-occurrence-narrowing") found_precise = true;
-        if (n.kind == "invalidated-occurrence-narrowing-conservative") found_conservative = true;
+        if (n.kind == "StaleOccurrenceRefinement") found_precise = true;
+        if (n.kind == "StaleOccurrenceRefinement-conservative") found_conservative = true;
     }
     CHECK(!found_precise,
           "Case C: precise note NOT emitted for clean node");

@@ -2408,6 +2408,99 @@ static bool is_syntactic_value(NodeId id, const FlatAST& flat) {
     }
 }
 
+// Issue #260: shared ADT exhaustiveness logic for typecheck + post-mutation.
+static std::vector<std::string>
+adt_match_missing_constructors(TypeRegistry& reg, const StringPool& pool,
+                               const MatchClauseInfo& minfo, TypeId subject_type) {
+    if (minfo.has_wildcard)
+        return {};
+
+    if (reg.tag_of(subject_type) == TypeTag::FUNC) {
+        if (auto* f = reg.func_of(subject_type))
+            subject_type = f->ret;
+    }
+
+    const std::vector<std::string>* ctors = reg.get_adt_constructors(subject_type);
+    if (!ctors && reg.tag_of(subject_type) == TypeTag::TYPE_VAR) {
+        for (auto sid : minfo.used_constructors) {
+            auto cname = std::string(pool.resolve(sid));
+            for (std::size_t ti = 0; ti < reg.size(); ++ti) {
+                auto tid2 = TypeId{static_cast<std::uint32_t>(ti), 1};
+                auto* c2 = reg.get_adt_constructors(tid2);
+                if (!c2)
+                    continue;
+                if (std::find(c2->begin(), c2->end(), cname) != c2->end()) {
+                    ctors = c2;
+                    subject_type = tid2;
+                    break;
+                }
+            }
+            if (ctors)
+                break;
+        }
+        if (!ctors) {
+            for (auto sid : minfo.candidate_constructors) {
+                auto cname = std::string(pool.resolve(sid));
+                for (std::size_t ti = 0; ti < reg.size(); ++ti) {
+                    auto tid2 = TypeId{static_cast<std::uint32_t>(ti), 1};
+                    auto* c2 = reg.get_adt_constructors(tid2);
+                    if (!c2)
+                        continue;
+                    if (std::find(c2->begin(), c2->end(), cname) != c2->end()) {
+                        ctors = c2;
+                        subject_type = tid2;
+                        break;
+                    }
+                }
+                if (ctors)
+                    break;
+            }
+        }
+    }
+    if (!ctors)
+        return {};
+
+    std::vector<std::string> used_eff;
+    used_eff.reserve(minfo.used_constructors.size() + minfo.candidate_constructors.size());
+    for (auto sid : minfo.used_constructors)
+        used_eff.push_back(std::string(pool.resolve(sid)));
+    for (auto sid : minfo.candidate_constructors) {
+        auto cname = std::string(pool.resolve(sid));
+        if (std::find(ctors->begin(), ctors->end(), cname) != ctors->end())
+            used_eff.push_back(std::move(cname));
+    }
+
+    std::vector<std::string> missing;
+    for (auto& cname : *ctors) {
+        if (std::find(used_eff.begin(), used_eff.end(), cname) == used_eff.end())
+            missing.push_back(cname);
+    }
+    return missing;
+}
+
+std::vector<std::string>
+analyze_match_exhaustiveness(const FlatAST& flat, const StringPool& pool, TypeRegistry& reg,
+                             NodeId let_node) {
+    if (let_node == NULL_NODE || let_node >= flat.size())
+        return {};
+    auto v = flat.get(let_node);
+    if (v.tag != NodeTag::Let)
+        return {};
+    if (std::string(pool.resolve(v.sym_id)) != "__match_tmp")
+        return {};
+    if (!flat.has_match_info(let_node))
+        return {};
+    const auto* minfo = flat.get_match_info(let_node);
+    if (!minfo)
+        return {};
+    std::uint32_t tid_raw = minfo->subject_type_id;
+    if (tid_raw == 0 || tid_raw >= reg.size())
+        tid_raw = flat.type_id(v.child(0));
+    if (tid_raw == 0 || tid_raw >= reg.size())
+        return {};
+    return adt_match_missing_constructors(reg, pool, *minfo, TypeId{tid_raw, 1});
+}
+
 TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
                                             aura::ast::NodeId node_id, NodeView v, bool is_rec) {
     // children: 0=value, 1=body, name from v.sym_id
@@ -2467,127 +2560,53 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
         env_.bind(var_name, val_norm);
     }
 
-    // ── Match exhaustiveness check ──
-    // Detect match on ADT by checking if let name is __match_tmp.
-    // The previous implementation iterated over all ADTs in the registry and
-    // picked the first one (bug: incorrect when multiple ADTs are defined).
-    // Now we use the actual inferred type of the subject value (val_norm).
+    // ── Match exhaustiveness check (Issue #260: shared with post-mutation) ──
     auto let_name = std::string(pool.resolve(v.sym_id));
     if (let_name == "__match_tmp" && !v.children.empty()) {
-        auto* scan_minfo = flat.get_match_info(node_id);
-
-        // Wildcard covers everything — nothing to check.
-        if (scan_minfo && !scan_minfo->has_wildcard) {
-            // Look up the ADT constructors of the actual subject type.
-            // val_norm is the normalized type of the value bound to __match_tmp.
-            // Common case: subject is already an ADT value (e.g. (Some 42)).
-            // Edge case: subject is a constructor function (e.g. (let ((x Red))
-            // — then x has type (-> Color) and we want to check the return type.
+        TypeId subject_type = val_norm;
+        if (reg_.tag_of(subject_type) == TypeTag::FUNC) {
+            if (auto* f = reg_.func_of(subject_type))
+                subject_type = f->ret;
+        }
+        if (auto* scan_minfo = flat.get_match_info(node_id)) {
+            MatchClauseInfo updated = *scan_minfo;
+            updated.exhaustiveness_checked = true;
+            updated.subject_type_id = subject_type.index;
+            flat.set_match_info(node_id, std::move(updated));
+        }
+        auto missing = analyze_match_exhaustiveness(flat, pool, reg_, node_id);
+        if (!missing.empty()) {
             TypeId subject_type = val_norm;
             if (reg_.tag_of(subject_type) == TypeTag::FUNC) {
-                auto* f = reg_.func_of(subject_type);
-                if (f)
+                if (auto* f = reg_.func_of(subject_type))
                     subject_type = f->ret;
             }
-            const std::vector<std::string>* ctors = reg_.get_adt_constructors(subject_type);
-            if (!ctors && reg_.tag_of(subject_type) == TypeTag::TYPE_VAR) {
-                // Parametric ADT case: the subject type is a type variable that
-                // stands in for `List a` etc. ctors aren't directly registered
-                // against the type variable, so fall back to scanning the
-                // registry for an ADT whose first used_ctor matches one of
-                // the constructors we know about.
-                for (auto sid : scan_minfo->used_constructors) {
-                    auto cname = std::string(pool.resolve(sid));
-                    for (std::size_t ti = 0; ti < reg_.size(); ++ti) {
-                        auto tid2 = TypeId{static_cast<std::uint32_t>(ti), 1};
-                        auto* c2 = reg_.get_adt_constructors(tid2);
-                        if (!c2)
-                            continue;
-                        if (std::find(c2->begin(), c2->end(), cname) != c2->end()) {
-                            ctors = c2;
-                            subject_type = tid2;
-                            break;
-                        }
-                    }
-                    if (ctors)
-                        break;
-                }
-                if (!ctors) {
-                    for (auto sid : scan_minfo->candidate_constructors) {
-                        auto cname = std::string(pool.resolve(sid));
-                        for (std::size_t ti = 0; ti < reg_.size(); ++ti) {
-                            auto tid2 = TypeId{static_cast<std::uint32_t>(ti), 1};
-                            auto* c2 = reg_.get_adt_constructors(tid2);
-                            if (!c2)
-                                continue;
-                            if (std::find(c2->begin(), c2->end(), cname) != c2->end()) {
-                                ctors = c2;
-                                subject_type = tid2;
-                                break;
-                            }
-                        }
-                        if (ctors)
-                            break;
-                    }
+            auto type_name = std::string(reg_.name_of(subject_type));
+            std::string msg = "match: ";
+            if (missing.size() == 1) {
+                msg += "missing constructor '" + missing[0] + "'";
+            } else {
+                msg += "missing constructors: ";
+                for (std::size_t mi = 0; mi < missing.size(); ++mi) {
+                    if (mi > 0)
+                        msg += ", ";
+                    msg += "'" + missing[mi] + "'";
                 }
             }
-            if (ctors) {
-                // Build the set of effective used constructors. Definite uses
-                // (Call patterns) are always counted. Bare-identifier candidates
-                // are counted only if they are real constructors of this ADT
-                // (so a variable binding like `(let ((x 5)) (match x (a a) ...))`
-                // doesn't false-positive on a non-existent `a` constructor).
-                std::vector<std::string> used_eff;
-                used_eff.reserve(scan_minfo->used_constructors.size() +
-                                 scan_minfo->candidate_constructors.size());
-                for (auto sid : scan_minfo->used_constructors)
-                    used_eff.push_back(std::string(pool.resolve(sid)));
-                for (auto sid : scan_minfo->candidate_constructors) {
-                    auto cname = std::string(pool.resolve(sid));
-                    if (std::find(ctors->begin(), ctors->end(), cname) != ctors->end())
-                        used_eff.push_back(std::move(cname));
+            msg += " in " + type_name;
+            if (missing.size() == 1) {
+                diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                                 .with_suggestion("add clause for '" + missing[0] + "' pattern"));
+            } else {
+                std::string suggest = "add clauses for ";
+                for (std::size_t mi = 0; mi < missing.size(); ++mi) {
+                    if (mi > 0)
+                        suggest += ", ";
+                    suggest += "'" + missing[mi] + "'";
                 }
-
-                // Find missing constructors
-                std::vector<std::string> missing;
-                for (auto& cname : *ctors) {
-                    if (std::find(used_eff.begin(), used_eff.end(), cname) == used_eff.end())
-                        missing.push_back(cname);
-                }
-
-                if (!missing.empty()) {
-                    auto type_name = std::string(reg_.name_of(subject_type));
-                    std::string msg = "match: ";
-                    if (missing.size() == 1) {
-                        msg += "missing constructor '" + missing[0] + "'";
-                    } else {
-                        msg += "missing constructors: ";
-                        for (std::size_t mi = 0; mi < missing.size(); ++mi) {
-                            if (mi > 0)
-                                msg += ", ";
-                            msg += "'" + missing[mi] + "'";
-                        }
-                    }
-                    msg += " in " + type_name;
-                    if (missing.size() == 1) {
-                        diag_.report(
-                            Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                .with_suggestion("add clause for '" + missing[0] + "' pattern"));
-                    } else {
-                        std::string suggest = "add clauses for ";
-                        for (std::size_t mi = 0; mi < missing.size(); ++mi) {
-                            if (mi > 0)
-                                suggest += ", ";
-                            suggest += "'" + missing[mi] + "'";
-                        }
-                        diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                         .with_suggestion(suggest));
-                    }
-                }
+                diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                                 .with_suggestion(suggest));
             }
-            // If subject isn't an ADT (Int, String, etc.) we don't try to
-            // enforce exhaustiveness — non-ADT subjects are typically matched
-            // with literal/wildcard patterns and the runtime check is enough.
         }
     }
 
@@ -3476,65 +3495,72 @@ namespace {
             // callers distinguish "this if-context was specifically
             // flagged for narrowing invalidation" from
             // "conservative: dirty scope contains an if-context".
-            note.kind = has_occ_bit ? "invalidated-occurrence-narrowing"
-                                    : "invalidated-occurrence-narrowing-conservative";
+            note.kind = has_occ_bit ? "StaleOccurrenceRefinement"
+                                    : "StaleOccurrenceRefinement-conservative";
             note.message = "occurrence narrowing on '" + occ->var_name +
                            "' in dirty scope may be invalidated by mutation";
             notes_out.push_back(std::move(note));
         }
     }
 
-    // Issue #147 follow-up (Phase 2): extend the post-mutation
-    // invariant check to also flag match patterns in the dirty
-    // scope. The original #147 implementation only walked IfExpr
-    // predicates (the `find_occurrence_contexts` helper above);
-    // match patterns — stored as MatchClauseInfo on the FlatAST —
-    // were documented as a known limitation. This helper closes
-    // that gap: for each node in the dirty subtree that has
-    // MatchClauseInfo attached, emit an "invalidated-match-pattern"
-    // OwnershipNote. The conservative interpretation: any
-    // mutation in the dirty scope may have changed a constructor
-    // signature or a pattern binding in a way the typechecker's
-    // static exhaustiveness check would not have caught (the
-    // check runs at typecheck time, not at mutation time).
-    //
-    // Note: MatchClauseInfo doesn't directly tell us which
-    // constructors the pattern references — it stores
-    // used_constructors (SymId) and candidate_constructors
-    // (SymId). The conservative emission (one note per match
-    // clause in the dirty scope) is the right MVP: a false
-    // positive is just a warning, a false negative would silently
-    // break the match. Mode behavior (Disabled / WarningsOnly /
-    // Strict) is the caller's responsibility — the helper just
-    // emits notes.
-    static void find_match_pattern_contexts(const FlatAST& flat, const std::vector<NodeId>& nodes,
-                                            std::vector<OwnershipNote>& notes_out) {
+    static void attach_mutation_blame(OwnershipNote& note, const MutationRecord& rec) {
+        note.source_mutation_id = rec.mutation_id;
+        note.blame = BlameInfo{BlameParty::System, rec.operator_name, "mutation"};
+    }
+
+    // Issue #260: re-run ADT exhaustiveness on dirty __match_tmp lets
+    // (including nested matches — each match is its own let node).
+    static void recheck_match_exhaustiveness_in_dirty_scope(
+        FlatAST& flat, const StringPool& pool, TypeRegistry& reg, const std::vector<NodeId>& nodes,
+        const MutationRecord& rec, std::vector<OwnershipNote>& notes_out) {
         for (auto id : nodes) {
             if (id == NULL_NODE || id >= flat.size())
                 continue;
-            // Check if this node has MatchClauseInfo attached. The
-            // helper is on the FlatAST (per-node, indexed by
-            // NodeId). The presence of match_info indicates a
-            // match expression (subject + arms) was lowered at
-            // this node.
             if (!flat.has_match_info(id))
                 continue;
-            const auto* mi = flat.get_match_info(id);
-            if (!mi)
+            auto let_v = flat.get(id);
+            bool had_subject_type = false;
+            if (let_v.tag == NodeTag::Let && !let_v.children.empty() && let_v.child(0) != NULL_NODE) {
+                auto tid_raw = flat.type_id(let_v.child(0));
+                had_subject_type = tid_raw > 0 && tid_raw < reg.size();
+            }
+            auto missing = analyze_match_exhaustiveness(flat, pool, reg, id);
+            if (auto* mi = flat.get_match_info(id)) {
+                MatchClauseInfo updated = *mi;
+                updated.exhaustiveness_checked = true;
+                if (had_subject_type && let_v.tag == NodeTag::Let && !let_v.children.empty())
+                    updated.subject_type_id = flat.type_id(let_v.child(0));
+                flat.set_match_info(id, std::move(updated));
+            }
+            if (!missing.empty()) {
+                OwnershipNote note;
+                note.node = id;
+                note.kind = "MissingConstructorInNestedMatch";
+                note.message = "match exhaustiveness stale after mutation: missing '" +
+                               missing[0] + "'";
+                if (missing.size() > 1) {
+                    note.message += " (and " + std::to_string(missing.size() - 1) + " more)";
+                }
+                attach_mutation_blame(note, rec);
+                notes_out.push_back(std::move(note));
                 continue;
-            // Conservative: emit a note for every match clause in
-            // the dirty scope. The note's `kind` distinguishes
-            // match-pattern warnings from occurrence-narrowing
-            // warnings so callers can filter if they want.
-            OwnershipNote note;
-            note.node = id;
-            note.kind = "invalidated-match-pattern";
-            note.message = "match pattern in dirty scope may be invalidated "
-                           "by mutation (used " +
-                           std::to_string(mi->used_constructors.size()) +
-                           " constructors, has_wildcard=" + (mi->has_wildcard ? "true" : "false") +
-                           ")";
-            notes_out.push_back(std::move(note));
+            }
+            // Subject type unknown — conservative fallback (#147).
+            if (!had_subject_type) {
+                const auto* mi = flat.get_match_info(id);
+                if (!mi)
+                    continue;
+                OwnershipNote note;
+                note.node = id;
+                note.kind = "invalidated-match-pattern";
+                note.message = "match pattern in dirty scope may be invalidated "
+                               "by mutation (used " +
+                               std::to_string(mi->used_constructors.size()) +
+                               " constructors, has_wildcard=" +
+                               (mi->has_wildcard ? "true" : "false") + ")";
+                attach_mutation_blame(note, rec);
+                notes_out.push_back(std::move(note));
+            }
         }
     }
 
@@ -3592,15 +3618,15 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
     // ── Occurrence-narrowing re-check on dirty nodes ─────────────
     find_occurrence_contexts(flat, pool, reg, dirty_nodes, notes_out);
 
-    // ── Match-pattern re-check on dirty nodes ────────────────
-    // Issue #147 follow-up (Phase 2): also flag match
-    // expressions in the dirty scope. Same conservative
-    // interpretation: a mutation may have changed a
-    // constructor signature or pattern binding. The check
-    // is independent of the linear-ownership and IfExpr
-    // checks — it walks the same dirty_nodes vector and
-    // adds notes for any MatchClauseInfo-attached node.
-    find_match_pattern_contexts(flat, dirty_nodes, notes_out);
+    // Issue #260: nested match exhaustiveness + conservative fallback.
+    recheck_match_exhaustiveness_in_dirty_scope(flat, pool, reg, dirty_nodes, rec, notes_out);
+
+    for (auto& note : notes_out) {
+        if (!note.source_mutation_id)
+            note.source_mutation_id = rec.mutation_id;
+        if (!note.blame)
+            note.blame = BlameInfo{BlameParty::System, rec.operator_name, "mutation"};
+    }
 
     if (notes_out.empty())
         return aura::ast::InvariantStatus::Ok;

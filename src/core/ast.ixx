@@ -475,6 +475,10 @@ export struct MatchClauseInfo {
     std::vector<SymId> used_constructors;
     std::vector<SymId> candidate_constructors;
     bool has_wildcard = false;
+    // Issue #260: set by typecheck / post-mutation exhaustiveness pass.
+    bool exhaustiveness_checked = false;
+    // Normalized subject TypeId.index from last exhaustiveness check (0 = unknown).
+    std::uint32_t subject_type_id = 0;
 };
 
 // ── Issue #222: OwnedSharedMutex wrapper ──────────────────────
