@@ -4,6 +4,7 @@ module;
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
+import aura.compiler.evaluator;
 import aura.compiler.evaluator_pure;
 // Issue #146 Phase 3: bring the pure is_truthy into the
 // global namespace so existing call sites that use
@@ -1041,6 +1042,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     } else {
                         locals[ops[0]] = make_void();
                     }
+                    break;
+                }
+
+                case IROpcode::TopCellLoad: {
+                    if (context_.evaluator && ops[1] < context_.evaluator->cells().size())
+                        locals[ops[0]] = context_.evaluator->cells()[ops[1]];
+                    else
+                        locals[ops[0]] = make_void();
                     break;
                 }
 

@@ -58,6 +58,27 @@ enum class IROpcode : std::uint8_t {
     Cdr,
     Raise,
     IsError,
+    TryBegin,
+    TryEnd,
+    HashRef,
+    HashSet,
+    HashRemove,
+    LinearWrap,
+    MoveOp,
+    BorrowOp,
+    MutBorrowOp,
+    DropOp,
+    RefCountOp,
+    ArenaPush,
+    ArenaPop,
+    GuardShape,
+    TopCellLoad,
+};
+
+enum class Region : std::uint8_t {
+    Default = 0,
+    Performance = 1,
+    Evolution = 2,
 };
 
 struct IRInstruction {
@@ -83,6 +104,11 @@ struct IRFunction {
     std::uint32_t local_count = 0;
     std::uint32_t arg_count = 0;
     bool variadic = false;
+    Region region = Region::Default;
+    std::uint8_t marker = 0;
+    std::uint32_t specialized_for = 0;
+    std::uint32_t generic_id = 0xFFFFFFFF;
+    std::vector<std::uint8_t> escape_map;
 };
 
 struct ClosureBridgeData {
@@ -90,6 +116,7 @@ struct ClosureBridgeData {
     const void* pool = nullptr;
     std::uint32_t body_id = ~0u;
     std::string body_source;
+    std::uint64_t bridge_epoch = 0;
 };
 
 struct IRModule {
@@ -133,10 +160,10 @@ char* aura_inspect_ir_json(const void* mod, size_t* out_size) {
     const auto& module = *static_cast<const aura::ir::IRModule*>(mod);
     auto json = aura::reflect::to_json(module);
     *out_size = json.size();
-    char* data = new char[*out_size + 1];
-    std::memcpy(data, json.data(), *out_size);
-    data[*out_size] = '\0';
-    return data;
+    char* out = new char[*out_size + 1];
+    std::memcpy(out, json.data(), *out_size);
+    out[*out_size] = '\0';
+    return out;
 }
 
 } // extern "C"

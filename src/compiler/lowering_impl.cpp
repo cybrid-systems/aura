@@ -204,6 +204,16 @@ static std::uint32_t lower_flat_expr(
                 state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
                 return slot;
             }
+            // Issue #272 Cycle 3: top-level value defines bound via IR.
+            if (state.value_cells) {
+                auto vc_it = state.value_cells->find(std::string(name));
+                if (vc_it != state.value_cells->end()) {
+                    auto slot = state.alloc_local();
+                    state.emit(IROpcode::TopCellLoad, slot,
+                               static_cast<std::uint32_t>(vc_it->second));
+                    return slot;
+                }
+            }
             auto slot = state.alloc_local();
             state.emit(IROpcode::ConstI64, slot, 0, 0);
             return slot;
@@ -1359,8 +1369,10 @@ static IRModule lower_to_ir_impl(
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge =
         nullptr,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
-    const std::string* self_name = nullptr) {
+    const std::string* self_name = nullptr,
+    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr) {
     LoweringState state(arena);
+    state.value_cells = value_cells;
 
     // Issue #150 Phase 2: automatic region inference pass.
     // Walk the FlatAST before main lowering. For each Define
@@ -1450,9 +1462,11 @@ IRModule lower_to_ir_with_cache(
     std::vector<std::string>* cache_hits, const Primitives* primitives,
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
-    const std::string* self_name, const aura::core::TypeRegistry* type_reg) {
+    const std::string* self_name, const aura::core::TypeRegistry* type_reg,
+    const std::unordered_map<std::string, std::size_t>* value_cells) {
     return lower_to_ir_with_cache_result(flat, pool, arena, cache, cache_hits, primitives,
-                                         cache_bridge, cache_strings, self_name, type_reg)
+                                         cache_bridge, cache_strings, self_name, type_reg,
+                                         value_cells)
         .value();
 }
 
@@ -1479,9 +1493,10 @@ aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(
     std::vector<std::string>* cache_hits, const Primitives* primitives,
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
-    const std::string* self_name, const aura::core::TypeRegistry* type_reg) {
+    const std::string* self_name, const aura::core::TypeRegistry* type_reg,
+    const std::unordered_map<std::string, std::size_t>* value_cells) {
     return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives, type_reg,
-                            cache_bridge, cache_strings, self_name);
+                            cache_bridge, cache_strings, self_name, value_cells);
 }
 
 // ── lower_function_at — per-function lowering (Issue #224 cycle 3) ─

@@ -1,8 +1,9 @@
 // @category: integration
 // @reason: uses CompilerService to verify IR-native define env binding
 
-// test_issue_272.cpp — Issue #272: IR-native env binding for function defines.
-// Cycle 1: cache_define / eval path. Cycle 2: compile_module + invalidate cascade.
+// test_issue_272.cpp — Issue #272: IR-native env binding for defines.
+// Cycle 1: cache_define / eval. Cycle 2: compile_module + invalidate.
+// Cycle 3: value defines + TopCellLoad references.
 
 #include <iostream>
 #include <memory>
@@ -107,6 +108,32 @@ bool test_invalidate_rebinds_dependent() {
     return true;
 }
 
+bool test_value_define_ir_bind() {
+    std::println("\n--- AC8: value define bound via IR ---");
+    aura::compiler::CompilerService cs;
+    CHECK(cs.value_define_ir_env_bind_count() == 0, "value metric starts at 0");
+    auto r = cs.eval("(define y (+ 1 2))");
+    CHECK(static_cast<bool>(r), "value define succeeds");
+    CHECK(cs.value_define_ir_env_bind_count() == 1, "value define bumps IR bind metric");
+    CHECK(run_int(cs, "(+ y 10)") == 13, "(+ y 10) => 13 via TopCellLoad");
+    return true;
+}
+
+bool test_value_define_no_tree_walker_fallback() {
+    std::println("\n--- AC9: value define does not need tree-walker fallback ---");
+    aura::compiler::CompilerService cs;
+    auto arena = std::make_unique<aura::ast::ASTArena>();
+    auto alloc = arena->allocator();
+    auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+    auto* pool = arena->create<aura::ast::StringPool>(alloc);
+    auto pr = aura::parser::parse_to_flat("(define n 42)", *flat, *pool);
+    CHECK(pr.success, "value define parses");
+    flat->root = pr.root;
+    CHECK(!cs.public_needs_tree_walker_fallback(*flat, *pool, pr.root),
+          "needs_tree_walker_fallback false for value define");
+    return true;
+}
+
 bool test_fn_define_no_tree_walker_fallback() {
     std::println("\n--- AC7: pure function define does not need tree-walker fallback ---");
     aura::compiler::CompilerService cs;
@@ -145,6 +172,8 @@ int run_tests() {
     test_define_then_call();
     test_redefine_updates_binding();
     test_invalidate_rebinds_dependent();
+    test_value_define_ir_bind();
+    test_value_define_no_tree_walker_fallback();
     test_fn_define_no_tree_walker_fallback();
     test_nested_define_calls();
     std::println("\nResults: {} passed, {} failed", g_passed, g_failed);

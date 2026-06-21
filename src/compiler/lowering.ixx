@@ -41,6 +41,8 @@ export struct LoweringState {
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge =
         nullptr;
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr;
+    // Issue #272 Cycle 3: top-level value defines bound via IR (name → cell index).
+    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr;
 
     // Self-reference support: function name and its pre-allocated func_id
     // Used by cached define functions to emit correct MakeClosure for self-recursion.
@@ -236,7 +238,8 @@ export aura::ir::IRModule lower_to_ir_with_cache(
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge =
         nullptr,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
-    const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr);
+    const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr,
+    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr);
 
 // FlatAST → S-expression source code (reverse of parse_to_flat)
 export std::string unparse_node(const ast::FlatAST& flat, const ast::StringPool& pool,
@@ -266,7 +269,8 @@ export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_with_cache_result
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge =
         nullptr,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
-    const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr);
+    const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr,
+    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr);
 
 // ── Per-function lowering API (Issue #224 cycle 3) ──────────
 //

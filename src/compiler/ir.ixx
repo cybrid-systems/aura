@@ -92,6 +92,8 @@ export enum class IROpcode : std::uint8_t {
     // generic-trampoline block id (branch target on mismatch).
     // The guard writes a bool to operands[0]: 1 = matches, 0 = deopt.
     GuardShape, // deopt guard: result, arg_slot, expected_shape, generic_block
+    // Issue #272 Cycle 3: load top-level value binding from evaluator cell heap.
+    TopCellLoad, // TopCellLoad: result_slot, cell_index
 };
 
 // ── Issue #217 Cycle 3: IR types are reflection-ready ────────
@@ -252,9 +254,11 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     {"arena-pop", 1, false},    // ArenaPop: saved_offset (no result)
     // Issue #61 Iter 2: GuardShape. result + arg + expected + generic_block.
     {"guard-shape", 4, true}, // GuardShape: result, arg, expected, generic
+    // Issue #272 Cycle 3
+    {"top-cell-load", 2, true}, // TopCellLoad: result, cell_index
 };
 
-static_assert(std::size(kOpcodeInfo) == 53, "kOpcodeInfo must have exactly one entry per IROpcode");
+static_assert(std::size(kOpcodeInfo) == 54, "kOpcodeInfo must have exactly one entry per IROpcode");
 
 // Helper: look up opcode info by IROpcode enum value
 export inline const OpcodeInfo* lookup_opcode(IROpcode op) {
