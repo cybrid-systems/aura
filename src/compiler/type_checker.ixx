@@ -169,6 +169,9 @@ export struct OwnershipNote {
     aura::ast::NodeId node;
     std::string message;
     std::string kind; // "use-after-move" | "double-borrow" | "leaked-linear" | "invalid-state"
+    // Issue #260: link post-mutation notes to MutationLog + BlameInfo.
+    std::optional<std::uint64_t> source_mutation_id;
+    std::optional<aura::diag::BlameInfo> blame;
 };
 
 export class OwnershipEnv {
@@ -708,6 +711,12 @@ export aura::ast::InvariantStatus
 post_mutation_invariant_check(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                               aura::core::TypeRegistry& reg, const aura::ast::MutationRecord& rec,
                               std::vector<OwnershipNote>& notes_out);
+
+// Issue #260: ADT match exhaustiveness for a single __match_tmp let node.
+// Returns missing constructor names (empty if complete, wildcard, or N/A).
+export std::vector<std::string>
+analyze_match_exhaustiveness(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                             aura::core::TypeRegistry& reg, aura::ast::NodeId let_node);
 
 // Issue #148 Phase 3: identify the affected node set for a mutation.
 // Returns NodeIds in the dirty subtree (descendants of the mutated
