@@ -21,23 +21,6 @@ using EvalValue = types::EvalValue;
 using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using namespace types;
 
-namespace primitives_detail {
-void register_network_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_type_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_hot_swap_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_compile_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_messaging_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_synthesize_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-                                    std::function<void()> destroy_defuse_index);
-void register_strategy_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_memory_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-                                std::function<void()> destroy_defuse_index);
-void register_jit_arena_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_policy_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-}
-
-void defuse_index_destroy(void** slot);
-
 void Evaluator::init_pair_primitives() {
     register_all_primitives();
 }
