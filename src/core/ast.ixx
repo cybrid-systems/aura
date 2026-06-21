@@ -532,6 +532,14 @@ export struct NodeLifecycleStats {
     double fragmentation_ratio = 0.0;
 };
 
+// Issue #263: post-restore consistency report (generation + span validity).
+export struct PostRestoreReport {
+    std::size_t violations = 0;
+    std::uint16_t generation = 0;
+    std::size_t live_nodes = 0;
+    std::size_t free_slots = 0;
+};
+
 // ── FlatAST — SoA flat index-based AST ─────────────────────────
 export class FlatAST {
 private:
@@ -2310,6 +2318,13 @@ public:
     };
     // Validate all nodes, populating errors vector instead of asserting.
     std::size_t validate_all_nodes(std::vector<ValidationError>& errors) const;
+
+    // Issue #263: post-restore consistency check. Verifies generation_
+    // / node_gen_ alignment, parent/child bidirectional integrity, and
+    // that all child spans reference live nodes. Populates `errors` when
+    // non-null. Returns violation count (0 = consistent).
+    [[nodiscard]] PostRestoreReport
+    validate_post_restore(std::vector<ValidationError>* errors = nullptr) const;
 
     // ── Value result cache (for incremental eval) ────────────
     // Stores the last EvalValue result for each node.

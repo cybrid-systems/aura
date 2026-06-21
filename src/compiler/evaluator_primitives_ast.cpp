@@ -24,6 +24,7 @@ import aura.parser.parser;
 
 namespace aura::compiler::primitives_detail {
 
+using WorkspaceTree = aura::compiler::WorkspaceTree;
 using EvalValue = types::EvalValue;
 using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
@@ -194,6 +195,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             *fs.flat = *ev.workspace_flat_;
             *fs.pool = *ev.workspace_pool_;
             fs.has_flat = true;
+            fs.flat_generation = ev.workspace_flat_->generation();
+            fs.flat_size = ev.workspace_flat_->size();
+            if (ev.workspace_tree_) {
+                auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+                if (auto* node = wt->active())
+                    fs.cow_epoch = node->cow_epoch;
+            }
         } catch (...) {
             // OOM during deep copy — store the source anyway so the
             // snapshot at least exists for diff / fallback restore.
@@ -409,6 +417,9 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // unreachable across restore iterations.
                     ev.workspace_flat_->recycle_dead_nodes();
                     ev.update_shared_tree_root();
+                    // Issue #263: verify generation/span consistency after restore.
+                    ev.last_post_restore_report_ = ev.workspace_flat_->validate_post_restore();
+                    ev.last_post_restore_violations_ = ev.last_post_restore_report_.violations;
                     // Invalidate caches (same as set-code)
                     // (ASAN fix #107 leak) delete the old index.
                     destroy_defuse_index();
@@ -957,46 +968,6 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
 
     // Issue #261: NodeId lifecycle primitives for long-running
     // AI query→mutate→eval loops.
-    auto build_ast_lifecycle_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv)
-        -> EvalValue {
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        for (auto& [k, v] : kv) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
-            for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
-            EvalValue key_ev = make_string(kidx);
-            bool inserted = false;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    keys[idx] = key_ev.val;
-                    vals[idx] = v.val;
-                    ht->size++;
-                    inserted = true;
-                    break;
-                }
-            }
-            if (!inserted) {
-                FlatHashTable::destroy(ht);
-                return make_void();
-            }
-        }
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    };
 
     // (ast:recycle-nodes) — mark unreachable slots free for reuse.
     add("ast:recycle-nodes", [&ev](const auto&) -> EvalValue {
@@ -1014,8 +985,38 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->compact_nodes()));
     });
 
+    // (ast:validate-post-restore) — Issue #263: check generation_ /
+    // node_gen_ / parent-child span consistency. Returns a hash with
+    // violations, generation, live-nodes, free-slots.
+    add("ast:validate-post-restore", [&ev](const auto&) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+        if (!ev.workspace_flat_)
+            return make_void();
+        auto report = ev.workspace_flat_->validate_post_restore();
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"violations", make_int(static_cast<std::int64_t>(report.violations))},
+            {"generation", make_int(static_cast<std::int64_t>(report.generation))},
+            {"live-nodes", make_int(static_cast<std::int64_t>(report.live_nodes))},
+            {"free-slots", make_int(static_cast<std::int64_t>(report.free_slots))},
+        };
+        return ev.build_ast_lifecycle_hash(kv);
+    });
+
+    // (ast:post-restore-stats) — Issue #263: result of the most recent
+    // ast:restore direct-path validation (0 violations = consistent).
+    add("ast:post-restore-stats", [&ev](const auto&) -> EvalValue {
+        auto& r = ev.last_post_restore_report_;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"violations", make_int(static_cast<std::int64_t>(r.violations))},
+            {"generation", make_int(static_cast<std::int64_t>(r.generation))},
+            {"live-nodes", make_int(static_cast<std::int64_t>(r.live_nodes))},
+            {"free-slots", make_int(static_cast<std::int64_t>(r.free_slots))},
+        };
+        return ev.build_ast_lifecycle_hash(kv);
+    });
+
     // (ast:node-lifecycle-stats) — fragmentation + counter hash.
-    add("ast:node-lifecycle-stats", [&](const auto&) -> EvalValue {
+    add("ast:node-lifecycle-stats", [&ev](const auto&) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         if (!ev.workspace_flat_)
             return make_void();
@@ -1033,7 +1034,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             {"compact-total", make_int(static_cast<std::int64_t>(
                                    ev.workspace_flat_->node_compact_total()))},
         };
-        return build_ast_lifecycle_hash(kv);
+        return ev.build_ast_lifecycle_hash(kv);
     });
 
 }

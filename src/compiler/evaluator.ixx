@@ -505,7 +505,11 @@ struct WorkspaceNode {
     ast::StringPool* pool = nullptr;
     ast::FlatAST* parent_flat_ = nullptr;
     ast::StringPool* parent_pool_ = nullptr;
+    // Issue #263: workspace-layer epoch. Synced to the owned flat's
+    // generation_ after COW clone; 0 for shared (pre-COW) children.
     std::uint64_t generation = 0;
+    // Issue #263: monotonic COW layer id assigned on lazy clone.
+    std::uint64_t cow_epoch = 0;
     bool read_only = false;
     bool has_own_flat = false;
     bool is_root = false;
@@ -517,6 +521,8 @@ struct WorkspaceNode {
 struct WorkspaceTree {
     std::vector<WorkspaceNode> nodes_;
     std::uint32_t active_idx_ = 0;
+    // Issue #263: global COW epoch counter (bumped on each lazy clone).
+    std::uint64_t cow_epoch_ = 0;
 
     [[nodiscard]] std::size_t size() const { return nodes_.size(); }
     [[nodiscard]] std::uint32_t active_idx() const { return active_idx_; }
@@ -1321,6 +1327,11 @@ private:
     // captured by std::function in the primitive table. A captured local
     // lambda would dangle as soon as the enclosing function returns.
     [[nodiscard]] types::EvalValue build_policy_hash(const MemoryPolicy& p);
+    // Issue #263: build lifecycle/validation stats hash. Member function
+    // (not a local lambda) so std::function-captured primitives do not
+    // hold a dangling reference to a stack-local helper.
+    [[nodiscard]] types::EvalValue build_ast_lifecycle_hash(
+        std::span<const std::pair<std::string, types::EvalValue>> kv);
     // (apply_closure and expand_macro removed — use eval_flat directly)
     [[nodiscard]] EvalValue ast_to_data(const aura::ast::FlatAST& flat,
                                         const aura::ast::StringPool& pool, aura::ast::NodeId nid);
@@ -1569,8 +1580,15 @@ private:
         std::unique_ptr<aura::ast::FlatAST> flat;
         std::unique_ptr<aura::ast::StringPool> pool;
         bool has_flat = false; // true if both flat + pool are valid
+        // Issue #263: metadata captured at snapshot time for restore checks.
+        std::uint16_t flat_generation = 0;
+        std::size_t flat_size = 0;
+        std::uint64_t cow_epoch = 0;
     };
     std::vector<FlatSnapshot> snapshot_flats_;
+    // Issue #263: last post-restore validation result (0 = consistent).
+    std::size_t last_post_restore_violations_ = 0;
+    aura::ast::PostRestoreReport last_post_restore_report_{};
 
     // Hot-swap callback storage (Issue #97 Action 1)
     HotSwapFn hot_swap_fn_;
@@ -2657,7 +2675,8 @@ inline bool WorkspaceTree::ensure_local_flat(std::uint32_t idx) {
         n.flat = new_flat;
         n.pool = new_pool;
         n.has_own_flat = true;
-        n.generation = 1;
+        n.cow_epoch = ++cow_epoch_;
+        n.generation = new_flat->generation();
         n.memory_used = parent_bytes;
         return true;
     }

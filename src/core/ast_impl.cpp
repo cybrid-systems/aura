@@ -188,4 +188,76 @@ std::size_t FlatAST::validate_all_nodes(std::vector<ValidationError>& errors) co
     return count;
 }
 
+PostRestoreReport FlatAST::validate_post_restore(std::vector<ValidationError>* errors) const {
+    PostRestoreReport report;
+    report.generation = generation_;
+
+    auto record = [&](NodeId id, std::string msg) {
+        ++report.violations;
+        if (errors) {
+            ValidationError ve;
+            ve.node = id;
+            ve.message = std::move(msg);
+            errors->push_back(std::move(ve));
+        }
+    };
+
+    if (generation_ == 0)
+        record(NULL_NODE, "generation_ is zero (invalid workspace epoch)");
+
+    for (NodeId id = 0; id < size(); ++id) {
+        const bool has_gen = id < node_gen_.size();
+        const bool live = has_gen && node_gen_[id] == generation_;
+        const bool tombstone = has_gen && node_gen_[id] == 0;
+
+        if (has_gen) {
+            if (live)
+                ++report.live_nodes;
+            else if (tombstone)
+                ++report.free_slots;
+            else
+                record(id, "slot generation neither live nor tombstone");
+        } else if (id < tag_.size()) {
+            record(id, "node_gen_ entry missing for occupied slot");
+        }
+
+        if (!live)
+            continue;
+
+        for (auto child : children(id)) {
+            if (child == NULL_NODE)
+                continue;
+            if (child >= size()) {
+                record(id, "child " + std::to_string(child) + " out of range");
+                continue;
+            }
+            if (child >= node_gen_.size() || node_gen_[child] != generation_) {
+                record(id, "child " + std::to_string(child) + " is not live");
+                continue;
+            }
+            if (parent_of(child) != id)
+                record(id, "child " + std::to_string(child) + " parent_ mismatch");
+        }
+
+        auto parent = parent_of(id);
+        if (parent == NULL_NODE)
+            continue;
+        if (parent >= size() || parent >= node_gen_.size() || node_gen_[parent] != generation_) {
+            record(id, "parent " + std::to_string(parent) + " is not live");
+            continue;
+        }
+        bool listed = false;
+        for (auto child : children(parent)) {
+            if (child == id) {
+                listed = true;
+                break;
+            }
+        }
+        if (!listed)
+            record(id, "parent " + std::to_string(parent) + " does not list node as child");
+    }
+
+    return report;
+}
+
 } // namespace aura::ast
