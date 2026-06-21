@@ -33,6 +33,35 @@ using MakeErrorVal = std::function<EvalValue(const std::string&, const std::stri
 
 using namespace types;
 
+namespace {
+
+using StableNodeRef = aura::ast::FlatAST::StableNodeRef;
+
+// Issue #270: verify a node is still attached under its parent.
+std::optional<std::uint32_t> parent_child_index_if_attached(
+    const aura::ast::FlatAST& flat, aura::ast::NodeId match_id) {
+    if (match_id == aura::ast::NULL_NODE || match_id >= flat.size())
+        return std::nullopt;
+    auto parent_id = flat.parent_of(match_id);
+    if (parent_id == aura::ast::NULL_NODE || parent_id >= flat.size())
+        return std::nullopt;
+    auto pv = flat.get(parent_id);
+    for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
+        if (pv.child(ci) == match_id)
+            return ci;
+    }
+    return std::nullopt;
+}
+
+bool stable_match_still_attached(const aura::ast::FlatAST& flat,
+                                 const StableNodeRef& match_ref) {
+    if (!match_ref.is_valid_in(flat))
+        return false;
+    return parent_child_index_if_attached(flat, match_ref.id).has_value();
+}
+
+}  // namespace
+
 void register_mutate_primitives(
     PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
     std::function<void()> destroy_defuse_index) {
@@ -257,9 +286,10 @@ void register_mutate_primitives(
                                      ev.string_heap_[sum_idx]);
         return make_int(static_cast<std::int64_t>(mid));
     });
-    // (#110) mutate:query-and-replace - composes (query:where :field value)
-    // predicates with replacement. Snapshots flat.size() to avoid
-    // re-evaluating after set_child grows the flat.
+    // (#110, #270) mutate:query-and-replace - composes (query:where :field value)
+    // predicates with replacement. Query phase snapshots flat.size() and
+    // captures StableNodeRef; apply phase uses is_valid_in() + parent-slot
+    // checks inside an atomic batch so multiple set_child calls share one bump.
     add(
         "mutate:query-and-replace", [&ev, mev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
             std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
@@ -320,8 +350,9 @@ void register_mutate_primitives(
             // Collect matches. Snapshot flat.size() so set_child during replacement
             // (which grows flat) doesn't extend the match scan. (#110 fix: bug
             // exposed by re-evaluating flat.size() each iteration.)
-            auto end_id = flat.size();
-            std::vector<aura::ast::NodeId> matches;
+            // Issue #270: store StableNodeRef so apply can validate each match.
+            const auto end_id = flat.size();
+            std::vector<StableNodeRef> matches;
             for (aura::ast::NodeId id = 0; id < end_id; ++id) {
                 auto v = flat.get(id);
                 bool match = true;
@@ -420,7 +451,7 @@ void register_mutate_primitives(
                     }
                 }
                 if (match)
-                    matches.push_back(id);
+                    matches.push_back(flat.make_ref(id));
             }
 
             if (matches.empty())
@@ -520,7 +551,16 @@ void register_mutate_primitives(
 
             int replaced = 0;
             std::vector<aura::ast::NodeId> replaced_roots;
-            for (auto match_id : matches) {
+            flat.begin_atomic_batch();
+            for (auto& match_ref : matches) {
+                if (!stable_match_still_attached(flat, match_ref))
+                    continue;
+                auto match_id = match_ref.id;
+                auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
+                if (!child_idx_opt)
+                    continue;
+                auto parent_id = flat.parent_of(match_id);
+
                 std::vector<std::string> capture_sources;
                 capture_sources.push_back(node_to_source(match_id));
                 auto mv = flat.get(match_id);
@@ -555,31 +595,18 @@ void register_mutate_primitives(
                 if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE)
                     continue;
 
-                auto parent_id = flat.parent_of(match_id);
-                if (parent_id == aura::ast::NULL_NODE)
-                    continue;
-                int child_idx = -1;
-                {
-                    auto pv = flat.get(parent_id);
-                    for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-                        if (pv.child(ci) == match_id) {
-                            child_idx = static_cast<int>(ci);
-                            break;
-                        }
-                    }
-                }
-                if (child_idx < 0)
-                    continue;
-
-                flat.set_child(parent_id, static_cast<std::uint32_t>(child_idx), repl_pr.root);
+                flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
                 replaced_roots.push_back(repl_pr.root);
                 flat.add_mutation(repl_pr.root, "query-and-replace", "matched", "template",
                                   summary);
                 ++replaced;
             }
 
-            if (replaced == 0)
+            if (replaced == 0) {
+                flat.rollback_atomic_batch();
                 return make_bool(false);
+            }
+            flat.commit_atomic_batch();
 
             // Issue #262: precise dirty + incremental defuse refresh
             // instead of destroying the index and marking all defines.
@@ -1523,6 +1550,12 @@ void register_mutate_primitives(
             bool matched = false;
             std::vector<NodeId> captures;
         };
+        // Issue #270: query captures StableNodeRef; apply validates
+        // each ref before set_child inside an atomic batch.
+        struct PatternMatch {
+            StableNodeRef match_ref;
+            std::vector<StableNodeRef> capture_refs;
+        };
 
         std::function<MatchResult(NodeId, NodeId)> match_capture;
         match_capture = [&](NodeId ws_id, NodeId pat_id) -> MatchResult {
@@ -1567,12 +1600,21 @@ void register_mutate_primitives(
             }
         };
 
-        // Find all matching nodes in workspace
-        std::vector<std::pair<NodeId, std::vector<NodeId>>> matches;
-        for (NodeId id = 0; id < flat.size(); ++id) {
+        // Find all matching nodes in workspace. Snapshot end_id (#111)
+        // and capture StableNodeRef per match (#270).
+        const auto end_id = flat.size();
+        std::vector<PatternMatch> matches;
+        matches.reserve(end_id);
+        for (NodeId id = 0; id < end_id; ++id) {
             auto mr = match_capture(id, pat_pr.root);
-            if (mr.matched)
-                matches.push_back({id, std::move(mr.captures)});
+            if (!mr.matched)
+                continue;
+            PatternMatch pm;
+            pm.match_ref = flat.make_ref(id);
+            pm.capture_refs.reserve(mr.captures.size());
+            for (auto cap_id : mr.captures)
+                pm.capture_refs.push_back(flat.make_ref(cap_id));
+            matches.push_back(std::move(pm));
         }
 
         if (matches.empty())
@@ -1595,29 +1637,27 @@ void register_mutate_primitives(
 
         // ── Apply replacements via string substitution ────────
         int replaced_count = 0;
+        flat.begin_atomic_batch();
         for (auto& match : matches) {
-            auto match_id = match.first;
-            auto& captures = match.second;
-
-            if (static_cast<int>(captures.size()) != expected_captures)
+            if (!stable_match_still_attached(flat, match.match_ref))
                 continue;
-
-            // Find parent
-            auto parent_id = flat.parent_of(match_id);
-            if (parent_id == NULL_NODE)
+            if (static_cast<int>(match.capture_refs.size()) != expected_captures)
                 continue;
-            int child_idx = -1;
-            {
-                auto pv = flat.get(parent_id);
-                for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-                    if (pv.child(ci) == match_id) {
-                        child_idx = static_cast<int>(ci);
-                        break;
-                    }
+            bool captures_ok = true;
+            for (auto& cap_ref : match.capture_refs) {
+                if (!cap_ref.is_valid_in(flat)) {
+                    captures_ok = false;
+                    break;
                 }
             }
-            if (child_idx < 0)
+            if (!captures_ok)
                 continue;
+
+            auto match_id = match.match_ref.id;
+            auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
+            if (!child_idx_opt)
+                continue;
+            auto parent_id = flat.parent_of(match_id);
 
             // Build the replacement string by substituting captures
             std::string filled_repl;
@@ -1634,8 +1674,8 @@ void register_mutate_primitives(
                         break;
                     }
                     filled_repl += repl_template.substr(pos, dot_pos - pos);
-                    if (cap_idx < static_cast<int>(captures.size())) {
-                        filled_repl += node_to_source(captures[cap_idx]);
+                    if (cap_idx < static_cast<int>(match.capture_refs.size())) {
+                        filled_repl += node_to_source(match.capture_refs[cap_idx].id);
                         cap_idx++;
                     }
                     pos = dot_pos + 3; // skip "..."
@@ -1648,13 +1688,17 @@ void register_mutate_primitives(
                 continue;
 
             // Replace the matched node
-            flat.set_child(parent_id, static_cast<std::uint32_t>(child_idx), repl_pr.root);
+            flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
             replaced_count++;
         }
 
-        if (replaced_count == 0)
+        if (replaced_count == 0) {
+            flat.rollback_atomic_batch();
+            ok = false;
             return mev("pattern-error",
                        "no replacements were applied (capture mismatch or parse failure)");
+        }
+        flat.commit_atomic_batch();
 
         flat.add_mutation(0, "replace-pattern", pattern_str, repl_template, summary);
         return make_bool(true);
