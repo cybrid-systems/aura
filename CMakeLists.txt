@@ -887,6 +887,8 @@ aura_add_issue_test(test_issue_261)
 aura_issue_test_link_llvm_jit(test_issue_261)
 aura_add_issue_test(test_issue_262)
 aura_issue_test_link_llvm_jit(test_issue_262)
+aura_add_issue_test(test_issue_263)
+aura_issue_test_link_llvm_jit(test_issue_263)
 
 # Issue test bundles — one link per profile (see scripts/gen_issue_bundles.py)
 aura_add_issue_bundle(light)

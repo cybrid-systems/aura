@@ -72,6 +72,47 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
     return make_hash(hidx);
 }
 
+EvalValue Evaluator::build_ast_lifecycle_hash(
+    std::span<const std::pair<std::string, EvalValue>> kv) {
+    auto* ht = FlatHashTable::create(16);
+    if (!ht)
+        return make_void();
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    auto cap = ht->capacity;
+    for (auto& [k, v] : kv) {
+        std::uint64_t h = 0xcbf29ce484222325ull;
+        for (char c : k)
+            h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+        if (fp == 0xFF)
+            fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+        auto kidx = string_heap_.size();
+        string_heap_.push_back(k);
+        EvalValue key_ev = make_string(kidx);
+        bool inserted = false;
+        for (std::size_t at = 0; at < cap; ++at) {
+            auto idx = ((h >> 1) + at) & (cap - 1);
+            if (meta[idx] == 0xFF) {
+                meta[idx] = fp;
+                keys[idx] = key_ev.val;
+                vals[idx] = v.val;
+                ht->size++;
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted) {
+            FlatHashTable::destroy(ht);
+            return make_void();
+        }
+    }
+    auto hidx = g_hash_tables.size();
+    g_hash_tables.push_back(ht);
+    return make_hash(hidx);
+}
+
 // eval_in(ast::Expr*) removed — all evaluation uses eval_flat(FlatAST&) now
 
 
