@@ -141,16 +141,21 @@ bool test_workspace_resolve_primitive() {
     return true;
 }
 
-} // namespace aura_issue_276_detail
-
-int main() {
-    using namespace aura_issue_276_detail;
+int run_tests() {
     std::println("Issue #276 — cross-layer NodeId remap / StableNodeRef\n");
     bool ok = true;
-    ok = test_remap_table_identity() && ok;
-    ok = test_workspace_cow_initializes_remap() && ok;
-    ok = test_cross_layer_resolve_validity_rate() && ok;
-    ok = test_workspace_resolve_primitive() && ok;
+    ok = aura_issue_276_detail::test_remap_table_identity() && ok;
+    ok = aura_issue_276_detail::test_workspace_cow_initializes_remap() && ok;
+    ok = aura_issue_276_detail::test_cross_layer_resolve_validity_rate() && ok;
+    ok = aura_issue_276_detail::test_workspace_resolve_primitive() && ok;
     std::println("\n{} passed, {} failed", g_passed, g_failed);
     return ok ? 0 : 1;
 }
+
+} // namespace aura_issue_276_detail
+
+int aura_issue_276_run() { return aura_issue_276_detail::run_tests(); }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() { return aura_issue_276_run(); }
+#endif

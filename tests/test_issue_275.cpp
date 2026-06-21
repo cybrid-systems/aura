@@ -111,17 +111,22 @@ bool test_flat_ast_delegates_to_pure_rollback() {
     return true;
 }
 
-} // namespace aura_issue_275_detail
-
-int main() {
-    using namespace aura_issue_275_detail;
+int run_tests() {
     std::println("Issue #275 — pure mutation / rollback module\n");
     bool ok = true;
-    ok = test_rollback_capable_concept() && ok;
-    ok = test_create_mutation_record_pure() && ok;
-    ok = test_classify_and_validate_rollback() && ok;
-    ok = test_wire_roundtrip_pure() && ok;
-    ok = test_flat_ast_delegates_to_pure_rollback() && ok;
+    ok = aura_issue_275_detail::test_rollback_capable_concept() && ok;
+    ok = aura_issue_275_detail::test_create_mutation_record_pure() && ok;
+    ok = aura_issue_275_detail::test_classify_and_validate_rollback() && ok;
+    ok = aura_issue_275_detail::test_wire_roundtrip_pure() && ok;
+    ok = aura_issue_275_detail::test_flat_ast_delegates_to_pure_rollback() && ok;
     std::println("\n{} passed, {} failed", g_passed, g_failed);
     return ok ? 0 : 1;
 }
+
+} // namespace aura_issue_275_detail
+
+int aura_issue_275_run() { return aura_issue_275_detail::run_tests(); }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() { return aura_issue_275_run(); }
+#endif

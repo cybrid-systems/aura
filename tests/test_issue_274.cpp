@@ -102,17 +102,22 @@ bool test_pipeline_short_circuit() {
     return true;
 }
 
-} // namespace aura_issue_274_detail
-
-int main() {
-    using namespace aura_issue_274_detail;
+int run_tests() {
     std::println("Issue #274 — MutationVisitor concept + pipeline\n");
     bool ok = true;
-    ok = test_mutation_visitor_concept() && ok;
-    ok = test_pure_fn_wrap() && ok;
-    ok = test_run_mutation_pipeline() && ok;
-    ok = test_stable_ref_helpers() && ok;
-    ok = test_pipeline_short_circuit() && ok;
+    ok = aura_issue_274_detail::test_mutation_visitor_concept() && ok;
+    ok = aura_issue_274_detail::test_pure_fn_wrap() && ok;
+    ok = aura_issue_274_detail::test_run_mutation_pipeline() && ok;
+    ok = aura_issue_274_detail::test_stable_ref_helpers() && ok;
+    ok = aura_issue_274_detail::test_pipeline_short_circuit() && ok;
     std::println("\n{} passed, {} failed", g_passed, g_failed);
     return ok ? 0 : 1;
 }
+
+} // namespace aura_issue_274_detail
+
+int aura_issue_274_run() { return aura_issue_274_detail::run_tests(); }
+
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() { return aura_issue_274_run(); }
+#endif

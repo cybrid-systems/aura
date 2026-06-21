@@ -76,6 +76,8 @@
     "test_issue_261",
     "test_issue_262",
     "test_issue_263",
+    "test_issue_276",
+    "test_issue_277",
     "test_issue_242",
     "test_issue_244",
     "test_issue_267",
@@ -108,7 +110,10 @@
     "test_issue_255",
     "test_issue_256",
     "test_issue_258",
-    "test_issue_259"
+    "test_issue_259",
+    "test_issue_273",
+    "test_issue_274",
+    "test_issue_275"
   ],
   "jit_tests": [
     "test_issue_224",
