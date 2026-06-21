@@ -26,23 +26,6 @@ using EvalValue = types::EvalValue;
 using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using namespace types;
 
-namespace primitives_detail {
-void register_defuse_query_primitives(
-    std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
-    aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
-    std::pmr::vector<std::string>& string_heap, std::function<void*()> ensure_defuse,
-    std::function<EvalValue(void* idx, aura::ast::SymId sym)> def_use_for_sym,
-    std::function<EvalValue(void* idx, aura::ast::NodeId node)> reaches_for_node,
-    std::function<EvalValue(void* idx, aura::ast::SymId sym)> effects_for_sym,
-    std::function<EvalValue(void* idx)> build_index, std::function<EvalValue(void* idx)> index_stats,
-    std::function<EvalValue(const std::string&, const std::string&)> make_merr);
-void register_ast_primitives(
-    std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-    std::function<void()> destroy_defuse_index,
-    std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>()>
-        defuse_summary_stats);
-}
-
 struct DefUseIndex {
     using NodeId = aura::ast::NodeId;
     using SymId = aura::ast::SymId;
@@ -680,7 +663,7 @@ struct DefUseIndex {
 // which is the same idiom as `defuse_touch_fn_` and friends.
 //
 // Note: we can't use std::unique_ptr<DefUseIndex> in the header
-// because DefUseIndex is a TU-local type (defined in evaluator_impl.cpp
+// because DefUseIndex is a TU-local type (defined in this TU;
 // only). The void* slot + this helper is the PIMPL-shaped equivalent.
 void defuse_index_destroy(void** slot) {
     if (!slot || !*slot)

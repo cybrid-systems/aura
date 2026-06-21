@@ -1,6 +1,6 @@
 # 贡献指南
 
-面向修改 `src/compiler/evaluator_impl.cpp` / `evaluator.ixx` 的运行时开发者。
+面向修改 `src/compiler/evaluator.ixx` 及 `evaluator_*.cpp` 分区实现的运行时开发者。
 
 用户/Agent 上手见 [tutorial.md](tutorial.md)；模块地图见 [architecture.md](architecture.md)。
 
@@ -17,7 +17,7 @@
 
 ## Evaluator 是什么
 
-`Evaluator`（`evaluator.ixx` + `evaluator_impl.cpp`）持有 workspace FlatAST、原语表 `Primitives`、执行入口 `eval_flat`，以及 workspace 锁、defuse 失效、快照/回滚等自修改不变式。
+`Evaluator`（`evaluator.ixx` + 多个 `evaluator_*.cpp` TU）持有 workspace FlatAST、原语表 `Primitives`、执行入口 `eval_flat`，以及 workspace 锁、defuse 失效、快照/回滚等自修改不变式。
 
 IR 解释器与 JIT 是下游，语义以 `eval_flat` 为准。
 
@@ -52,7 +52,7 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 |-----------|--------|----------|------|
 | 类型谓词 / `not` | `evaluator_primitives_core.cpp` | `register_type_and_char_primitives` | 无状态 |
 | pair / string | `evaluator_primitives_pair.cpp` | `register_pair_and_string_primitives` | `pairs_` / `string_heap_` |
-| list 高阶 | `evaluator_primitives_list.cpp` | `register_list_primitives` | + `apply_unary/pred/binary` |
+| list 高阶 | `evaluator_primitives_list.cpp` | `register_list_primitives` | 收 `Evaluator&`；`apply_unary/pred/binary` 在 list TU |
 | JSON | `evaluator_primitives_json.cpp` | `register_json_primitives` | |
 | vector / hash | `evaluator_primitives_vector.cpp` | `register_vector_and_hash_primitives` | + `vector_heap_` |
 | math / regex | `evaluator_primitives_math.cpp` | `register_math_regex_and_arithmetic_primitives` | |
@@ -143,9 +143,19 @@ if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 
 | 文件 | 职责 |
 |------|------|
-| `evaluator.ixx` / `evaluator_impl.cpp` | Evaluator、eval_flat、EDSL 胶水 |
-| `evaluator_defuse_index.cpp` | DefUseIndex 实现（P1 从 impl 抽出） |
-| `evaluator_eval_flat.cpp` | `eval_flat` 求值主循环（P1 从 impl 抽出） |
+| `evaluator.ixx` | 模块接口；`primitives_detail::register_*` 前向声明 hub（P2） |
+| `evaluator_ctor.cpp` | `Evaluator` 构造/析构、post-init 原语注册 |
+| `evaluator_eval_flat.cpp` | `eval_flat`、宏展开、`post_mutation_macro_reexpand` |
+| `evaluator_env.cpp` | `Env` / `EnvFrame` / SoA arena |
+| `evaluator_module_loader.cpp` | `load_module_file` / `resolve_module_path` / `gc_module` |
+| `evaluator_workspace_tree.cpp` | workspace tree、panic checkpoint、`copy_env` |
+| `evaluator_defuse_index.cpp` | `DefUseIndex`、`install_defuse_subsystem` |
+| `evaluator_gc.cpp` | GC root flush / sweep、`compact_pairs` |
+| `evaluator_typecheck.cpp` | `run_typecheck_no_lock*` |
+| `evaluator_adt.cpp` | 动态 ADT ctor、`make_merr` |
+| `evaluator_primitives_builtins.cpp` | `Primitives` 内置算术/布尔原语 |
+| `evaluator_fiber_mutation.cpp` | per-fiber mutation stack |
+| `evaluator_query_index.cpp` | `build_tag_arity_index` |
 | `evaluator_primitives_registry.cpp` | `register_all_primitives` 编排 |
 | `evaluator_primitives_*.cpp` | 各簇原语注册（31 TU） |
 | `query.ixx` / `query_impl.cpp` | QueryEngine、ASTIndex |

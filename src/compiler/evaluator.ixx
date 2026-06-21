@@ -412,17 +412,60 @@ export struct Closure {
 // to the same type: `std::expected<types::EvalValue, Diagnostic>`.
 export using EvalResult = aura::diag::Result<types::EvalValue>;
 
+// P2: single forward-decl hub for all primitives_detail::register_* TU entry points.
 namespace primitives_detail {
+void register_type_and_char_primitives(std::function<void(std::string, PrimFn)> add);
+void register_pair_and_string_primitives(std::function<void(std::string, PrimFn)> add,
+                                         std::pmr::vector<Pair>& pairs,
+                                         std::pmr::vector<std::string>& string_heap,
+                                         std::vector<EvalValue>& error_values);
+void register_json_primitives(std::function<void(std::string, PrimFn)> add,
+                              std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap);
+void register_list_primitives(std::function<void(std::string, PrimFn)> add,
+                              std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
+                              std::vector<EvalValue>& error_values, Evaluator& ev);
+void register_vector_and_hash_primitives(
+    std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
+    std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
+    std::vector<std::vector<EvalValue>>& vector_heap);
+void register_math_regex_and_arithmetic_primitives(
+    std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
+    std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values);
+void register_reflect_and_type_primitives(
+    std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
+    std::pmr::vector<std::string>& string_heap, std::vector<std::string>& keyword_table,
+    void*& type_registry);
+void register_query_primitives(std::function<void(std::string, PrimFn)> add,
+                               std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
+                               void*& type_registry,
+                               std::function<std::string(const std::string&)> resolve_module_path);
+void register_workspace_query_primitives(
+    std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
+    aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool, void*& type_registry,
+    std::vector<std::string>& keyword_table, std::pmr::vector<Pair>& pairs,
+    std::pmr::vector<std::string>& string_heap, aura::ast::ASTArena*& temp_arena,
+    std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
+    std::function<aura::ast::StringPool*()> canonical_pool, std::function<void()> build_tag_arity_index,
+    std::function<EvalValue(const std::string&, const std::string&)> mev);
+void register_defuse_query_primitives(
+    std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
+    aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
+    std::pmr::vector<std::string>& string_heap, std::function<void*()> ensure_defuse,
+    std::function<EvalValue(void* idx, aura::ast::SymId sym)> def_use_for_sym,
+    std::function<EvalValue(void* idx, aura::ast::NodeId node)> reaches_for_node,
+    std::function<EvalValue(void* idx, aura::ast::SymId sym)> effects_for_sym,
+    std::function<EvalValue(void* idx)> build_index, std::function<EvalValue(void* idx)> index_stats,
+    std::function<EvalValue(const std::string&, const std::string&)> make_merr);
 void register_mutate_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
                                 std::function<EvalValue(const std::string&, const std::string&)> mev,
                                 std::function<void()> destroy_defuse_index);
 void register_workspace_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-                                 std::function<void()> destroy_defuse_index);
+                                   std::function<void()> destroy_defuse_index);
 void register_ast_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-                              std::function<void()> destroy_defuse_index,
-                              std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t,
-                                                                      std::uint64_t>>()>
-                                  defuse_summary_stats);
+                             std::function<void()> destroy_defuse_index,
+                             std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t,
+                                                                     std::uint64_t>>()>
+                                 defuse_summary_stats);
 void register_compile_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_eval_observability_primitives(std::function<void(std::string, PrimFn)> add,
                                             Evaluator& ev);
@@ -451,12 +494,11 @@ void register_misc_primitives(std::function<void(std::string, PrimFn)> add, Eval
 void register_control_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_char_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_mutation_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_list_primitives(std::function<void(std::string, PrimFn)> add,
-                              std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
-                              std::vector<EvalValue>& error_values, Evaluator& ev);
 }
 
-// Workspace layering (P13) — shared by evaluator_impl + workspace primitives TU.
+void defuse_index_destroy(void** slot);
+
+// Workspace layering (P13) — shared by workspace-tree TU + workspace primitives TU.
 struct WorkspaceNode {
     std::string name;
     ast::FlatAST* flat = nullptr;
