@@ -183,8 +183,8 @@ Runtime canonical list: `(api-reference)`.
 - `cadar` — `src/compiler/evaluator_primitives_pair.cpp`
 - `caddr` — `src/compiler/evaluator_primitives_pair.cpp`
 - `cadr` — `src/compiler/evaluator_primitives_pair.cpp`
-- `capability-stack` — `src/compiler/evaluator_impl.cpp`
-- `capability?` — `src/compiler/evaluator_impl.cpp`
+- `capability-stack` — `src/compiler/evaluator_primitives_policy.cpp`
+- `capability?` — `src/compiler/evaluator_primitives_policy.cpp`
 - `car` — `src/compiler/evaluator_primitives_pair.cpp`
 - `cdaar` — `src/compiler/evaluator_primitives_pair.cpp`
 - `cdadr` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -204,7 +204,7 @@ Runtime canonical list: `(api-reference)`.
 - `char=?` — `src/compiler/evaluator_primitives_core.cpp`
 - `char?` — `src/compiler/evaluator_impl.cpp`
 - `check` — `src/compiler/evaluator_impl.cpp`
-- `check-capability` — `src/compiler/evaluator_impl.cpp`
+- `check-capability` — `src/compiler/evaluator_primitives_policy.cpp`
 - `check-module-signature` — `src/compiler/evaluator_impl.cpp`
 - `check-preconditions` — `src/compiler/evaluator_impl.cpp`
 - `check-success` — `src/compiler/evaluator_impl.cpp`
@@ -252,7 +252,7 @@ Runtime canonical list: `(api-reference)`.
 - `generate-type-sigs` — `src/compiler/evaluator_impl.cpp`
 - `gensym` — `src/compiler/evaluator_impl.cpp`
 - `get-inferred-type` — `src/compiler/evaluator_impl.cpp`
-- `get-memory-policy` — `src/compiler/evaluator_impl.cpp`
+- `get-memory-policy` — `src/compiler/evaluator_primitives_policy.cpp`
 - `getenv` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-branch-current` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-commit` — `src/compiler/evaluator_primitives_io.cpp`
@@ -352,7 +352,7 @@ Runtime canonical list: `(api-reference)`.
 - `session-active?` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `set-car!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-cdr!` — `src/compiler/evaluator_primitives_pair.cpp`
-- `set-memory-policy` — `src/compiler/evaluator_impl.cpp`
+- `set-memory-policy` — `src/compiler/evaluator_primitives_policy.cpp`
 - `shell` — `src/compiler/evaluator_impl.cpp`
 - `sin` — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
@@ -400,7 +400,7 @@ Runtime canonical list: `(api-reference)`.
 - `void` — `src/compiler/evaluator_primitives_core.cpp`
 - `void?` — `src/compiler/evaluator_primitives_core.cpp`
 - `while` — `src/compiler/evaluator_impl.cpp`
-- `with-capability` — `src/compiler/evaluator_impl.cpp`
+- `with-capability` — `src/compiler/evaluator_primitives_policy.cpp`
 - `workspace-state` — `src/compiler/evaluator_primitives_agent.cpp`
 - `write` — `src/compiler/evaluator_impl.cpp`
 - `write-file` — `src/compiler/evaluator_impl.cpp`
