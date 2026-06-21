@@ -1,0 +1,353 @@
+// Issue #275: pure mutation / rollback helpers extracted from FlatAST.
+module;
+
+#include <chrono>
+#include <cstring>
+
+export module aura.core.mutation;
+import std;
+
+namespace aura::ast {
+
+// ── Shared node aliases (same values as aura.core.ast) ───────
+export using NodeId = std::uint32_t;
+export constexpr NodeId NULL_NODE = ~0u;
+export using SymId = std::uint32_t;
+
+// ── MutationRecord — typed mutation audit log ─────────────────
+export enum class MutationStatus : std::uint8_t {
+    Committed,
+    RolledBack,
+};
+
+export enum class InvariantStatus : std::uint8_t {
+    NotChecked = 0,
+    Ok = 1,
+    Warnings = 2,
+    Violations = 3,
+};
+
+export struct MutationRecord {
+    std::uint64_t mutation_id;
+    std::uint64_t timestamp_ms;
+    NodeId target_node;
+    std::string operator_name;
+    std::string old_type_str;
+    std::string new_type_str;
+    std::string summary;
+    MutationStatus status;
+    std::uint32_t field_offset;
+    std::uint64_t old_value;
+    std::uint64_t new_value;
+    bool has_rollback_data;
+    NodeId parent_id = NULL_NODE;
+    std::uint32_t child_idx = 0;
+    std::string old_subtree_source;
+    bool has_subtree_rollback = false;
+    InvariantStatus invariant_status = InvariantStatus::NotChecked;
+};
+
+export enum class MutationSoAField : std::uint32_t {
+    IntVal = 0,
+    TypeId = 1,
+    SymId = 2,
+    FloatVal = 3,
+};
+
+// ── std::expected error surface ───────────────────────────────
+export enum class MutationError : std::uint8_t {
+    NotCommitted,
+    NoRollbackData,
+    InvalidTarget,
+    InvalidParent,
+    InvalidField,
+    UnknownStructuralOp,
+    OutOfRange,
+};
+
+export [[nodiscard]] constexpr std::string_view mutation_error_string(MutationError err) noexcept {
+    switch (err) {
+        case MutationError::NotCommitted:
+            return "mutation is not committed";
+        case MutationError::NoRollbackData:
+            return "mutation has no rollback data";
+        case MutationError::InvalidTarget:
+            return "invalid mutation target node";
+        case MutationError::InvalidParent:
+            return "invalid mutation parent node";
+        case MutationError::InvalidField:
+            return "invalid SoA field for rollback";
+        case MutationError::UnknownStructuralOp:
+            return "unknown structural rollback operator";
+        case MutationError::OutOfRange:
+            return "rollback index out of range";
+    }
+    return "unknown mutation error";
+}
+
+// Issue #275: constrain record types that participate in rollback.
+export template <typename Rec>
+concept RollbackCapable = requires(const Rec& rec) {
+    { rec.mutation_id } -> std::convertible_to<std::uint64_t>;
+    { rec.status } -> std::convertible_to<MutationStatus>;
+    { rec.target_node } -> std::convertible_to<NodeId>;
+    { rec.parent_id } -> std::convertible_to<NodeId>;
+    { rec.has_rollback_data } -> std::convertible_to<bool>;
+    { rec.has_subtree_rollback } -> std::convertible_to<bool>;
+    { rec.operator_name } -> std::convertible_to<const std::string&>;
+    { rec.field_offset } -> std::convertible_to<std::uint32_t>;
+    { rec.old_value } -> std::convertible_to<std::uint64_t>;
+    { rec.new_value } -> std::convertible_to<std::uint64_t>;
+};
+
+static_assert(RollbackCapable<MutationRecord>);
+
+export enum class RollbackKind : std::uint8_t {
+    SubtreeMark,
+    Structural,
+    ScalarInt,
+    ScalarTypeId,
+    ScalarSymId,
+    ScalarFloat,
+};
+
+export enum class StructuralRollbackOp : std::uint8_t {
+    SetChild,
+    InsertChild,
+    RemoveChild,
+};
+
+namespace mutation {
+
+export struct MutationRecordParams {
+    std::uint64_t mutation_id = 0;
+    NodeId target_node = NULL_NODE;
+    std::string_view operator_name;
+    std::string_view old_type_str;
+    std::string_view new_type_str;
+    std::string_view summary;
+    MutationStatus status = MutationStatus::Committed;
+    std::uint32_t field_offset = 0;
+    std::uint64_t old_value = 0;
+    std::uint64_t new_value = 0;
+    bool has_rollback_data = false;
+};
+
+export struct SubtreeMutationParams {
+    std::uint64_t mutation_id = 0;
+    NodeId target_node = NULL_NODE;
+    NodeId parent_id = NULL_NODE;
+    std::uint32_t child_idx = 0;
+    std::string_view old_subtree_source;
+    std::string_view operator_name;
+    std::string_view summary;
+};
+
+export [[nodiscard]] std::uint64_t timestamp_ms() noexcept {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+}
+
+export [[nodiscard]] MutationRecord create_mutation_record(const MutationRecordParams& p) {
+    return MutationRecord{p.mutation_id,
+                          timestamp_ms(),
+                          p.target_node,
+                          std::string(p.operator_name),
+                          std::string(p.old_type_str),
+                          std::string(p.new_type_str),
+                          std::string(p.summary),
+                          p.status,
+                          p.field_offset,
+                          p.old_value,
+                          p.new_value,
+                          p.has_rollback_data,
+                          NULL_NODE,
+                          0,
+                          "",
+                          false,
+                          InvariantStatus::NotChecked};
+}
+
+export [[nodiscard]] MutationRecord create_subtree_mutation_record(const SubtreeMutationParams& p) {
+    return MutationRecord{p.mutation_id,
+                          timestamp_ms(),
+                          p.target_node,
+                          std::string(p.operator_name),
+                          "",
+                          "",
+                          std::string(p.summary),
+                          MutationStatus::Committed,
+                          0,
+                          0,
+                          0,
+                          false,
+                          p.parent_id,
+                          p.child_idx,
+                          std::string(p.old_subtree_source),
+                          true,
+                          InvariantStatus::NotChecked};
+}
+
+export [[nodiscard]] std::expected<StructuralRollbackOp, MutationError>
+structural_rollback_op(std::string_view op_name) noexcept {
+    if (op_name == "structural-set-child")
+        return StructuralRollbackOp::SetChild;
+    if (op_name == "structural-insert-child")
+        return StructuralRollbackOp::InsertChild;
+    if (op_name == "structural-remove-child")
+        return StructuralRollbackOp::RemoveChild;
+    return std::unexpected(MutationError::UnknownStructuralOp);
+}
+
+export template <RollbackCapable Rec>
+[[nodiscard]] std::expected<void, MutationError> validate_rollback_record(const Rec& rec,
+                                                                        std::size_t tag_size) noexcept {
+    if (rec.status != MutationStatus::Committed)
+        return std::unexpected(MutationError::NotCommitted);
+    if (rec.has_subtree_rollback) {
+        if (rec.parent_id == NULL_NODE || rec.parent_id >= tag_size)
+            return std::unexpected(MutationError::InvalidParent);
+        return {};
+    }
+    if (!rec.has_rollback_data)
+        return std::unexpected(MutationError::NoRollbackData);
+    if (rec.operator_name.starts_with("structural-"))
+        return {};
+    if (rec.target_node >= tag_size)
+        return std::unexpected(MutationError::InvalidTarget);
+    switch (rec.field_offset) {
+        case static_cast<std::uint32_t>(MutationSoAField::IntVal):
+        case static_cast<std::uint32_t>(MutationSoAField::TypeId):
+        case static_cast<std::uint32_t>(MutationSoAField::SymId):
+        case static_cast<std::uint32_t>(MutationSoAField::FloatVal):
+            return {};
+        default:
+            return std::unexpected(MutationError::InvalidField);
+    }
+}
+
+export template <RollbackCapable Rec>
+[[nodiscard]] std::expected<RollbackKind, MutationError> classify_rollback(const Rec& rec) noexcept {
+    if (rec.has_subtree_rollback)
+        return RollbackKind::SubtreeMark;
+    if (!rec.has_rollback_data)
+        return std::unexpected(MutationError::NoRollbackData);
+    if (rec.operator_name.starts_with("structural-"))
+        return RollbackKind::Structural;
+    switch (rec.field_offset) {
+        case static_cast<std::uint32_t>(MutationSoAField::IntVal):
+            return RollbackKind::ScalarInt;
+        case static_cast<std::uint32_t>(MutationSoAField::TypeId):
+            return RollbackKind::ScalarTypeId;
+        case static_cast<std::uint32_t>(MutationSoAField::SymId):
+            return RollbackKind::ScalarSymId;
+        case static_cast<std::uint32_t>(MutationSoAField::FloatVal):
+            return RollbackKind::ScalarFloat;
+        default:
+            return std::unexpected(MutationError::InvalidField);
+    }
+}
+
+export [[nodiscard]] std::int64_t scalar_int_old_value(const MutationRecord& rec) noexcept {
+    return static_cast<std::int64_t>(rec.old_value);
+}
+
+export [[nodiscard]] std::uint32_t scalar_type_old_value(const MutationRecord& rec) noexcept {
+    return static_cast<std::uint32_t>(rec.old_value);
+}
+
+export [[nodiscard]] SymId scalar_sym_old_value(const MutationRecord& rec) noexcept {
+    return static_cast<SymId>(rec.old_value);
+}
+
+export [[nodiscard]] double scalar_float_old_value(const MutationRecord& rec) noexcept {
+    double old_f = 0.0;
+    std::memcpy(&old_f, &rec.old_value, sizeof(old_f));
+    return old_f;
+}
+
+// ── Wire format (pure serialization) ───────────────────────────
+namespace detail {
+
+inline void wire_write_string(std::vector<char>& buf, std::string_view s) {
+    auto len = static_cast<std::uint32_t>(s.size());
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&len),
+               reinterpret_cast<const char*>(&len) + 4);
+    buf.insert(buf.end(), s.begin(), s.end());
+}
+
+inline std::string wire_read_string(const std::vector<char>& buf, std::size_t& pos) {
+    std::uint32_t len;
+    std::memcpy(&len, &buf[pos], 4);
+    pos += 4;
+    std::string s(buf.data() + pos, buf.data() + pos + len);
+    pos += len;
+    return s;
+}
+
+} // namespace detail
+
+export void wire_write_mutation_record(std::vector<char>& buf, const MutationRecord& r) {
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&r.mutation_id),
+               reinterpret_cast<const char*>(&r.mutation_id) + 8);
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&r.timestamp_ms),
+               reinterpret_cast<const char*>(&r.timestamp_ms) + 8);
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&r.target_node),
+               reinterpret_cast<const char*>(&r.target_node) + 4);
+    detail::wire_write_string(buf, r.operator_name);
+    detail::wire_write_string(buf, r.old_type_str);
+    detail::wire_write_string(buf, r.new_type_str);
+    detail::wire_write_string(buf, r.summary);
+    auto status = static_cast<std::uint8_t>(r.status);
+    buf.push_back(static_cast<char>(status));
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&r.field_offset),
+               reinterpret_cast<const char*>(&r.field_offset) + 4);
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&r.old_value),
+               reinterpret_cast<const char*>(&r.old_value) + 8);
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&r.new_value),
+               reinterpret_cast<const char*>(&r.new_value) + 8);
+    buf.push_back(r.has_rollback_data ? '\1' : '\0');
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&r.parent_id),
+               reinterpret_cast<const char*>(&r.parent_id) + 4);
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&r.child_idx),
+               reinterpret_cast<const char*>(&r.child_idx) + 4);
+    detail::wire_write_string(buf, r.old_subtree_source);
+    buf.push_back(r.has_subtree_rollback ? '\1' : '\0');
+    auto inv = static_cast<std::uint8_t>(r.invariant_status);
+    buf.push_back(static_cast<char>(inv));
+}
+
+export MutationRecord wire_read_mutation_record(const std::vector<char>& buf, std::size_t& pos) {
+    MutationRecord r;
+    std::memcpy(&r.mutation_id, &buf[pos], 8);
+    pos += 8;
+    std::memcpy(&r.timestamp_ms, &buf[pos], 8);
+    pos += 8;
+    std::memcpy(&r.target_node, &buf[pos], 4);
+    pos += 4;
+    r.operator_name = detail::wire_read_string(buf, pos);
+    r.old_type_str = detail::wire_read_string(buf, pos);
+    r.new_type_str = detail::wire_read_string(buf, pos);
+    r.summary = detail::wire_read_string(buf, pos);
+    r.status = static_cast<MutationStatus>(static_cast<std::uint8_t>(buf[pos++]));
+    std::memcpy(&r.field_offset, &buf[pos], 4);
+    pos += 4;
+    std::memcpy(&r.old_value, &buf[pos], 8);
+    pos += 8;
+    std::memcpy(&r.new_value, &buf[pos], 8);
+    pos += 8;
+    r.has_rollback_data = buf[pos++] != 0;
+    std::memcpy(&r.parent_id, &buf[pos], 4);
+    pos += 4;
+    std::memcpy(&r.child_idx, &buf[pos], 4);
+    pos += 4;
+    r.old_subtree_source = detail::wire_read_string(buf, pos);
+    r.has_subtree_rollback = buf[pos++] != 0;
+    r.invariant_status = static_cast<InvariantStatus>(static_cast<std::uint8_t>(buf[pos++]));
+    return r;
+}
+
+} // namespace mutation
+} // namespace aura::ast
