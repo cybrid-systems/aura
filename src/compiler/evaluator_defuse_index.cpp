@@ -1,5 +1,5 @@
 // evaluator_defuse_index.cpp — P1-a: DefUseIndex + defuse_index_destroy
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

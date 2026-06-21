@@ -1,5 +1,5 @@
 // evaluator_primitives_agent.cpp — P0 step 18: auto-evolve / synthesize / intend / strategy
-// extracted from init_pair_primitives() and Evaluator constructor.
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

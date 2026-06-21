@@ -1,5 +1,5 @@
 // evaluator_primitives_misc.cpp — P0 step 28: current-time / arena-offset primitives
-// extracted from init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

@@ -229,7 +229,7 @@ compute_macro_subst_pure(const std::vector<std::string>& params,
 } // namespace aura::compiler::pure
 
 // Re-export the pure is_truthy as types::is_truthy for
-// backward compat (legacy callers in evaluator_impl.cpp
+// backward compat (legacy callers in evaluator partition TUs
 // unqualified-ADL through types::). New code should
 // import aura.compiler.evaluator_pure and use
 // aura::compiler::pure::is_truthy directly.
@@ -305,7 +305,7 @@ export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(const types::E
 // (val, from, to, heap) are passed in as parameters. Heap mutation
 // for INT→STRING / FLOAT→STRING is allowed (and expected) since
 // heap is a parameter, not Evaluator state. The legacy in-out
-// `coerce_value` in evaluator_impl.cpp becomes a thin wrapper.
+// `coerce_value` in evaluator_eval_flat.cpp becomes a thin wrapper.
 export inline aura::diag::Result<void> coerce_value_pure(types::EvalValue& val,
                                                          aura::core::TypeTag from,
                                                          aura::core::TypeTag to,
@@ -406,7 +406,7 @@ export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalVa
         // a diag sink is provided, mirror the pre-Phase-1 stderr
         // line so callers that previously relied on the
         // stateful coerce_to_int wrapper's stderr emission
-        // (e.g. the `+` primitive in evaluator_impl.cpp) keep
+        // (e.g. the `+` primitive in evaluator_primitives_builtins.cpp) keep
         // working.
         if (diag && types::is_string(v) && !string_heap.empty()) {
             auto idx = types::as_string_idx(v);

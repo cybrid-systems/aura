@@ -1,5 +1,5 @@
 // evaluator_primitives_builtins.cpp — P1-k: Primitives ctor (arithmetic/boolean builtins)
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

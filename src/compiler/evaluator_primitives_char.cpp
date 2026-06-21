@@ -1,5 +1,5 @@
 // evaluator_primitives_char.cpp — P0 step 30: char? / string->list / read-line primitives
-// extracted from init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

@@ -1,7 +1,7 @@
 // evaluator_primitives_pair.cpp — P0 step 2: pair/list/string heap primitives
-// extracted from evaluator_impl.cpp::init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 //
-// Same module partition as evaluator_impl.cpp (aura.compiler.evaluator).
+// aura.compiler.evaluator module partition.
 // Registration uses PrimRegistrar + heap refs (FFI/adt_runtime pattern).
 
 module;

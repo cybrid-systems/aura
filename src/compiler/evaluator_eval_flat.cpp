@@ -1,5 +1,5 @@
 // evaluator_eval_flat.cpp — P1-b: apply_closure, eval_flat, macro expansion
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

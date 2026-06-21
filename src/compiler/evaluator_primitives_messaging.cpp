@@ -1,5 +1,5 @@
 // evaluator_primitives_messaging.cpp — P0 step 16: messaging / fiber / channel primitives
-// extracted from Evaluator constructor.
+// aura.compiler.evaluator module partition; registered via evaluator_ctor.cpp.
 
 module;
 

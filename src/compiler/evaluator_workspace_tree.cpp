@@ -1,5 +1,5 @@
 // evaluator_workspace_tree.cpp — P1-h: workspace tree lifecycle + policy hash
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

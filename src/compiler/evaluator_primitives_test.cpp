@@ -1,5 +1,5 @@
 // evaluator_primitives_test.cpp — P0 step 27: run-tests primitive
-// extracted from init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

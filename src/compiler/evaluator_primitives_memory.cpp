@@ -1,5 +1,5 @@
 // evaluator_primitives_memory.cpp — P0 step 19: coverage / gc / arena / dirty / memory-pressure
-// extracted from Evaluator constructor.
+// aura.compiler.evaluator module partition; registered via evaluator_ctor.cpp.
 
 module;
 

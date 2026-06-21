@@ -1,5 +1,5 @@
 // evaluator_query_index.cpp — P1-o: tag/arity index for query:pattern
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

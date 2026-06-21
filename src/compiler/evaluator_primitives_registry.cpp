@@ -1,5 +1,5 @@
 // evaluator_primitives_registry.cpp — P1-c: register_all_primitives orchestration
-// extracted from Evaluator::init_pair_primitives().
+// aura.compiler.evaluator module partition; orchestrates register_all_primitives().
 
 module;
 
@@ -107,22 +107,8 @@ void Evaluator::register_all_primitives() {
     // (set-code code-string) — Parse code and set as current workspace AST
     // Nodes in workspace AST have stable IDs across query/mutate operations
     // Multi-expression code is automatically wrapped in (begin ...) by the parser.
-    // Helper: build structured error value as a pair ("kind" "message")
-    // Inline lambda to avoid capture issues — used by set-code, eval-current, etc.
-    auto make_error_val = [this](const std::string& kind, const std::string& msg) -> EvalValue {
-        auto msg_idx = string_heap_.size();
-        string_heap_.push_back(msg);
-        auto kind_idx = string_heap_.size();
-        string_heap_.push_back(kind);
-        auto nil = EvalValue(0);
-        // (cons "kind" (cons "message" nil)) → ("kind" "message") as a proper list
-        auto msg_pair = make_pair(pairs_.size());
-        pairs_.push_back({make_string(msg_idx), nil});
-        auto kind_pair = make_pair(pairs_.size());
-        pairs_.push_back({make_string(kind_idx), msg_pair});
-        return kind_pair;
-    };
-    std::function<EvalValue(const std::string&, const std::string&)> mev = make_error_val;
+    std::function<EvalValue(const std::string&, const std::string&)> mev =
+        [this](const std::string& kind, const std::string& msg) { return make_merr(kind, msg); };
 
     primitives_detail::register_workspace_query_primitives(
         prim_registrar(),

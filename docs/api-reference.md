@@ -8,7 +8,7 @@
 (api-reference)    ; REPL 或 eval 中调用 → 全部已注册 primitive 名称
 ```
 
-实现：`evaluator_impl.cpp` 中 `primitives_.add("api-reference", …)`，遍历 `Primitives` 槽位生成。
+实现：`evaluator_primitives_eval.cpp` 中 `primitives_.add("api-reference", …)`，遍历 `Primitives` 槽位生成。
 
 静态扫描（CI 校验）：[generated/primitives.md](generated/primitives.md) — `./build.py docs`
 

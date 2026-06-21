@@ -1,5 +1,5 @@
 // evaluator_adt.cpp — P1-q: ADT ctor registration + make_merr helper
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

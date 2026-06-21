@@ -1,5 +1,5 @@
 // evaluator_primitives_control.cpp — P0 step 29: while primitive
-// extracted from init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

@@ -1,5 +1,5 @@
 // evaluator_fiber_mutation.cpp — P1-l: per-fiber mutation stack + boundary hooks
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

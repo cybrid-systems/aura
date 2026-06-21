@@ -1,5 +1,5 @@
 // evaluator_primitives_observability.cpp — P0 step 15: panic / stats / jit / gc-arena observability
-// extracted from evaluator_impl.cpp::init_pair_primitives() and Evaluator constructor.
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

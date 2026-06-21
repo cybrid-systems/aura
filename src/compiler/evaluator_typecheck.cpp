@@ -1,5 +1,5 @@
 // evaluator_typecheck.cpp — P1-j: inline typecheck helpers
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

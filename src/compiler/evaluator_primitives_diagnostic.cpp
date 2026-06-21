@@ -1,5 +1,5 @@
 // evaluator_primitives_diagnostic.cpp — P0 step 23: diagnose / apply-fix / check-preconditions
-// extracted from init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

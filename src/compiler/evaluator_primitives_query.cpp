@@ -1,5 +1,5 @@
 // evaluator_primitives_query.cpp — P0 step 8: standalone query primitives
-// extracted from evaluator_impl.cpp::init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

@@ -1,5 +1,5 @@
 // evaluator_module_loader.cpp — P1-e: module path resolution, load, and GC
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

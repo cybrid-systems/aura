@@ -1,5 +1,5 @@
 // evaluator_primitives_types.cpp — P0 step 22: declare-type / module-sig / hot-swap primitives
-// extracted from Evaluator constructor.
+// aura.compiler.evaluator module partition; registered via evaluator_ctor.cpp.
 
 module;
 
