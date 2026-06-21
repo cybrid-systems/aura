@@ -2854,6 +2854,44 @@ public:
     // workspace. Also exposed publicly for the mutation
     // primitives to call after a non-SoA-mutating structural
     // change (e.g., a workspace-level COW swap).
+    // Issue #273: refresh node_gen_ after a generation bump that does
+    // not invalidate the whole FlatAST (e.g. hygienic macro rewrite).
+    void restamp_all_node_generations() {
+        // node_gen_==0 marks free-list slots, but live nodes at
+        // generation_==0 also carry 0 — do not use is_free_slot here.
+        std::vector<std::uint8_t> on_free(size(), 0);
+        for (NodeId fid : free_list_) {
+            if (fid < on_free.size())
+                on_free[fid] = 1;
+        }
+        for (NodeId id = 0; id < size(); ++id) {
+            if (!on_free[id] && id < node_gen_.size())
+                node_gen_[id] = generation_;
+        }
+    }
+
+    // Refresh node_gen_ on one subtree (narrower than restamp_all).
+    void restamp_subtree_generation(NodeId root) {
+        if (root == NULL_NODE || root >= size())
+            return;
+        std::vector<NodeId> stack;
+        stack.push_back(root);
+        std::vector<std::uint8_t> seen(size(), 0);
+        while (!stack.empty()) {
+            auto id = stack.back();
+            stack.pop_back();
+            if (id == NULL_NODE || id >= size() || seen[id])
+                continue;
+            seen[id] = 1;
+            if (id < node_gen_.size())
+                node_gen_[id] = generation_;
+            for (auto cid : children(id)) {
+                if (cid != NULL_NODE)
+                    stack.push_back(cid);
+            }
+        }
+    }
+
     void bump_generation() noexcept post(generation_ != 0) {
         if (bump_generation_suppressed_) {
             // Issue #250: inside an atomic batch, individual

@@ -884,10 +884,22 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     if (is_closure(callee_val)) {
                         auto closure_id = as_closure_id(callee_val);
                         auto it = runtime_closures_.find(closure_id);
-                        if (it == runtime_closures_.end())
+                        if (it == runtime_closures_.end()) {
+                            // Tree-walker closure passed into IR (e.g. lambda arg
+                            // to a cached define). Delegate to evaluator bridge.
+                            if (context_.evaluator) {
+                                if (auto tw = context_.evaluator->apply_closure(closure_id,
+                                                                                call_args))
+                                    locals[ops[3]] = *tw;
+                                else
+                                    return std::unexpected(Diagnostic{
+                                        ErrorKind::InvalidClosure, "invalid closure reference"});
+                                break;
+                            }
                             return std::unexpected(
                                 Diagnostic{ErrorKind::InvalidClosure, "invalid closure reference"}
                                     .with_suggestion("the function was redefined (--hot-swap)"));
+                        }
 
                         auto& closure = it->second;
                         if (closure.func_id >= module_.functions.size())
@@ -990,10 +1002,20 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     if (is_closure(closure_val)) {
                         auto closure_id = as_closure_id(closure_val);
                         auto it = runtime_closures_.find(closure_id);
-                        if (it == runtime_closures_.end())
+                        if (it == runtime_closures_.end()) {
+                            if (context_.evaluator) {
+                                if (auto tw = context_.evaluator->apply_closure(closure_id,
+                                                                                apply_args))
+                                    locals[ops[2]] = *tw;
+                                else
+                                    return std::unexpected(Diagnostic{
+                                        ErrorKind::InvalidClosure, "invalid closure in apply"});
+                                break;
+                            }
                             return std::unexpected(
                                 Diagnostic{ErrorKind::InvalidClosure, "invalid closure in apply"}
                                     .with_suggestion("the function was redefined (--hot-swap)"));
+                        }
 
                         auto& closure = it->second;
                         if (closure.func_id >= module_.functions.size())

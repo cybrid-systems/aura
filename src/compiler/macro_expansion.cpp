@@ -330,6 +330,7 @@ expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura:
             for (std::uint32_t ci = 0; ci < parent_v.children.size(); ++ci) {
                 if (parent_v.child(ci) == root) {
                     flat->set_child(parent_id, ci, unwrapped);
+                    flat->restamp_all_node_generations();
                     break;
                 }
             }
@@ -379,6 +380,7 @@ expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura:
                     for (std::uint32_t ci = 0; ci < parent_v.children.size(); ++ci) {
                         if (parent_v.child(ci) == root) {
                             flat->set_child(parent_id, ci, cloned);
+                            flat->restamp_all_node_generations();
                             break;
                         }
                     }

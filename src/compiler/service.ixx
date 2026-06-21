@@ -766,6 +766,7 @@ public:
             "mutate:move-node",
             "intend",
             "fiber:spawn",
+            "fiber:join",
             "define-strategy",
             "register-strategy!",
             "intend-history",
@@ -3729,9 +3730,9 @@ public:
 
         IRDefineEnvBinding(aura::ir::IRModule mod, aura::compiler::Primitives& prim,
                            const aura::core::TypeRegistry* reg,
-                           aura::compiler::CompilerMetrics* metrics)
+                           aura::compiler::CompilerMetrics* metrics, Evaluator* eval)
             : module(std::move(mod))
-            , context(prim, reg, metrics) {}
+            , context(prim, reg, metrics, eval) {}
     };
 
     void install_persistent_define_closure_bridge() {
@@ -3784,6 +3785,17 @@ public:
                 if (needs_fallback || id == aura::ast::NULL_NODE || id >= f.size())
                     return;
                 auto nv = f.get(id);
+                if (nv.tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
+                    auto callee_id = nv.child(0);
+                    if (callee_id < f.size()) {
+                        auto callee_v = f.get(callee_id);
+                        if (callee_v.tag == aura::ast::NodeTag::Variable) {
+                            auto callee_name = std::string(p.resolve(callee_v.sym_id));
+                            if (callee_name == "fiber:spawn" || callee_name == "fiber:join")
+                                needs_fallback = true;
+                        }
+                    }
+                }
                 if (nv.tag == aura::ast::NodeTag::Variable) {
                     auto var_name = std::string(p.resolve(nv.sym_id));
                     if (param_names.count(var_name) || var_name == self_name)
@@ -3851,7 +3863,8 @@ public:
             return false;
 
         auto binding = std::make_unique<IRDefineEnvBinding>(ir_mod, evaluator_.primitives(),
-                                                            &type_registry_, &metrics_);
+                                                            &type_registry_, &metrics_,
+                                                            &evaluator_);
         binding->interpreter =
             std::make_unique<aura::compiler::IRInterpreter>(binding->module, binding->context);
 
@@ -3881,9 +3894,44 @@ public:
         auto owner_it = ir_define_closure_owner_.find(cid);
         if (owner_it == ir_define_closure_owner_.end())
             return std::nullopt;
-        auto bind_it = ir_define_env_bindings_.find(owner_it->second);
+        const auto& name = owner_it->second;
+        auto bind_it = ir_define_env_bindings_.find(name);
         if (bind_it == ir_define_env_bindings_.end() || !bind_it->second->interpreter)
             return std::nullopt;
+
+        // Higher-order cached defines (bridge:cached-fn): TW lambda args
+        // are not in the IR interpreter's runtime_closures_. Run the cached
+        // FlatAST body via eval_flat so (f ...) dispatches correctly.
+        bool has_tw_closure_arg = false;
+        for (auto& a : args) {
+            if (!types::is_closure(a))
+                continue;
+            auto ac = types::as_closure_id(a);
+            if (ir_define_closure_owner_.find(ac) == ir_define_closure_owner_.end())
+                has_tw_closure_arg = true;
+        }
+        if (has_tw_closure_arg) {
+            auto bridge_it = ir_cache_bridge_.find(name);
+            auto func_it = ir_cache_.find(name);
+            if (bridge_it != ir_cache_bridge_.end() && !bridge_it->second.empty() &&
+                func_it != ir_cache_.end() && !func_it->second.empty()) {
+                auto& bd = bridge_it->second[0];
+                if (bd.flat && bd.pool && bd.body_id != aura::ast::NULL_NODE) {
+                    aura::compiler::Env ne(&evaluator_.top_env());
+                    ne.set_primitives(&evaluator_.primitives());
+                    ne.set_pool(bd.pool.get());
+                    auto& params = func_it->second[0].params;
+                    for (std::size_t i = 0; i < params.size() && i < args.size(); ++i)
+                        ne.bind(params[i], args[i]);
+                    auto r = evaluator_.eval_flat(*const_cast<aura::ast::FlatAST*>(bd.flat.get()),
+                                                  *const_cast<aura::ast::StringPool*>(bd.pool.get()),
+                                                  bd.body_id, ne);
+                    if (r)
+                        return *r;
+                }
+            }
+        }
+
         auto r = bind_it->second->interpreter->call_closure(static_cast<std::uint64_t>(cid), args);
         if (!r)
             return std::nullopt;

@@ -2939,6 +2939,7 @@ void register_mutate_primitives(
                 ev.workspace_flat_->mark_dirty_upward(ws_root);
 
             flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
+            flat.restamp_all_node_generations();
 
             // Return (define-node-id . call-node-id)
             auto result_pid = ev.pairs_.size();
@@ -3201,6 +3202,7 @@ void register_mutate_primitives(
         ev.workspace_flat_->mark_dirty_upward(call_parent);
 
         flat.add_mutation(call_id, "inline-call", summary, summary, summary);
+        flat.restamp_all_node_generations();
         return make_bool(true);
     });
 
