@@ -436,6 +436,7 @@ void register_synthesize_primitives(std::function<void(std::string, PrimFn)> add
 void register_strategy_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_memory_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
                                 std::function<void()> destroy_defuse_index);
+void register_policy_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 }
 
 // Workspace layering (P13) — shared by evaluator_impl + workspace primitives TU.
@@ -506,6 +507,8 @@ export class Evaluator {
     friend void primitives_detail::register_memory_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<void()> destroy_defuse_index);
+    friend void primitives_detail::register_policy_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 
 public:
     Evaluator();
