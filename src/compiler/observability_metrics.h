@@ -53,6 +53,8 @@ struct CompilerMetrics {
     // benchmarking / --evo-explain.
     std::atomic<std::uint64_t> relower_skipped_entirely_count{0};
     std::atomic<std::uint64_t> relower_full_called_count{0};
+    // Issue #272: function defines bound via IRInterpreter (not eval_flat).
+    std::atomic<std::uint64_t> define_ir_env_bind_count{0};
     // Issue #224 cycle 3: per-function re-lower. The helper
     // relower_define_function() re-lowers a single Lambda
     // from a cached entry's bundle (one of N functions) and

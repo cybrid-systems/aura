@@ -308,6 +308,8 @@ public:
         evaluator_.set_compiler_metrics(&metrics_);
         evaluator_.set_compiler_service(this);
         evaluator_.set_session_id(session_id_);
+        // Issue #272: route cached-define closures through persistent IR runtimes.
+        install_persistent_define_closure_bridge();
         // Phase 2: EDSL IR cache V2 hooks. Let evaluator partition TUs mark
         // cached defines dirty via these std::function pointers, without
         // needing to import CompilerService (which would be circular).
@@ -699,6 +701,8 @@ public:
         // The bridges themselves must be cleared to avoid
         // referencing the now-freed arena memory.
         ir_cache_bridge_.clear();
+        ir_define_env_bindings_.clear();
+        ir_define_closure_owner_.clear();
         // Issue #223: bump mutation_epoch_ so any stale
         // ClosureBridgeData that captured the old epoch is detected
         // by the bridge callback / apply_closure. The bridge_epoch_
@@ -1377,8 +1381,11 @@ public:
                                                     std::span<const types::EvalValue> args)
                                               -> std::optional<types::EvalValue> {
                 auto snap = ir_interp.inspect_closure(cid);
-                if (!snap)
+                if (!snap) {
+                    if (auto ir_define = dispatch_ir_define_closure(cid, args))
+                        return ir_define;
                     return std::nullopt;
+                }
 
                 aura::compiler::Env ne;
                 ne.set_primitives(&evaluator_.primitives());
@@ -1446,8 +1453,8 @@ public:
 
             auto result = ir_interp.execute();
 
-            // Clear bridge after execution to avoid dangling references
-            evaluator_.set_closure_bridge(aura::compiler::Evaluator::ClosureBridgeFn());
+            // Restore persistent define bridge (session bridge references ir_interp).
+            install_persistent_define_closure_bridge();
 
             last_closures_ = ir_interp.list_closures();
             last_cells_ = ir_interp.list_cells();
@@ -1651,7 +1658,7 @@ public:
         auto result = ir_interp.execute();
 
         // Clear bridge after execution
-        evaluator_.set_closure_bridge(aura::compiler::Evaluator::ClosureBridgeFn());
+        install_persistent_define_closure_bridge();
 
         // Capture runtime state for --inspect
         last_closures_ = ir_interp.list_closures();
@@ -3743,10 +3750,95 @@ public:
         }
     }
 
+    // ---- Issue #272: IR-native define env binding --------------------
+
+    struct IRDefineEnvBinding {
+        aura::ir::IRModule module;
+        aura::compiler::IRContext context;
+        std::unique_ptr<aura::compiler::IRInterpreter> interpreter;
+        types::EvalValue bound_closure{};
+        aura::compiler::ClosureId closure_id = 0;
+
+        IRDefineEnvBinding(aura::ir::IRModule mod, aura::compiler::Primitives& prim,
+                           const aura::core::TypeRegistry* reg,
+                           aura::compiler::CompilerMetrics* metrics)
+            : module(std::move(mod))
+            , context(prim, reg, metrics) {}
+    };
+
+    void install_persistent_define_closure_bridge() {
+        evaluator_.set_closure_bridge(
+            [this](aura::compiler::ClosureId cid, std::span<const types::EvalValue> args)
+                -> std::optional<types::EvalValue> { return dispatch_ir_define_closure(cid, args); });
+    }
+
+    void bind_define_value_in_env(const std::string& name, const types::EvalValue& value) {
+        auto existing = evaluator_.top_env().lookup_binding(name);
+        if (existing && types::is_cell(*existing)) {
+            evaluator_.cells()[types::as_cell_id(*existing)] = value;
+            return;
+        }
+        auto ci = evaluator_.cells().size();
+        evaluator_.cells().push_back(value);
+        evaluator_.top_env().bind(name, types::make_cell(ci));
+    }
+
+    bool bind_function_define_via_ir(const aura::ir::IRModule& ir_mod, const std::string& name) {
+        if (ir_mod.functions.empty())
+            return false;
+
+        auto binding = std::make_unique<IRDefineEnvBinding>(ir_mod, evaluator_.primitives(),
+                                                            &type_registry_, &metrics_);
+        binding->interpreter =
+            std::make_unique<aura::compiler::IRInterpreter>(binding->module, binding->context);
+
+        auto result = binding->interpreter->execute();
+        if (!result || !types::is_closure(*result))
+            return false;
+
+        binding->bound_closure = *result;
+        binding->closure_id = types::as_closure_id(*result);
+
+        auto old_it = ir_define_env_bindings_.find(name);
+        if (old_it != ir_define_env_bindings_.end()) {
+            ir_define_closure_owner_.erase(old_it->second->closure_id);
+        }
+
+        ir_define_closure_owner_[binding->closure_id] = name;
+        bind_define_value_in_env(name, binding->bound_closure);
+        ir_define_env_bindings_[name] = std::move(binding);
+
+        metrics_.define_ir_env_bind_count.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    std::optional<types::EvalValue>
+    dispatch_ir_define_closure(aura::compiler::ClosureId cid,
+                               std::span<const types::EvalValue> args) {
+        auto owner_it = ir_define_closure_owner_.find(cid);
+        if (owner_it == ir_define_closure_owner_.end())
+            return std::nullopt;
+        auto bind_it = ir_define_env_bindings_.find(owner_it->second);
+        if (bind_it == ir_define_env_bindings_.end() || !bind_it->second->interpreter)
+            return std::nullopt;
+        auto r = bind_it->second->interpreter->call_closure(static_cast<std::uint64_t>(cid), args);
+        if (!r)
+            return std::nullopt;
+        return *r;
+    }
+
+    void clear_ir_define_env_binding(const std::string& name) {
+        auto it = ir_define_env_bindings_.find(name);
+        if (it == ir_define_env_bindings_.end())
+            return;
+        ir_define_closure_owner_.erase(it->second->closure_id);
+        ir_define_env_bindings_.erase(it);
+    }
+
     // ---- Define caching (shared by eval, eval_ir, define_function) -----
 
-    // Lower a define expression to IR, cache it, and eval tree-walker for env.
-    // Returns tree-walker result (or void for success).
+    // Lower a define expression to IR, cache it, and bind env via IR when possible.
+    // Falls back to eval_flat on skip_ir_cache or IR bind failure.
     EvalResult cache_define(std::string_view source, aura::ast::FlatAST& flat,
                             aura::ast::StringPool& pool, aura::ast::NodeId expanded_root,
                             const std::string& name_str, bool bind_in_env = true) {
@@ -3908,11 +4000,13 @@ public:
             mark_module_dirty(name_str);
         }
 
-        // Eval tree-walker for persistent runtime bindings.
+        // Issue #272: bind env via IRInterpreter when possible (function defines).
         // Skip when bind_in_env=false (populate_ir_cache_v2_from_workspace
-        // pre-populates the v2 cache without polluting the env; the define
-        // gets bound later by eval-current which uses its own env).
+        // pre-populates the v2 cache without polluting the env).
         if (bind_in_env) {
+            if (bind_function_define_via_ir(ir_mod, name_str)) {
+                return EvalResult(types::make_void());
+            }
             return evaluator_.eval_flat(flat, pool, expanded_root, evaluator_.top_env());
         }
         // bind_in_env=false: skip the env binding. Caller (e.g.
@@ -4970,6 +5064,10 @@ private:
     // String pool cached alongside ir_cache_ (same keys).
     std::unordered_map<std::string, std::vector<std::string>> ir_cache_strings_;
 
+    // Issue #272: persistent IR runtimes for function-define env bindings.
+    std::unordered_map<std::string, std::unique_ptr<IRDefineEnvBinding>> ir_define_env_bindings_;
+    std::unordered_map<aura::compiler::ClosureId, std::string> ir_define_closure_owner_;
+
     // Source code for each cached function, used for re-lowering on dependency changes.
     std::unordered_map<std::string, std::string> function_sources_;
 
@@ -5225,6 +5323,11 @@ public:
     // hot_swap_function_impl / reset(). Tests can call
     // this directly to verify the helper's behavior.
     void public_invalidate_bridges_for(const std::string& name) { invalidate_bridge_for(name); }
+
+    // Issue #272: test/observability accessor.
+    [[nodiscard]] std::uint64_t define_ir_env_bind_count() const noexcept {
+        return metrics_.define_ir_env_bind_count.load(std::memory_order_relaxed);
+    }
 
     // Track names defined via value define (tree-walker path) so subsequent
     // expressions referencing them fall back to tree-walker instead of IR.
