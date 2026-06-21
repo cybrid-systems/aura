@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**407** registrations scanned from `src/**/*.cpp`.
+**408** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -85,7 +85,7 @@ Runtime canonical list: `(api-reference)`.
 - `ast:validate-post-restore` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:version` — `src/compiler/evaluator_primitives_ast.cpp`
 
-## Workspace: (19)
+## Workspace: (20)
 
 - `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`
@@ -101,6 +101,7 @@ Runtime canonical list: `(api-reference)`.
 - `workspace:merge` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:merge-3way` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:mutation-count` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:resolve-stable-ref` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:rollback-latest` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:set-memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:switch` — `src/compiler/evaluator_primitives_workspace.cpp`
