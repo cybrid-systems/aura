@@ -1276,19 +1276,19 @@ EvalValue Evaluator::make_merr(const std::string& k, const std::string& m) {
 
 void Evaluator::init_pair_primitives() {
     primitives_detail::register_type_and_char_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); });
+        prim_registrar());
 
     primitives_detail::register_pair_and_string_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         pairs_, string_heap_, error_values_);
 
     primitives_detail::register_json_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         pairs_, string_heap_);
 
 
     primitives_detail::register_list_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         pairs_, string_heap_, error_values_,
         [this](const EvalValue& fn, const EvalValue& arg) -> EvalValue {
             if (is_primitive(fn)) {
@@ -1343,24 +1343,24 @@ void Evaluator::init_pair_primitives() {
         });
 
     primitives_detail::register_vector_and_hash_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         pairs_, string_heap_, error_values_, vector_heap_);
 
     primitives_detail::register_math_regex_and_arithmetic_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         pairs_, string_heap_, error_values_);
 
     primitives_detail::register_reflect_and_type_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         pairs_, string_heap_, keyword_table_, type_registry_);
 
     primitives_detail::register_query_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         pairs_, string_heap_, type_registry_,
         [this](const std::string& path) { return resolve_module_path(path); });
 
     primitives_detail::register_runtime_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
 
@@ -1379,34 +1379,34 @@ void Evaluator::init_pair_primitives() {
 
 
     primitives_detail::register_test_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_diagnostic_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
 
 
 
     primitives_detail::register_misc_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_file_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_git_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_module_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_control_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
 
@@ -1422,15 +1422,15 @@ void Evaluator::init_pair_primitives() {
 
 
     primitives_detail::register_char_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_mutation_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_auto_evolve_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     // ═══════════════════════════════════════════════════════════════
@@ -1458,26 +1458,26 @@ void Evaluator::init_pair_primitives() {
     std::function<EvalValue(const std::string&, const std::string&)> mev = make_error_val;
 
     primitives_detail::register_workspace_query_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         workspace_mtx_, workspace_flat_, workspace_pool_, type_registry_, keyword_table_, pairs_,
         string_heap_, temp_arena_, tag_arity_index_, [this]() { return canonical_pool(); },
         [this]() { build_tag_arity_index(); }, mev);
 
     primitives_detail::register_mutate_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this, mev, [this]() { defuse_index_destroy(&defuse_index_); });
 
     primitives_detail::register_workspace_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this, [this]() { defuse_index_destroy(&defuse_index_); });
 
     primitives_detail::register_eval_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this, mev, [this]() { defuse_index_destroy(&defuse_index_); });
 
 
     primitives_detail::register_eval_observability_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 }
 
@@ -2295,23 +2295,23 @@ Evaluator::Evaluator() {
     // callback breaks the cyclic import between
     // evaluator.ixx and ffi_primitives.ixx.
     ffi_runtime_.register_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         &string_heap_, &opaque_heap_, &coverage_counters_);
 
     // Step 2.3 + 5.2 hygiene: wire ADT using exact same signature + coverage
     // counters as ffi_runtime_ (for consistency across extractions; modeled on FFI).
     adt_runtime_.register_primitives(
-        [this](std::string n, PrimFn f) { primitives_.add(std::move(n), std::move(f)); },
+        prim_registrar(),
         &string_heap_, &opaque_heap_, &coverage_counters_);
 
     build_primitive_slots();
 
     primitives_detail::register_network_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_type_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
 
@@ -2422,7 +2422,7 @@ Evaluator::Evaluator() {
     };
 
     primitives_detail::register_defuse_query_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         workspace_mtx_, workspace_flat_, workspace_pool_, string_heap_, ensure_defuse,
         [def_use_pair](void* idx, aura::ast::SymId sym) {
             return def_use_pair(static_cast<DefUseIndex*>(idx), sym);
@@ -2501,7 +2501,7 @@ Evaluator::Evaluator() {
         [this](const std::string& k, const std::string& m) { return make_merr(k, m); });
 
     primitives_detail::register_ast_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this, [this]() { defuse_index_destroy(&defuse_index_); },
         [this]() -> std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>> {
             auto* idx = static_cast<DefUseIndex*>(defuse_index_);
@@ -2515,38 +2515,38 @@ Evaluator::Evaluator() {
     // ═══════════════════════════════════════════════════════════════
     // Issue #97 Action 1: Hot-swap primitive
     primitives_detail::register_hot_swap_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
 
     primitives_detail::register_compile_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_messaging_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_synthesize_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this, [this]() { defuse_index_destroy(&defuse_index_); });
 
     primitives_detail::register_strategy_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
     primitives_detail::register_memory_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this, [this]() { defuse_index_destroy(&defuse_index_); });
 
 
     primitives_detail::register_jit_arena_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
 
     primitives_detail::register_policy_primitives(
-        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        prim_registrar(),
         *this);
 
 }
