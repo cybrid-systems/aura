@@ -48,7 +48,7 @@ bool test_cells_returns_span() {
     std::println("\n--- Test: cells() const returns std::span ---");
 
     // We don't construct an Evaluator here (that would
-    // require pulling in evaluator_impl.cpp and its
+    // require pulling in evaluator partition TUs and their
     // transitive deps). Instead, we verify the TYPE
     // identity of the cells() const member: it returns
     // std::span<const EvalValue>, not std::vector.

@@ -2,7 +2,7 @@
 """
 eval-expr leak regression test.
 
-(eval-expr value) at src/compiler/evaluator_impl.cpp:4180-4181 allocates
+(eval-expr value) in evaluator_primitives_eval.cpp allocates
 a fresh StringPool + FlatAST in the main arena for every call. The
 FlatAST is short-lived (only used for the duration of eval_flat inside
 the call), but the main arena is monotonic so the memory is never

@@ -102,7 +102,7 @@ static bool run_bool(aura::compiler::CompilerService& cs, std::string_view src) 
 
 bool test_clone_macro_body_marker_param() {
     std::println("\n--- Test 1.1: clone_macro_body has cloned_marker param ---");
-    // The function signature is in evaluator_impl.cpp; this test
+    // The function signature is in evaluator_primitives_compile.cpp; this test
     // verifies the API exists by calling it via macro expansion
     // (the main user-facing path) and checking the cloned nodes
     // get MacroIntroduced.

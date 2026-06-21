@@ -2,7 +2,7 @@
 """
 Functor instantiation leak regression test.
 
-Functor instantiation at src/compiler/evaluator_impl.cpp:13932 has the
+Functor instantiation in evaluator_eval_flat.cpp has the
 EXACT same pattern as the load_module_file leak we just fixed:
     auto* cached_env = arena_->create<Env>(mod_env);
     auto mod_idx = modules_.size();
@@ -135,7 +135,7 @@ def main():
             f"FAIL: instantiating the same 5 functors {args.iterations} times "
             f"added {delta} modules (expected {expected_new}). "
             f"Likely cause: functor instance cache not deduping, OR "
-            f"src/compiler/evaluator_impl.cpp:13932 leaking per instantiation.",
+            f"evaluator_eval_flat.cpp functor instantiation leaking per instantiation.",
             file=sys.stderr,
         )
         return 6

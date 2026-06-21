@@ -1,5 +1,5 @@
 // adt_runtime_impl.cpp — Implementation of the ADT runtime
-// extracted from evaluator_impl.cpp (refactor Step 2.x).
+// aura.compiler.evaluator module partition (refactor Step 2.x).
 //
 // Follows *exact* pattern from ffi_primitives_impl.cpp (Issue #131):
 // - Per-instance state (no more globals)

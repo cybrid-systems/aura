@@ -147,7 +147,7 @@ bool test_pure_string_empty_heap_silent_zero() {
 
 // ── AC #3: legacy coerce_to_int wrapper (zero regression) ──────
 //
-// The legacy wrapper (in evaluator_impl.cpp anonymous namespace)
+// The legacy wrapper (in evaluator_eval_flat.cpp)
 // calls .value_or(0) on the pure version. End-to-end coverage
 // is provided by the existing test_ir + suite (test_concurrent,
 // suite/*) runs, all of which exercise + and other primitives

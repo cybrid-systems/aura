@@ -1001,7 +1001,7 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("load-module", {String}, Dyn);
     register_primitive("import", {String}, Dyn);
     register_primitive("write-file", {String, String}, Void);
-    // file-exists? returns 0/1 (Int), not Bool — matches evaluator_impl.cpp
+    // file-exists? returns 0/1 (Int), not Bool — matches evaluator_primitives_file.cpp
     register_primitive("file-exists?", {String}, Int);
     register_primitive("gensym", {}, String);
 
@@ -1127,7 +1127,7 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("product", {Dyn}, Int);
     register_primitive("factorial", {Int}, Int);
 
-    // std/io — return types match evaluator_impl.cpp (Int 0/1 for
+    // std/io — return types match evaluator partition primitives (Int 0/1 for
     // success/failure, not Bool; the runtime never makes Bool here)
     register_primitive("file-exists?", {String}, Int);
     register_primitive("file-size", {String}, Int);

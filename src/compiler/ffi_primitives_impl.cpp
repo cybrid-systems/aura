@@ -1,10 +1,10 @@
 // ffi_primitives_impl.cpp — Implementation of the FFI
-// primitives extracted from evaluator_impl.cpp
+// primitives extracted from evaluator partition TUs
 // (Issue #131).
 //
 // The C FFI state (loaded libraries, registered C
 // functions) was previously file-scope statics in
-// evaluator_impl.cpp. Now it's per-FFIRuntime, allowing
+// the monolithic evaluator TU. Now it's per-FFIRuntime, allowing
 // multiple evaluators with independent FFI state.
 
 module;
@@ -28,7 +28,7 @@ import aura.compiler.value;
 //
 // The C FFI state (loaded libraries, registered C
 // functions) was previously file-scope statics in
-// evaluator_impl.cpp. Now it's per-FFIRuntime, allowing
+// the monolithic evaluator TU. Now it's per-FFIRuntime, allowing
 // multiple evaluators with independent FFI state.
 
 

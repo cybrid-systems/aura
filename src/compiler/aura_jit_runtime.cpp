@@ -1344,7 +1344,7 @@ extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
 // processes (serve-async, fuzz, multi-session).
 // Issue #137: also frees the hash tables in g_hash_tables.
 // These are created by the `hash` primitive in
-// evaluator_impl.cpp and only freed by the (gc-heap)
+// evaluator partition TUs and only freed by the (gc-heap)
 // primitive. Test scripts that use `hash` without calling
 // `gc-heap` leak these tables, which LeakSanitizer flags.
 // For long-running processes (serve-async, fuzz) the
@@ -1370,7 +1370,7 @@ void aura_reset_runtime() {
     g_string_pool.clear();
     g_float_pool.clear();
     // Issue #137: free hash tables. The `hash` primitive
-    // (evaluator_impl.cpp) creates these via FlatHashTable::create
+    // (evaluator_eval_flat.cpp) creates these via FlatHashTable::create
     // and stores them in g_hash_tables; they're normally only
     // freed by the (gc-heap) primitive. Test scripts that
     // create a hash and exit without calling gc-heap (e.g. all

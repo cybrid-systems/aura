@@ -7,7 +7,7 @@
 // The ADT infrastructure is already implemented:
 //   - parser: parse_datatype in parser_impl.cpp:1335
 //   - runtime: g_adt_constructors + adt:register-constructors
-//     primitive + Env::lookup fallback in evaluator_impl.cpp
+//     primitive + Env::lookup fallback in evaluator_env.cpp
 //   - match: compile_pattern handles ctor patterns
 //
 // This test verifies the acceptance criteria by parsing

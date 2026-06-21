@@ -12,7 +12,7 @@
 ;; assertion. Migrate to attribute form when GCC 17+ / clang 20+ lands.
 ;;
 ;; Note: the contracts being tested here are C++-level contracts on
-;; Aura's evaluator (e.g. copy_env in evaluator_impl.cpp), not
+;; Aura's evaluator (e.g. copy_env in evaluator_workspace_tree.cpp), not
 ;; Aura-level contracts. This test verifies the C++ machinery
 ;; doesn't break normal Aura code execution.
 

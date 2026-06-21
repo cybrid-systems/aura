@@ -695,7 +695,7 @@ public:
     // function's bound name). region_by_lambda_id_ is keyed by
     // the lambda's NodeId (for anonymous lambdas that don't
     // have a bound name). Both are populated by the parser
-    // (evaluator_impl.cpp) when it sees
+    // (evaluator_eval_flat.cpp) when it sees
     // (performance-region ...) / (evolution-region ...) wrappers.
     // Lowering reads them via get_function_region_for_sym /
     // get_function_region_for_lambda to set
@@ -790,7 +790,7 @@ public:
     }
     // Issue #255: explicit copy constructor + copy assignment.
     // Declaring a move ctor/assignment implicitly deletes the
-    // copy versions, but evaluator_impl.cpp has 3 copy-assign
+    // copy versions, but evaluator_env.cpp has 3 copy-assign
     // sites (workspace COW, local-flat initialization, etc.).
     // Copy is rare in hot paths but must compile.
     FlatAST(const FlatAST& other)

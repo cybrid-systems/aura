@@ -308,7 +308,7 @@ public:
         evaluator_.set_compiler_metrics(&metrics_);
         evaluator_.set_compiler_service(this);
         evaluator_.set_session_id(session_id_);
-        // Phase 2: EDSL IR cache V2 hooks. Let evaluator_impl.cpp mark
+        // Phase 2: EDSL IR cache V2 hooks. Let evaluator partition TUs mark
         // cached defines dirty via these std::function pointers, without
         // needing to import CompilerService (which would be circular).
         evaluator_.set_mark_define_dirty_fn(
@@ -2740,7 +2740,7 @@ public:
     std::unordered_map<std::string, IRCacheEntry> ir_cache_v2_;
 
     // ── EDSL IR cache V2 (Phase 2) public API ──
-    // Called from evaluator_impl.cpp's (eval-current) primitive.
+    // Called from evaluator_primitives_eval.cpp's (eval-current) primitive.
     // See dual-workspace design (archived: docs-archive-pre-2026-06).
 
     // Look up a define in the cache. Returns:

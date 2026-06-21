@@ -1,9 +1,9 @@
 // adt_runtime.ixx — ADT (datatype ...) support extracted from
-// the monolithic evaluator_impl.cpp (refactor Step 2.x, following
+// the monolithic evaluator TU (refactor Step 2.x, following
 // the exact pattern of Issue #131 FFI extraction).
 //
 // This module owns the ADT constructor table (previously g_adt_constructors
-// global + struct in evaluator_impl). It provides a registration
+// global + struct in evaluator). It provides a registration
 // function that wires the ADT primitives/ctors into a Primitives table.
 //
 // The global state is now per-AdtRuntime instance (per Evaluator).

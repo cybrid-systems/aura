@@ -2,8 +2,8 @@
 """
 query:pattern / mutate:replace-pattern leak regression test.
 
-(query:pattern "...") at src/compiler/evaluator_impl.cpp:5174-5175 and
-mutate:replace-pattern at line 5526-5527 both allocate a fresh
+(query:pattern "...") in evaluator_primitives_query_workspace.cpp and
+mutate:replace-pattern in evaluator_primitives_mutate.cpp both allocate a fresh
 StringPool + FlatAST in the main arena for every call to parse the
 pattern. Like eval-expr, the FlatAST is short-lived but the main arena
 is monotonic.

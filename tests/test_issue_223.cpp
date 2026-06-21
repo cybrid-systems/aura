@@ -228,7 +228,7 @@ void test_4_monotonicity() {
 }
 
 // ── Test 5: apply_closure wiring (simulated) ─────────────────
-// Mirrors the apply_closure logic in evaluator_impl.cpp:
+// Mirrors the apply_closure logic in evaluator_eval_flat.cpp:
 // "if cl.flat is non-null, check is_bridge_stale; if stale,
 //  return nullopt (invalidate); otherwise proceed with eval".
 // The test verifies the invalidation logic.
