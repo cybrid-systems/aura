@@ -14,6 +14,11 @@ import aura.diag;
 namespace aura::compiler {
 
 // ── Pass concept — any type with run(IRModule&) + has_error() ───
+//
+// Issue #274: FlatAST mutation visitors follow the same fold
+// pattern via aura::ast::MutationVisitor + run_mutation_pipeline
+// in aura.core.ast (visit_mutation(FlatAST&, const MutationRecord&)
+// + has_error()).
 export template <typename P>
 concept Pass = requires(P& p, aura::ir::IRModule& m) {
     { p.run(m) } -> std::same_as<void>;

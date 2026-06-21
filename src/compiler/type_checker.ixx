@@ -740,4 +740,50 @@ export std::vector<aura::ast::NodeId>
 affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
                                const aura::ast::MutationRecord& rec);
 
+// Issue #274: post-mutation invariant visitor for run_mutation_pipeline.
+// Skips records already checked; accumulates notes and worst status.
+// apply_status_updates() writes invariant_status back to the log
+// (visit_mutation takes const MutationRecord& per the concept).
+export class PostMutationInvariantVisitor {
+public:
+    PostMutationInvariantVisitor(const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg)
+        : pool_(pool), reg_(reg) {}
+
+    void visit_mutation(aura::ast::FlatAST& flat, const aura::ast::MutationRecord& rec) {
+        if (rec.invariant_status != aura::ast::InvariantStatus::NotChecked)
+            return;
+        std::vector<OwnershipNote> notes;
+        auto st = post_mutation_invariant_check(flat, pool_, reg_, rec, notes);
+        status_updates_[rec.mutation_id] = st;
+        if (st == aura::ast::InvariantStatus::Warnings) {
+            worst_ = aura::ast::InvariantStatus::Warnings;
+            for (auto& n : notes)
+                notes_out_.push_back(std::move(n));
+        }
+    }
+
+    bool has_error() const { return false; }
+
+    aura::ast::InvariantStatus worst_status() const { return worst_; }
+    const std::vector<OwnershipNote>& notes() const { return notes_out_; }
+
+    void apply_status_updates(aura::ast::FlatAST& flat) const {
+        if (status_updates_.empty())
+            return;
+        for (auto& rec : flat.all_mutations()) {
+            if (auto it = status_updates_.find(rec.mutation_id); it != status_updates_.end())
+                rec.invariant_status = it->second;
+        }
+    }
+
+private:
+    const aura::ast::StringPool& pool_;
+    aura::core::TypeRegistry& reg_;
+    aura::ast::InvariantStatus worst_ = aura::ast::InvariantStatus::Ok;
+    std::vector<OwnershipNote> notes_out_;
+    std::unordered_map<std::uint64_t, aura::ast::InvariantStatus> status_updates_;
+};
+
+static_assert(aura::ast::MutationVisitor<PostMutationInvariantVisitor>);
+
 } // namespace aura::compiler

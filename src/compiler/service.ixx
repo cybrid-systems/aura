@@ -4670,29 +4670,15 @@ public:
             // candidate for this transaction. This is a soft
             // contract — it works because earlier entries already
             // got their status set by prior typed_mutate calls.
-            std::vector<aura::compiler::OwnershipNote> all_notes;
-            aura::ast::InvariantStatus worst = aura::ast::InvariantStatus::Ok;
+            // Issue #274: fold invariant checks via MutationVisitor pipeline.
+            aura::compiler::PostMutationInvariantVisitor invariant_visitor(*current_pool_,
+                                                                           type_registry_);
+            aura::ast::run_mutation_pipeline(*ws_flat, invariant_visitor);
+            invariant_visitor.apply_status_updates(*ws_flat);
+            res.invariant_status = invariant_visitor.worst_status();
+            res.invariant_diagnostics =
+                std::vector<aura::compiler::OwnershipNote>(invariant_visitor.notes());
             auto& log = ws_flat->all_mutations();
-            for (auto& rec : log) {
-                // Only check records that haven't been checked yet.
-                // On a re-typed_mutate call, prior records are
-                // already Ok/Warnings; checking them again would
-                // just repeat the work and could double-count
-                // diagnostics.
-                if (rec.invariant_status != aura::ast::InvariantStatus::NotChecked)
-                    continue;
-                std::vector<aura::compiler::OwnershipNote> notes;
-                auto st = post_mutation_invariant_check(*ws_flat, *current_pool_, type_registry_,
-                                                        rec, notes);
-                rec.invariant_status = st;
-                if (st == aura::ast::InvariantStatus::Warnings) {
-                    worst = aura::ast::InvariantStatus::Warnings;
-                    for (auto& n : notes)
-                        all_notes.push_back(std::move(n));
-                }
-            }
-            res.invariant_status = worst;
-            res.invariant_diagnostics = std::move(all_notes);
 
             // Issue #165 Phase 1B: post-mutation macro re-expansion.
             // For every MutationRecord we just processed, walk
@@ -4725,7 +4711,7 @@ public:
             }
 
             if (invariant_check_mode_ == InvariantCheckMode::Strict &&
-                worst == aura::ast::InvariantStatus::Warnings) {
+                res.invariant_status == aura::ast::InvariantStatus::Warnings) {
                 res.success = false;
                 if (!res.invariant_diagnostics.empty()) {
                     res.error = res.invariant_diagnostics.front().message;
