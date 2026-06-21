@@ -3320,6 +3320,127 @@ public:
     std::uint64_t atomic_batch_bumps_saved_ = 0;
 };
 
+// ── MutationVisitor concept (Issue #274) ─────────────────────
+//
+// Mirrors the Pass / AnalysisPass pattern in pass_manager.ixx,
+// but for FlatAST mutation records instead of IRModule transforms.
+// Visitors observe or react to committed mutations; the pipeline
+// folds over the mutation log with short-circuit on has_error().
+export template <typename V>
+concept MutationVisitor = requires(V& v, FlatAST& flat, const MutationRecord& rec) {
+    { v.visit_mutation(flat, rec) } -> std::same_as<void>;
+    { v.has_error() } -> std::convertible_to<bool>;
+};
+
+// Pure-function mutation callbacks (no persistent visitor state).
+export template <typename Fn>
+concept PureMutationFn = requires(Fn& fn, FlatAST& flat, const MutationRecord& rec) {
+    { fn(flat, rec) } -> std::same_as<void>;
+};
+
+export template <PureMutationFn Fn>
+class MutationFnWrap {
+public:
+    explicit MutationFnWrap(Fn& fn) : fn_(&fn) {}
+
+    void visit_mutation(FlatAST& flat, const MutationRecord& rec) { (*fn_)(flat, rec); }
+    bool has_error() const { return false; }
+
+private:
+    Fn* fn_;
+};
+
+// ── StableNodeRef + MutationRecord helpers ───────────────────
+export [[nodiscard]] FlatAST::StableNodeRef mutation_target_ref(const FlatAST& flat,
+                                                                const MutationRecord& rec) noexcept {
+    return flat.make_ref(rec.target_node);
+}
+
+export [[nodiscard]] FlatAST::StableNodeRef mutation_parent_ref(const FlatAST& flat,
+                                                                const MutationRecord& rec) noexcept {
+    return flat.make_ref(rec.parent_id);
+}
+
+export [[nodiscard]] bool is_mutation_target_valid(const FlatAST& flat,
+                                                   const MutationRecord& rec) noexcept {
+    return flat.is_valid(mutation_target_ref(flat, rec));
+}
+
+export [[nodiscard]] bool is_mutation_parent_valid(const FlatAST& flat,
+                                                  const MutationRecord& rec) noexcept {
+    return rec.parent_id == NULL_NODE || flat.is_valid(mutation_parent_ref(flat, rec));
+}
+
+// ── run_mutation_pipeline — fold over mutation log ───────────
+export template <MutationVisitor V>
+bool run_mutation_visitor_one(FlatAST& flat, const MutationRecord& rec, V& visitor) {
+    visitor.visit_mutation(flat, rec);
+    return !visitor.has_error();
+}
+
+export template <MutationVisitor... Visitors>
+bool run_mutation_one(FlatAST& flat, const MutationRecord& rec, Visitors&... visitors) {
+    return (run_mutation_visitor_one(flat, rec, visitors) && ...);
+}
+
+export template <MutationVisitor... Visitors>
+bool run_mutation_pipeline(FlatAST& flat, Visitors&... visitors) {
+    for (const auto& rec : flat.all_mutations()) {
+        if (!run_mutation_one(flat, rec, visitors...))
+            return false;
+    }
+    return true;
+}
+
+export template <MutationVisitor... Visitors>
+bool run_mutation_pipeline(FlatAST& flat, std::span<const MutationRecord> records,
+                           Visitors&... visitors) {
+    for (const auto& rec : records) {
+        if (!run_mutation_one(flat, rec, visitors...))
+            return false;
+    }
+    return true;
+}
+
+// ── Example mutation visitors ──────────────────────────────────
+export class MutationCountVisitor {
+public:
+    void visit_mutation(FlatAST&, const MutationRecord& rec) {
+        if (rec.status == MutationStatus::Committed)
+            ++committed_count_;
+        ++total_count_;
+    }
+
+    bool has_error() const { return false; }
+    std::size_t total_count() const { return total_count_; }
+    std::size_t committed_count() const { return committed_count_; }
+
+private:
+    std::size_t total_count_ = 0;
+    std::size_t committed_count_ = 0;
+};
+
+export class MutationTargetValidityVisitor {
+public:
+    void visit_mutation(FlatAST& flat, const MutationRecord& rec) {
+        if (rec.status != MutationStatus::Committed)
+            return;
+        const bool has_target = rec.target_node != NULL_NODE;
+        const bool has_parent = rec.parent_id != NULL_NODE;
+        if (!has_target && !has_parent)
+            return;
+        if (has_target && !is_mutation_target_valid(flat, rec))
+            has_error_ = true;
+        if (has_parent && !is_mutation_parent_valid(flat, rec))
+            has_error_ = true;
+    }
+
+    bool has_error() const { return has_error_; }
+
+private:
+    bool has_error_ = false;
+};
+
 // ── Patch application ──────────────────────────────────────────
 export bool apply_patches(FlatAST& ast, std::span<const Patch> patches) pre(!patches.empty());
 
