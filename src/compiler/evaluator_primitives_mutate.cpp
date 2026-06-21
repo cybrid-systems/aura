@@ -396,6 +396,24 @@ void register_mutate_primitives(
                             match = false;
                             break;
                         }
+                    } else if (p.field == ":marker" || p.field == ":syntax-marker") {
+                        auto m = flat.marker(id);
+                        const char* mname = nullptr;
+                        switch (m) {
+                            case aura::ast::SyntaxMarker::User:
+                                mname = "User";
+                                break;
+                            case aura::ast::SyntaxMarker::MacroIntroduced:
+                                mname = "MacroIntroduced";
+                                break;
+                            case aura::ast::SyntaxMarker::BoolLiteral:
+                                mname = "BoolLiteral";
+                                break;
+                        }
+                        if (!mname || p.value != mname) {
+                            match = false;
+                            break;
+                        }
                     } else {
                         return mev("unknown-field",
                                    std::string("unknown where field: \"") + p.field + "\"");

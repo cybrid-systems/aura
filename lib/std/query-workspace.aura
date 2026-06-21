@@ -1,0 +1,19 @@
+; ── std/query-workspace.aura — workspace EDSL query helpers (Issue #267) ──
+;
+; Composes C++ evaluator primitives query:filter / query:where.
+; Do NOT (require "std/query") in the same module — that shadows
+; query:filter with the list-filtering stdlib version.
+
+(export query:macro-introduced-calls query:macro-introduced-defines)
+
+; Macro-introduced Call nodes (for targeted cleanup / refactoring).
+(define (query:macro-introduced-calls)
+  (query:filter
+    (query:where :syntax-marker "MacroIntroduced")
+    (query:where :node-type "Call")))
+
+; Macro-introduced Define nodes.
+(define (query:macro-introduced-defines)
+  (query:filter
+    (query:where :syntax-marker "MacroIntroduced")
+    (query:where :node-type "Define")))

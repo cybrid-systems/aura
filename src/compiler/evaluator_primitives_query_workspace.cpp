@@ -356,6 +356,7 @@ void register_workspace_query_primitives(
     //   :has-child  — node has at least one child with the given NodeTag name
     //   :depth      — node is at the given depth from root (e.g. "0" = root)
     //   :marker     — Issue #244: match SyntaxMarker name
+    //   :syntax-marker — Issue #267: alias for :marker
     //                 ("User" / "MacroIntroduced" / "BoolLiteral").
     //                 Useful for EDSL queries that want to operate
     //                 only on macro-introduced code, or only on
@@ -563,8 +564,8 @@ void register_workspace_query_primitives(
                         match = false;
                         break;
                     }
-                } else if (p.field == ":marker") {
-                    // Issue #244: match SyntaxMarker by name.
+                } else if (p.field == ":marker" || p.field == ":syntax-marker") {
+                    // Issue #244 / #267: match SyntaxMarker by name.
                     // The marker column is populated by clone_macro_body
                     // (Issue #190) and persists in ws.workspace_flat across
                     // mutations. Marker names (case-sensitive):
@@ -930,15 +931,55 @@ void register_workspace_query_primitives(
     //
     // The pattern is parsed as an S-expression. A Variable named "..." acts as
     // wildcard and matches any single node or subtree.
+    //
+    // Optional keyword (Issue #267):
+    //   :include-macro-introduced [#t|#f]
+    // When absent or #f, macro-introduced root positions are skipped
+    // (Issue #140 hygiene default). When #t, they are included.
     add("query:pattern", [ws, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query:pattern expr)");
+        if (a.empty())
+            return mev("bad-arg",
+                       "usage: (query:pattern expr [:include-macro-introduced [#t]])");
         if (!ws.workspace_flat || !ws.workspace_pool)
             return mev("no-workspace", "no workspace AST loaded");
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ws.string_heap.size())
-            return mev("bad-arg", "pattern string index out of range");
+
+        bool have_pattern = false;
+        std::size_t pattern_string_idx = 0;
+        bool include_macro_introduced = false;
+        for (std::size_t ai = 0; ai < a.size(); ++ai) {
+            if (is_string(a[ai])) {
+                if (have_pattern)
+                    return mev("bad-arg", "query:pattern: multiple pattern strings");
+                have_pattern = true;
+                pattern_string_idx = as_string_idx(a[ai]);
+                if (pattern_string_idx >= ws.string_heap.size())
+                    return mev("bad-arg", "pattern string index out of range");
+            } else if (is_keyword(a[ai])) {
+                auto kidx = as_keyword_idx(a[ai]);
+                if (kidx >= ws.keyword_table.size())
+                    return mev("bad-arg", "unknown keyword");
+                auto kw = ws.keyword_table[kidx];
+                if (kw == ":include-macro-introduced") {
+                    include_macro_introduced = true;
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            include_macro_introduced = as_bool(a[ai + 1]);
+                        else
+                            include_macro_introduced = (as_int(a[ai + 1]) != 0);
+                        ++ai;
+                    }
+                } else {
+                    return mev("bad-arg", std::string("unknown query:pattern keyword: ") + kw);
+                }
+            } else {
+                return mev("bad-arg",
+                           "usage: (query:pattern expr [:include-macro-introduced [#t]])");
+            }
+        }
+        if (!have_pattern)
+            return mev("bad-arg", "query:pattern: missing pattern string");
+        auto idx = pattern_string_idx;
 
         // Phase 2.5.0: pat_pool stays separate from canonical_pool.
         // Patterns parse into a fresh FlatAST + pool per call (ws.temp_arena
@@ -1025,9 +1066,8 @@ void register_workspace_query_primitives(
         // code, not the macro-expanded body). Hygiene correctness:
         // matching a macro-introduced call as if it were user code
         // would be misleading. The pattern only matches user-written
-        // code by default. Callers who want to include macro nodes
-        // can query the specific macro node or use a different
-        // primitive (out of scope for #140's basic hygiene).
+        // code by default. Issue #267: pass :include-macro-introduced
+        // #t to opt in to matching macro-introduced root positions.
         //
         // Issue #186: also skip nodes whose children count doesn't
         // match the pattern's children count (the pattern's
@@ -1064,7 +1104,8 @@ void register_workspace_query_primitives(
             for (aura::ast::NodeId id : bucket) {
                 if (id >= flat.size())
                     continue;
-                if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
+                if (!include_macro_introduced &&
+                    flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
                     continue;
                 if (match_subtree(id, pr.root)) {
                     auto pid = ws.pairs.size();
@@ -1076,7 +1117,8 @@ void register_workspace_query_primitives(
             // Wildcard pattern: full walk (the index doesn't
             // help for wildcards).
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-                if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
+                if (!include_macro_introduced &&
+                    flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
                     continue;
                 if (match_subtree(id, pr.root)) {
                     auto pid = ws.pairs.size();
