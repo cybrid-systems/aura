@@ -3,13 +3,26 @@
 ; 在现有 query C++ 原语之上提供组合查询和过滤。
 ;
 ; API:
-;   (query:filter pred node-ids)    → 过滤节点列表
-;   (query:uncalled)                → 已定义但零调用的函数
-;   (query:callers-of name)         → 调用 name 的 Define 列表
+;   (query:filter pred node-ids)       → 过滤节点列表
+;   (query:uncalled)                   → 已定义但零调用的函数
+;   (query:callers-of name)            → 调用 name 的 Define 列表
+;   (query:defines-by-marker marker)   → 标记为 marker 的 Define 节点
+;   (query:calls-by-marker marker)     → 标记为 marker 的 Call 节点
+;   (query:node-marker node-id)        → 节点的 syntax-marker 字符串
+;   (query:defines                     → 全部 Define 节点
+;   (query:calls                       → 全部 Call 节点
+;   (query:ref-counts node-id)         → 节点被引用的次数
+;
+; Issue #278: 这些 helper 在原有 C++ 原语上做语义包装，让 AI Agent
+; 写更简洁的 S-表达式。所有 helper 保持纯函数语义 — 不修改 workspace。
+;
 
 (require "std/list" all:)
 
-(export query:filter query:uncalled query:callers-of)
+(export query:filter query:uncalled query:callers-of
+        query:defines-by-marker query:calls-by-marker
+        query:node-marker query:defines query:calls
+        query:ref-counts)
 
 ; ── query:filter — 按谓词过滤节点 ID 列表 ──
 ;
@@ -65,3 +78,88 @@
               (if (refers-to? (car ids) name) #t
                 (walk (cdr ids)))))
           (and (pair? children) (walk children)))))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Issue #278 — Aura-layer wrappers for EDSL observability
+;; ═══════════════════════════════════════════════════════════════
+
+; ── query:defines — 全部 Define 节点 ID 列表 ──
+;
+; 等价于 (query:node-type "Define")，但语义更清晰。
+;
+(define (query:defines)
+  (query:node-type "Define"))
+
+; ── query:calls — 全部 Call 节点 ID 列表 ──
+;
+; 等价于 (query:node-type "Call")，但语义更清晰。
+;
+(define (query:calls)
+  (query:node-type "Call"))
+
+; ── query:defines-by-marker marker — 标记为 marker 的 Define 节点 ──
+;
+; marker: "User" / "MacroIntroduced" / "BoolLiteral"
+;
+;   (query:defines-by-marker "MacroIntroduced")
+;   → 宏展开产生的 Define 节点 ID 列表
+;
+; 出错时（无 workspace / 原语不存在）返回 ()。
+;
+(define (query:defines-by-marker marker)
+  (try
+    (query:filter
+      (query:where :syntax-marker marker)
+      (query:defines))
+    (catch (e) (quote ()))))
+
+; ── query:calls-by-marker marker — 标记为 marker 的 Call 节点 ──
+;
+; marker: "User" / "MacroIntroduced" / "BoolLiteral"
+;
+;   (query:calls-by-marker "MacroIntroduced")
+;   → 宏展开产生的 Call 节点 ID 列表
+;
+(define (query:calls-by-marker marker)
+  (try
+    (query:filter
+      (query:where :syntax-marker marker)
+      (query:calls))
+    (catch (e) (quote ()))))
+
+; ── query:node-marker node-id — 节点的 syntax-marker ──
+;
+; 通过 query:where 的反向过滤来查找节点的 marker。
+; 对每个 marker 字符串 ("User" / "MacroIntroduced" / "BoolLiteral")
+; 试着看 node-id 是否匹配。返回第一个匹配的 marker，或 "User" (默认)。
+;
+; 这是个 O(markers) 的小循环，markers 数固定 (3)，所以开销可忽略。
+;
+(define (query:node-marker node-id)
+  (define markers '("MacroIntroduced" "BoolLiteral" "User"))
+  (define (try-each ms)
+    (if (null? ms) "User"
+      (let* ((m (car ms))
+             (matches (try
+                        (query:filter
+                          (query:where :syntax-marker m)
+                          (cons node-id (quote ())))
+                        (catch (quote ())))))
+        (if (and (pair? matches) (not (null? matches)))
+          m
+          (try-each (cdr ms))))))
+  (try-each markers))
+
+; ── query:ref-counts node-id — 节点被引用次数 ──
+;
+; 数 (mutation-history node-id) 返回的记录数。
+; 因为 mutation-history 返回所有引用过该节点的 mutation 记录。
+;
+; 出错时返回 0。
+;
+(define (query:ref-counts node-id)
+  (try
+    (let loop ((hist (mutation-history node-id)) (n 0))
+      (if (null? hist) n
+        (loop (cdr hist) (+ n 1))))
+    (catch (e) 0)))

@@ -1,0 +1,6 @@
+mutate:summary:  -> Any
+mutate:by-operator:  -> Any
+mutate:last-info:  -> Any
+mutate:operator-count: Any -> Any
+mutate:rolled-back?:  -> Any
+mutate:rollback-rate:  -> Any
