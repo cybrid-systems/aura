@@ -187,6 +187,7 @@ void register_type_primitives(std::function<void(std::string, PrimFn)> add, Eval
 void register_hot_swap_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_diagnostic_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_module_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_file_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_defuse_query_primitives(
     std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
     aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
@@ -1998,23 +1999,6 @@ void Evaluator::init_pair_primitives() {
         return make_string(sidx);
     });
 
-    primitives_.add("read", [this](const auto&) {
-        std::string line;
-        std::getline(std::cin, line);
-        if (line.empty())
-            return make_void();
-        auto id = string_heap_.size();
-        string_heap_.push_back(std::move(line));
-        return make_string(id);
-    });
-
-    // ── File I/O (P0) ───────────────────────────────────────────
-    // Helper: check path is a regular file (skip directories)
-    auto is_regular = [](const std::string& path) -> bool {
-        struct stat st;
-        return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
-    };
-
     // (current-time) → integer epoch seconds
     primitives_.add("current-time", [](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(std::time(nullptr)));
@@ -2026,181 +2010,9 @@ void Evaluator::init_pair_primitives() {
         return make_int(static_cast<int64_t>(g_tl_arena.offset));
     });
 
-    primitives_.add("read-file", [this, is_regular](const auto& a) {
-        if (a.empty() || !is_string(a[0]))
-            return make_void();
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size())
-            return make_void();
-        auto& path = string_heap_[idx];
-        if (!is_regular(path))
-            return make_void();
-        std::ifstream f(path);
-        if (!f)
-            return make_void();
-        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        auto id = string_heap_.size();
-        string_heap_.push_back(std::move(content));
-        return make_string(id);
-    });
-
-    primitives_.add("write-file", [this](std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_string(a[0]))
-            return make_void();
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size())
-            return make_void();
-        auto& path = string_heap_[idx];
-        std::string content;
-        if (is_string(a[1])) {
-            auto cidx = as_string_idx(a[1]);
-            if (cidx < string_heap_.size())
-                content = string_heap_[cidx];
-        } else if (is_int(a[1])) {
-            content = std::to_string(as_int(a[1]));
-        } else {
-            return make_void();
-        }
-        std::ofstream f(path);
-        if (!f)
-            return make_void();
-        f << content;
-        return make_int(1);
-    });
-
-    // ── CLI interface ────────────────────────────────────────────
-    primitives_.add("command-line", [this](const auto&) -> EvalValue {
-        // Returns list of command-line argument strings, NOT including argv[0].
-        // Parsed from /proc/self/cmdline on Linux.
-        std::ifstream f("/proc/self/cmdline");
-        if (!f)
-            return make_void();
-        std::string raw;
-        std::getline(f, raw, '\0'); // skip argv[0]
-        std::vector<std::string> items;
-        while (std::getline(f, raw, '\0')) {
-            if (!raw.empty())
-                items.push_back(raw);
-        }
-        EvalValue result = make_void();
-        for (auto it = items.rbegin(); it != items.rend(); ++it) {
-            auto sidx = string_heap_.size();
-            string_heap_.push_back(*it);
-            auto pid = pairs_.size();
-            pairs_.push_back({make_string(sidx), result});
-            result = make_pair(pid);
-        }
-        return result;
-    });
-
-    primitives_.add("file-exists?", [this](std::span<const EvalValue> a) {
-        if (a.empty() || !is_string(a[0]))
-            return make_int(0);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size())
-            return make_int(0);
-        auto& path = string_heap_[idx];
-        struct stat st;
-        return make_int(::stat(path.c_str(), &st) == 0 ? 1 : 0);
-    });
-
-    // ── File I/O: copy, delete, size, directory list ─────────────
-    primitives_.add("file-copy", [this, is_regular](const auto& a) {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return make_void();
-        auto sidx = as_string_idx(a[0]), didx = as_string_idx(a[1]);
-        if (sidx >= string_heap_.size() || didx >= string_heap_.size())
-            return make_void();
-        if (!is_regular(string_heap_[sidx]))
-            return make_void();
-        std::ifstream src(string_heap_[sidx], std::ios::binary);
-        if (!src)
-            return make_void();
-        std::ofstream dst(string_heap_[didx], std::ios::binary);
-        if (!dst)
-            return make_void();
-        dst << src.rdbuf();
-        return make_int(1);
-    });
-
-    primitives_.add("file-delete", [this](std::span<const EvalValue> a) {
-        if (a.empty() || !is_string(a[0]))
-            return make_int(0);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size())
-            return make_int(0);
-        return make_int(std::remove(string_heap_[idx].c_str()) == 0 ? 1 : 0);
-    });
-
-    primitives_.add("file-size", [this, is_regular](const auto& a) {
-        if (a.empty() || !is_string(a[0]))
-            return make_int(0);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size() || !is_regular(string_heap_[idx]))
-            return make_int(0);
-        std::ifstream f(string_heap_[idx], std::ios::ate | std::ios::binary);
-        if (!f)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(f.tellg()));
-    });
-
-    // ── Shell / Process ────────────────────────────────────────
-    primitives_.add("shell", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_int(-1);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size())
-            return make_int(-1);
-        return make_int(::system(string_heap_[idx].c_str()));
-    });
-
-    primitives_.add("command-output", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_void();
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size())
-            return make_void();
-        auto& cmd = string_heap_[idx];
-        std::array<char, 4096> buf;
-        std::string result;
-        auto* fp = ::popen(cmd.c_str(), "r");
-        if (!fp)
-            return make_void();
-        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
-            result += buf.data();
-        ::pclose(fp);
-        if (!result.empty() && result.back() == '\n')
-            result.pop_back();
-        auto sid = string_heap_.size();
-        string_heap_.push_back(std::move(result));
-        return make_string(sid);
-    });
-
-    primitives_.add("directory-list", [this](std::span<const EvalValue> a) {
-        if (a.empty() || !is_string(a[0]))
-            return make_void();
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size())
-            return make_void();
-        auto& dir_path = string_heap_[idx];
-        EvalValue result = make_void();
-        auto dir = opendir(dir_path.c_str());
-        if (!dir)
-            return make_void();
-        struct dirent* entry;
-        while ((entry = readdir(dir)) != nullptr) {
-            std::string name(entry->d_name);
-            if (name == "." || name == "..")
-                continue;
-            auto sid = string_heap_.size();
-            string_heap_.push_back(name);
-            auto pid = pairs_.size();
-            pairs_.push_back({make_string(sid), result});
-            result = make_pair(pid);
-        }
-        closedir(dir);
-        return result;
-    });
+    primitives_detail::register_file_primitives(
+        [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },
+        *this);
 
     primitives_detail::register_git_primitives(
         [this](std::string name, PrimFn fn) { primitives_.add(std::move(name), std::move(fn)); },

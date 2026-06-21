@@ -32,6 +32,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_types.cpp
     src/compiler/evaluator_primitives_diagnostic.cpp
     src/compiler/evaluator_primitives_module.cpp
+    src/compiler/evaluator_primitives_file.cpp
 )
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
