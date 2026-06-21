@@ -445,6 +445,12 @@ void register_hot_swap_primitives(std::function<void(std::string, PrimFn)> add, 
 void register_diagnostic_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_module_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_file_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_runtime_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_test_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_misc_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_control_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_char_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_mutation_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 }
 
 // Workspace layering (P13) — shared by evaluator_impl + workspace primitives TU.
@@ -530,6 +536,18 @@ export class Evaluator {
     friend void primitives_detail::register_module_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_file_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_runtime_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_test_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_misc_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_control_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_char_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_mutation_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 
 public:
