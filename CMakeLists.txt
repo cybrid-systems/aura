@@ -5,6 +5,7 @@ project(aura LANGUAGES CXX C)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraTest.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraIssueBundles.cmake)
 
+
 # P0: evaluator implementation partitions (same module: aura.compiler.evaluator).
 set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_ctor.cpp
@@ -427,6 +428,7 @@ set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
 # (sccache) will eliminate. For now, modules in both places are
 # necessary to make aura_test_objects compile.
 target_sources(aura_test_objects PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/reflect/reflect.ixx
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
@@ -454,6 +456,7 @@ target_sources(aura_test_objects PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/type_checker.ixx
     src/compiler/ir_soa.ixx
     src/compiler/type_concepts.ixx)
+set_source_files_properties(src/reflect/reflect.ixx PROPERTIES COMPILE_FLAGS "-freflection")
 target_include_directories(aura_test_objects PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura_test_objects PUBLIC cxx_std_26)
 aura_test_compile_options(aura_test_objects)
@@ -820,6 +823,16 @@ aura_add_issue_test_reflect_standalone(test_issue_216)
 # that verifies the reflection infrastructure works for
 # IR-shaped types (OpcodeInfo, IRInstruction).
 aura_add_issue_test_reflect_standalone(test_issue_217)
+
+# Issue #268: production aura::ast::NodeView roundtrip (split TU:
+# module side uses real NodeView; reflect side uses nodeview_wire.hh).
+add_executable(test_issue_178 tests/test_issue_178.cpp tests/test_issue_178_reflect.cpp)
+set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_178 PRIVATE src tests)
+aura_test_compile_options_reflect_minimal(test_issue_178)
+target_compile_features(test_issue_178 PUBLIC cxx_std_26)
+target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
+add_test(NAME test_issue_178_verification COMMAND ./test_issue_178)
 
 # Issue #219: gap-buffer child_data_ for O(1) insert/remove
 # in FlatAST. Tests the GapBuffer<T> template defined in
