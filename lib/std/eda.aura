@@ -554,6 +554,56 @@
     (else (eda:emit-body-item ir))))
 
 ; ═══════════════════════════════════════════════════════════
+; Cycle 4: dependent types + type-checked mutate + pipeline
+; ═══════════════════════════════════════════════════════════
+
+(define (eda:port-to-typed-signal p)
+  (make-eda:typed-signal
+    (eda:port-name p)
+    (make-eda:bitvec (eda:port-width p))
+    eda:default-clock-domain
+    eda:default-reset-type))
+
+(define (eda:wire-to-typed-signal w)
+  (make-eda:typed-signal
+    (eda:wire-name w)
+    (make-eda:bitvec (eda:wire-width w))
+    eda:default-clock-domain
+    (make-eda:reset-type 'none)))
+
+(define (eda:query:typed-signals m)
+  (append
+    (map eda:port-to-typed-signal (eda:query:ports m))
+    (map eda:wire-to-typed-signal (eda:query:wires m))))
+
+(define (eda:assign-widths-ok? a m)
+  (let ((lhs (eda:assign-lhs a))
+        (rhs (eda:assign-rhs a)))
+    (if (and (equal? (eda:expr-op lhs) 'symbol)
+             (equal? (eda:expr-op rhs) 'symbol))
+        (= (eda:query:bit-width (car (eda:expr-args lhs)) m)
+           (eda:query:bit-width (car (eda:expr-args rhs)) m))
+        #t)))
+
+(define (eda:check-module-types m)
+  (let loop ((as (eda:query:assigns m)))
+    (cond
+      ((null? as) #t)
+      ((not (eda:assign-widths-ok? (car as) m)) #f)
+      (else (loop (cdr as))))))
+
+(define (eda:mutate:insert-clock-gating-checked m clk en)
+  (if (and (= (eda:query:bit-width clk m) 1)
+           (= (eda:query:bit-width en m) 1))
+      (eda:mutate:insert-clock-gating m clk en)
+      #f))
+
+(define (eda:pipeline:check-and-emit m)
+  (if (eda:check-module-types m)
+      (eda:emit-verilog m)
+      #f))
+
+; ═══════════════════════════════════════════════════════════
 ; Dependent type system (Issue #228 — Phase 1 minimum viable)
 ; ═══════════════════════════════════════════════════════════
 ;
@@ -620,8 +670,6 @@
   (and (pair? x) (equal? (car x) 'eda:clock-domain)))
 (define (eda:clock-domain-name cd)
   (car (cdr cd)))
-(define (eda:clock-domain? x)
-  (and (pair? x) (equal? (car x) 'eda:clock-domain)))
 ; Same domain iff same symbol.
 (define (eda:clock-domain-compatible? cd1 cd2)
   (and (eda:clock-domain? cd1) (eda:clock-domain? cd2)
@@ -640,8 +688,6 @@
   (and (pair? x) (equal? (car x) 'eda:reset-type)))
 (define (eda:reset-type-kind rt)
   (car (cdr rt)))
-(define (eda:reset-type? x)
-  (and (pair? x) (equal? (car x) 'eda:reset-type)))
 ; Compatible iff same kind. 'none is special: it's compatible
 ; with itself only (a circuit without reset can't be combined
 ; with one that requires async reset).
@@ -725,6 +771,10 @@
   eda:emit-verilog eda:emit-module eda:emit-port eda:emit-wire
   eda:emit-assign eda:emit-always eda:emit-sensitivity eda:emit-signal
   eda:emit-expr eda:emit-body-item eda:name-str
+  ; Type-checked pipeline (Cycle 4)
+  eda:port-to-typed-signal eda:wire-to-typed-signal
+  eda:query:typed-signals eda:assign-widths-ok? eda:check-module-types
+  eda:mutate:insert-clock-gating-checked eda:pipeline:check-and-emit
   ; BitVec
   make-eda:bitvec make-eda:bitvec-8 make-eda:bitvec-16
   make-eda:bitvec-32 make-eda:bitvec-64 make-eda:bitvec-param

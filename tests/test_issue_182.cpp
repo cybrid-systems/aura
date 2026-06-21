@@ -1,8 +1,8 @@
 // @category: unit
 // @reason: no CompilerService usage; pure C++ test
 // test_issue_182.cpp — Issue #182: Hardware IR + Verilog Backend
-// (Cycle 1-3: IR + accessors + display + query/mutate helpers +
-// Verilog emitter, C++ verification).
+// (Cycle 1-4: IR + accessors + display + query/mutate helpers +
+// Verilog emitter + type-checked pipeline, C++ verification).
 //
 // Issue #182 (Hardware EDA + Verilog) is by design 100% stdlib work
 // (`lib/std/eda.aura`). However, the Aura binary's top-level
@@ -32,6 +32,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -537,6 +538,54 @@ IrNode mutate_extract_common_expr(IrNode m) {
     return m;
 }
 
+// ═══════════════════════════════════════════════════════════
+// Cycle 4: dependent types + type-checked mutate (C++ mirror)
+// ═══════════════════════════════════════════════════════════
+
+IrNode port_to_typed_signal(IrNode const& p) {
+    return IrNode(Tag::Expr,
+        {std::string("typed-signal"), port_name(p), port_width(p)});
+}
+
+IrNode wire_to_typed_signal(IrNode const& w) {
+    return IrNode(Tag::Expr,
+        {std::string("typed-signal"), wire_name(w), wire_width(w)});
+}
+
+std::vector<IrNode> query_typed_signals(IrNode const& m) {
+    std::vector<IrNode> result;
+    for (auto const& p : module_ports(m)) result.push_back(port_to_typed_signal(p));
+    for (auto const& w : query_wires(m)) result.push_back(wire_to_typed_signal(w));
+    return result;
+}
+
+bool assign_widths_ok(IrNode const& a, IrNode const& m) {
+    auto const& lhs = assign_lhs(a);
+    auto const& rhs = assign_rhs(a);
+    if (expr_op(lhs) != "symbol" || expr_op(rhs) != "symbol") return true;
+    return query_bit_width(expr_symbol_name(lhs), m)
+        == query_bit_width(expr_symbol_name(rhs), m);
+}
+
+bool check_module_types(IrNode const& m) {
+    for (auto const& a : query_assigns(m)) {
+        if (!assign_widths_ok(a, m)) return false;
+    }
+    return true;
+}
+
+std::optional<IrNode> mutate_insert_clock_gating_checked(
+    IrNode m, std::string_view clk, std::string_view en) {
+    if (query_bit_width(clk, m) != 1 || query_bit_width(en, m) != 1)
+        return std::nullopt;
+    return mutate_insert_clock_gating(std::move(m), clk, en);
+}
+
+std::optional<std::string> pipeline_check_and_emit(IrNode const& m) {
+    if (!check_module_types(m)) return std::nullopt;
+    return emit_verilog(m);
+}
+
 } // namespace eda
 
 // ═══════════════════════════════════════════════════════════
@@ -867,6 +916,68 @@ bool test_cycle3_emit_always() {
     return true;
 }
 
+bool test_cycle4_typed_signals() {
+    PRINTLN("\n--- Test 14: Cycle 4 typed-signal query ---");
+    using namespace eda;
+
+    std::vector<IrNode> ports = {
+        make_port("clk", "input", 1),
+        make_port("q", "output", 8),
+    };
+    std::vector<IrNode> body = {
+        make_wire("q_next", 8),
+        make_assign(expr_symbol("q"), expr_symbol("q_next")),
+    };
+    auto m = make_module("counter", ports, body);
+
+    auto typed = query_typed_signals(m);
+    CHECK(typed.size() == 3, "typed-signals: 2 ports + 1 wire");
+    return true;
+}
+
+bool test_cycle4_check_module_types() {
+    PRINTLN("\n--- Test 15: Cycle 4 check-module-types ---");
+    using namespace eda;
+
+    auto ok = make_module("ok",
+        {make_port("q", "output", 8)},
+        {make_wire("q_next", 8),
+         make_assign(expr_symbol("q"), expr_symbol("q_next"))});
+    CHECK(check_module_types(ok), "matching symbol widths pass");
+
+    auto bad = make_module("bad",
+        {make_port("q", "output", 8)},
+        {make_assign(expr_symbol("q"), expr_symbol("clk"))});
+    CHECK(!check_module_types(bad), "width mismatch fails type check");
+    return true;
+}
+
+bool test_cycle4_pipeline() {
+    PRINTLN("\n--- Test 16: Cycle 4 pipeline (check + emit + gated mutate) ---");
+    using namespace eda;
+
+    auto m = make_module("counter",
+        {make_port("clk", "input", 1), make_port("en", "input", 1)},
+        {});
+    auto gated = mutate_insert_clock_gating_checked(m, "clk", "en");
+    CHECK(gated.has_value(), "clock-gating-checked accepts 1-bit clk/en");
+    if (gated) {
+        CHECK(check_module_types(*gated), "gated module passes type check");
+        auto out = pipeline_check_and_emit(*gated);
+        CHECK(out.has_value(), "pipeline returns verilog string");
+        if (out) {
+            CHECK(out->find("wire clk_gated;") != std::string::npos,
+                  "pipeline emit contains gated wire");
+            CHECK(out->find("assign clk_gated = (clk & en);") != std::string::npos,
+                  "pipeline emit contains gate assign");
+        }
+    }
+
+    auto bad_gate = mutate_insert_clock_gating_checked(m, "clk", "q");
+    CHECK(!bad_gate.has_value(), "clock-gating-checked rejects missing en port");
+    return true;
+}
+
 bool test_end_to_end_counter() {
     PRINTLN("\n--- Test 7: end-to-end counter module ---");
     using namespace eda;
@@ -902,10 +1013,11 @@ bool test_end_to_end_counter() {
 
 int run_tests() {
     std::fprintf(stdout,
-                 "═══ Issue #182 — Hardware IR + Verilog Backend (Cycle 1-3, C++) ═══\n");
+                 "═══ Issue #182 — Hardware IR + Verilog Backend (Cycle 1-4, C++) ═══\n");
     std::fprintf(stdout, "  Cycle 1: IR + display + basic query.\n");
     std::fprintf(stdout, "  Cycle 2: dependency query + mutate helpers.\n");
     std::fprintf(stdout, "  Cycle 3: Verilog emitter (eda:emit-verilog).\n");
+    std::fprintf(stdout, "  Cycle 4: dependent types + type-checked pipeline.\n");
     std::fprintf(stdout, "  Aura stdlib mirror: lib/std/eda.aura (#229-#231 fixed).\n\n");
 
     test_ir_construction();
@@ -920,6 +1032,9 @@ int run_tests() {
     test_cycle2_mutate_extract_common();
     test_cycle3_emit_verilog();
     test_cycle3_emit_always();
+    test_cycle4_typed_signals();
+    test_cycle4_check_module_types();
+    test_cycle4_pipeline();
     test_end_to_end_counter();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
