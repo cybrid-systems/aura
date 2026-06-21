@@ -2167,6 +2167,11 @@ public:
             // is now different from what the index reflects.
             defuse_index_ = nullptr;
         }
+        // Issue #273: structural mutates bump generation_; refresh all
+        // live node_gen_ entries so subsequent eval_flat paths see
+        // valid NodeIds (including unrelated workspace defines).
+        if (workspace_flat_)
+            workspace_flat_->restamp_all_node_generations();
         // Bump version on both success and failure (legacy
         // invariant: 2 bumps per boundary). The lock is
         // released by the unique_lock going out of scope.

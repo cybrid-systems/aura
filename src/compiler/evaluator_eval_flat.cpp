@@ -1869,6 +1869,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 expanded = expand_inner_macros(
                                     f, p, expanded, /*depth=*/0, /*max_depth=*/10,
                                     as_expansion_registry(macros_));
+                                f->restamp_all_node_generations();
                                 // Evaluate the cloned + inner-expanded
                                 // body. eval_flat returns a runtime
                                 // value (a list for cons-chain qq
@@ -2331,12 +2332,34 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
                             m->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
                         }
-                        auto it = closures_.find(cid);
-                        if (it == closures_.end())
+                        Closure cl;
+                        bool tw_closure = false;
+                        {
+                            std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+                            auto it = closures_.find(cid);
+                            if (it != closures_.end()) {
+                                cl = it->second;
+                                tw_closure = true;
+                            }
+                        }
+                        if (!tw_closure) {
+                            // IR-produced closure (e.g. lambda arg to cached define).
+                            std::vector<EvalValue> cargs;
+                            for (std::size_t i = 1; i < v.children.size(); ++i) {
+                                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                                if (!ar)
+                                    return ar;
+                                if (is_error(*ar))
+                                    return ar;
+                                cargs.push_back(*ar);
+                            }
+                            auto bridged = apply_closure(cid, cargs);
+                            if (bridged)
+                                return *bridged;
                             return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
                                                               "eval_flat: invalid closure"});
-                        auto& cl = it->second;
-                        // Evaluate named args first
+                        }
+                        // Evaluate named args for TW TCO inline path.
                         std::size_t named_count = cl.dotted && !cl.params.empty()
                                                       ? cl.params.size() - 1
                                                       : cl.params.size();

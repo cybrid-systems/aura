@@ -216,6 +216,7 @@ public:
         auto coercions = tc.take_coercions();
         if (!coercions.empty()) {
             aura::compiler::apply_coercion_map(flat, coercions);
+            flat.restamp_all_node_generations();
         }
         auto all = diag.diagnostics();
         return all.size();

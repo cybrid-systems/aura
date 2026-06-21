@@ -2147,7 +2147,13 @@ using namespace aura::ast;
 // return — no state escapes this function.
 FlatParseResult parse_to_flat(std::string_view source, FlatAST& flat, StringPool& pool) {
     detail::ParserState s{flat, pool, Lexer(source), 0};
-    return detail::parse(s, source);
+    auto result = detail::parse(s, source);
+    // Issue #273: define-module (and similar) append body exprs via
+    // insert_child, which bumps generation_ per op. Refresh all live
+    // node_gen_ entries so eval_flat / typecheck see valid NodeIds.
+    if (result.success && result.root != aura::ast::NULL_NODE)
+        flat.restamp_all_node_generations();
+    return result;
 }
 
 } // namespace aura::parser

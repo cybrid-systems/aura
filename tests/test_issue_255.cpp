@@ -99,9 +99,10 @@ bool test_aura_primitive_returns_hash() {
         ++g_failed; return false;
     }
     CHECK(true, "(compile:invalidations-stats) is not a pair (pair? is #f)");
-    // Verify the 4 keys exist with value 0 (fresh service).
-    for (const char* key : {"bump-generation-count", "is-valid-check-count",
-                            "stable-ref-invalidations", "atomic-batch-commits"}) {
+    // Verify counter keys. is-valid-check-count may be >0 after
+    // eval-current (#273 contract checks in eval_flat).
+    for (const char* key : {"bump-generation-count", "stable-ref-invalidations",
+                            "atomic-batch-commits"}) {
         std::string check = std::string("(hash-ref h \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv) ||
@@ -111,6 +112,17 @@ bool test_aura_primitive_returns_hash() {
             ++g_failed;
         } else {
             CHECK(true, std::string("hash-ref h \"") + key + "\" returns 0");
+        }
+    }
+    {
+        auto rv = cs.eval("(hash-ref h \"is-valid-check-count\")");
+        if (!rv || !aura::compiler::types::is_int(*rv) ||
+            aura::compiler::types::as_int(*rv) < 0) {
+            std::println("  FAIL: hash-ref h is-valid-check-count not a non-negative int (val={})",
+                         rv ? rv->val : -1);
+            ++g_failed;
+        } else {
+            CHECK(true, "hash-ref h \"is-valid-check-count\" returns non-negative int");
         }
     }
     return true;
