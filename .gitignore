@@ -1,5 +1,6 @@
 
 build/
+gcm.cache/
 build_asan
 build_dbg/
 build_debug
