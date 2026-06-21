@@ -1,0 +1,129 @@
+; ── std/mutate.aura — mutation observability wrappers (Issue #278) ──
+;
+; 高层 mutation 观察 / 诊断 helpers。
+; 全部纯 Aura，调用 (mutation-log:summary) 等 C++ observability primitives。
+;
+; API:
+;   (mutate:summary)              → alist 摘要 (:total :committed :rolled-back ...)
+;   (mutate:by-operator)          → hash (operator-name → count)
+;   (mutate:last-info)            → alist 上一次 mutation 的 (:id :operator :target)
+;   (mutate:operator-count name)  → 某 operator 的 mutation 次数
+;   (mutate:rolled-back?)         → 是否存在已 rollback 的 mutation
+;   (mutate:rollback-rate)        → ratio: rolled-back / total (返回 0..100 整数 pct)
+;
+; 全部 helper 失败时返回安全默认值（不抛错），适合 AI Agent 在
+; 长 eval loop 里调用而不会因为无 workspace 而 crash。
+
+(export mutate:summary mutate:by-operator mutate:last-info
+        mutate:operator-count mutate:rolled-back?
+        mutate:rollback-rate)
+
+; ── mutate:summary — 完整 mutation log 摘要 ──
+;
+; 返回 alist:
+;   ((:total . n)
+;    (:committed . n)
+;    (:rolled-back . n)
+;    (:by-operator . <hash>)
+;    (:last-mutation-id . n)
+;    (:last-operator . "...")
+;    (:last-target-node . n))
+;
+; by-operator 保留为 hash (FlatHashTable) — 用户用 hash-ref 取值。
+;
+(define (mutate:summary)
+  (try
+    (let* ((h (mutation-log:summary))
+           (total (hash-ref h "total"))
+           (committed (hash-ref h "committed"))
+           (rolled (hash-ref h "rolled-back"))
+           (by-op (hash-ref h "by-operator"))
+           (last-id (hash-ref h "last-mutation-id"))
+           (last-op (hash-ref h "last-operator"))
+           (last-tgt (hash-ref h "last-target-node")))
+      (list (cons ":total" total)
+            (cons ":committed" committed)
+            (cons ":rolled-back" rolled)
+            (cons ":by-operator" by-op)
+            (cons ":last-mutation-id" last-id)
+            (cons ":last-operator" last-op)
+            (cons ":last-target-node" last-tgt)))
+    (catch (e)
+      ; 失败时返回空 list — AI Agent 可以 nil-check
+      (list (cons ":total" 0)
+            (cons ":committed" 0)
+            (cons ":rolled-back" 0)
+            (cons ":by-operator" (hash))
+            (cons ":last-mutation-id" 0)
+            (cons ":last-operator" "")
+            (cons ":last-target-node" 0)))))
+
+; ── mutate:by-operator — 按 operator 分组的 count hash ──
+;
+; 返回 hash (FlatHashTable): {operator-name → count}
+; 用户用 (hash-ref <hash> "operator-name") 取值。
+;
+(define (mutate:by-operator)
+  (try
+    (let* ((h (mutation-log:summary)))
+      (hash-ref h "by-operator"))
+    (catch (e) (hash))))
+
+; ── mutate:last-info — 上一次 mutation 的信息 ──
+;
+; 返回 alist:
+;   ((:id . n) (:operator . "...") (:target . n))
+;
+(define (mutate:last-info)
+  (try
+    (let* ((h (mutation-log:summary))
+           (id (hash-ref h "last-mutation-id"))
+           (op (hash-ref h "last-operator"))
+           (tgt (hash-ref h "last-target-node")))
+      (list (cons ":id" id)
+            (cons ":operator" op)
+            (cons ":target" tgt)))
+    (catch (e)
+      (list (cons ":id" 0)
+            (cons ":operator" "")
+            (cons ":target" 0)))))
+
+; ── mutate:operator-count name — 某 operator 的 mutation 次数 ──
+;
+; 通过 (mutate:by-operator) hash-ref 查找。
+; 找不到返回 0。
+;
+(define (mutate:operator-count name)
+  (try
+    (let ((op-hash (mutate:by-operator)))
+      (let ((v (hash-ref op-hash name 0)))
+        (if (null? v) 0 v)))
+    (catch (e) 0)))
+
+; ── mutate:rolled-back? — 是否存在已 rollback 的 mutation ──
+;
+; 返回 #t / #f。
+;
+(define (mutate:rolled-back?)
+  (try
+    (let* ((h (mutation-log:summary))
+           (rolled (hash-ref h "rolled-back")))
+      (> rolled 0))
+    (catch (e) #f)))
+
+; ── mutate:rollback-rate — rollback ratio (0..100 integer) ──
+;
+; 返回 rolled-back / total 的百分比（整数）。
+; total == 0 时返回 0。
+;
+(define (mutate:rollback-rate)
+  (try
+    (let* ((h (mutation-log:summary))
+           (rolled (hash-ref h "rolled-back"))
+           (total (hash-ref h "total")))
+      (if (= total 0) 0
+        (let ((pct (* 100 (/ rolled total))))
+          (if (< pct 0) 0
+            (if (> pct 100) 100
+              pct)))))
+    (catch (e) 0)))

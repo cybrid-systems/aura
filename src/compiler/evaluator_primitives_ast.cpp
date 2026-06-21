@@ -956,6 +956,60 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         ev.string_heap_.push_back(s);
         return types::make_string(sidx);
     });
+    // (ast:stable-refs-valid? refs) — Issue #278: bulk validity
+    // check for a list of (id . gen) stable-ref pairs. Returns a
+    // list of booleans (#t #f #t ...) in the same order as the
+    // input. Useful for AI agent code that has captured a batch
+    // of stable-refs (e.g. across a long query→mutate cycle) and
+    // wants to quickly check which ones are still valid before
+    // using any of them.
+    //
+    //   (ast:stable-refs-valid? '((1 . 5) (2 . 5) (3 . 6)))
+    //   → (#t #t #f)   ; if gen 6 was bumped by a recent mutation
+    //
+    // Each input element must be a (id . gen) pair where both car
+    // and cdr are integers (the shape returned by ast:stable-ref).
+    // Malformed entries yield #f. Empty input returns ().
+    add("ast:stable-refs-valid?", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !ev.workspace_flat_)
+            return make_void();
+        auto& flat = *ev.workspace_flat_;
+        EvalValue result = make_void();
+        // Walk the input list. The list is structured as a chain of
+        // cons cells: each cons cell has car=element, cdr=next cons
+        // cell (or void for end-of-list). We process elements in
+        // forward order by collecting them in a vector first, then
+        // cons-ing the results in reverse.
+        std::vector<EvalValue> elements;
+        EvalValue cur = a[0];
+        while (is_pair(cur)) {
+            auto cons_idx = as_pair_idx(cur);
+            auto& cons = ev.pairs_[cons_idx];
+            // cons.car is the current element; cons.cdr is the rest.
+            elements.push_back(cons.car);
+            cur = cons.cdr;
+        }
+        // Build the result list by cons-ing in reverse (so order is preserved).
+        for (auto it = elements.rbegin(); it != elements.rend(); ++it) {
+            EvalValue valid_ev = make_bool(false);
+            // The element should be a (id . gen) pair where both
+            // car and cdr are integers. If it's anything else
+            // (e.g. a non-pair, or a pair of strings), yield #f.
+            if (is_pair(*it)) {
+                auto ref_idx = as_pair_idx(*it);
+                auto& ref = ev.pairs_[ref_idx];
+                if (is_int(ref.car) && is_int(ref.cdr)) {
+                    auto id = static_cast<aura::ast::NodeId>(as_int(ref.car));
+                    auto gen = static_cast<std::uint16_t>(as_int(ref.cdr));
+                    valid_ev = make_bool(flat.is_valid(aura::ast::FlatAST::StableNodeRef{id, gen}));
+                }
+            }
+            auto cons_pair = ev.pairs_.size();
+            ev.pairs_.push_back({valid_ev, result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    });
     // (ast:generation) — Issue #191: return the current
     // generation counter. Used to inspect when a structural
     // mutation has happened (compare the returned value to
