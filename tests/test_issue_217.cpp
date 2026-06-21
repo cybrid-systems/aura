@@ -855,14 +855,11 @@ bool test_node_view_full() {
 // NodeViewFullLike struct (the hand-written copy that
 // mirrors the production NodeView's field layout).
 //
-// The test_issue_178 binary (separate target) imports
-// the real aura.core.ast module and roundtrips the
-// ACTUAL production NodeView type. test_issue_178
-// doesn't build in the current GCC 16.1 env due to a
-// std module + -freflection + pthread header ICE
-// (documented in the test_issue_178.cpp file). This
-// test_issue_217 Test 17 is the in-env verification of
-// the empty-roundtrip behavior.
+// The test_issue_178 binary (separate target, Issue #268
+// split TU) imports the real aura.core.ast module and
+// roundtrips the ACTUAL production NodeView type. This
+// test_issue_217 Test 17 is the in-env fallback for the
+// empty-roundtrip behavior when test_issue_178 is not run.
 bool test_node_view_empty() {
     PRINTLN("\n--- Test 17: NodeView empty (defaults) roundtrip ---");
     NodeViewFullLike original;  // all defaults

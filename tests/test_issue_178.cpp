@@ -24,6 +24,7 @@ int issue178_roundtrip_populated(
     std::size_t* out_bytes);
 int issue178_roundtrip_empty(std::size_t* out_bytes);
 int issue178_roundtrip_verify_marker(std::uint8_t marker_out);
+int issue178_run_stress_iterations(int iterations);
 
 using aura::ast::NodeView;
 using aura::ast::NodeId;
@@ -72,6 +73,13 @@ int main() {
     {
         std::uint8_t marker = 0;
         issue178_roundtrip_verify_marker(marker);
+    }
+
+    // Issue #218: 1000+ serialize/deserialize iterations.
+    // Skip when AURA_SKIP_STRESS=1 (fast CI path).
+    if (const char* skip = std::getenv("AURA_SKIP_STRESS"); !skip || skip[0] == '\0') {
+        constexpr int kStressIterations = 1000;
+        issue178_run_stress_iterations(kStressIterations);
     }
 
     return issue178_failed_count() > 0 ? 1 : 0;

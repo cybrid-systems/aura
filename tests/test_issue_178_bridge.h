@@ -21,3 +21,6 @@ int issue178_roundtrip_populated(
 int issue178_roundtrip_empty(std::size_t* out_bytes);
 
 int issue178_roundtrip_verify_marker(std::uint8_t marker_out);
+
+// Issue #218: 1000+ serialize/deserialize iterations (TSan/ASan target).
+int issue178_run_stress_iterations(int iterations);

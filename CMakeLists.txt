@@ -834,6 +834,13 @@ target_compile_features(test_issue_178 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
 add_test(NAME test_issue_178_verification COMMAND ./test_issue_178)
 
+# Issue #218: reflection integration (Cycle 5) — query:schema +
+# hygienic macro composition (#140 + #248). The 1000+ reflect
+# stress loop is in test_issue_178; TSan/ASan:
+# tests/run_issue_218_tsan.sh
+aura_add_issue_test(test_issue_218)
+aura_issue_test_link_llvm_jit(test_issue_218)
+
 # Issue #219: gap-buffer child_data_ for O(1) insert/remove
 # in FlatAST. Tests the GapBuffer<T> template defined in
 # src/core/gap_buffer.hh. Standalone test (no production
@@ -945,6 +952,8 @@ add_dependencies(all_test_issue_targets test_issue_214)
 add_dependencies(all_test_issue_targets test_issue_215)
 add_dependencies(all_test_issue_targets test_issue_216)
 add_dependencies(all_test_issue_targets test_issue_217)
+add_dependencies(all_test_issue_targets test_issue_178)
+add_dependencies(all_test_issue_targets test_issue_218)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)
