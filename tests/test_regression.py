@@ -6,9 +6,12 @@ import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 from _aura_harness import AURA_BIN as AURA
 from regression_cases import load_regression_cases
+
+REPO = Path(__file__).resolve().parent.parent
 
 
 def run(code, timeout=10):
@@ -342,10 +345,11 @@ def test_cross_session():
     """Cross-session agent orchestration via --serve-async."""
     try:
         r = subprocess.run(
-            [sys.executable, "tests/test_cross_session.py"],
+            [sys.executable, str(REPO / "tests" / "test_cross_session.py")],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=20,
+            cwd=str(REPO),
         )
         for line in r.stdout.split("\n"):
             if "passed" in line and "/" in line:
@@ -577,10 +581,11 @@ def test_mutation_sequences():
 def test_fuzz_edsl():
     """Run property-based EDSL mutation fuzz (quick mode)."""
     r = subprocess.run(
-        [sys.executable, "tests/fuzz_edsl.py", "--quick"],
+        [sys.executable, str(REPO / "tests" / "fuzz_edsl.py"), "--quick"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=90,
+        cwd=str(REPO),
     )
     if r.returncode != 0:
         print(f"  fuzz-edsl stderr:\n{r.stderr}")
