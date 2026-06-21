@@ -212,9 +212,9 @@
   (let ((op (eda:expr-op e))
         (args (eda:expr-args e)))
     (cond
-      ((eq? op 'symbol)
+      ((equal? op 'symbol)
        (display (car args)))
-      ((eq? op 'int)
+      ((equal? op 'int)
        (display (car args)))
       ((eq? op 'slice)
        (eda:display-expr (car args))
@@ -235,12 +235,9 @@
         (display ")")))))
 
 ; ═══════════════════════════════════════════════════════════
-; Cycle 2: query helpers (stub for now, expanded in Cycle 2)
+; Cycle 2: query + mutate helpers
 ; ═══════════════════════════════════════════════════════════
 
-; eda:query:ports: return all ports of a module
-; Cycle 1 stub: just returns the ports field directly.
-; Cycle 2 will add filter / map / etc. for complex queries.
 (define (eda:query:ports m) (eda:module-ports m))
 
 (define (eda:query:wires m)
@@ -259,32 +256,169 @@
 
 (define (eda:query:module-name m) (eda:module-name m))
 
-; ═══════════════════════════════════════════════════════════
-; Exports
-; ═══════════════════════════════════════════════════════════
+(define (eda:expr-collect-symbols e)
+  (let ((op (eda:expr-op e))
+        (args (eda:expr-args e)))
+    (cond
+      ((equal? op 'symbol) (list (car args)))
+      ((equal? op 'int) '())
+      (else
+        (let loop ((as args) (acc '()))
+          (if (null? as) acc
+              (append (eda:expr-collect-symbols (car as))
+                      (loop (cdr as) acc))))))))
 
-(export
-  ; IR constructors
-  make-eda:module make-eda:port make-eda:wire make-eda:assign
-  make-eda:always make-eda:signal make-eda:expr make-eda:sensitivity
-  ; IR predicates
-  eda:module? eda:port? eda:wire? eda:assign?
-  eda:always? eda:signal? eda:expr? eda:sensitivity?
-  ; IR accessors
-  eda:module-name eda:module-ports eda:module-body
-  eda:port-name eda:port-direction eda:port-width
-  eda:wire-name eda:wire-width
-  eda:assign-lhs eda:assign-rhs
-  eda:always-sensitivity eda:always-body
-  eda:signal-name eda:signal-width eda:signal-kind
-  eda:expr-op eda:expr-args
-  eda:sensitivity-edge eda:sensitivity-signal
-  ; Display / debug
-  eda:display eda:display-module eda:display-port eda:display-wire
-  eda:display-assign eda:display-always eda:display-sensitivity
-  eda:display-signal eda:display-expr
-  ; Query helpers
-  eda:query:ports eda:query:wires eda:query:assigns eda:query:module-name)
+(define (eda:expr-mentions? e sym)
+  (let loop ((syms (eda:expr-collect-symbols e)))
+    (cond
+      ((null? syms) #f)
+      ((equal? (car syms) sym) #t)
+      (else (loop (cdr syms))))))
+
+(define (eda:query:bit-width name m)
+  (let loop-ports ((ps (eda:query:ports m)))
+    (cond
+      ((not (null? ps))
+       (if (equal? (eda:port-name (car ps)) name)
+           (eda:port-width (car ps))
+           (loop-ports (cdr ps))))
+      (else
+        (let loop-wires ((ws (eda:query:wires m)))
+          (cond
+            ((null? ws) 0)
+            ((equal? (eda:wire-name (car ws)) name)
+             (eda:wire-width (car ws)))
+            (else (loop-wires (cdr ws)))))))))
+
+(define (eda:query:dependencies sig m)
+  (let loop ((as (eda:query:assigns m)) (acc '()))
+    (cond
+      ((null? as) (reverse acc))
+      (else
+        (let ((a (car as)))
+          (if (eda:expr-mentions? (eda:assign-lhs a) sig)
+              (loop (cdr as)
+                    (append (eda:expr-collect-symbols (eda:assign-rhs a)) acc))
+              (loop (cdr as) acc)))))))
+
+(define (eda:query:dependents sig m)
+  (let loop ((as (eda:query:assigns m)) (acc '()))
+    (cond
+      ((null? as) (reverse acc))
+      (else
+        (let ((a (car as)))
+          (if (eda:expr-mentions? (eda:assign-rhs a) sig)
+              (loop (cdr as)
+                    (cons (car (eda:expr-collect-symbols (eda:assign-lhs a))) acc))
+              (loop (cdr as) acc)))))))
+
+(define (eda:expr-rename-sym e old new)
+  (let ((op (eda:expr-op e))
+        (args (eda:expr-args e)))
+    (cond
+      ((equal? op 'symbol)
+       (if (equal? (car args) old)
+           (make-eda:expr 'symbol (list new))
+           e))
+      ((equal? op 'int) e)
+      (else
+        (make-eda:expr op
+          (map (lambda (a) (eda:expr-rename-sym a old new)) args))))))
+
+(define (eda:port-rename-sym p old new)
+  (if (equal? (eda:port-name p) old)
+      (make-eda:port new (eda:port-direction p) (eda:port-width p))
+      p))
+
+(define (eda:wire-rename-sym w old new)
+  (if (equal? (eda:wire-name w) old)
+      (make-eda:wire new (eda:wire-width w))
+      w))
+
+(define (eda:assign-rename-sym a old new)
+  (make-eda:assign
+    (eda:expr-rename-sym (eda:assign-lhs a) old new)
+    (eda:expr-rename-sym (eda:assign-rhs a) old new)))
+
+(define (eda:body-item-rename-sym item old new)
+  (cond
+    ((eda:wire? item) (eda:wire-rename-sym item old new))
+    ((eda:assign? item) (eda:assign-rename-sym item old new))
+    (else item)))
+
+(define (eda:mutate:rename-symbol old new m)
+  (make-eda:module
+    (eda:module-name m)
+    (map (lambda (p) (eda:port-rename-sym p old new)) (eda:module-ports m))
+    (map (lambda (item) (eda:body-item-rename-sym item old new))
+         (eda:module-body m))))
+
+(define (eda:mutate:insert-clock-gating m clk en)
+  (let* ((gated 'clk-gated)
+         (gate-wire (make-eda:wire gated 1))
+         (gate-assign
+           (make-eda:assign
+             (make-eda:expr 'symbol (list gated))
+             (make-eda:expr '&
+               (list (make-eda:expr 'symbol (list clk))
+                     (make-eda:expr 'symbol (list en)))))))
+    (make-eda:module
+      (eda:module-name m)
+      (eda:module-ports m)
+      (append (list gate-wire gate-assign) (eda:module-body m)))))
+
+(define (eda:expr-equal? e1 e2)
+  (and (equal? (eda:expr-op e1) (eda:expr-op e2))
+       (let ((op (eda:expr-op e1))
+             (a1 (eda:expr-args e1))
+             (a2 (eda:expr-args e2)))
+         (cond
+           ((equal? op 'symbol) (equal? (car a1) (car a2)))
+           ((equal? op 'int) (= (car a1) (car a2)))
+           (else
+             (and (= (length a1) (length a2))
+                  (let loop ((xs a1) (ys a2))
+                    (cond
+                      ((null? xs) #t)
+                      (else (and (eda:expr-equal? (car xs) (car ys))
+                                 (loop (cdr xs) (cdr ys)))))))))))
+
+(define (eda:mutate:extract-common-expr m)
+  (let ((as (eda:query:assigns m)))
+    (let loop ((rest (cdr as)) (first (if (null? as) #f (car as))))
+      (cond
+        ((null? as) m)
+        ((null? rest) m)
+        (else
+          (let ((a (car rest)))
+            (if (eda:expr-equal? (eda:assign-rhs first) (eda:assign-rhs a))
+                (let* ((tmp-name 'common-expr)
+                       (tmp-wire (make-eda:wire tmp-name
+                                   (eda:query:bit-width
+                                     (car (eda:expr-collect-symbols
+                                            (eda:assign-lhs first)))
+                                     m)))
+                       (tmp-assign
+                         (make-eda:assign
+                           (make-eda:expr 'symbol (list tmp-name))
+                           (eda:assign-rhs first)))
+                       (new-body
+                         (map
+                           (lambda (item)
+                             (if (eda:assign? item)
+                                 (let ((rhs (eda:assign-rhs item)))
+                                   (if (eda:expr-equal? rhs (eda:assign-rhs first))
+                                       (make-eda:assign
+                                         (eda:assign-lhs item)
+                                         (make-eda:expr 'symbol (list tmp-name)))
+                                       item))
+                                 item))
+                           (eda:module-body m))))
+                  (make-eda:module
+                    (eda:module-name m)
+                    (eda:module-ports m)
+                    (append (list tmp-wire tmp-assign) new-body)))
+                (loop (cdr rest) first))))))))
 
 ; ═══════════════════════════════════════════════════════════
 ; Dependent type system (Issue #228 — Phase 1 minimum viable)
@@ -428,6 +562,32 @@
   (list 'eda:bitvec-param name))
 
 (export
+  ; IR constructors
+  make-eda:module make-eda:port make-eda:wire make-eda:assign
+  make-eda:always make-eda:signal make-eda:expr make-eda:sensitivity
+  ; IR predicates
+  eda:module? eda:port? eda:wire? eda:assign?
+  eda:always? eda:signal? eda:expr? eda:sensitivity?
+  ; IR accessors
+  eda:module-name eda:module-ports eda:module-body
+  eda:port-name eda:port-direction eda:port-width
+  eda:wire-name eda:wire-width
+  eda:assign-lhs eda:assign-rhs
+  eda:always-sensitivity eda:always-body
+  eda:signal-name eda:signal-width eda:signal-kind
+  eda:expr-op eda:expr-args
+  eda:sensitivity-edge eda:sensitivity-signal
+  ; Display / debug
+  eda:display eda:display-module eda:display-port eda:display-wire
+  eda:display-assign eda:display-always eda:display-sensitivity
+  eda:display-signal eda:display-expr
+  ; Query helpers (Cycle 1-2)
+  eda:query:ports eda:query:wires eda:query:assigns eda:query:module-name
+  eda:query:bit-width eda:query:dependencies eda:query:dependents
+  eda:expr-collect-symbols eda:expr-mentions?
+  ; Mutate helpers (Cycle 2)
+  eda:mutate:rename-symbol eda:mutate:insert-clock-gating
+  eda:mutate:extract-common-expr eda:expr-equal?
   ; BitVec
   make-eda:bitvec make-eda:bitvec-8 make-eda:bitvec-16
   make-eda:bitvec-32 make-eda:bitvec-64 make-eda:bitvec-param
