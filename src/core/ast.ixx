@@ -2015,8 +2015,8 @@ public:
     // the structure is different. Old v1 cache files won't
     // roundtrip with the new format.
     //
-    // Wire format (matches tests/test_issue_217.cpp Test 18):
-    //   [u32 format_version = 1]
+    // Wire format (matches tests/test_issue_217.cpp Test 18/19):
+    //   [u32 format_version = 2]  (v1 still readable)
     //   [u32 num_nodes]
     //   For each of 22 SoA columns (fixed order, see below):
     //     [u32 count]
@@ -2052,20 +2052,166 @@ public:
     // child_data_ as a flat child array) are replaced by
     // child_count_per_node_ + child_data.
     //
-    // NOT serialized in v1 (would be v2):
-    //   - mutation_log_ (vector<MutationRecord> — length-
-    //     prefixed records. Cyclically a separate concern
-    //     from #147 MutationRecord migration.)
-    //   - match_info_ (vector<MatchClauseInfo> — side table,
-    //     populated by add_match_clause, not in core SoA)
-    //   - region_by_sym_ / region_by_lambda_id_ (pmr::unordered_map,
-    //     populated by performance-region / evolution-region
-    //     parsers)
-    //   - root (scalar; can be derived from the AST or
-    //     set after deserialize)
+    // v2 additions (Issue #269 — hand-inlined; no reflect.hh in module):
+    //   - mutation_log_ (vector<MutationRecord>)
+    //   - match_info_ (vector<MatchClauseInfo>, 3 wire fields)
+    //   - region_by_sym_ / region_by_lambda_id_ (manual map)
+    //   - root (NodeId scalar)
+
+    static void wire_write_string(std::vector<char>& buf, std::string_view s) {
+        std::uint32_t len = static_cast<std::uint32_t>(s.size());
+        buf.insert(buf.end(), reinterpret_cast<char*>(&len),
+                   reinterpret_cast<char*>(&len) + 4);
+        buf.insert(buf.end(), s.begin(), s.end());
+    }
+
+    static void wire_write_vec_u32(std::vector<char>& buf,
+                                   const std::vector<SymId>& v) {
+        std::uint32_t sz = static_cast<std::uint32_t>(v.size());
+        buf.insert(buf.end(), reinterpret_cast<char*>(&sz),
+                   reinterpret_cast<char*>(&sz) + 4);
+        if (!v.empty()) {
+            buf.insert(buf.end(), reinterpret_cast<const char*>(v.data()),
+                       reinterpret_cast<const char*>(v.data()) + v.size() * sizeof(SymId));
+        }
+    }
+
+    static void wire_write_mutation_record(std::vector<char>& buf,
+                                           const MutationRecord& r) {
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.mutation_id),
+                   reinterpret_cast<const char*>(&r.mutation_id) + 8);
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.timestamp_ms),
+                   reinterpret_cast<const char*>(&r.timestamp_ms) + 8);
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.target_node),
+                   reinterpret_cast<const char*>(&r.target_node) + 4);
+        wire_write_string(buf, r.operator_name);
+        wire_write_string(buf, r.old_type_str);
+        wire_write_string(buf, r.new_type_str);
+        wire_write_string(buf, r.summary);
+        auto status = static_cast<std::uint8_t>(r.status);
+        buf.push_back(static_cast<char>(status));
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.field_offset),
+                   reinterpret_cast<const char*>(&r.field_offset) + 4);
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.old_value),
+                   reinterpret_cast<const char*>(&r.old_value) + 8);
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.new_value),
+                   reinterpret_cast<const char*>(&r.new_value) + 8);
+        buf.push_back(r.has_rollback_data ? '\1' : '\0');
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.parent_id),
+                   reinterpret_cast<const char*>(&r.parent_id) + 4);
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.child_idx),
+                   reinterpret_cast<const char*>(&r.child_idx) + 4);
+        wire_write_string(buf, r.old_subtree_source);
+        buf.push_back(r.has_subtree_rollback ? '\1' : '\0');
+        auto inv = static_cast<std::uint8_t>(r.invariant_status);
+        buf.push_back(static_cast<char>(inv));
+    }
+
+    static void wire_write_match_clause_info(std::vector<char>& buf,
+                                             const MatchClauseInfo& m) {
+        wire_write_vec_u32(buf, m.used_constructors);
+        wire_write_vec_u32(buf, m.candidate_constructors);
+        buf.push_back(m.has_wildcard ? '\1' : '\0');
+    }
+
+    static void wire_write_map_u32_u8(
+        std::vector<char>& buf,
+        const std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
+        std::uint32_t count = static_cast<std::uint32_t>(m.size());
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
+                   reinterpret_cast<char*>(&count) + 4);
+        for (const auto& [k, v] : m) {
+            buf.insert(buf.end(), reinterpret_cast<const char*>(&k),
+                       reinterpret_cast<const char*>(&k) + 4);
+            buf.insert(buf.end(), reinterpret_cast<const char*>(&v),
+                       reinterpret_cast<const char*>(&v) + 1);
+        }
+    }
+
+    static std::string wire_read_string(const std::vector<char>& buf, std::size_t& pos) {
+        std::uint32_t len;
+        std::memcpy(&len, &buf[pos], 4);
+        pos += 4;
+        std::string s(buf.data() + pos, buf.data() + pos + len);
+        pos += len;
+        return s;
+    }
+
+    static std::vector<SymId> wire_read_vec_u32(const std::vector<char>& buf,
+                                                  std::size_t& pos) {
+        std::uint32_t sz;
+        std::memcpy(&sz, &buf[pos], 4);
+        pos += 4;
+        std::vector<SymId> v(sz);
+        if (sz > 0) {
+            std::memcpy(v.data(), &buf[pos], sz * sizeof(SymId));
+            pos += sz * sizeof(SymId);
+        }
+        return v;
+    }
+
+    static MutationRecord wire_read_mutation_record(const std::vector<char>& buf,
+                                                    std::size_t& pos) {
+        MutationRecord r;
+        std::memcpy(&r.mutation_id, &buf[pos], 8);
+        pos += 8;
+        std::memcpy(&r.timestamp_ms, &buf[pos], 8);
+        pos += 8;
+        std::memcpy(&r.target_node, &buf[pos], 4);
+        pos += 4;
+        r.operator_name = wire_read_string(buf, pos);
+        r.old_type_str = wire_read_string(buf, pos);
+        r.new_type_str = wire_read_string(buf, pos);
+        r.summary = wire_read_string(buf, pos);
+        r.status = static_cast<MutationStatus>(static_cast<std::uint8_t>(buf[pos++]));
+        std::memcpy(&r.field_offset, &buf[pos], 4);
+        pos += 4;
+        std::memcpy(&r.old_value, &buf[pos], 8);
+        pos += 8;
+        std::memcpy(&r.new_value, &buf[pos], 8);
+        pos += 8;
+        r.has_rollback_data = buf[pos++] != 0;
+        std::memcpy(&r.parent_id, &buf[pos], 4);
+        pos += 4;
+        std::memcpy(&r.child_idx, &buf[pos], 4);
+        pos += 4;
+        r.old_subtree_source = wire_read_string(buf, pos);
+        r.has_subtree_rollback = buf[pos++] != 0;
+        r.invariant_status =
+            static_cast<InvariantStatus>(static_cast<std::uint8_t>(buf[pos++]));
+        return r;
+    }
+
+    static MatchClauseInfo wire_read_match_clause_info(const std::vector<char>& buf,
+                                                       std::size_t& pos) {
+        MatchClauseInfo m;
+        m.used_constructors = wire_read_vec_u32(buf, pos);
+        m.candidate_constructors = wire_read_vec_u32(buf, pos);
+        m.has_wildcard = buf[pos++] != 0;
+        return m;
+    }
+
+    static void wire_read_map_u32_u8(
+        const std::vector<char>& buf, std::size_t& pos,
+        std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
+        std::uint32_t count;
+        std::memcpy(&count, &buf[pos], 4);
+        pos += 4;
+        m.clear();
+        for (std::uint32_t i = 0; i < count; ++i) {
+            std::uint32_t k;
+            std::uint8_t v;
+            std::memcpy(&k, &buf[pos], 4);
+            pos += 4;
+            std::memcpy(&v, &buf[pos], 1);
+            pos += 1;
+            m[k] = v;
+        }
+    }
+
     void serialize_soa(std::vector<char>& buf) const {
-        // Format version
-        std::uint32_t version = 1;
+        // Format version (v2 includes side-data fields)
+        std::uint32_t version = 2;
         buf.insert(buf.end(), reinterpret_cast<char*>(&version),
                    reinterpret_cast<char*>(&version) + 4);
         // Num nodes (informational; per-node columns derive their size)
@@ -2134,10 +2280,30 @@ public:
                    reinterpret_cast<const char*>(&next_mutation_id_) + 4);
         buf.insert(buf.end(), reinterpret_cast<const char*>(&generation_),
                    reinterpret_cast<const char*>(&generation_) + 2);
-        // 2 bytes padding for u32 alignment of a future v2 field
+        // 2 bytes padding (v1 compat; v2 side-data follows)
         std::uint16_t reserved = 0;
         buf.insert(buf.end(), reinterpret_cast<const char*>(&reserved),
                    reinterpret_cast<const char*>(&reserved) + 2);
+
+        // v2 side-data (Issue #269)
+        {
+            std::uint32_t log_count = static_cast<std::uint32_t>(mutation_log_.size());
+            buf.insert(buf.end(), reinterpret_cast<char*>(&log_count),
+                       reinterpret_cast<char*>(&log_count) + 4);
+            for (const auto& rec : mutation_log_)
+                wire_write_mutation_record(buf, rec);
+        }
+        {
+            std::uint32_t mi_count = static_cast<std::uint32_t>(match_info_.size());
+            buf.insert(buf.end(), reinterpret_cast<char*>(&mi_count),
+                       reinterpret_cast<char*>(&mi_count) + 4);
+            for (const auto& mi : match_info_)
+                wire_write_match_clause_info(buf, mi);
+        }
+        wire_write_map_u32_u8(buf, region_by_sym_);
+        wire_write_map_u32_u8(buf, region_by_lambda_id_);
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&root),
+                   reinterpret_cast<const char*>(&root) + 4);
     }
 
     // Static (no instance needed). Returns a freshly-constructed
@@ -2147,23 +2313,18 @@ public:
     // pass an allocator to the FlatAST constructor after the
     // call.
     //
-    // NOT in v1: mutation_log_, match_info_, region_by_*,
-    // root. After deserialize, these are empty/default — the
-    // caller is responsible for re-running any post-load
-    // initialization (e.g. link_parents after data-driven
-    // loads).
+    // v1 omits side-data (mutation_log_, match_info_, region_by_*,
+    // root stay default). v2 includes all five fields.
     static FlatAST deserialize_soa(const std::vector<char>& buf, std::size_t& pos) {
         FlatAST ast;
         std::uint32_t version;
         std::memcpy(&version, &buf[pos], 4);
         pos += 4;
-        // Only v1 is supported. The caller is responsible for
-        // version dispatch in a future multi-version loader.
-        if (version != 1) {
-            // For now, just set pos to end (signal failure to caller).
+        if (version != 1 && version != 2) {
             pos = buf.size();
             return ast;
         }
+        const bool is_v2 = (version == 2);
         std::uint32_t num_nodes;
         std::memcpy(&num_nodes, &buf[pos], 4);
         pos += 4;
@@ -2232,6 +2393,28 @@ public:
         std::memcpy(&ast.generation_, &buf[pos], 2);
         pos += 2;
         pos += 2; // reserved
+
+        if (is_v2) {
+            std::uint32_t log_count;
+            std::memcpy(&log_count, &buf[pos], 4);
+            pos += 4;
+            ast.mutation_log_.clear();
+            ast.mutation_log_.reserve(log_count);
+            for (std::uint32_t i = 0; i < log_count; ++i)
+                ast.mutation_log_.push_back(wire_read_mutation_record(buf, pos));
+
+            std::uint32_t mi_count;
+            std::memcpy(&mi_count, &buf[pos], 4);
+            pos += 4;
+            ast.match_info_.resize(mi_count);
+            for (std::uint32_t i = 0; i < mi_count; ++i)
+                ast.match_info_[i] = wire_read_match_clause_info(buf, pos);
+
+            wire_read_map_u32_u8(buf, pos, ast.region_by_sym_);
+            wire_read_map_u32_u8(buf, pos, ast.region_by_lambda_id_);
+            std::memcpy(&ast.root, &buf[pos], 4);
+            pos += 4;
+        }
         return ast;
     }
 
