@@ -174,7 +174,7 @@ Runtime canonical list: `(api-reference)`.
 - `auto-evolve-stop` — `src/compiler/evaluator_impl.cpp`
 - `auto-evolve-tick` — `src/compiler/evaluator_impl.cpp`
 - `auto-evolve-total-fixed` — `src/compiler/evaluator_impl.cpp`
-- `auto-rollback-on-panic` — `src/compiler/evaluator_impl.cpp`
+- `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_observability.cpp`
 - `boolean?` — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` — `src/compiler/evaluator_impl.cpp`
 - `caaar` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -240,8 +240,8 @@ Runtime canonical list: `(api-reference)`.
 - `foldl` — `src/compiler/evaluator_primitives_list.cpp`
 - `format` — `src/compiler/evaluator_impl.cpp`
 - `gc` — `src/compiler/evaluator_impl.cpp`
-- `gc-arena-info` — `src/compiler/evaluator_impl.cpp`
-- `gc-arena-stats` — `src/compiler/evaluator_impl.cpp`
+- `gc-arena-info` — `src/compiler/evaluator_primitives_observability.cpp`
+- `gc-arena-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `gc-freeze` — `src/compiler/evaluator_impl.cpp`
 - `gc-heap` — `src/compiler/evaluator_impl.cpp`
 - `gc-module` — `src/compiler/evaluator_impl.cpp`
@@ -318,10 +318,10 @@ Runtime canonical list: `(api-reference)`.
 - `number->string` — `src/compiler/evaluator_primitives_pair.cpp`
 - `number?` — `src/compiler/evaluator_primitives_core.cpp`
 - `pair?` — `src/compiler/evaluator_primitives_pair.cpp`
-- `panic-auto-rollback?` — `src/compiler/evaluator_impl.cpp`
-- `panic-checkpoint` — `src/compiler/evaluator_impl.cpp`
-- `panic-restore` — `src/compiler/evaluator_impl.cpp`
-- `panic-safe-source` — `src/compiler/evaluator_impl.cpp`
+- `panic-auto-rollback?` — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-checkpoint` — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-restore` — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-safe-source` — `src/compiler/evaluator_primitives_observability.cpp`
 - `pow` — `src/compiler/evaluator_primitives_math.cpp`
 - `procedure?` — `src/compiler/evaluator_primitives_core.cpp`
 - `query-annotate-functions` — `src/compiler/evaluator_impl.cpp`
@@ -389,7 +389,7 @@ Runtime canonical list: `(api-reference)`.
 - `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `typecheck-current` — `src/compiler/evaluator_impl.cpp`
 - `typecheck-incremental` — `src/compiler/evaluator_impl.cpp`
-- `typecheck-status` — `src/compiler/evaluator_impl.cpp`
+- `typecheck-status` — `src/compiler/evaluator_primitives_observability.cpp`
 - `use` — `src/compiler/evaluator_impl.cpp`
 - `vector` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` — `src/compiler/evaluator_primitives_vector.cpp`
@@ -421,7 +421,7 @@ Runtime canonical list: `(api-reference)`.
 
 ## Atomic-Batch: (1)
 
-- `atomic-batch:stats` — `src/compiler/evaluator_impl.cpp`
+- `atomic-batch:stats` — `src/compiler/evaluator_primitives_observability.cpp`
 
 ## Channel: (5)
 
@@ -433,7 +433,7 @@ Runtime canonical list: `(api-reference)`.
 
 ## Closure: (1)
 
-- `closure:stats` — `src/compiler/evaluator_impl.cpp`
+- `closure:stats` — `src/compiler/evaluator_primitives_observability.cpp`
 
 ## Concurrency: (3)
 
@@ -461,11 +461,11 @@ Runtime canonical list: `(api-reference)`.
 
 ## Jit: (5)
 
-- `jit:deopt-fn?` — `src/compiler/evaluator_impl.cpp`
-- `jit:exception-depth` — `src/compiler/evaluator_impl.cpp`
-- `jit:exception-fibers` — `src/compiler/evaluator_impl.cpp`
-- `jit:exception-fibers-clear` — `src/compiler/evaluator_impl.cpp`
-- `jit:intrinsic-count` — `src/compiler/evaluator_impl.cpp`
+- `jit:deopt-fn?` — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:exception-depth` — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:exception-fibers` — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:exception-fibers-clear` — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:intrinsic-count` — `src/compiler/evaluator_primitives_observability.cpp`
 
 ## Orch: (2)
 

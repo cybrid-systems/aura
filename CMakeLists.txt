@@ -22,6 +22,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_workspace.cpp
     src/compiler/evaluator_primitives_ast.cpp
     src/compiler/evaluator_primitives_compile.cpp
+    src/compiler/evaluator_primitives_observability.cpp
 )
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
