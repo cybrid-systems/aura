@@ -2354,8 +2354,8 @@ public:
 
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag,
                               bool fine_rollback = false) noexcept
-            : ev_(&ev)
-            , fine_rollback_(fine_rollback)
+            : fine_rollback_(fine_rollback)
+            , ev_(&ev)
             , flag_(success_flag)
             ,
             // Issue #233 + #236 follow-up: the unique_lock is
@@ -2474,8 +2474,9 @@ public:
         }
 
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
-            : ev_(o.ev_)
+            : had_panic_checkpoint_(o.had_panic_checkpoint_)
             , fine_rollback_(o.fine_rollback_)
+            , ev_(o.ev_)
             , flag_(o.flag_)
             , lock_(std::move(o.lock_)) {
             // Move transfers the lock state (the unique_lock

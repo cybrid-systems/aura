@@ -813,6 +813,11 @@ T auto_deserialize_inner(const std::vector<char>& buf, std::size_t& pos) {
 
 // Member-based struct path (POD flat structs)
 template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, std::size_t& pos) {
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
     T obj{};
     constexpr auto members = reflect_members<T>();
     auto* base = reinterpret_cast<char*>(&obj);
@@ -862,8 +867,8 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 uint32_t len;
                 std::memcpy(&len, &buf[pos], 4);
                 pos += 4;
-                auto& sv = *reinterpret_cast<std::string_view*>(field);
-                sv = std::string_view(buf.data() + pos, len);
+                const std::string_view sv(buf.data() + pos, len);
+                std::memcpy(field, &sv, sizeof(sv));
                 pos += len;
                 break;
             }
@@ -901,11 +906,11 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 uint32_t byte_count;
                 std::memcpy(&byte_count, &buf[pos], 4);
                 pos += 4;
-                auto& sp = *reinterpret_cast<std::span<const char>*>(field);
-                std::size_t elem_count = m.elem_size > 0
-                                              ? byte_count / m.elem_size
-                                              : byte_count;
-                sp = std::span<const char>(buf.data() + pos, elem_count);
+                const std::size_t elem_count = m.elem_size > 0
+                                                   ? byte_count / m.elem_size
+                                                   : byte_count;
+                const std::span<const char> sp(buf.data() + pos, elem_count);
+                std::memcpy(field, &sp, sizeof(sp));
                 pos += byte_count;
                 break;
             }
@@ -957,6 +962,9 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 break;
         }
     }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
     return obj;
 }
 

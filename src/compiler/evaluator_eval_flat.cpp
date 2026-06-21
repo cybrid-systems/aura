@@ -136,7 +136,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                         fn_ptr);
                 result_i = i_fn(i6[0], i6[1], i6[2], i6[3], i6[4], i6[5]);
                 if (ret_type == 2)
-                    return types::make_float(*reinterpret_cast<double*>(&result_i));
+                    return types::make_float(std::bit_cast<double>(result_i));
                 if (ret_type == 3 && result_i != 0) {
                     // String return: char* → string_heap
                     auto s = reinterpret_cast<const char*>(static_cast<std::intptr_t>(result_i));

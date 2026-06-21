@@ -92,7 +92,10 @@ struct TestFlatAST {
     }
 
     void mark_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) {
-        if (id >= dirty_.size()) dirty_.resize(id + 1, 0);
+        if (id == NULL_NODE)
+            return;
+        while (dirty_.size() <= static_cast<std::size_t>(id))
+            dirty_.push_back(0);
         dirty_[id] |= reasons;
     }
 
@@ -183,7 +186,9 @@ struct TestFlatAST {
     NodeId mark_dirty_upward_target_ = NULL_NODE;
 
     void mark_dirty_upward(NodeId id, std::uint8_t reasons = 0x01) {
-        if (id != NULL_NODE) mark_dirty(id, reasons);
+        if (id == NULL_NODE)
+            return;
+        mark_dirty(id, reasons);
         mark_dirty_upward_target_ = id;
     }
 
