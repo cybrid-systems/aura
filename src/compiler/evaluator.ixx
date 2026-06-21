@@ -720,6 +720,18 @@ public:
     void set_mark_all_defines_dirty_fn(std::function<void()> fn) {
         mark_all_defines_dirty_fn_ = std::move(fn);
     }
+    // Issue #262: precise def-use dirty propagation. Marks entry
+    // nodes + ancestors with kDefUseDirty, records the sym for
+    // incremental DefUseIndex refresh, and touches per-sym staleness.
+    void propagate_defuse_dirty(aura::ast::SymId sym, const std::string& sym_name,
+                                std::span<const aura::ast::NodeId> entry_nodes,
+                                std::uint8_t reasons = aura::ast::FlatAST::kGeneralDirty) {
+        defuse_affected_syms_.insert(sym_name);
+        if (defuse_touch_fn_)
+            defuse_touch_fn_(defuse_index_, sym);
+        if (workspace_flat_ && !entry_nodes.empty())
+            workspace_flat_->mark_dirty_defuse_entries(entry_nodes, reasons);
+    }
     // After (set-code ...) parses a new workspace, walk its top-level defines
     // and pre-populate the v2 cache. Source-hash based, so unchanged defines
     // hit the cache and skip the lowering work.

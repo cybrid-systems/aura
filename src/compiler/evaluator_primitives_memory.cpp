@@ -461,8 +461,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // which targeted re-analysis pass to run, and for diagnostics
     // to surface "why is this node dirty". Bit values:
     //   0x01 = general (re-infer), 0x02 = constraint, 0x04 = occurrence,
-    //   0x08 = ownership, 0x10 = coercion. Returns 0 for clean nodes
-    //   or out-of-range ids.
+    //   0x08 = ownership, 0x10 = coercion, 0x20 = struct, 0x40 = defuse,
+    //   0x80 = ppa-hint. Returns 0 for clean nodes or out-of-range ids.
     add("dirty:reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_int(0);
@@ -471,15 +471,17 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->dirty_reasons(id)));
     });
-    // (dirty:counts) — Issue #188: aggregate per-reason dirty counts
-    // across the workspace. Returns hash with 5 integer fields:
-    //   general, constraint, occurrence, ownership, coercion, total
+    // (dirty:counts) — Issue #188/#262: aggregate per-reason dirty counts
+    // across the workspace. Returns hash with 8 integer fields:
+    //   general, constraint, occurrence, ownership, coercion,
+    //   struct, defuse, ppa-hint, total
     //   (total is the number of dirty nodes, not the sum of bits).
     // Built inline using the same hash-build pattern as gc-arena-info.
     add("dirty:counts", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.workspace_flat_)
             return make_void();
-        std::size_t gen = 0, con = 0, occ = 0, own = 0, coe = 0, total = 0;
+        std::size_t gen = 0, con = 0, occ = 0, own = 0, coe = 0;
+        std::size_t str = 0, def = 0, ppa = 0, total = 0;
         const auto& dirty = ev.workspace_flat_->dirty_column();
         for (std::size_t i = 0; i < dirty.size(); ++i) {
             auto b = dirty[i];
@@ -496,6 +498,12 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 ++own;
             if (b & 0x10)
                 ++coe;
+            if (b & 0x20)
+                ++str;
+            if (b & 0x40)
+                ++def;
+            if (b & 0x80)
+                ++ppa;
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
@@ -542,6 +550,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             {"occurrence", make_int(static_cast<std::int64_t>(occ))},
             {"ownership", make_int(static_cast<std::int64_t>(own))},
             {"coercion", make_int(static_cast<std::int64_t>(coe))},
+            {"struct", make_int(static_cast<std::int64_t>(str))},
+            {"defuse", make_int(static_cast<std::int64_t>(def))},
+            {"ppa-hint", make_int(static_cast<std::int64_t>(ppa))},
             {"total", make_int(static_cast<std::int64_t>(total))},
         };
         return build_hash(kv);
