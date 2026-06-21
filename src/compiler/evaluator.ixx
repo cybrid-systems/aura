@@ -9,6 +9,7 @@ module;
 #include "../core/persistent_child_vector.hh"
 
 export module aura.compiler.evaluator;
+import aura.compiler.macro_expansion;
 import std;
 import aura.core;
 import aura.compiler.ffi_primitives;
@@ -2613,8 +2614,7 @@ export inline std::string format_value(const types::EvalValue& v, std::span<cons
 // default of 32 covers all current call sites (max measured depth
 // is 18 in test_issue_137) and still terminates fast for non-macro
 // inputs (the function early-exits when no MacroDef is found).
-export aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                          aura::ast::NodeId root, int max_passes = 32);
+export using aura::compiler::macro_exp::macro_expand_all;
 
 // ══════════════════════════════════════════════════════════════════
 // Issue #145: EnvView + ClosureView — zero-copy span views
