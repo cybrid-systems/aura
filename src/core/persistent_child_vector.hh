@@ -65,6 +65,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <contracts>
 #include <initializer_list>
 #include <iterator>
 #include <memory>
@@ -181,7 +182,8 @@ public:
     long use_count() const noexcept { return data_.use_count(); }
 
     // ── Element access (const) ───────────────────────────────
-    const_reference operator[](size_type i) const noexcept {
+    const_reference operator[](size_type i) const noexcept pre(i < size_) {
+        contract_assert(data_ != nullptr);
         return data_->data[i];
     }
     const_reference at(size_type i) const {
@@ -225,7 +227,9 @@ public:
         const T* src = src_data();
         if (src) std::copy(src, src + size_, out->data.get());
         out->data[size_] = v;
-        return from_storage(out, size_ + 1);
+        auto result = from_storage(out, size_ + 1);
+        contract_assert(result.size() == size_ + 1);
+        return result;
     }
 
     PersistentChildVector with_push_back(T&& v) const {
@@ -233,7 +237,9 @@ public:
         const T* src = src_data();
         if (src) std::move(src, src + size_, out->data.get());
         out->data[size_] = std::move(v);
-        return from_storage(out, size_ + 1);
+        auto result = from_storage(out, size_ + 1);
+        contract_assert(result.size() == size_ + 1);
+        return result;
     }
 
     PersistentChildVector with_insert(size_type pos, const T& v) const {
@@ -245,7 +251,9 @@ public:
             std::copy(src + pos, src + size_, out->data.get() + pos + 1);
         }
         out->data[pos] = v;
-        return from_storage(out, size_ + 1);
+        auto result = from_storage(out, size_ + 1);
+        contract_assert(result.size() == size_ + 1);
+        return result;
     }
 
     PersistentChildVector with_erase(size_type pos) const {
@@ -256,7 +264,9 @@ public:
             std::copy(src, src + pos, out->data.get());
             std::copy(src + pos + 1, src + size_, out->data.get() + pos);
         }
-        return from_storage(out, size_ - 1);
+        auto result = from_storage(out, size_ - 1);
+        contract_assert(result.size() == size_ - 1);
+        return result;
     }
 
     PersistentChildVector with_set(size_type i, const T& v) const {
@@ -265,7 +275,9 @@ public:
         const T* src = src_data();
         if (src) std::copy(src, src + size_, out->data.get());
         out->data[i] = v;
-        return from_storage(out, size_);
+        auto result = from_storage(out, size_);
+        contract_assert(result.size() == size_);
+        return result;
     }
 
     // ── Comparison ───────────────────────────────────────────

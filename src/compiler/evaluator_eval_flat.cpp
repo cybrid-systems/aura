@@ -1587,6 +1587,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             const Env& eval_env = *current_env;
             if (current_id == aura::ast::NULL_NODE)
                 return EvalResult(make_void());
+            // Issue #273: catch stale NodeIds before tree-walker field access.
+            contract_assert(f->is_valid(current_id));
             if (current_id >= f->size())
                 return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
             auto v = f->get(current_id);
