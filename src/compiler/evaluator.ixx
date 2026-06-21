@@ -1398,11 +1398,18 @@ private:
     //
     // The index is per-evaluator (process-wide), not
     // per-primitive-call. Building it on first use and
-    // reusing it across calls is the optimization. The
-    // build cost is O(N) — a single pass over the
-    // workspace, which is faster than the per-call
-    // full-walk that the matcher would otherwise do.
+    // reusing it across calls is the optimization.
+    //
+    // Issue #271: incremental maintenance. After the
+    // initial O(N) build, append-only growth is O(ΔN)
+    // and post-mutation sync keys off FlatAST generation
+    // + dirty_ instead of clearing the whole map.
     mutable std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>> tag_arity_index_;
+    // Reverse map: node-id → indexed (tag, arity) key.
+    mutable std::vector<std::uint64_t> tag_arity_indexed_key_;
+    // flat.size() / generation captured at last sync.
+    mutable std::size_t tag_arity_index_synced_size_ = 0;
+    mutable std::uint16_t tag_arity_index_synced_gen_ = 0;
     // The workspace pointer the index was built for.
     // When this changes, the index must be rebuilt.
     mutable const ast::FlatAST* tag_arity_index_workspace_ = nullptr;
@@ -1410,10 +1417,19 @@ private:
     // workspace. Called by query:pattern (and other
     // future matchers) before walking.
     void build_tag_arity_index() const;
+    void tag_arity_index_insert_node(const ast::FlatAST& flat, ast::NodeId id) const;
+    void tag_arity_index_remove_node(ast::NodeId id) const;
+    void tag_arity_index_rebuild_full(const ast::FlatAST& flat) const;
+    void tag_arity_index_append_nodes(const ast::FlatAST& flat, std::size_t from_id) const;
+    void tag_arity_index_prune_stale_entries(const ast::FlatAST& flat) const;
+    void tag_arity_index_sync_after_mutation(const ast::FlatAST& flat) const;
     // Drop the index (called on workspace changes).
-    void invalidate_tag_arity_index() {
+    void invalidate_tag_arity_index() const {
         tag_arity_index_.clear();
+        tag_arity_indexed_key_.clear();
         tag_arity_index_workspace_ = nullptr;
+        tag_arity_index_synced_size_ = 0;
+        tag_arity_index_synced_gen_ = 0;
     }
     void* type_registry_ = nullptr; // points to aura::core::TypeRegistry
     std::unordered_map<ClosureId, Closure> closures_;
@@ -1884,6 +1900,18 @@ public:
     }
     [[nodiscard]] const ast::FlatAST* tag_arity_index_workspace() const noexcept {
         return tag_arity_index_workspace_;
+    }
+    [[nodiscard]] std::size_t tag_arity_index_synced_size() const noexcept {
+        return tag_arity_index_synced_size_;
+    }
+    [[nodiscard]] std::uint16_t tag_arity_index_synced_gen() const noexcept {
+        return tag_arity_index_synced_gen_;
+    }
+    [[nodiscard]] std::size_t tag_arity_index_entry_count() const noexcept {
+        std::size_t total = 0;
+        for (const auto& [_, bucket] : tag_arity_index_)
+            total += bucket.size();
+        return total;
     }
     // Force a build of the index (for tests that need to
     // verify the index without going through query:pattern).
