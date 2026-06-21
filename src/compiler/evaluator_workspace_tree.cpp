@@ -136,4 +136,71 @@ bool Evaluator::refresh_active_flat_pool(void* wt, void** out_flat, void** out_p
     return true;
 }
 
+// ── Panic auto-rollback (Issue #39) ────────────────────────────
+bool Evaluator::save_panic_checkpoint() {
+    if (!workspace_flat_ || !workspace_pool_)
+        return false;
+    auto src_fn = primitives_.lookup("current-source");
+    if (!src_fn)
+        return false;
+    auto src = (*src_fn)({});
+    if (!types::is_string(src))
+        return false;
+    auto idx = types::as_string_idx(src);
+    if (idx >= string_heap_.size())
+        return false;
+    panic_safe_source_ = string_heap_[idx];
+    // Issue #242: snapshot the 4 pmr/append-only arena sizes
+    // so restore_panic_checkpoint can truncate them back.
+    // env_frames_ size is recorded for diagnostics only (the
+    // deque itself is NOT truncated on restore — see
+    // restore_panic_checkpoint).
+    panic_safe_cells_size_ = cells_.size();
+    panic_safe_pairs_size_ = pairs_.size();
+    panic_safe_string_heap_size_ = string_heap_.size();
+    panic_safe_env_frames_size_ = env_frames_.size();
+    return true;
+}
+
+bool Evaluator::restore_panic_checkpoint() {
+    if (panic_safe_source_.empty())
+        return false;
+    auto set_fn = primitives_.lookup("set-code");
+    if (!set_fn)
+        return false;
+    auto idx = string_heap_.size();
+    string_heap_.push_back(panic_safe_source_);
+    auto result = (*set_fn)({make_string(idx)});
+    bool ok = types::is_bool(result) && types::as_bool(result);
+    if (ok) {
+        // Issue #242: truncate the 3 append-only arenas back to
+        // their checkpoint sizes. We do NOT truncate env_frames_
+        // (the Closure::env_id indices must remain valid for
+        // already-constructed closures; the version stamping
+        // from Phase 1 detects stale frames instead).
+        //
+        // The source string we just pushed back is at idx; we
+        // resize string_heap_ to idx+1 (= pre-save size + 1) so
+        // the source string is preserved while everything added
+        // AFTER the save (idx+1 onwards) is truncated away.
+        std::size_t new_string_heap_size = idx + 1;
+        if (new_string_heap_size <= string_heap_.size()) {
+            string_heap_.resize(new_string_heap_size);
+        }
+        if (panic_safe_cells_size_ > 0 && panic_safe_cells_size_ <= cells_.size()) {
+            cells_.resize(panic_safe_cells_size_);
+        }
+        if (panic_safe_pairs_size_ > 0 && panic_safe_pairs_size_ <= pairs_.size()) {
+            pairs_.resize(panic_safe_pairs_size_);
+        }
+        // Clear checkpoint after successful restore
+        panic_safe_source_.clear();
+        panic_safe_cells_size_ = 0;
+        panic_safe_pairs_size_ = 0;
+        panic_safe_string_heap_size_ = 0;
+        panic_safe_env_frames_size_ = 0;
+    }
+    return ok;
+}
+
 } // namespace aura::compiler
