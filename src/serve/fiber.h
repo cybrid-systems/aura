@@ -107,6 +107,9 @@ public:
     // it via the pointer.
     void* mutation_stack_ptr() { return mutation_stack_storage_; }
     void set_mutation_stack_ptr(void* p) { mutation_stack_storage_ = p; }
+    // Issue #264: per-fiber yield-boundary checkpoint stack.
+    void* yield_checkpoint_ptr() { return yield_checkpoint_storage_; }
+    void set_yield_checkpoint_ptr(void* p) { yield_checkpoint_storage_ = p; }
 
 private:
     uint64_t id_;
@@ -127,6 +130,7 @@ private:
     // Per-fiber state: the mutation stack (Issue #213 Cycle 3).
     // Opaque void* — see mutation_stack_ptr() / set_mutation_stack_ptr().
     void* mutation_stack_storage_ = nullptr;
+    void* yield_checkpoint_storage_ = nullptr;
 };
 
 // Issue #213 Cycle 3: function pointers that the Evaluator
@@ -140,6 +144,12 @@ private:
 // doesn't need to know about Evaluator internals.
 extern void* (*g_fiber_setter_)(void*);
 extern void (*g_fiber_storage_deleter_)(void*);
+// Issue #264: yield-boundary checkpoint hooks (registered by
+// evaluator_fiber_mutation.cpp). Called before yield swapcontext
+// and after resume swapcontext returns.
+extern void (*g_fiber_yield_checkpoint_)(uint8_t reason);
+extern void (*g_fiber_resume_validate_)();
+extern void (*g_fiber_yield_checkpoint_deleter_)(void*);
 
 // ── GCPhase — GC safepoint state machine (P2) ────────
 enum class GCPhase : uint8_t {

@@ -889,6 +889,15 @@ aura_add_issue_test(test_issue_262)
 aura_issue_test_link_llvm_jit(test_issue_262)
 aura_add_issue_test(test_issue_263)
 aura_issue_test_link_llvm_jit(test_issue_263)
+aura_add_issue_test(test_issue_264)
+aura_issue_test_link_llvm_jit_minimal(test_issue_264)
+target_include_directories(test_issue_264 PRIVATE src/serve tests)
+target_sources(test_issue_264 PRIVATE
+    src/serve/fiber.cpp
+    src/serve/scheduler.cpp
+    src/serve/worker.cpp
+    src/serve/thread_pool.cpp
+)
 
 # Issue test bundles — one link per profile (see scripts/gen_issue_bundles.py)
 aura_add_issue_bundle(light)

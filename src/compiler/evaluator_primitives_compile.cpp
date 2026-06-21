@@ -835,6 +835,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             {"total-mutations", make_int(static_cast<std::int64_t>(ev.total_mutations()))},
             {"boundary-depth", make_int(static_cast<std::int64_t>(ev.mutation_boundary_depth()))},
             {"at-wait-version", make_int(static_cast<std::int64_t>(ev.defuse_version_at_wait_))},
+            {"mutation-yield-count",
+             make_int(static_cast<std::int64_t>(ev.mutation_yield_count()))},
+            {"compaction-paused-by-boundary",
+             make_int(static_cast<std::int64_t>(ev.compaction_paused_by_boundary()))},
+            {"cross-fiber-rollback-count",
+             make_int(static_cast<std::int64_t>(ev.cross_fiber_rollback_count()))},
         };
         return build_hash(kv);
     });
