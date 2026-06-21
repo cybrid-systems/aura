@@ -7,10 +7,10 @@ Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
 
-- `current-source` — `src/compiler/evaluator_impl.cpp`
-- `eval-current` — `src/compiler/evaluator_impl.cpp`
-- `eval-current-output` — `src/compiler/evaluator_impl.cpp`
-- `set-code` — `src/compiler/evaluator_impl.cpp`
+- `current-source` — `src/compiler/evaluator_primitives_eval.cpp`
+- `eval-current` — `src/compiler/evaluator_primitives_eval.cpp`
+- `eval-current-output` — `src/compiler/evaluator_primitives_eval.cpp`
+- `set-code` — `src/compiler/evaluator_primitives_eval.cpp`
 
 ## Query: (25)
 
@@ -159,7 +159,7 @@ Runtime canonical list: `(api-reference)`.
 
 - `abs` — `src/compiler/evaluator_primitives_math.cpp`
 - `acos` — `src/compiler/evaluator_primitives_math.cpp`
-- `api-reference` — `src/compiler/evaluator_impl.cpp`
+- `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `append` — `src/compiler/evaluator_primitives_list.cpp`
 - `apply` — `src/compiler/evaluator_impl.cpp`
 - `apply-fix` — `src/compiler/evaluator_impl.cpp`
@@ -226,8 +226,8 @@ Runtime canonical list: `(api-reference)`.
 - `equal?` — `src/compiler/evaluator_impl.cpp`
 - `error` — `src/compiler/evaluator_impl.cpp`
 - `error?` — `src/compiler/evaluator_impl.cpp`
-- `eval` — `src/compiler/evaluator_impl.cpp`
-- `eval-expr` — `src/compiler/evaluator_impl.cpp`
+- `eval` — `src/compiler/evaluator_primitives_eval.cpp`
+- `eval-expr` — `src/compiler/evaluator_primitives_eval.cpp`
 - `evolve-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
 - `exp` — `src/compiler/evaluator_primitives_math.cpp`
 - `file-copy` — `src/compiler/evaluator_impl.cpp`
@@ -251,7 +251,7 @@ Runtime canonical list: `(api-reference)`.
 - `gcd` — `src/compiler/evaluator_primitives_math.cpp`
 - `generate-type-sigs` — `src/compiler/evaluator_impl.cpp`
 - `gensym` — `src/compiler/evaluator_impl.cpp`
-- `get-inferred-type` — `src/compiler/evaluator_impl.cpp`
+- `get-inferred-type` — `src/compiler/evaluator_primitives_eval.cpp`
 - `get-memory-policy` — `src/compiler/evaluator_primitives_policy.cpp`
 - `getenv` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-branch-current` — `src/compiler/evaluator_primitives_io.cpp`
@@ -291,7 +291,7 @@ Runtime canonical list: `(api-reference)`.
 - `list->vector` — `src/compiler/evaluator_primitives_vector.cpp`
 - `list-ref` — `src/compiler/evaluator_primitives_list.cpp`
 - `list?` — `src/compiler/evaluator_primitives_list.cpp`
-- `load` — `src/compiler/evaluator_impl.cpp`
+- `load` — `src/compiler/evaluator_primitives_eval.cpp`
 - `load-module` — `src/compiler/evaluator_impl.cpp`
 - `log` — `src/compiler/evaluator_primitives_math.cpp`
 - `log10` — `src/compiler/evaluator_primitives_math.cpp`
@@ -324,9 +324,9 @@ Runtime canonical list: `(api-reference)`.
 - `panic-safe-source` — `src/compiler/evaluator_primitives_observability.cpp`
 - `pow` — `src/compiler/evaluator_primitives_math.cpp`
 - `procedure?` — `src/compiler/evaluator_primitives_core.cpp`
-- `query-annotate-functions` — `src/compiler/evaluator_impl.cpp`
-- `query-expected-type` — `src/compiler/evaluator_impl.cpp`
-- `query-type-of` — `src/compiler/evaluator_impl.cpp`
+- `query-annotate-functions` — `src/compiler/evaluator_primitives_eval.cpp`
+- `query-expected-type` — `src/compiler/evaluator_primitives_eval.cpp`
+- `query-type-of` — `src/compiler/evaluator_primitives_eval.cpp`
 - `quotient` — `src/compiler/evaluator_primitives_math.cpp`
 - `raise` — `src/compiler/evaluator_impl.cpp`
 - `read` — `src/compiler/evaluator_impl.cpp`
@@ -372,7 +372,7 @@ Runtime canonical list: `(api-reference)`.
 - `string=?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `substring` — `src/compiler/evaluator_primitives_pair.cpp`
-- `suggest-annotation-at` — `src/compiler/evaluator_impl.cpp`
+- `suggest-annotation-at` — `src/compiler/evaluator_primitives_eval.cpp`
 - `symbol-append` — `src/compiler/evaluator_impl.cpp`
 - `symbol?` — `src/compiler/evaluator_primitives_core.cpp`
 - `syntax-marker` — `src/compiler/evaluator_primitives_compile.cpp`
@@ -387,8 +387,8 @@ Runtime canonical list: `(api-reference)`.
 - `type-registry-compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `type-registry-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
-- `typecheck-current` — `src/compiler/evaluator_impl.cpp`
-- `typecheck-incremental` — `src/compiler/evaluator_impl.cpp`
+- `typecheck-current` — `src/compiler/evaluator_primitives_eval.cpp`
+- `typecheck-incremental` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-status` — `src/compiler/evaluator_primitives_observability.cpp`
 - `use` — `src/compiler/evaluator_impl.cpp`
 - `vector` — `src/compiler/evaluator_primitives_vector.cpp`
@@ -448,7 +448,7 @@ Runtime canonical list: `(api-reference)`.
 
 ## Eval: (1)
 
-- `eval:async` — `src/compiler/evaluator_impl.cpp`
+- `eval:async` — `src/compiler/evaluator_primitives_eval.cpp`
 
 ## Hot-Swap: (1)
 
@@ -456,8 +456,8 @@ Runtime canonical list: `(api-reference)`.
 
 ## Ir-Cache-V2: (2)
 
-- `ir-cache-v2:dependents` — `src/compiler/evaluator_impl.cpp`
-- `ir-cache-v2:dirty?` — `src/compiler/evaluator_impl.cpp`
+- `ir-cache-v2:dependents` — `src/compiler/evaluator_primitives_eval.cpp`
+- `ir-cache-v2:dirty?` — `src/compiler/evaluator_primitives_eval.cpp`
 
 ## Jit: (5)
 
