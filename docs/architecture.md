@@ -44,7 +44,7 @@ Agent 自修改路径：`set-code` → `query:*` / `mutate:*` → `eval-current`
 
 ## 自修改 EDSL（C++ 原语）
 
-在 `evaluator_impl.cpp` 经 `primitives_.add` 注册（约 400+ 个）。核心集群：
+在 `evaluator_primitives_registry.cpp` 及各 `evaluator_primitives_*.cpp` 分区经 `primitives_.add` 注册（约 400+ 个）。核心集群：
 
 | 集群 | 示例 | 测试 |
 |------|------|------|

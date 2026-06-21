@@ -1,5 +1,5 @@
 // evaluator_env.cpp — P1-d: Env, EnvFrame, EnvView, and env-frame arena
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

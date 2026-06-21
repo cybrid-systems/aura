@@ -1,5 +1,5 @@
 // evaluator_primitives_io.cpp — P0 step 17: git:* and network primitives
-// extracted from init_pair_primitives() and Evaluator constructor.
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

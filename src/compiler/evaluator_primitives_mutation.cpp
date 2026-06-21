@@ -1,5 +1,5 @@
 // evaluator_primitives_mutation.cpp — P0 step 31: mutation-count / rollback primitives
-// extracted from init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

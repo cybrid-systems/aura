@@ -1,7 +1,7 @@
 // evaluator_primitives_core.cpp — P0 step 1: stateless R5RS-style primitives
-// extracted from evaluator_impl.cpp::init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 //
-// Same module partition as evaluator_impl.cpp (aura.compiler.evaluator).
+// aura.compiler.evaluator module partition.
 // Registration uses a callback to avoid friending or exposing Evaluator
 // internals — mirrors ffi_primitives_impl.cpp / adt_runtime_impl.cpp.
 

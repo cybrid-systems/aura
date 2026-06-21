@@ -1,5 +1,5 @@
 // evaluator_ctor.cpp — P1-p: Evaluator construction / teardown
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 

@@ -1,5 +1,5 @@
 // evaluator_gc.cpp — P1-i: GC root flush, sweep, and pair compaction
-// extracted from evaluator_impl.cpp.
+// aura.compiler.evaluator module partition.
 
 module;
 
@@ -117,7 +117,7 @@ void Evaluator::flush_gc_roots(void* root_set_out) {
     }
 
     // 4. fiber results — s_fiber_results_ is a TU-local static in
-    //    evaluator_impl.cpp (managed by fiber:join). Each live entry
+    //    evaluator_primitives_messaging.cpp (managed by fiber:join). Each live entry
     //    is a root because the value is shared between the spawned
     //    fiber and the joiner. The static map is internally
     //    synchronized by s_fiber_results_mtx_, but at the safepoint

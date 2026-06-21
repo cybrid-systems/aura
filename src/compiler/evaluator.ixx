@@ -107,7 +107,7 @@ public:
     // Issue #145: SymId fast path. The apply_closure loop hits
     // this once per parameter per call — replacing the old
     // string-compare lookup with integer-compare. Implemented
-    // in evaluator_impl.cpp.
+    // in evaluator_env.cpp.
     void bind_symid(aura::ast::SymId s, types::EvalValue v);
     // Issue #145: Optional pool reference. When set, bind_symid
     // mirrors the binding into the string-keyed bindings_ so
@@ -307,7 +307,7 @@ export struct EnvFrame {
     // using the Evaluator-owned central pmr cells_ vector.
     // This eliminates one source of pointer-to-reallocatable-heap
     // and prepares for full removal of cells_/pairs_ pointers from
-    // all env representations. See evaluator_impl.cpp lookup_local
+    // all env representations. See evaluator_env.cpp lookup_local
     // variants and lookup_by_symid_chain.
     std::vector<std::pair<std::string, types::EvalValue>> bindings_;
     // Phase 1 parity: parallel SymId-keyed store. Same length
@@ -955,7 +955,7 @@ public:
     // Issue #145 follow-up / Phase 2.5.0 prep: canonical pool accessor.
     // For now, the canonical pool is the workspace pool — it is the
     // pool where almost all `intern()` calls already route (39 sites
-    // in evaluator_impl.cpp, vs. ~5 in pat_pool / tmp_pool / local
+    // across evaluator partition TUs, vs. ~5 in pat_pool / tmp_pool / local
     // scratch pools). The pool unification refactor (Phase 2.5.0 in
     // C++26 module layout) will:
     //
@@ -1068,7 +1068,7 @@ public:
     // We use `void*` (not the full GCRootSet& reference) to avoid
     // pulling serve/gc_coordinator.h into every TU that includes
     // this module interface. The full definition is only needed at
-    // the call site in evaluator_impl.cpp. This is the same
+    // the call site in evaluator_gc.cpp. This is the same
     // pattern as `defuse_index_destroy` (Issue #107) and the
     // GCRootFlushFn typedef in messaging_bridge.h.
     //
@@ -1090,7 +1090,7 @@ public:
     // stopped all fibers, so no concurrent mutator can run).
     //
     // The opaque `void*` is `aura::serve::GCSweepBuffers*` from
-    // gc_coordinator.h (cast at the call site in evaluator_impl.cpp
+    // gc_coordinator.h (cast at the call site in evaluator_gc.cpp
     // to keep the include surface minimal — same pattern as
     // `flush_gc_roots(void*)` above).
     //
@@ -1339,7 +1339,7 @@ private:
 
     // Centralized tagged error pair builder ("error" . ("kind" . "message")).
     // Replaces the ~14 duplicated local `auto merr = [this](...)` lambdas
-    // (see docs/contributing.md §3). Body implemented in evaluator_impl.cpp.
+    // (see docs/contributing.md §3). Body implemented in evaluator_adt.cpp.
     // Added in refactor Step 0.1 (pure addition, no call-site changes yet).
     [[nodiscard]] EvalValue make_merr(const std::string& k, const std::string& m);
 
@@ -1469,7 +1469,7 @@ private:
     std::vector<types::EvalValue> error_values_; // error cause values (indexed by ErrorRef)
     std::vector<void*> opaque_heap_;             // opaque pointers (indexed by OpaqueRef)
     // Issue #131: FFI state moved to FFIRuntime instance
-    // (formerly file-scope statics in evaluator_impl.cpp).
+    // (formerly file-scope statics in the monolithic evaluator TU).
     FFIRuntime ffi_runtime_;
     // Step 2.3: ADT state moved to AdtRuntime (exact same pattern).
     AdtRuntime adt_runtime_;
@@ -1697,7 +1697,7 @@ private:
 
     // ── EDSL IR cache V2 (Phase 2) hooks ─────────────────────────────
     // Function pointers set by CompilerService on init. Avoids
-    // evaluator_impl.cpp needing to import CompilerService (circular).
+    // evaluator partition TUs needing to import CompilerService (circular).
     // mark_define_dirty_fn_(name)         → mark a single define's IR dirty
     // mark_all_defines_dirty_fn_()       → mark all cached defines dirty
     std::function<void(const std::string&)> mark_define_dirty_fn_ = nullptr;
@@ -2064,7 +2064,7 @@ public:
 
     // Issue #236 follow-up: per-fiber (thread_local) depth
     // counter for MutationBoundaryGuard nesting. The
-    // implementation lives in evaluator_impl.cpp and uses
+    // implementation lives in evaluator_fiber_mutation.cpp and uses
     // a `thread_local std::unordered_map<Evaluator*, int>`
     // keyed by this address. thread_local gives us LIFO
     // ordering on each fiber's call stack; multiple fibers
@@ -2360,7 +2360,7 @@ public:
     // because evaluator.ixx is a module interface and the bridge
     // header is a non-module .h — including a non-module header in
     // a module interface causes "declaration in module implementation
-    // unit" errors. The actual implementation is in evaluator_impl.cpp
+    // unit" errors. The actual implementation is in evaluator_fiber_mutation.cpp
     // which DOES include messaging_bridge.h.
     void yield_mutation_boundary();
 

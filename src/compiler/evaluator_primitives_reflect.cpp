@@ -1,5 +1,5 @@
 // evaluator_primitives_reflect.cpp — P0 step 7: reflect/type/keyword primitives
-// extracted from evaluator_impl.cpp::init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

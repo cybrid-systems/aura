@@ -1,5 +1,5 @@
 // evaluator_primitives_compile.cpp — P0 step 14: compile:* / concurrency:* / syntax-marker primitives
-// extracted from evaluator_impl.cpp::init_pair_primitives() and Evaluator constructor.
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

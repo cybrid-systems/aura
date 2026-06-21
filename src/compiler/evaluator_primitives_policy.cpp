@@ -1,5 +1,5 @@
 // evaluator_primitives_policy.cpp — P0 step 20: memory-policy / capability primitives
-// extracted from Evaluator constructor.
+// aura.compiler.evaluator module partition; registered via evaluator_ctor.cpp.
 
 module;
 

@@ -1,5 +1,5 @@
 // evaluator_primitives_file.cpp — P0 step 25: read / read-file / write-file / file-* / shell / directory-list
-// extracted from init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 

@@ -1,5 +1,5 @@
 // evaluator_primitives_json.cpp — P0 step 4: JSON encode/parse primitives
-// extracted from evaluator_impl.cpp::init_pair_primitives().
+// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 
