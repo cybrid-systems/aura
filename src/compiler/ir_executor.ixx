@@ -159,6 +159,9 @@ public:
     // Execute the top-level function and return result
     EvalResult execute();
 
+    // Issue #272: invoke a runtime closure by id (full IR path).
+    EvalResult call_closure(std::uint64_t closure_id, std::span<const EvalValue> args);
+
     // ── Runtime reflection API ─────────────────────────────────
     // Inspect a single closure by id
     std::optional<ClosureSnapshot> inspect_closure(std::uint64_t closure_id) const;

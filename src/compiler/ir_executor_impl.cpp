@@ -133,6 +133,86 @@ EvalResult IRInterpreter::execute() {
     return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "stack underflow"});
 }
 
+EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const EvalValue> args) {
+    auto it = runtime_closures_.find(closure_id);
+    if (it == runtime_closures_.end()) {
+        return std::unexpected(
+            Diagnostic{ErrorKind::InvalidClosure, "unknown IR closure in call_closure"});
+    }
+    auto& closure = it->second;
+    if (closure.func_id >= module_.functions.size()) {
+        return std::unexpected(
+            Diagnostic{ErrorKind::IRCorruption, "invalid function id in IR closure"});
+    }
+    auto& callee_func = module_.functions[closure.func_id];
+    std::vector<EvalValue> all_args;
+    all_args.reserve(closure.env.size() + args.size());
+    for (auto& ev : closure.env)
+        all_args.push_back(ev);
+    for (auto& a : args)
+        all_args.push_back(a);
+
+    if (context_.metrics) {
+        context_.metrics->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
+        context_.metrics->closure_ir_calls.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    call_stack_.clear();
+    auto local_count = callee_func.local_count + std::max(std::size_t(64), all_args.size());
+    call_stack_.push_back({.func = &callee_func,
+                           .current_block = callee_func.entry_block,
+                           .locals = std::vector<EvalValue>(local_count, make_void()),
+                           .args = std::move(all_args),
+                           .resume_instr = 0,
+                           .is_top_level = true,
+                           .result_slot = 0,
+                           .ex_depth_at_entry = ex_stack_.size()});
+
+    while (!call_stack_.empty()) {
+        auto& frame = call_stack_.back();
+        auto result = run_function(*frame.func, frame.locals, frame.args);
+
+        if (std::holds_alternative<PendingCall>(result)) {
+            if (context_.metrics) {
+                context_.metrics->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            auto& pc = std::get<PendingCall>(result);
+            auto new_count = pc.func->local_count + std::max(std::size_t(64), pc.args.size());
+            std::vector<EvalValue> new_locals(new_count, make_void());
+            call_stack_.push_back({.func = pc.func,
+                                   .current_block = pc.func->entry_block,
+                                   .locals = std::move(new_locals),
+                                   .args = std::move(pc.args),
+                                   .resume_instr = 0,
+                                   .is_top_level = false,
+                                   .result_slot = pc.result_slot,
+                                   .ex_depth_at_entry = ex_stack_.size()});
+            continue;
+        }
+
+        auto& eval_res = std::get<EvalResult>(result);
+        if (!eval_res) {
+            call_stack_.clear();
+            return eval_res;
+        }
+
+        if (frame.is_top_level) {
+            call_stack_.pop_back();
+            return eval_res;
+        }
+
+        auto retval = *eval_res;
+        call_stack_.pop_back();
+        if (!call_stack_.empty()) {
+            auto& caller_frame = call_stack_.back();
+            if (frame.result_slot < caller_frame.locals.size())
+                caller_frame.locals[frame.result_slot] = retval;
+        }
+    }
+
+    return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "stack underflow"});
+}
+
 EvalResult IRInterpreter::execute_function(const IRFunction& func,
                                            std::span<const EvalValue> args) {
     auto local_count = func.local_count + std::max(std::size_t(64), args.size());
