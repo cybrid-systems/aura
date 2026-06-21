@@ -182,6 +182,11 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         // (whose pmr vectors use the arena allocator) — the arena
         // ends up with the restored data, and the snapshot retains
         // its own heap copy for subsequent restores.
+        // Issue #261: reclaim unreachable NodeId slots before the
+        // deep copy so long-running sessions don't amplify dead
+        // slots into every snapshot.
+        ev.workspace_flat_->recycle_dead_nodes();
+
         Evaluator::FlatSnapshot fs;
         try {
             fs.flat = std::make_unique<aura::ast::FlatAST>();
@@ -400,6 +405,9 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                 try {
                     *ev.workspace_flat_ = *ev.snapshot_flats_[id].flat;
                     *ev.workspace_pool_ = *ev.snapshot_flats_[id].pool;
+                    // Issue #261: recycle any slots that became
+                    // unreachable across restore iterations.
+                    ev.workspace_flat_->recycle_dead_nodes();
                     ev.update_shared_tree_root();
                     // Invalidate caches (same as set-code)
                     // (ASAN fix #107 leak) delete the old index.
@@ -945,6 +953,87 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         if (!ev.workspace_flat_)
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->generation()));
+    });
+
+    // Issue #261: NodeId lifecycle primitives for long-running
+    // AI query→mutate→eval loops.
+    auto build_ast_lifecycle_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv)
+        -> EvalValue {
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        for (auto& [k, v] : kv) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (char c : k)
+                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            auto kidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            bool inserted = false;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = v.val;
+                    ht->size++;
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                FlatHashTable::destroy(ht);
+                return make_void();
+            }
+        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    };
+
+    // (ast:recycle-nodes) — mark unreachable slots free for reuse.
+    add("ast:recycle-nodes", [&ev](const auto&) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->recycle_dead_nodes()));
+    });
+
+    // (ast:compact-nodes) — densify live nodes into 0..n-1 slots.
+    add("ast:compact-nodes", [&ev](const auto&) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->compact_nodes()));
+    });
+
+    // (ast:node-lifecycle-stats) — fragmentation + counter hash.
+    add("ast:node-lifecycle-stats", [&](const auto&) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+        if (!ev.workspace_flat_)
+            return make_void();
+        auto stats = ev.workspace_flat_->node_lifecycle_stats();
+        auto frag_bp = static_cast<std::int64_t>(stats.fragmentation_ratio * 10000.0);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"total-slots", make_int(static_cast<std::int64_t>(stats.total_slots))},
+            {"live-nodes", make_int(static_cast<std::int64_t>(stats.live_nodes))},
+            {"free-slots", make_int(static_cast<std::int64_t>(stats.free_slots))},
+            {"fragmentation-ratio-bp", make_int(frag_bp)},
+            {"recycle-total", make_int(static_cast<std::int64_t>(
+                                  ev.workspace_flat_->node_recycle_total()))},
+            {"slot-reuse-count", make_int(static_cast<std::int64_t>(
+                                     ev.workspace_flat_->node_slot_reuse_count()))},
+            {"compact-total", make_int(static_cast<std::int64_t>(
+                                   ev.workspace_flat_->node_compact_total()))},
+        };
+        return build_ast_lifecycle_hash(kv);
     });
 
 }
