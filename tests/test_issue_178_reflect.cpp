@@ -164,6 +164,27 @@ int issue178_roundtrip_empty(std::size_t* out_bytes) {
     return ok ? 1 : 0;
 }
 
+int issue178_run_stress_iterations(int iterations) {
+    std::array<std::uint32_t, 3> children = {10, 20, 30};
+    std::array<std::uint32_t, 2> params = {100, 200};
+    std::array<std::uint32_t, 1> annot = {5};
+    for (int i = 0; i < iterations; ++i) {
+        const std::uint8_t marker = static_cast<std::uint8_t>(i % 2);
+        auto wire = make_wire(
+            static_cast<std::uint32_t>(42 + i), static_cast<std::uint32_t>(WireNodeTag::Call),
+            static_cast<std::int64_t>(0x1000 + i), 3.14 + i * 0.001, static_cast<std::uint32_t>(i),
+            static_cast<std::uint32_t>(i % 1000), static_cast<std::uint32_t>(i % 50),
+            static_cast<std::uint32_t>(i % 256), children.data(), children.size(), params.data(),
+            params.size(), annot.data(), annot.size(), marker);
+        std::size_t bytes = 0;
+        NodeViewWire rt{};
+        const bool ok = roundtrip_wire(wire, bytes, &rt);
+        check(ok);
+        check(static_cast<std::uint8_t>(rt.marker) == marker);
+    }
+    return g_failed > 0 ? 1 : 0;
+}
+
 int issue178_roundtrip_verify_marker(std::uint8_t marker_out) {
     std::array<std::uint32_t, 2> children = {99, 100};
     std::array<std::uint32_t, 3> params = {0xAA, 0xBB, 0xCC};
