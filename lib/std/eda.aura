@@ -216,7 +216,7 @@
        (display (car args)))
       ((equal? op 'int)
        (display (car args)))
-      ((eq? op 'slice)
+      ((equal? op 'slice)
        (eda:display-expr (car args))
        (display "[")
        (display (car (cdr args)))
@@ -237,6 +237,11 @@
 ; ═══════════════════════════════════════════════════════════
 ; Cycle 2: query + mutate helpers
 ; ═══════════════════════════════════════════════════════════
+
+(define (eda:name-str n)
+  (cond ((string? n) n)
+        ((number? n) (number->string n))
+        (else (string-append "" n))))
 
 (define (eda:query:ports m) (eda:module-ports m))
 
@@ -381,7 +386,7 @@
                     (cond
                       ((null? xs) #t)
                       (else (and (eda:expr-equal? (car xs) (car ys))
-                                 (loop (cdr xs) (cdr ys)))))))))))
+                                 (loop (cdr xs) (cdr ys))))))))))))
 
 (define (eda:mutate:extract-common-expr m)
   (let ((as (eda:query:assigns m)))
@@ -419,6 +424,134 @@
                     (eda:module-ports m)
                     (append (list tmp-wire tmp-assign) new-body)))
                 (loop (cdr rest) first))))))))
+
+; ═══════════════════════════════════════════════════════════
+; Cycle 3: Verilog emitter (returns strings, not display)
+; ═══════════════════════════════════════════════════════════
+
+(define (eda:emit-infix op-str args)
+  ; Avoid (string-append "" x) — empty-string first arg leaks outer bindings.
+  (cond
+    ((null? args) "")
+    ((null? (cdr args)) (eda:emit-expr (car args)))
+    (else (string-append (eda:emit-expr (car args)) " " op-str " "
+                         (eda:emit-infix op-str (cdr args))))))
+
+(define (eda:emit-expr e)
+  (let ((op (eda:expr-op e))
+        (args (eda:expr-args e)))
+    (if (equal? op 'symbol)
+        (eda:name-str (car args))
+        (if (equal? op 'int)
+            (number->string (car args))
+            (if (equal? op 'slice)
+                (string-append (eda:emit-expr (car args)) "["
+                               (number->string (car (cdr args))) ":"
+                               (number->string (car (cdr (cdr args)))) "]")
+                (if (equal? op '+)
+                    (string-append "(" (eda:emit-infix "+" args) ")")
+                    (if (equal? op '-)
+                        (string-append "(" (eda:emit-infix "-" args) ")")
+                        (if (equal? op '&)
+                            (string-append "(" (eda:emit-infix "&" args) ")")
+                            (string-append (eda:name-str op) "(...)")))))))))
+
+(define (eda:emit-port p)
+  (let ((dir (eda:port-direction p))
+        (name (eda:port-name p))
+        (width (eda:port-width p)))
+    (if (> width 1)
+        (string-append dir " " (eda:name-str name)
+                       " [" (number->string width) "-1:0]")
+        (string-append dir " " (eda:name-str name)))))
+
+(define (eda:emit-wire w)
+  (let ((name (eda:wire-name w))
+        (width (eda:wire-width w)))
+    (if (> width 1)
+        (string-append "wire [" (number->string width) "-1:0] "
+                       (eda:name-str name) ";")
+        (string-append "wire " (eda:name-str name) ";"))))
+
+(define (eda:emit-assign a)
+  (string-append "assign " (eda:emit-expr (eda:assign-lhs a))
+                 " = " (eda:emit-expr (eda:assign-rhs a)) ";"))
+
+(define (eda:emit-sensitivity s)
+  (string-append (eda:name-str (eda:sensitivity-edge s)) " "
+                 (eda:name-str (eda:sensitivity-signal s))))
+
+(define (eda:emit-always a)
+  (string-append
+    "always @("
+    (let loop ((ss (eda:always-sensitivity a)) (acc ""))
+      (cond
+        ((null? ss) (string-append acc ") begin\n"))
+        (else
+          (loop (cdr ss)
+                (if (string=? acc "")
+                    (eda:emit-sensitivity (car ss))
+                    (string-append acc ", " (eda:emit-sensitivity (car ss))))))))
+    (eda:emit-always-body (eda:always-body a))))
+
+(define (eda:emit-always-body-stmt item)
+  (cond
+    ((eda:assign? item) (eda:emit-assign item))
+    ((eda:wire? item) (eda:emit-wire item))
+    (else "")))
+
+(define (eda:emit-always-body body)
+  (cond
+    ((null? body) "end\n")
+    ((null? (cdr body))
+     (string-append (eda:emit-always-body-stmt (car body)) "end\n"))
+    (else (string-append (eda:emit-always-body-stmt (car body)) "\n"
+                         (eda:emit-always-body (cdr body))))))
+
+(define (eda:emit-signal s)
+  (let ((kind (eda:signal-kind s))
+        (name (eda:signal-name s))
+        (width (eda:signal-width s)))
+    (if (> width 1)
+        (string-append (eda:name-str kind) " ["
+                       (number->string width) "-1:0] "
+                       (eda:name-str name))
+        (string-append (eda:name-str kind) " " (eda:name-str name)))))
+
+(define (eda:emit-body-item item)
+  (cond
+    ((eda:wire? item) (string-append (eda:emit-wire item) "\n"))
+    ((eda:assign? item) (string-append (eda:emit-assign item) "\n"))
+    ((eda:always? item) (eda:emit-always item))
+    ((eda:signal? item) (string-append (eda:emit-signal item) ";\n"))
+    (else "")))
+
+(define (eda:emit-module-body body)
+  (cond
+    ((null? body) "")
+    ((null? (cdr body)) (eda:emit-body-item (car body)))
+    (else (string-append (eda:emit-body-item (car body))
+                         (eda:emit-module-body (cdr body))))))
+
+(define (eda:emit-module m)
+  (string-append
+    "module " (eda:name-str (eda:module-name m)) "("
+    (let loop ((ps (eda:module-ports m)) (acc "") (first? #t))
+      (cond
+        ((null? ps) (string-append acc ");\n"))
+        (else
+          (loop (cdr ps)
+                (if first?
+                    (eda:emit-port (car ps))
+                    (string-append acc ", " (eda:emit-port (car ps))))
+                #f))))
+    (eda:emit-module-body (eda:module-body m))
+    "endmodule"))
+
+(define (eda:emit-verilog ir)
+  (cond
+    ((eda:module? ir) (eda:emit-module ir))
+    (else (eda:emit-body-item ir))))
 
 ; ═══════════════════════════════════════════════════════════
 ; Dependent type system (Issue #228 — Phase 1 minimum viable)
@@ -588,6 +721,10 @@
   ; Mutate helpers (Cycle 2)
   eda:mutate:rename-symbol eda:mutate:insert-clock-gating
   eda:mutate:extract-common-expr eda:expr-equal?
+  ; Verilog emitter (Cycle 3)
+  eda:emit-verilog eda:emit-module eda:emit-port eda:emit-wire
+  eda:emit-assign eda:emit-always eda:emit-sensitivity eda:emit-signal
+  eda:emit-expr eda:emit-body-item eda:name-str
   ; BitVec
   make-eda:bitvec make-eda:bitvec-8 make-eda:bitvec-16
   make-eda:bitvec-32 make-eda:bitvec-64 make-eda:bitvec-param

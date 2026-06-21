@@ -1,8 +1,8 @@
 // @category: unit
 // @reason: no CompilerService usage; pure C++ test
 // test_issue_182.cpp — Issue #182: Hardware IR + Verilog Backend
-// (Cycle 1-2: IR + accessors + display + query/mutate helpers,
-// C++ verification).
+// (Cycle 1-3: IR + accessors + display + query/mutate helpers +
+// Verilog emitter, C++ verification).
 //
 // Issue #182 (Hardware EDA + Verilog) is by design 100% stdlib work
 // (`lib/std/eda.aura`). However, the Aura binary's top-level
@@ -233,6 +233,117 @@ std::string display_wire(IrNode const& w) {
 std::string display_assign(IrNode const& a) {
     return "assign " + display_expr(assign_lhs(a))
          + " = " + display_expr(assign_rhs(a)) + ";";
+}
+
+std::string emit_expr(IrNode const& e);
+
+std::string emit_infix(std::string_view op_str,
+                       std::vector<IrNode> const& args) {
+    if (args.empty()) return "";
+    if (args.size() == 1) return emit_expr(args[0]);
+    return emit_expr(args[0]) + " " + std::string(op_str) + " "
+         + emit_infix(op_str, {args.begin() + 1, args.end()});
+}
+
+std::string emit_expr(IrNode const& e) {
+    std::string op = expr_op(e);
+    if (op == "symbol") return expr_symbol_name(e);
+    if (op == "int") return std::to_string(expr_int_value(e));
+    if (op == "slice") {
+        auto const& a = expr_args(e);
+        return emit_expr(a[0]) + "[" + std::to_string(expr_int_value(a[1]))
+             + ":" + std::to_string(expr_int_value(a[2])) + "]";
+    }
+    if (op == "+") return "(" + emit_infix("+", expr_args(e)) + ")";
+    if (op == "-") return "(" + emit_infix("-", expr_args(e)) + ")";
+    if (op == "&") return "(" + emit_infix("&", expr_args(e)) + ")";
+    return op + "(...)";
+}
+
+std::string emit_port(IrNode const& p) {
+    std::string s = port_direction(p) + " " + port_name(p);
+    if (port_width(p) > 1) s += " [" + std::to_string(port_width(p)) + "-1:0]";
+    return s;
+}
+
+std::string emit_wire(IrNode const& w) {
+    std::string s = "wire ";
+    if (wire_width(w) > 1) s += "[" + std::to_string(wire_width(w)) + "-1:0] ";
+    s += wire_name(w);
+    s += ";";
+    return s;
+}
+
+std::string emit_assign(IrNode const& a) {
+    return "assign " + emit_expr(assign_lhs(a))
+         + " = " + emit_expr(assign_rhs(a)) + ";";
+}
+
+std::string emit_sensitivity(IrNode const& s) {
+    return std::get<std::string>(s.fields[0]) + " "
+         + std::get<std::string>(s.fields[1]);
+}
+
+std::string emit_always_body_stmt(IrNode const& item) {
+    if (is_assign(item)) return emit_assign(item);
+    if (is_wire(item)) return emit_wire(item);
+    return "";
+}
+
+std::string emit_always_body(std::vector<IrNode> const& body) {
+    if (body.empty()) return "end\n";
+    if (body.size() == 1) return emit_always_body_stmt(body[0]) + "end\n";
+    return emit_always_body_stmt(body[0]) + "\n" + emit_always_body(
+        {body.begin() + 1, body.end()});
+}
+
+std::string emit_always(IrNode const& a) {
+    std::string s = "always @(";
+    auto const& sens = std::get<std::vector<IrNode>>(a.fields[0]);
+    for (std::size_t i = 0; i < sens.size(); ++i) {
+        if (i > 0) s += ", ";
+        s += emit_sensitivity(sens[i]);
+    }
+    s += ") begin\n";
+    s += emit_always_body(std::get<std::vector<IrNode>>(a.fields[1]));
+    return s;
+}
+
+std::string emit_body_item(IrNode const& item) {
+    if (is_wire(item)) return emit_wire(item) + "\n";
+    if (is_assign(item)) return emit_assign(item) + "\n";
+    if (is_always(item)) return emit_always(item);
+    if (is_signal(item)) {
+        std::string s = item.get<std::string>(2) + " ";
+        if (item.get<int64_t>(1) > 1)
+            s += "[" + std::to_string(item.get<int64_t>(1)) + "-1:0] ";
+        s += item.get<std::string>(0) + ";\n";
+        return s;
+    }
+    return "";
+}
+
+std::string emit_module_body(std::vector<IrNode> const& body) {
+    if (body.empty()) return "";
+    if (body.size() == 1) return emit_body_item(body[0]);
+    return emit_body_item(body[0]) + emit_module_body(
+        {body.begin() + 1, body.end()});
+}
+
+std::string emit_verilog(IrNode const& ir) {
+    if (is_module(ir)) {
+        std::string s = "module " + module_name(ir) + "(";
+        auto const& ports = module_ports(ir);
+        for (std::size_t i = 0; i < ports.size(); ++i) {
+            if (i > 0) s += ", ";
+            s += emit_port(ports[i]);
+        }
+        s += ");\n";
+        s += emit_module_body(module_body(ir));
+        s += "endmodule";
+        return s;
+    }
+    return emit_body_item(ir);
 }
 
 std::string display_module(IrNode const& m) {
@@ -699,6 +810,63 @@ bool test_cycle2_mutate_extract_common() {
     return true;
 }
 
+bool test_cycle3_emit_verilog() {
+    PRINTLN("\n--- Test 12: Cycle 3 emit-verilog (module + assigns) ---");
+    using namespace eda;
+
+    std::vector<IrNode> ports = {
+        make_port("clk", "input", 1),
+        make_port("rst", "input", 1),
+        make_port("q", "output", 8),
+    };
+    std::vector<IrNode> body = {
+        make_wire("q_next", 8),
+        make_assign(expr_symbol("q"), expr_symbol("q_next")),
+    };
+    auto m = make_module("counter", ports, body);
+
+    std::string s = emit_verilog(m);
+    std::fprintf(stdout, "  emit-verilog:\n%s\n", s.c_str());
+
+    CHECK(s.find("module counter") != std::string::npos,
+          "emit contains module header");
+    CHECK(s.find("wire [8-1:0] q_next;") != std::string::npos,
+          "emit contains wire decl");
+    CHECK(s.find("assign q = q_next;") != std::string::npos,
+          "emit contains assign");
+    CHECK(s.find("endmodule") != std::string::npos,
+          "emit contains endmodule");
+    CHECK(s.find("eda:module") == std::string::npos,
+          "emit does not leak IR tags");
+    return true;
+}
+
+bool test_cycle3_emit_always() {
+    PRINTLN("\n--- Test 13: Cycle 3 emit-always (posedge + infix expr) ---");
+    using namespace eda;
+
+    auto inc = make_expr("+", {expr_symbol("q"), expr_int(1)});
+    std::vector<IrNode> body = {
+        make_assign(expr_symbol("q"), inc),
+    };
+    auto always_blk = make_always(
+        {make_sensitivity("posedge", "clk")},
+        body);
+    std::vector<IrNode> mod_body = {always_blk};
+    auto m = make_module("tick", {make_port("clk", "input", 1)}, mod_body);
+
+    std::string s = emit_verilog(m);
+    std::fprintf(stdout, "  always emit:\n%s\n", s.c_str());
+
+    CHECK(s.find("always @(posedge clk)") != std::string::npos,
+          "emit contains sensitivity list");
+    CHECK(s.find("assign q = (q + 1);") != std::string::npos,
+          "emit contains infix assignment");
+    CHECK(s.find("end\nendmodule") != std::string::npos,
+          "emit closes always block and module");
+    return true;
+}
+
 bool test_end_to_end_counter() {
     PRINTLN("\n--- Test 7: end-to-end counter module ---");
     using namespace eda;
@@ -734,9 +902,10 @@ bool test_end_to_end_counter() {
 
 int run_tests() {
     std::fprintf(stdout,
-                 "═══ Issue #182 — Hardware IR + Verilog Backend (Cycle 1-2, C++) ═══\n");
+                 "═══ Issue #182 — Hardware IR + Verilog Backend (Cycle 1-3, C++) ═══\n");
     std::fprintf(stdout, "  Cycle 1: IR + display + basic query.\n");
     std::fprintf(stdout, "  Cycle 2: dependency query + mutate helpers.\n");
+    std::fprintf(stdout, "  Cycle 3: Verilog emitter (eda:emit-verilog).\n");
     std::fprintf(stdout, "  Aura stdlib mirror: lib/std/eda.aura (#229-#231 fixed).\n\n");
 
     test_ir_construction();
@@ -749,6 +918,8 @@ int run_tests() {
     test_cycle2_mutate_rename();
     test_cycle2_mutate_clock_gating();
     test_cycle2_mutate_extract_common();
+    test_cycle3_emit_verilog();
+    test_cycle3_emit_always();
     test_end_to_end_counter();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
