@@ -6,6 +6,7 @@
 module;
 
 #include "core/persistent_child_vector.hh"
+#include <contracts>
 #include <shared_mutex>
 
 export module aura.core.ast;
@@ -2586,7 +2587,9 @@ public:
     // from the leaf to all ancestors. Default is kGeneralDirty for
     // backward compatibility with the 30+ callers that don't yet
     // classify their mutations.
-    void mark_dirty_upward(NodeId id, std::uint8_t reasons = kGeneralDirty) {
+    void mark_dirty_upward(const NodeId id, std::uint8_t reasons = kGeneralDirty)
+        // Issue #273: node must be in-bounds; NULL_NODE would resize dirty_ to ~4G.
+        pre(id < tag_.size()) {
         // Issue #256: bump the call counter + track total nodes
         // touched. The ratio (total_nodes / call_count) gives
         // the average dirty-propagation depth per mutation —
@@ -2669,11 +2672,12 @@ public:
     }
 
     // Record a mutation with rollback data (field_offset + old/new_value)
-    std::uint64_t add_mutation_with_rollback(NodeId node, std::string_view op_name,
+    std::uint64_t add_mutation_with_rollback(const NodeId node, std::string_view op_name,
                                              std::string_view old_type, std::string_view new_type,
                                              std::string_view summary, MutationStatus status,
                                              std::uint32_t field_offset, std::uint64_t old_value,
-                                             std::uint64_t new_value, bool has_rollback) {
+                                             std::uint64_t new_value, bool has_rollback)
+        pre(node < tag_.size()) post(r: r >= 1) {
         std::uint64_t mid = next_mutation_id_++;
         auto now =
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2761,7 +2765,9 @@ public:
     std::uint16_t generation() const { return generation_; }
 
     // Check if a NodeId is valid (in-bounds and from the current generation).
-    bool is_valid(NodeId id) const {
+    bool is_valid(const NodeId id) const
+        post(r: r == (id != NULL_NODE && id < tag_.size() && id < node_gen_.size() &&
+                      node_gen_[id] == generation_)) {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
         return id < tag_.size() && id < node_gen_.size() && node_gen_[id] == generation_;
@@ -2769,19 +2775,19 @@ public:
 
     // Validate NodeId — panics on stale/dangling NodeIds.
     // Use in debug paths to catch post-rollback staleness early.
+    // Issue #273: contract_assert replaces manual abort branches.
     void validate(NodeId id) const {
         if (id != NULL_NODE) [[likely]] {
-            if (id >= tag_.size())
-                std::abort(); // NodeId out of bounds
-            if (id >= node_gen_.size())
-                std::abort(); // NodeId generation array too small
-            if (node_gen_[id] != generation_)
-                std::abort(); // NodeId stale: generation mismatch (was rollback?)
+            contract_assert(id < tag_.size());
+            contract_assert(id < node_gen_.size());
+            contract_assert(node_gen_[id] == generation_);
         }
     }
 
     // Safe get — returns nullopt on stale/invalid NodeId.
-    std::optional<NodeView> get_safe(NodeId id) const {
+    std::optional<NodeView> get_safe(const NodeId id) const
+        post(r: !r.has_value() || (id < tag_.size() && id < node_gen_.size() &&
+                                   node_gen_[id] == generation_)) {
         if (!is_valid(id))
             return std::nullopt;
         return get(id);
@@ -2816,7 +2822,10 @@ public:
     // The ref's gen is compared to the FlatAST's current gen; if
     // they differ, the ref is stale (a structural mutation
     // happened in between).
-    [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept {
+    [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept
+        post(r: r == (ref.id != NULL_NODE && ref.id < tag_.size() &&
+                      ref.id < node_gen_.size() && node_gen_[ref.id] == ref.gen &&
+                      ref.gen == generation_)) {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
         bool ok = ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
@@ -2831,7 +2840,8 @@ public:
         }
         return ok;
     }
-    [[nodiscard]] std::optional<NodeView> get_safe(const StableNodeRef& ref) const noexcept {
+    [[nodiscard]] std::optional<NodeView> get_safe(const StableNodeRef& ref) const noexcept
+        post(r: !r.has_value() || is_valid(ref)) {
         if (!is_valid(ref))
             return std::nullopt;
         return get(ref.id);
@@ -2844,7 +2854,7 @@ public:
     // workspace. Also exposed publicly for the mutation
     // primitives to call after a non-SoA-mutating structural
     // change (e.g., a workspace-level COW swap).
-    void bump_generation() noexcept {
+    void bump_generation() noexcept post(generation_ != 0) {
         if (bump_generation_suppressed_) {
             // Issue #250: inside an atomic batch, individual
             // structural mutations (set_child / insert_child /
@@ -3002,7 +3012,7 @@ public:
         return true;
     }
 
-    bool rollback(std::uint64_t mutation_id) {
+    bool rollback(std::uint64_t mutation_id) pre(mutation_id != 0) {
         for (auto& rec : mutation_log_) {
             if (rec.mutation_id == mutation_id) {
                 if (rec.status != MutationStatus::Committed)
