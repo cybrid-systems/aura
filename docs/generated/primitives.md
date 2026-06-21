@@ -114,11 +114,11 @@ Runtime canonical list: `(api-reference)`.
 
 ## Synthesize: (5)
 
-- `synthesize:define` — `src/compiler/evaluator_impl.cpp`
-- `synthesize:fill` — `src/compiler/evaluator_impl.cpp`
-- `synthesize:list-templates` — `src/compiler/evaluator_impl.cpp`
-- `synthesize:optimize` — `src/compiler/evaluator_impl.cpp`
-- `synthesize:register-template` — `src/compiler/evaluator_impl.cpp`
+- `synthesize:define` — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:fill` — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:list-templates` — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:optimize` — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:register-template` — `src/compiler/evaluator_primitives_agent.cpp`
 
 ## Compile: (19)
 
@@ -167,13 +167,13 @@ Runtime canonical list: `(api-reference)`.
 - `asin` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` — `src/compiler/evaluator_impl.cpp`
 - `atan` — `src/compiler/evaluator_primitives_math.cpp`
-- `auto-evolve-cycle-count` — `src/compiler/evaluator_impl.cpp`
-- `auto-evolve-loop` — `src/compiler/evaluator_impl.cpp`
-- `auto-evolve-once` — `src/compiler/evaluator_impl.cpp`
-- `auto-evolve-running?` — `src/compiler/evaluator_impl.cpp`
-- `auto-evolve-stop` — `src/compiler/evaluator_impl.cpp`
-- `auto-evolve-tick` — `src/compiler/evaluator_impl.cpp`
-- `auto-evolve-total-fixed` — `src/compiler/evaluator_impl.cpp`
+- `auto-evolve-cycle-count` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-loop` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-once` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-running?` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-stop` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-tick` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-total-fixed` — `src/compiler/evaluator_primitives_agent.cpp`
 - `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_observability.cpp`
 - `boolean?` — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -217,7 +217,7 @@ Runtime canonical list: `(api-reference)`.
 - `current-time` — `src/compiler/evaluator_impl.cpp`
 - `declare-type` — `src/compiler/evaluator_impl.cpp`
 - `define-linear` — `src/compiler/evaluator_primitives_math.cpp`
-- `define-strategy` — `src/compiler/evaluator_impl.cpp`
+- `define-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
 - `diagnose` — `src/compiler/evaluator_impl.cpp`
 - `directory-list` — `src/compiler/evaluator_impl.cpp`
 - `display` — `src/compiler/evaluator_impl.cpp`
@@ -228,7 +228,7 @@ Runtime canonical list: `(api-reference)`.
 - `error?` — `src/compiler/evaluator_impl.cpp`
 - `eval` — `src/compiler/evaluator_impl.cpp`
 - `eval-expr` — `src/compiler/evaluator_impl.cpp`
-- `evolve-strategy` — `src/compiler/evaluator_impl.cpp`
+- `evolve-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
 - `exp` — `src/compiler/evaluator_primitives_math.cpp`
 - `file-copy` — `src/compiler/evaluator_impl.cpp`
 - `file-delete` — `src/compiler/evaluator_impl.cpp`
@@ -276,9 +276,9 @@ Runtime canonical list: `(api-reference)`.
 - `inexact->exact` — `src/compiler/evaluator_primitives_math.cpp`
 - `integer->char` — `src/compiler/evaluator_impl.cpp`
 - `integer?` — `src/compiler/evaluator_primitives_core.cpp`
-- `intend` — `src/compiler/evaluator_impl.cpp`
-- `intend-analytics` — `src/compiler/evaluator_impl.cpp`
-- `intend-history` — `src/compiler/evaluator_impl.cpp`
+- `intend` — `src/compiler/evaluator_primitives_agent.cpp`
+- `intend-analytics` — `src/compiler/evaluator_primitives_agent.cpp`
+- `intend-history` — `src/compiler/evaluator_primitives_agent.cpp`
 - `json-encode` — `src/compiler/evaluator_primitives_json.cpp`
 - `json-get-string` — `src/compiler/evaluator_primitives_json.cpp`
 - `json-parse` — `src/compiler/evaluator_primitives_json.cpp`
@@ -340,7 +340,7 @@ Runtime canonical list: `(api-reference)`.
 - `regex-match?` — `src/compiler/evaluator_primitives_math.cpp`
 - `regex-replace` — `src/compiler/evaluator_primitives_math.cpp`
 - `regex-split` — `src/compiler/evaluator_primitives_math.cpp`
-- `register-strategy!` — `src/compiler/evaluator_impl.cpp`
+- `register-strategy!` — `src/compiler/evaluator_primitives_agent.cpp`
 - `remainder` — `src/compiler/evaluator_primitives_math.cpp`
 - `reply` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `reverse` — `src/compiler/evaluator_primitives_list.cpp`
@@ -356,9 +356,9 @@ Runtime canonical list: `(api-reference)`.
 - `shell` — `src/compiler/evaluator_impl.cpp`
 - `sin` — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
-- `strategy-field` — `src/compiler/evaluator_impl.cpp`
-- `strategy-inspect` — `src/compiler/evaluator_impl.cpp`
-- `strategy-set-field!` — `src/compiler/evaluator_impl.cpp`
+- `strategy-field` — `src/compiler/evaluator_primitives_agent.cpp`
+- `strategy-inspect` — `src/compiler/evaluator_primitives_agent.cpp`
+- `strategy-set-field!` — `src/compiler/evaluator_primitives_agent.cpp`
 - `string->list` — `src/compiler/evaluator_impl.cpp`
 - `string->number` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-append` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -401,7 +401,7 @@ Runtime canonical list: `(api-reference)`.
 - `void?` — `src/compiler/evaluator_primitives_core.cpp`
 - `while` — `src/compiler/evaluator_impl.cpp`
 - `with-capability` — `src/compiler/evaluator_impl.cpp`
-- `workspace-state` — `src/compiler/evaluator_impl.cpp`
+- `workspace-state` — `src/compiler/evaluator_primitives_agent.cpp`
 - `write` — `src/compiler/evaluator_impl.cpp`
 - `write-file` — `src/compiler/evaluator_impl.cpp`
 

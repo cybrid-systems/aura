@@ -430,6 +430,10 @@ void register_jit_arena_primitives(std::function<void(std::string, PrimFn)> add,
 void register_messaging_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_git_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_network_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_auto_evolve_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_synthesize_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+                                    std::function<void()> destroy_defuse_index);
+void register_strategy_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 }
 
 // Workspace layering (P13) — shared by evaluator_impl + workspace primitives TU.
@@ -489,6 +493,13 @@ export class Evaluator {
     friend void primitives_detail::register_git_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_network_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_auto_evolve_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_synthesize_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+        std::function<void()> destroy_defuse_index);
+    friend void primitives_detail::register_strategy_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 
 public:
