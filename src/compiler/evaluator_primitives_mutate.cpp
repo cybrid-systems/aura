@@ -23,6 +23,7 @@ import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.parser.parser;
 import aura.diag;
+import aura.compiler.hardware_backend;
 
 namespace aura::compiler::primitives_detail {
 
@@ -158,9 +159,13 @@ void register_mutate_primitives(
             : (void)0; // safe point before mutation
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2])) {
             ok = false;
-            return ev.make_merr("bad-arg", "usage: (mutate:replace-value node-id new-value summary)");
+            return ev.make_merr("bad-arg",
+                                 "usage: (mutate:replace-value node-id new-value summary [ppa-hint])");
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        std::uint8_t ppa_hint = 0;
+        if (a.size() >= 4 && is_int(a[3]))
+            ppa_hint = aura::compiler::hardware::parse_ppa_hint(as_int(a[3]));
         auto sum_idx = as_string_idx(a[2]);
         if (sum_idx >= ev.string_heap_.size()) {
             ok = false;
@@ -193,7 +198,11 @@ void register_mutate_primitives(
                     aura::ast::MutationStatus::Committed, 0, old_val,
                     static_cast<std::uint64_t>(new_val), true);
                 flat.set_int(node, new_val);
-                ev.workspace_flat_->mark_dirty_upward(node);
+                ev.workspace_flat_->mark_dirty_upward(node, aura::ast::FlatAST::kGeneralDirty,
+                                                      ppa_hint);
+                if (ppa_hint != 0)
+                    aura::compiler::hardware::on_structural_mutation(
+                        node, aura::ast::FlatAST::kGeneralDirty, ppa_hint);
                 return make_int(static_cast<std::int64_t>(mid));
             }
             case aura::ast::NodeTag::LiteralFloat: {
@@ -213,7 +222,11 @@ void register_mutate_primitives(
                     static_cast<std::uint32_t>(aura::ast::MutationSoAField::FloatVal), old_bits,
                     new_bits, true);
                 flat.set_float(node, new_val);
-                ev.workspace_flat_->mark_dirty_upward(node);
+                ev.workspace_flat_->mark_dirty_upward(node, aura::ast::FlatAST::kGeneralDirty,
+                                                      ppa_hint);
+                if (ppa_hint != 0)
+                    aura::compiler::hardware::on_structural_mutation(
+                        node, aura::ast::FlatAST::kGeneralDirty, ppa_hint);
                 return make_int(static_cast<std::int64_t>(mid));
             }
             case aura::ast::NodeTag::Variable:
@@ -237,7 +250,11 @@ void register_mutate_primitives(
                     static_cast<std::uint32_t>(aura::ast::MutationSoAField::SymId), old_val,
                     new_sym, true);
                 flat.set_sym(node, new_sym);
-                ev.workspace_flat_->mark_dirty_upward(node);
+                ev.workspace_flat_->mark_dirty_upward(node, aura::ast::FlatAST::kGeneralDirty,
+                                                      ppa_hint);
+                if (ppa_hint != 0)
+                    aura::compiler::hardware::on_structural_mutation(
+                        node, aura::ast::FlatAST::kGeneralDirty, ppa_hint);
                 return make_int(static_cast<std::int64_t>(mid));
             }
             default:
@@ -313,15 +330,22 @@ void register_mutate_primitives(
                 return mev("bad-arg", "template string index out of range");
             std::string repl_template = ev.string_heap_[template_idx];
 
-            // The arg just before the template is optionally a summary.
+            // Optional [ppa-hint] and [summary] before the template.
             std::size_t pred_end = a.size() - 1;
             std::string summary = "query-and-replace";
+            std::uint8_t ppa_hint = 0;
             if (a.size() >= 3 && is_string(a[a.size() - 2])) {
                 auto sidx = as_string_idx(a[a.size() - 2]);
                 if (sidx < ev.string_heap_.size()) {
                     summary = ev.string_heap_[sidx];
                     pred_end = a.size() - 2;
+                    if (a.size() >= 4 && is_int(a[a.size() - 3]))
+                        ppa_hint =
+                            aura::compiler::hardware::parse_ppa_hint(as_int(a[a.size() - 3]));
                 }
+            } else if (a.size() >= 3 && is_int(a[a.size() - 2])) {
+                ppa_hint = aura::compiler::hardware::parse_ppa_hint(as_int(a[a.size() - 2]));
+                pred_end = a.size() - 2;
             }
 
             struct Predicate {
@@ -612,7 +636,12 @@ void register_mutate_primitives(
             // instead of destroying the index and marking all defines.
             const auto structural_reasons = aura::ast::FlatAST::kGeneralDirty |
                                             aura::ast::FlatAST::kStructDirty;
-            flat.mark_dirty_defuse_entries(replaced_roots, structural_reasons);
+            flat.mark_dirty_defuse_entries(replaced_roots, structural_reasons, ppa_hint);
+            if (ppa_hint != 0) {
+                for (auto root : replaced_roots)
+                    aura::compiler::hardware::on_structural_mutation(root, structural_reasons,
+                                                                   ppa_hint);
+            }
 
             std::unordered_set<std::string> affected_names;
             auto collect_def_syms = [&](aura::ast::NodeId id, auto& self) -> void {

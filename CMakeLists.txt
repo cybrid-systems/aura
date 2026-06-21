@@ -90,6 +90,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
                             # binary's lowering.ixx import resolves.
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
+    src/compiler/hardware_backend.ixx
     src/compiler/arity.ixx
     src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
@@ -120,6 +121,7 @@ target_sources(aura PRIVATE
     src/compiler/ir_executor_impl.cpp
     src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
+    src/compiler/hardware_backend_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
     src/compiler/type_checker_impl.cpp
@@ -263,6 +265,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
                             # test_ir too since it compiles lowering.ixx.
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
+    src/compiler/hardware_backend.ixx
     src/compiler/arity.ixx
     src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
@@ -298,6 +301,7 @@ target_sources(test_ir PRIVATE
     src/compiler/ir_executor_impl.cpp
     src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
+    src/compiler/hardware_backend_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
     src/compiler/spec_jit_controller.cpp
@@ -410,6 +414,7 @@ add_library(aura_test_objects STATIC
     src/compiler/ir_executor_impl.cpp
     src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
+    src/compiler/hardware_backend_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
     src/compiler/spec_jit_controller.cpp
@@ -442,6 +447,7 @@ target_sources(aura_test_objects PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/lowering.ixx
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
+    src/compiler/hardware_backend.ixx
     src/compiler/arity.ixx
     src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
@@ -541,6 +547,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/compiler/ir_executor_impl.cpp
     src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
+    src/compiler/hardware_backend_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
     src/compiler/spec_jit_controller.cpp
@@ -782,6 +789,7 @@ target_sources(issue_212_bench PRIVATE
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
     src/compiler/compute_kind_impl.cpp
+    src/compiler/hardware_backend_impl.cpp
     tests/_stubs/issue_212_runtime_stubs.cpp)
 # Match aura_test_objects's compile flags so the prebuilt BMIs
 # in module_cache/aura_test_objects.dir/ (produced by the .ixx
@@ -934,6 +942,8 @@ aura_add_issue_test_standalone(test_issue_274)
 aura_add_issue_test_standalone(test_issue_275)
 aura_add_issue_test(test_issue_276)
 aura_issue_test_link_llvm_jit(test_issue_276)
+aura_add_issue_test(test_issue_277)
+aura_issue_test_link_llvm_jit(test_issue_277)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
 target_sources(test_issue_264 PRIVATE
     src/serve/fiber.cpp

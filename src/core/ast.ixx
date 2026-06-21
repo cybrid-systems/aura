@@ -517,6 +517,8 @@ private:
         marker_[id] = m;
         type_id_[id] = 0;
         dirty_[id] = 0;
+        if (id < ppa_dirty_.size())
+            ppa_dirty_[id] = 0;
         error_kind_[id] = 0;
         if (id < value_cache_.size())
             value_cache_[id] = kNotCached;
@@ -573,6 +575,7 @@ private:
         marker_.push_back(m);
         type_id_.push_back(0);
         dirty_.push_back(0);
+        ppa_dirty_.push_back(0);
         // Issue #79: per-node error kind (0 = no error, non-zero = ErrorKind).
         // Populated by the type-checker and runtime evaluator; queryable via
         // the AuraQuery `(has-error? N)` clause.
@@ -651,6 +654,9 @@ private:
     // Type information (L6.5+): type_id per node, 0 = DYNAMIC
     std::pmr::vector<SyntaxMarker> marker_;
     std::pmr::vector<std::uint8_t> dirty_;
+    // Issue #277: per-node PPA dirty bitmask (orthogonal to DirtyReason
+    // which is full at 8 bits). OR'd with kPpaHintDirty on dirty_ when set.
+    std::pmr::vector<std::uint8_t> ppa_dirty_;
     std::pmr::vector<std::uint32_t> type_id_;
     // Issue #79: per-node error kind, 0 = no error, non-zero = ErrorKind
     // enum value. Populated by the type-checker and runtime evaluator;
@@ -1771,6 +1777,7 @@ public:
         std::pmr::vector<std::uint32_t> new_col(alloc);
         std::pmr::vector<SyntaxMarker> new_marker(alloc);
         std::pmr::vector<std::uint8_t> new_dirty(alloc);
+        std::pmr::vector<std::uint8_t> new_ppa_dirty(alloc);
         std::pmr::vector<std::uint32_t> new_type_id(alloc);
         std::pmr::vector<std::uint8_t> new_error_kind(alloc);
         std::pmr::vector<std::uint32_t> new_node_first_mutation(alloc);
@@ -1790,6 +1797,7 @@ public:
         new_col.reserve(live_count);
         new_marker.reserve(live_count);
         new_dirty.reserve(live_count);
+        new_ppa_dirty.reserve(live_count);
         new_type_id.reserve(live_count);
         new_error_kind.reserve(live_count);
         new_node_first_mutation.reserve(live_count);
@@ -1818,6 +1826,10 @@ public:
             new_col.push_back(col_[id]);
             new_marker.push_back(marker_[id]);
             new_dirty.push_back(dirty_[id]);
+            if (id < ppa_dirty_.size())
+                new_ppa_dirty.push_back(ppa_dirty_[id]);
+            else
+                new_ppa_dirty.push_back(0);
             new_type_id.push_back(type_id_[id]);
             new_error_kind.push_back(error_kind_[id]);
             new_node_first_mutation.push_back(node_first_mutation_[id]);
@@ -1841,6 +1853,7 @@ public:
         col_ = std::move(new_col);
         marker_ = std::move(new_marker);
         dirty_ = std::move(new_dirty);
+        ppa_dirty_ = std::move(new_ppa_dirty);
         type_id_ = std::move(new_type_id);
         error_kind_ = std::move(new_error_kind);
         node_first_mutation_ = std::move(new_node_first_mutation);
@@ -1922,6 +1935,7 @@ public:
         col_.clear();
         marker_.clear();
         dirty_.clear();
+        ppa_dirty_.clear();
         type_id_.clear();
         mutation_log_.clear();
         node_first_mutation_.clear();
@@ -2183,6 +2197,8 @@ public:
         wire_write_map_u32_u8(buf, region_by_lambda_id_);
         buf.insert(buf.end(), reinterpret_cast<const char*>(&root),
                    reinterpret_cast<const char*>(&root) + 4);
+        // Issue #277: optional v2 extension — PPA dirty column.
+        write_column(ppa_dirty_);
     }
 
     // Static (no instance needed). Returns a freshly-constructed
@@ -2293,6 +2309,10 @@ public:
             wire_read_map_u32_u8(buf, pos, ast.region_by_lambda_id_);
             std::memcpy(&ast.root, &buf[pos], 4);
             pos += 4;
+            // Issue #277: backward-compatible optional PPA dirty column.
+            if (pos + 4 <= buf.size()) {
+                read_column(ast.ppa_dirty_);
+            }
         }
         return ast;
     }
@@ -2341,6 +2361,28 @@ public:
         kPpaHintDirty = 0x80,    // PPA-hint metadata needs refresh
     };
 
+    // Issue #277: PPA-specific dirty bits stored in the orthogonal
+    // ppa_dirty_ column (DirtyReason uint8_t is full). Setting any
+    // PPA bit also ORs kPpaHintDirty on dirty_ for backward-compat
+    // with dirty:counts "ppa-hint" aggregation.
+    enum PpaDirtyReason : std::uint8_t {
+        kTimingDirty = 0x01,  // timing closure stale
+        kPowerDirty = 0x02,   // power estimate stale
+        kAreaDirty = 0x04,    // area estimate stale
+        kBackendHint = 0x08,  // Verilog/HW backend should re-emit
+    };
+
+    // Issue #277: OR PPA bits into ppa_dirty_ and mirror kPpaHintDirty
+    // on dirty_ so legacy dirty:counts aggregation stays accurate.
+    void apply_ppa_dirty_bits(NodeId id, std::uint8_t ppa_reasons) {
+        if (ppa_reasons == 0)
+            return;
+        if (id >= ppa_dirty_.size())
+            ppa_dirty_.resize(id + 1, 0);
+        ppa_dirty_[id] |= ppa_reasons;
+        mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty | kPpaHintDirty));
+    }
+
     // Issue #188: mark a node dirty for one or more specific reasons.
     // The `kGeneralDirty` bit is set automatically so existing
     // is_dirty() callers still see "this node needs work".
@@ -2350,12 +2392,14 @@ public:
         dirty_[id] |= reasons;
         clear_cached_value(id); // invalidate result cache
     }
-    void mark_subtree_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) {
+    void mark_subtree_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty,
+                            std::uint8_t ppa_reasons = 0) {
         mark_dirty(id, reasons);
+        apply_ppa_dirty_bits(id, ppa_reasons);
         auto v = get(id);
         for (auto c : v.children) {
             if (c != NULL_NODE)
-                mark_subtree_dirty(c, reasons);
+                mark_subtree_dirty(c, reasons, ppa_reasons);
         }
     }
     // Issue #188: backward-compatible single-bit semantics — true if
@@ -2388,6 +2432,27 @@ public:
     // accessor call.
     [[nodiscard]] const std::pmr::vector<std::uint8_t>& dirty_column() const noexcept {
         return dirty_;
+    }
+    // Issue #277: PPA dirty accessors (orthogonal column).
+    void mark_ppa_dirty(NodeId id, std::uint8_t ppa_reasons) {
+        apply_ppa_dirty_bits(id, ppa_reasons);
+    }
+    bool is_ppa_dirty_for(NodeId id, std::uint8_t ppa_mask) const {
+        return id < ppa_dirty_.size() && (ppa_dirty_[id] & ppa_mask) != 0;
+    }
+    std::uint8_t ppa_dirty_reasons(NodeId id) const {
+        return id < ppa_dirty_.size() ? ppa_dirty_[id] : 0;
+    }
+    void clear_ppa_dirty(NodeId id) {
+        if (id < ppa_dirty_.size())
+            ppa_dirty_[id] = 0;
+    }
+    void clear_ppa_dirty_for(NodeId id, std::uint8_t ppa_mask) {
+        if (id < ppa_dirty_.size())
+            ppa_dirty_[id] &= static_cast<std::uint8_t>(~ppa_mask);
+    }
+    [[nodiscard]] const std::pmr::vector<std::uint8_t>& ppa_dirty_column() const noexcept {
+        return ppa_dirty_;
     }
     // Issue #190: read-only view of the marker column for
     // observability/aggregation. Used by the (syntax-marker-counts)
@@ -2465,7 +2530,8 @@ public:
     // from the leaf to all ancestors. Default is kGeneralDirty for
     // backward compatibility with the 30+ callers that don't yet
     // classify their mutations.
-    void mark_dirty_upward(const NodeId id, std::uint8_t reasons = kGeneralDirty)
+    void mark_dirty_upward(const NodeId id, std::uint8_t reasons = kGeneralDirty,
+                           std::uint8_t ppa_reasons = 0)
         // Issue #273: node must be in-bounds; NULL_NODE would resize dirty_ to ~4G.
         pre(id < tag_.size()) {
         // Issue #256: bump the call counter + track total nodes
@@ -2481,6 +2547,7 @@ public:
             auto nid = queue.front();
             queue.pop_front();
             mark_dirty(nid, reasons);
+            apply_ppa_dirty_bits(nid, ppa_reasons);
             ++touched;
             auto p = parent_[nid];
             if (p != NULL_NODE)
@@ -2492,12 +2559,14 @@ public:
     // Issue #262: propagate dirty upward but stop at `stop_at` (exclusive).
     // Marks `id` and ancestors until (but not including) `stop_at`.
     // If `stop_at` is NULL_NODE, behaves like mark_dirty_upward.
-    void mark_dirty_upward_until(NodeId id, std::uint8_t reasons, NodeId stop_at) {
+    void mark_dirty_upward_until(NodeId id, std::uint8_t reasons, NodeId stop_at,
+                                 std::uint8_t ppa_reasons = 0) {
         mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
         std::uint64_t touched = 0;
         auto cur = id;
         while (cur != NULL_NODE && cur != stop_at) {
             mark_dirty(cur, reasons);
+            apply_ppa_dirty_bits(cur, ppa_reasons);
             ++touched;
             cur = parent_[cur];
         }
@@ -2507,11 +2576,12 @@ public:
     // Issue #262: mark def-use entry nodes and propagate the combined
     // reason mask (including kDefUseDirty) upward through ancestors.
     // Used when a mutation affects a known set of caller/use sites.
-    void mark_dirty_defuse_entries(std::span<const NodeId> entries, std::uint8_t reasons) {
+    void mark_dirty_defuse_entries(std::span<const NodeId> entries, std::uint8_t reasons,
+                                   std::uint8_t ppa_reasons = 0) {
         auto combined = static_cast<std::uint8_t>(reasons | kDefUseDirty);
         for (auto entry : entries) {
             if (entry < size())
-                mark_dirty_upward(entry, combined);
+                mark_dirty_upward(entry, combined, ppa_reasons);
         }
     }
 
@@ -2528,7 +2598,8 @@ public:
     }
 
     void clear_all_dirty() {
-        std::fill(dirty_.begin(), dirty_.end(), false);
+        std::fill(dirty_.begin(), dirty_.end(), 0);
+        std::fill(ppa_dirty_.begin(), ppa_dirty_.end(), 0);
         // DO NOT clear value_cache_ here! The value cache persists across
         // eval-current calls so that non-dirty subtrees keep their cached
         // results. Only mark_dirty() (called on mutation) clears individual
