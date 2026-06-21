@@ -92,7 +92,8 @@
     "test_issue_212",
     "test_issue_213",
     "test_issue_177",
-    "test_issue_213_panic_fiber"
+    "test_issue_213_panic_fiber",
+    "test_issue_264"
   ],
   "jit_contract": [
     "test_issue_144",

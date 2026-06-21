@@ -1704,6 +1704,14 @@ private:
     // same fiber's worker thread). Issue #184 Cycle 3 may promote
     // this to atomic if cross-fiber resume becomes a thing.
     std::uint64_t defuse_version_at_wait_ = 0;
+    // Issue #264: yield-boundary + compaction observability.
+    std::atomic<std::uint64_t> mutation_yield_count_{0};
+    std::atomic<std::uint64_t> compaction_paused_by_boundary_{0};
+    std::atomic<std::uint64_t> cross_fiber_rollback_count_{0};
+    // Set by outermost MutationBoundaryGuard; used by
+    // restore_post_yield_or_rollback to signal rollback on
+    // cross-thread migration during an active boundary.
+    bool* outermost_mutation_success_flag_ = nullptr;
     // (#10) Track mutation-affected symbols for targeted index rebuild
     // Mutation primitives push affected sym names here; ensure_defuse
     // uses them to avoid full rebuild when only a few symbols changed.
@@ -1932,6 +1940,15 @@ public:
         // (so the vector copy doesn't require allocator conversion).
         std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
     };
+    // Issue #264: snapshot taken at fiber yield while a mutation
+    // boundary may be active (per-fiber stack on Fiber).
+    struct YieldBoundaryCheckpoint {
+        std::uint64_t defuse_version = 0;
+        std::size_t boundary_depth = 0;
+        std::size_t mutation_stack_depth = 0;
+        std::thread::id thread_id{};
+        bool had_active_boundary = false;
+    };
     // Per-fiber checkpoint stack. Each Fiber carries its own
     // `mutation_stack_` (added in Issue #213 Cycle 3), so a
     // fiber that migrates between threads brings its stack
@@ -1949,6 +1966,7 @@ public:
     // When no fiber is active, we fall back to a thread-local
     // stack so the main-thread eval path still works.
     static thread_local std::vector<MutationCheckpoint> g_main_thread_stack;
+    static thread_local std::vector<YieldBoundaryCheckpoint> g_main_thread_yield_checkpoints;
 
     // Current fiber on this thread. Set by the scheduler
     // before resume(); cleared after the fiber yields. nullptr
@@ -2103,6 +2121,25 @@ public:
     // happens at the unique_lock layer.
     static int* mutation_boundary_depth_slot(Evaluator* ev);
 
+    // Issue #264: yield-boundary checkpoint handshake (per-fiber
+    // stack, stored on Fiber like mutation_stack_storage_).
+    void checkpoint_yield_boundary(bool at_mutation_boundary_yield);
+    bool restore_post_yield_or_rollback();
+    [[nodiscard]] bool any_active_mutation_boundary() const noexcept;
+    [[nodiscard]] std::uint64_t mutation_yield_count() const noexcept {
+        return mutation_yield_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t compaction_paused_by_boundary() const noexcept {
+        return compaction_paused_by_boundary_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t cross_fiber_rollback_count() const noexcept {
+        return cross_fiber_rollback_count_.load(std::memory_order_relaxed);
+    }
+    std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack();
+    static std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack_static();
+    void bind_yield_hook_evaluator();
+    void unbind_yield_hook_evaluator();
+
     // Issue #189: reader-side version snapshot API. Fibers /
     // JIT-compiled code / closure dispatch that need to detect
     // concurrent mutations capture a snapshot via
@@ -2252,8 +2289,11 @@ public:
             int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
             int prev = ++(*slot);
             bool outermost = (prev == 1);
-            if (outermost)
+            if (outermost) {
                 lock_.lock();
+                ev_->outermost_mutation_success_flag_ = flag_;
+                ev_->bind_yield_hook_evaluator();
+            }
             ev_->enter_mutation_boundary();
             // Issue #241: capture panic checkpoint at the OUTERMOST
             // guard only (nested guards share the outer checkpoint).
@@ -2280,8 +2320,11 @@ public:
             int prev = (*slot)--;
             bool outermost = (prev == 1);
             ev_->exit_mutation_boundary(success);
-            if (outermost)
+            if (outermost) {
                 lock_.unlock();
+                ev_->outermost_mutation_success_flag_ = nullptr;
+                ev_->unbind_yield_hook_evaluator();
+            }
             // Issue #241: panic-checkpoint commit / restore.
             // Only the outermost guard owns the checkpoint;
             // nested guards (which can't fail independently

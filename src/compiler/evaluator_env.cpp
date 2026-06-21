@@ -547,7 +547,12 @@ bool Evaluator::is_env_frame_stale(EnvId id) const {
 std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(EnvId start,
                                                                  aura::ast::SymId s) const {
     std::optional<types::EvalValue> result;
+    const auto version_snap = defuse_version_.load(std::memory_order_acquire);
     walk_env_frames(start, [&](EnvId, const EnvFrame& fr) {
+        // Issue #264: skip frames stamped before the current
+        // mutation epoch (stale under concurrent mutate/compact).
+        if (fr.version_ < version_snap)
+            return true;
         auto v = fr.lookup_local_by_symid(s);
         if (v.has_value()) {
             auto val = *v;

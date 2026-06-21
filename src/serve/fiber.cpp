@@ -23,6 +23,9 @@ thread_local WorkerContext* g_worker_ctx = nullptr;
 // registers at startup. See fiber.h for the rationale.
 void* (*g_fiber_setter_)(void*) = nullptr;
 void (*g_fiber_storage_deleter_)(void*) = nullptr;
+void (*g_fiber_yield_checkpoint_)(uint8_t) = nullptr;
+void (*g_fiber_resume_validate_)() = nullptr;
+void (*g_fiber_yield_checkpoint_deleter_)(void*) = nullptr;
 
 // Issue #195: per-fiber exception state requires a way to
 // query the current fiber's id from the runtime (the JIT
@@ -134,6 +137,12 @@ Fiber::~Fiber() {
         }
         mutation_stack_storage_ = nullptr;
     }
+    if (yield_checkpoint_storage_) {
+        if (g_fiber_storage_deleter_) {
+            g_fiber_yield_checkpoint_deleter_(yield_checkpoint_storage_);
+        }
+        yield_checkpoint_storage_ = nullptr;
+    }
 }
 
 // ── Resume — worker → fiber ───────────────────────────
@@ -167,6 +176,10 @@ void Fiber::resume() {
                      std::strerror(errno));
     }
 
+    // Issue #264: validate yield-boundary checkpoint after resume.
+    if (g_fiber_resume_validate_)
+        g_fiber_resume_validate_();
+
     if (g_fiber_setter_)
         g_fiber_setter_(prev_fiber_void);
     g_current_fiber = prev;
@@ -194,6 +207,9 @@ void Fiber::yield() {
 
     // Mark as explicit yield (safe to steal)
     fb->set_yield_reason(YieldReason::Explicit);
+
+    if (g_fiber_yield_checkpoint_)
+        g_fiber_yield_checkpoint_(static_cast<uint8_t>(YieldReason::Explicit));
 
     // Swap from fiber's context back to worker's loop context
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
@@ -224,6 +240,9 @@ void Fiber::yield(YieldReason reason) {
     if (reason == YieldReason::BlockingIO) {
         fb->set_state(FiberState::Waiting);
     }
+
+    if (g_fiber_yield_checkpoint_)
+        g_fiber_yield_checkpoint_(static_cast<uint8_t>(reason));
 
     // Swap from fiber's context back to worker's loop context
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {

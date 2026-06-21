@@ -327,11 +327,21 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     add("arena:compact", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_)
             return make_int(0);
+        // Issue #264: defer compaction while any fiber holds an
+        // active MutationBoundaryGuard on this evaluator.
+        if (ev.any_active_mutation_boundary()) {
+            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
+            return make_int(0);
+        }
         return make_int(static_cast<std::int64_t>(ev.arena_->compact()));
     });
     add("arena:compact-all", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_group_)
             return make_int(0);
+        if (ev.any_active_mutation_boundary()) {
+            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
+            return make_int(0);
+        }
         return make_int(static_cast<std::int64_t>(ev.arena_group_->auto_compact()));
     });
     add("arena:shrink-to-fit", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
