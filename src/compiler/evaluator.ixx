@@ -451,6 +451,9 @@ void register_misc_primitives(std::function<void(std::string, PrimFn)> add, Eval
 void register_control_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_char_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_mutation_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_list_primitives(std::function<void(std::string, PrimFn)> add,
+                              std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
+                              std::vector<EvalValue>& error_values, Evaluator& ev);
 }
 
 // Workspace layering (P13) — shared by evaluator_impl + workspace primitives TU.
@@ -549,6 +552,10 @@ export class Evaluator {
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_mutation_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_list_primitives(
+        std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
+        std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
+        Evaluator& ev);
 
 public:
     Evaluator();
@@ -1274,6 +1281,9 @@ private:
     void register_all_primitives();
     void install_defuse_subsystem();
     void build_primitive_slots();
+    // Dynamic ADT ctor registration (define-type eval path).
+    void register_adt_ctor(const std::string& ctor_name, types::EvalValue tag_str, int field_count);
+    [[nodiscard]] types::EvalValue make_adt_zero_arg_ctor(types::EvalValue tag_str);
     // Callback passed to primitives_detail::register_* helpers.
     [[nodiscard]] std::function<void(std::string, PrimFn)> prim_registrar() {
         return [this](std::string name, PrimFn fn) {

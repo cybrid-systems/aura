@@ -17,10 +17,6 @@ namespace aura::compiler::primitives_detail {
 using EvalValue = types::EvalValue;
 using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
-using UnaryApplyFn = std::function<EvalValue(const EvalValue& fn, const EvalValue& arg)>;
-using PredApplyFn = std::function<bool(const EvalValue& fn, const EvalValue& arg)>;
-using BinaryApplyFn =
-    std::function<EvalValue(const EvalValue& fn, const EvalValue& acc, const EvalValue& arg)>;
 
 using namespace types;
 
@@ -34,8 +30,58 @@ bool is_end_of_list(const EvalValue& v) {
 
 void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               std::pmr::vector<std::string>& string_heap,
-                              std::vector<EvalValue>& error_values, UnaryApplyFn apply_unary,
-                              PredApplyFn apply_pred, BinaryApplyFn apply_binary) {
+                              std::vector<EvalValue>& error_values, Evaluator& ev) {
+    auto apply_unary = [&ev](const EvalValue& fn, const EvalValue& arg) -> EvalValue {
+        if (is_primitive(fn)) {
+            auto slot = as_primitive_slot(fn);
+            if (slot >= ev.primitives_.slot_count())
+                return make_void();
+            auto prim = ev.primitives_.lookup(ev.primitives_.name_for_slot(slot));
+            if (!prim)
+                return make_void();
+            return (*prim)({arg});
+        }
+        if (is_closure(fn)) {
+            auto cid = as_closure_id(fn);
+            auto result = ev.apply_closure(cid, {arg});
+            return result ? *result : make_void();
+        }
+        return make_void();
+    };
+    auto apply_pred = [&ev](const EvalValue& fn, const EvalValue& arg) -> bool {
+        if (is_primitive(fn)) {
+            auto slot = as_primitive_slot(fn);
+            if (slot >= ev.primitives_.slot_count())
+                return false;
+            auto prim = ev.primitives_.lookup(ev.primitives_.name_for_slot(slot));
+            if (!prim)
+                return false;
+            return aura::compiler::pure::is_truthy((*prim)({arg}));
+        }
+        if (is_closure(fn)) {
+            auto cid = as_closure_id(fn);
+            auto result = ev.apply_closure(cid, {arg});
+            return result ? aura::compiler::pure::is_truthy(*result) : false;
+        }
+        return false;
+    };
+    auto apply_binary = [&ev](const EvalValue& fn, const EvalValue& acc, const EvalValue& arg) -> EvalValue {
+        if (is_primitive(fn)) {
+            auto slot = as_primitive_slot(fn);
+            if (slot >= ev.primitives_.slot_count())
+                return make_void();
+            auto prim = ev.primitives_.lookup(ev.primitives_.name_for_slot(slot));
+            if (!prim)
+                return make_void();
+            return (*prim)({acc, arg});
+        }
+        if (is_closure(fn)) {
+            auto cid = as_closure_id(fn);
+            auto result = ev.apply_closure(cid, {acc, arg});
+            return result ? *result : make_void();
+        }
+        return make_void();
+    };
     add("list", [&pairs](std::span<const EvalValue> a) {
         // Build proper list (pair chain ending with void)
         EvalValue result = make_void();

@@ -36,10 +36,7 @@ void register_json_primitives(std::function<void(std::string, PrimFn)> add,
 void register_list_primitives(
     std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
     std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
-    std::function<EvalValue(const EvalValue& fn, const EvalValue& arg)> apply_unary,
-    std::function<bool(const EvalValue& fn, const EvalValue& arg)> apply_pred,
-    std::function<EvalValue(const EvalValue& fn, const EvalValue& acc, const EvalValue& arg)>
-        apply_binary);
+    Evaluator& ev);
 void register_vector_and_hash_primitives(
     std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
     std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
@@ -130,58 +127,7 @@ void Evaluator::register_all_primitives() {
 
     primitives_detail::register_list_primitives(
         prim_registrar(),
-        pairs_, string_heap_, error_values_,
-        [this](const EvalValue& fn, const EvalValue& arg) -> EvalValue {
-            if (is_primitive(fn)) {
-                auto slot = as_primitive_slot(fn);
-                if (slot >= primitives_.slot_count())
-                    return make_void();
-                auto prim = primitives_.lookup(primitives_.name_for_slot(slot));
-                if (!prim)
-                    return make_void();
-                return (*prim)({arg});
-            }
-            if (is_closure(fn)) {
-                auto cid = as_closure_id(fn);
-                auto result = apply_closure(cid, {arg});
-                return result ? *result : make_void();
-            }
-            return make_void();
-        },
-        [this](const EvalValue& fn, const EvalValue& arg) -> bool {
-            if (is_primitive(fn)) {
-                auto slot = as_primitive_slot(fn);
-                if (slot >= primitives_.slot_count())
-                    return false;
-                auto prim = primitives_.lookup(primitives_.name_for_slot(slot));
-                if (!prim)
-                    return false;
-                return aura::compiler::pure::is_truthy((*prim)({arg}));
-            }
-            if (is_closure(fn)) {
-                auto cid = as_closure_id(fn);
-                auto result = apply_closure(cid, {arg});
-                return result ? aura::compiler::pure::is_truthy(*result) : false;
-            }
-            return false;
-        },
-        [this](const EvalValue& fn, const EvalValue& acc, const EvalValue& arg) -> EvalValue {
-            if (is_primitive(fn)) {
-                auto slot = as_primitive_slot(fn);
-                if (slot >= primitives_.slot_count())
-                    return make_void();
-                auto prim = primitives_.lookup(primitives_.name_for_slot(slot));
-                if (!prim)
-                    return make_void();
-                return (*prim)({acc, arg});
-            }
-            if (is_closure(fn)) {
-                auto cid = as_closure_id(fn);
-                auto result = apply_closure(cid, {acc, arg});
-                return result ? *result : make_void();
-            }
-            return make_void();
-        });
+        pairs_, string_heap_, error_values_, *this);
 
     primitives_detail::register_vector_and_hash_primitives(
         prim_registrar(),

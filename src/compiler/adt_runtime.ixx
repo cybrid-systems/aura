@@ -45,6 +45,13 @@ public:
                              std::vector<void*>* opaque_heap = nullptr,
                              std::array<std::uint64_t, 16>* coverage_counters = nullptr);
 
+    // Register a dynamically-defined multi-arg constructor (from define-type
+    // eval). The PrimFn body is built by the Evaluator module (which owns
+    // pairs_); this method wires it into the primitives table and records
+    // the slot for Env::lookup fallback via find_ctor.
+    void register_dynamic_ctor(RegisterFn add_primitive, const std::string& name, PrimFn body,
+                               int arity, std::size_t slot);
+
     // Lookup a constructor by name (used from Env::lookup etc.).
     std::optional<std::size_t> find_ctor(const std::string& name) const;
 
@@ -53,6 +60,7 @@ public:
 
 private:
     std::unordered_map<std::string, AdtCtorEntry> ctors_;
+    std::unordered_map<std::string, std::size_t> ctor_slots_;
 };
 
 } // namespace aura::compiler

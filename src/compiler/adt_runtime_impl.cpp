@@ -32,29 +32,26 @@ using namespace aura::compiler::types;
 void AdtRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::string>* string_heap,
                                      std::vector<void*>* opaque_heap,
                                      std::array<std::uint64_t, 16>* coverage_counters) {
-    // Skeleton: register a placeholder or the hook for datatype ctors.
-    // Wiring of registration mechanism complete (Step 2.3): Evaluator ctor calls
-    // adt_runtime_.register_primitives with the add-callback (exact FFI pattern).
-    // Parser (parse_datatype) still drives actual ctor population by invoking the
-    // registered adt:* primitive(s); entries end up in the per-instance ctors_ map.
-    // (Full move of population logic into this module is follow-on if needed.)
-
-    // Example stub (will be replaced when wiring the real ctors):
-    // add("datatype", [this, string_heap](std::span<const EvalValue> a) -> EvalValue { ... });
-
+    // Static adt:* primitives (if any) register here. Dynamic define-type
+    // constructors register via register_dynamic_ctor during eval_flat.
     (void)add;
     (void)string_heap;
     (void)opaque_heap;
     (void)coverage_counters;
 }
 
+void AdtRuntime::register_dynamic_ctor(RegisterFn add, const std::string& name, PrimFn body,
+                                       int arity, std::size_t slot) {
+    add(name, std::move(body));
+    ctors_[name] = AdtCtorEntry{.name = name, .arity = arity};
+    ctor_slots_[name] = slot;
+}
+
 std::optional<std::size_t> AdtRuntime::find_ctor(const std::string& name) const {
-    auto it = ctors_.find(name);
-    if (it == ctors_.end())
+    auto it = ctor_slots_.find(name);
+    if (it == ctor_slots_.end())
         return std::nullopt;
-    // Return a slot/index (for now, just presence; real impl will map to primitive slot or closure
-    // id).
-    return 0; // placeholder
+    return it->second;
 }
 
 } // namespace aura::compiler
