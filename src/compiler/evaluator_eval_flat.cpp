@@ -2937,26 +2937,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             }
                         }
                         if (field_count == 0) {
-                            // Zero-arg constructor: bind directly to constructed value
-                            types::EvalValue rest = make_void();
-                            auto cid = static_cast<std::uint64_t>(pairs_.size());
-                            pairs_.push_back({tag_str, rest});
-                            me.bind(ctor_name, make_pair(cid));
+                            me.bind(ctor_name, make_adt_zero_arg_ctor(tag_str));
                         } else {
-                            // Multi-arg constructor: register as primitive
-                            primitives_.add(
-                                ctor_name, [this, tag_str](const auto& args) -> EvalValue {
-                                    types::EvalValue rest = make_void();
-                                    for (auto it = args.rbegin(); it != args.rend(); ++it) {
-                                        auto pid = static_cast<std::uint64_t>(pairs_.size());
-                                        pairs_.push_back({*it, rest});
-                                        rest = make_pair(pid);
-                                    }
-                                    auto pid = static_cast<std::uint64_t>(pairs_.size());
-                                    pairs_.push_back({tag_str, rest});
-                                    return make_pair(pid);
-                                });
-                        } // end else (multi-arg)
+                            register_adt_ctor(ctor_name, tag_str, field_count);
+                        }
                     }
                     return EvalResult(make_void());
                 }

@@ -127,10 +127,7 @@ void register_json_primitives(std::function<void(std::string, PrimFn)> add,
 void register_list_primitives(
     std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
     std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
-    std::function<EvalValue(const EvalValue& fn, const EvalValue& arg)> apply_unary,
-    std::function<bool(const EvalValue& fn, const EvalValue& arg)> apply_pred,
-    std::function<EvalValue(const EvalValue& fn, const EvalValue& acc, const EvalValue& arg)>
-        apply_binary);
+    Evaluator& ev);
 void register_vector_and_hash_primitives(
     std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
     std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
@@ -616,6 +613,31 @@ EvalValue Evaluator::make_merr(const std::string& k, const std::string& m) {
 
 void Evaluator::init_pair_primitives() {
     register_all_primitives();
+}
+
+void Evaluator::register_adt_ctor(const std::string& ctor_name, types::EvalValue tag_str,
+                                  int field_count) {
+    const auto slot = primitives_.slot_count();
+    auto body = [this, tag_str](const auto& args) -> EvalValue {
+        types::EvalValue rest = make_void();
+        for (auto it = args.rbegin(); it != args.rend(); ++it) {
+            auto pid = static_cast<std::uint64_t>(pairs_.size());
+            pairs_.push_back({*it, rest});
+            rest = make_pair(pid);
+        }
+        auto pid = static_cast<std::uint64_t>(pairs_.size());
+        pairs_.push_back({tag_str, rest});
+        return make_pair(pid);
+    };
+    adt_runtime_.register_dynamic_ctor(prim_registrar(), ctor_name, std::move(body), field_count,
+                                       slot);
+}
+
+types::EvalValue Evaluator::make_adt_zero_arg_ctor(types::EvalValue tag_str) {
+    types::EvalValue rest = make_void();
+    auto cid = static_cast<std::uint64_t>(pairs_.size());
+    pairs_.push_back({tag_str, rest});
+    return make_pair(cid);
 }
 
 
