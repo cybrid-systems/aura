@@ -1276,11 +1276,9 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
 // ═══════════════════════════════════════════════════════════
 
 // FlatAST version of analyze_predicate
-struct OccurrenceInfoFlat {
-    std::string var_name;
-    TypeId refined_type;
-    bool is_negation = false;
-};
+// Issue #281: OccurrenceInfoFlat moved to the module interface
+// (type_checker.ixx) so the InferenceEngine's predicate memo
+// can use it as a value type.
 
 static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& flat,
                                                                 const StringPool& pool,
@@ -1454,6 +1452,16 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
         epoch_invalidated_ = true;
         last_inference_epoch_ = cache_epoch_;
         ++epoch_invalidations_;
+        // Issue #281: clear the predicate memo wholesale on
+        // epoch change. The epoch advances when a mutation
+        // happened; we can't tell which cond nodes were
+        // affected, so the safe move is to drop everything.
+        // The next call to synthesize_flat_if will repopulate
+        // the memo on demand.
+        if (!predicate_memo_.empty()) {
+            ++predicate_memo_evictions_;
+            predicate_memo_.clear();
+        }
     }
 
     cs_.clear();
@@ -2430,8 +2438,27 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
     // below.
     last_if_narrowing_ = 0;
 
-    // Occurrence typing: analyze condition for type predicates
-    auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_);
+    // Issue #281: predicate memoization. Check the per-condition
+    // memo before calling analyze_predicate_flat. On hit, we
+    // return the cached OccurrenceInfoFlat without re-walking
+    // the predicate AST (which can be 10-50 instructions deep
+    // for nested and/or/not patterns). On miss, we compute
+    // + cache. On epoch change (handled below in infer_flat),
+    // the whole memo is cleared.
+    std::optional<OccurrenceInfoFlat> occ;
+    {
+        auto memo_it = predicate_memo_.find(cond_id);
+        if (memo_it != predicate_memo_.end() &&
+            memo_it->second.epoch == cache_epoch_) {
+            occ = memo_it->second.result;
+            ++predicate_memo_hits_;
+        } else {
+            ++predicate_memo_misses_;
+            occ = analyze_predicate_flat(flat, pool, cond_id, reg_);
+            predicate_memo_[cond_id] = PredicateMemoEntry{
+                cond_id, cache_epoch_, occ};
+        }
+    }
 
     // Issue #280: capture the narrowing bitmask from the predicate
     // (or from the outermost not-wrapped predicate). Only positive
@@ -3126,6 +3153,10 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
     // The engine is short-lived (per call) so we move-out here
     // to avoid an extra copy.
     result.coercions = engine.take_coercions();
+    // Issue #281: predicate memo stats from this call.
+    result.predicate_memo_hits = engine.predicate_memo_hits();
+    result.predicate_memo_misses = engine.predicate_memo_misses();
+    result.predicate_memo_evictions = engine.predicate_memo_evictions();
     return result;
 }
 

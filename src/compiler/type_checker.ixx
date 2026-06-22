@@ -297,6 +297,16 @@ public:
                                         const std::unordered_set<std::string>& dirty_bindings,
                                         std::vector<OwnershipNote>& notes_out);
 };
+
+// Issue #281: moved to the module interface so the
+// InferenceEngine's predicate memo can use it as a value
+// type. The struct is unchanged from the pre-#281 .cpp
+// declaration (var_name, refined_type, is_negation).
+export struct OccurrenceInfoFlat {
+    std::string var_name;
+    aura::core::TypeId refined_type;
+    bool is_negation = false;
+};
 export class InferenceEngine {
     aura::core::TypeRegistry& reg_;
     aura::diag::DiagnosticCollector& diag_;
@@ -362,6 +372,14 @@ public:
     void set_metrics(void* m) { cs_.set_metrics(m); }
     std::uint64_t epoch_invalidations() const { return epoch_invalidations_; }
 
+    // Issue #281: predicate memoization stats accessors. Test/
+    // observability can read these to verify the memo is doing
+    // useful work (high hit rate = same-condition re-analysis
+    // being skipped).
+    std::uint64_t predicate_memo_hits() const noexcept { return predicate_memo_hits_; }
+    std::uint64_t predicate_memo_misses() const noexcept { return predicate_memo_misses_; }
+    std::uint64_t predicate_memo_evictions() const noexcept { return predicate_memo_evictions_; }
+
     // Issue #280: capture narrowing evidence from the most
     // recent IfExpr synthesize. Bitmask values are defined
     // below (kNarrowString = 1 << 1, kNarrowNumber = 1 << 2,
@@ -423,6 +441,29 @@ public:
     // even if is_dirty is false). Reset by the next call to
     // infer_flat that sees the same epoch.
     bool epoch_invalidated_ = false;
+
+    // Issue #281: per-condition memoization for analyze_predicate_flat.
+    // Keyed by cond NodeId + the epoch at which the predicate was
+    // analyzed. On lookup, if the stored epoch matches cache_epoch_
+    // we return the cached OccurrenceInfoFlat without re-walking
+    // the predicate AST. This is the predicate-specific
+    // counterpart to the coarse epoch gate above (which
+    // invalidates the *whole* type cache on epoch change).
+    //
+    // When the epoch advances (#168 path), we clear the memo
+    // wholesale. We don't try to be smarter than the global
+    // dirty mechanism: that's #262's job. We just want to skip
+    // redundant work for the common case where the same
+    // (string? x) predicate is analyzed N times in a row.
+    struct PredicateMemoEntry {
+        aura::ast::NodeId cond_id{};
+        std::uint64_t epoch = 0;
+        std::optional<OccurrenceInfoFlat> result; // nullopt = no narrowing found
+    };
+    std::unordered_map<aura::ast::NodeId, PredicateMemoEntry> predicate_memo_;
+    std::uint64_t predicate_memo_hits_ = 0;
+    std::uint64_t predicate_memo_misses_ = 0;
+    std::uint64_t predicate_memo_evictions_ = 0; // cleared on epoch change
 
     // Issue #116: defer CoercionNode insertion to a separate
     // explicit pass. The type checker no longer mutates the
@@ -543,6 +584,13 @@ export struct TypeCheckResult {
     // 0 = no narrowing applied (no predicate found, or the
     //     predicate wasn't recognized).
     std::uint32_t narrow_evidence = 0;
+
+    // Issue #281: predicate memo stats. Mirrors the
+    // InferenceEngine's internal counters, copied into the
+    // result for the caller. hit_rate ≈ hits / (hits + misses).
+    std::uint64_t predicate_memo_hits = 0;
+    std::uint64_t predicate_memo_misses = 0;
+    std::uint64_t predicate_memo_evictions = 0;
 };
 
 // Pure: type-check a FlatAST subtree and return the inferred
