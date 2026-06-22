@@ -1310,8 +1310,18 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
         // Check for (and p1 p2) — combine predicates for the same variable
         if (fn_name == "and") {
             std::optional<OccurrenceInfoFlat> result;
+            // Issue #281 follow-up #2: track the OR-combined bitmask
+            // across all branch predicates. Each branch may have
+            // its own narrowing; the AND of the predicates implies
+            // all of them hold in the then-branch, so we OR the
+            // bits (any predicate being true is a sufficient
+            // narrowing signal). The refined_type is still
+            // intersected via the conservative LUB rules.
+            std::uint32_t combined_evidence = 0;
             for (std::size_t i = 1; i < cond.children.size(); i++) {
                 auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg);
+                if (auto bit = compute_narrowing_evidence(flat, pool, cond.child(i), reg))
+                    combined_evidence |= *bit;
                 if (inner) {
                     if (!result) {
                         result = inner;
@@ -2517,6 +2527,16 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             occ = analyze_predicate_flat(flat, pool, cond_id, reg_);
             predicate_memo_[cond_id] = PredicateMemoEntry{
                 cond_id, cache_epoch_, occ};
+            // Issue #281 follow-up #5: bound the memo. When
+            // the size exceeds the threshold, evict the
+            // entire map and let the next call repopulate.
+            // Wholesale eviction is cheaper than LRU
+            // (no extra bookkeeping) and the memo is hot for
+            // the current epoch anyway.
+            if (predicate_memo_.size() > PREDICATE_MEMO_MAX_ENTRIES) {
+                ++predicate_memo_evictions_;
+                predicate_memo_.clear();
+            }
         }
     }
 
@@ -2541,8 +2561,13 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             auto fn = flat.get(fn_id);
             if (fn.tag == NodeTag::Variable) {
                 std::string fname(pool.resolve(fn.sym_id));
-                if (fname == "or") {
-                    // OR: combine bits across all branch predicates.
+                if (fname == "or" || fname == "and") {
+                    // OR / AND: combine bits across all branch
+                    // predicates. The conservative LUB rules
+                    // (#279) pick the refined_type; the bitmask
+                    // records the union of evidence (any branch
+                    // predicate is a sufficient narrowing signal
+                    // for the then-branch to see the refinement).
                     std::uint32_t combined = 0;
                     for (std::size_t i = 1; i < cond.children.size(); ++i) {
                         if (auto ev_bit = compute_narrowing_evidence(
@@ -2996,6 +3021,49 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             // permitted). This mirrors the original-type
             // default of `Owned` for unknown vars.
             ownership_env_.mark(occ->var_name, OwnershipState::Owned);
+            // Issue #283 follow-up #3: also capture provenance
+            // in check-mode. This mirrors the synthesize_flat_if
+            // capture so (query:provenance-of var) works
+            // whether the workspace was last typechecked via
+            // synthesize or check. The capture_epoch is the
+            // current inference engine's epoch.
+            {
+                std::string refined_str;
+                if (occ->refined_type.index != 0) {
+                    auto n = reg_.name_of(occ->refined_type);
+                    if (!n.empty()) refined_str = std::string(n);
+                }
+                std::string pred_src = "(...)";
+                if (cond_id < flat.size()) {
+                    auto cn = flat.get(cond_id);
+                    if (cn.tag == NodeTag::Call && !cn.children.empty()) {
+                        auto fn = flat.get(cn.child(0));
+                        if (fn.tag == NodeTag::Variable) {
+                            pred_src = std::string(pool.resolve(fn.sym_id));
+                            if (cn.children.size() >= 2) {
+                                auto arg = flat.get(cn.child(1));
+                                if (arg.tag == NodeTag::Variable)
+                                    pred_src += " " + std::string(pool.resolve(arg.sym_id));
+                            }
+                        }
+                    }
+                }
+                // Use compute_narrowing_evidence to set the
+                // bitmask consistently with synthesize path.
+                std::uint32_t ev_bit = 0;
+                if (auto info = compute_narrowing_evidence(flat, pool, cond_id, reg_))
+                    ev_bit = *info;
+                NarrowingRecord rec;
+                rec.var_name = occ->var_name;
+                rec.predicate_src = pred_src;
+                rec.refined_type_str = refined_str;
+                rec.if_node = id; // check_flat's id param
+                rec.cond_node = cond_id;
+                rec.is_negation = false;
+                rec.narrow_evidence = ev_bit;
+                rec.capture_epoch = cache_epoch_;
+                flat.record_narrowing(std::move(rec));
+            }
             check_flat(flat, pool, then_id, expected);
             ownership_env_.pop_scope();
             env_.pop_scope();
@@ -3006,6 +3074,25 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             if (env_.is_bound(occ->var_name))
                 env_.bind(occ->var_name, occ->refined_type);
             ownership_env_.mark(occ->var_name, OwnershipState::Owned);
+            // Issue #283 follow-up #3: capture provenance for
+            // the negation case (else-branch gets refinement).
+            {
+                std::string refined_str;
+                if (occ->refined_type.index != 0) {
+                    auto n = reg_.name_of(occ->refined_type);
+                    if (!n.empty()) refined_str = std::string(n);
+                }
+                NarrowingRecord rec;
+                rec.var_name = occ->var_name;
+                rec.predicate_src = "(not (...))";
+                rec.refined_type_str = refined_str;
+                rec.if_node = id;
+                rec.cond_node = cond_id;
+                rec.is_negation = true;
+                rec.narrow_evidence = 0;
+                rec.capture_epoch = cache_epoch_;
+                flat.record_narrowing(std::move(rec));
+            }
             if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
                 check_flat(flat, pool, v.child(2), expected);
             ownership_env_.pop_scope();
