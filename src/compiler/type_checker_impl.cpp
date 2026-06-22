@@ -1,4 +1,5 @@
 module aura.compiler.type_checker;
+import aura.core.mutation;
 
 namespace aura::compiler {
 
@@ -1470,6 +1471,24 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                     return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
                 else if (fn_name == "procedure?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
+                else {
+                    // Issue #279 follow-up #4: consult the
+                    // custom-predicate registry. If this
+                    // predicate name was registered via
+                    // (register-predicate! name type-name),
+                    // refine the variable to the named type.
+                    // The registry lives in aura.core.mutation
+                    // (shared by both this module and the
+                    // evaluator module's Aura primitive).
+                    if (auto custom_type_name =
+                            aura::ast::mutation::lookup_custom_predicate_type(
+                                std::string(fn_name))) {
+                        auto tid = reg.lookup_type(*custom_type_name);
+                        if (tid.valid())
+                            return OccurrenceInfoFlat{
+                                std::string(var_name), tid};
+                    }
+                }
             }
         }
     }
