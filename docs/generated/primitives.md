@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**412** registrations scanned from `src/**/*.cpp`.
+**416** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -12,7 +12,7 @@ Runtime canonical list: `(api-reference)`.
 - `eval-current-output` — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (26)
+## Query: (28)
 
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -27,12 +27,14 @@ Runtime canonical list: `(api-reference)`.
 - `query:macro-introduced` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:marker-stats` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:module-exports` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:narrowings-at-mutation` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pattern` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:provenance-of*` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reaches` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:root` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:schema` — `src/compiler/evaluator_primitives_query.cpp`
@@ -449,11 +451,12 @@ Runtime canonical list: `(api-reference)`.
 - `concurrency:version-current?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `concurrency:version-snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
 
-## Dirty: (3)
+## Dirty: (4)
 
 - `dirty:counts` — `src/compiler/evaluator_primitives_memory.cpp`
 - `dirty:ppa-reasons` — `src/compiler/evaluator_primitives_memory.cpp`
 - `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:summary` — `src/compiler/evaluator_primitives_memory.cpp`
 
 ## Eval: (1)
 
@@ -476,8 +479,9 @@ Runtime canonical list: `(api-reference)`.
 - `jit:exception-fibers-clear` — `src/compiler/evaluator_primitives_observability.cpp`
 - `jit:intrinsic-count` — `src/compiler/evaluator_primitives_observability.cpp`
 
-## Mutation-Log: (1)
+## Mutation-Log: (2)
 
+- `mutation-log:diff` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `mutation-log:summary` — `src/compiler/evaluator_primitives_mutation.cpp`
 
 ## Orch: (2)

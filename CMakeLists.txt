@@ -1044,6 +1044,8 @@ aura_add_issue_test(test_issue_282)
 aura_issue_test_link_llvm_jit(test_issue_282)
 aura_add_issue_test(test_issue_283)
 aura_issue_test_link_llvm_jit(test_issue_283)
+aura_add_issue_test(test_followups)
+aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
 target_sources(test_issue_264 PRIVATE
     src/serve/fiber.cpp

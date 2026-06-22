@@ -595,6 +595,110 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         };
         return build_hash(kv);
     });
+
+    // Issue #278 follow-up #2: (dirty:summary reason-mask) —
+    // return a compact per-reason summary of dirty nodes, where
+    // reason-mask is a bitmask of the reason bits the caller
+    // cares about (1=general, 2=constraint, 4=occurrence, etc.,
+    // matching the bits in dirty:counts). Returns a hash with
+    // one key per reason that has at least one matching node.
+    //
+    // Use case: AI agent asking "what's currently dirty and
+    // why?" — gets a compact summary without having to
+    // iterate all dirty nodes. Pass 0 to get all reasons
+    // (default).
+    add("dirty:summary", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+        if (!ev.workspace_flat_) return make_void();
+        std::uint32_t mask = 0;
+        if (a.size() >= 1 && is_int(a[0])) {
+            mask = static_cast<std::uint32_t>(as_int(a[0]));
+        }
+        if (mask == 0) mask = 0xFFFF;  // default: all reasons
+        // Accumulate the unique reason bits present in the
+        // workspace, plus a count of nodes per reason. This
+        // gives a compact per-reason summary without the full
+        // node-id list (which can be 100s of entries).
+        std::uint32_t present_bits = 0;
+        std::size_t total = 0;
+        std::size_t gen = 0, con = 0, occ = 0, own = 0, coe = 0;
+        std::size_t str = 0, def = 0, ppa = 0;
+        const auto& dirty = ev.workspace_flat_->dirty_column();
+        const auto& ppa_dirty = ev.workspace_flat_->ppa_dirty_column();
+        const auto n = std::max(dirty.size(), ppa_dirty.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            auto b = i < dirty.size() ? dirty[i] : 0;
+            auto pb = i < ppa_dirty.size() ? ppa_dirty[i] : 0;
+            if (b == 0 && pb == 0) continue;
+            ++total;
+            if (b & 0x01) { present_bits |= 0x01; ++gen; }
+            if (b & 0x02) { present_bits |= 0x02; ++con; }
+            if (b & 0x04) { present_bits |= 0x04; ++occ; }
+            if (b & 0x08) { present_bits |= 0x08; ++own; }
+            if (b & 0x10) { present_bits |= 0x10; ++coe; }
+            if (b & 0x20) { present_bits |= 0x20; ++str; }
+            if (b & 0x40) { present_bits |= 0x40; ++def; }
+            if (b & 0x80) { present_bits |= 0x80; ++ppa; }
+        }
+        // Build the result hash.
+        auto* ht = FlatHashTable::create(8);
+        if (!ht) return make_void();
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"present-bits", make_int(static_cast<std::int64_t>(present_bits))},
+            {"requested-mask", make_int(static_cast<std::int64_t>(mask))},
+            {"total", make_int(static_cast<std::int64_t>(total))},
+        };
+        // Add per-reason counts only for reasons the caller
+        // requested (mask) AND which are present.
+        if ((mask & 0x01) && (present_bits & 0x01))
+            kv.push_back({"general", make_int(static_cast<std::int64_t>(gen))});
+        if ((mask & 0x02) && (present_bits & 0x02))
+            kv.push_back({"constraint", make_int(static_cast<std::int64_t>(con))});
+        if ((mask & 0x04) && (present_bits & 0x04))
+            kv.push_back({"occurrence", make_int(static_cast<std::int64_t>(occ))});
+        if ((mask & 0x08) && (present_bits & 0x08))
+            kv.push_back({"ownership", make_int(static_cast<std::int64_t>(own))});
+        if ((mask & 0x10) && (present_bits & 0x10))
+            kv.push_back({"coercion", make_int(static_cast<std::int64_t>(coe))});
+        if ((mask & 0x20) && (present_bits & 0x20))
+            kv.push_back({"struct", make_int(static_cast<std::int64_t>(str))});
+        if ((mask & 0x40) && (present_bits & 0x40))
+            kv.push_back({"defuse", make_int(static_cast<std::int64_t>(def))});
+        if ((mask & 0x80) && (present_bits & 0x80))
+            kv.push_back({"ppa-hint", make_int(static_cast<std::int64_t>(ppa))});
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        for (auto& [k, v] : kv) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (char c : k)
+                h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF) fp = 0xFE;
+            auto kidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            bool inserted = false;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = v.val;
+                    ht->size++;
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                FlatHashTable::destroy(ht);
+                return make_void();
+            }
+        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
     // (memory-pressure) — Assess overall memory pressure and suggest actions.
     //
     //   Returns hash:
