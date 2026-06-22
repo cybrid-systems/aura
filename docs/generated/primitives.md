@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**409** registrations scanned from `src/**/*.cpp`.
+**411** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -63,7 +63,7 @@ Runtime canonical list: `(api-reference)`.
 - `mutate:tweak-literal` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:wrap` — `src/compiler/evaluator_primitives_mutate.cpp`
 
-## Ast: (19)
+## Ast: (20)
 
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:defs` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -79,6 +79,7 @@ Runtime canonical list: `(api-reference)`.
 - `ast:restore` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:snapshot` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:stable-ref` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:stable-refs-valid?` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:summary` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -473,6 +474,10 @@ Runtime canonical list: `(api-reference)`.
 - `jit:exception-fibers` — `src/compiler/evaluator_primitives_observability.cpp`
 - `jit:exception-fibers-clear` — `src/compiler/evaluator_primitives_observability.cpp`
 - `jit:intrinsic-count` — `src/compiler/evaluator_primitives_observability.cpp`
+
+## Mutation-Log: (1)
+
+- `mutation-log:summary` — `src/compiler/evaluator_primitives_mutation.cpp`
 
 ## Orch: (2)
 
