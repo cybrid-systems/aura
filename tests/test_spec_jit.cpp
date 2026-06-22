@@ -27,7 +27,11 @@ static int tests_passed = 0;
 
 // ── Float/String bias constants ───────────────────────────────
 static constexpr std::int64_t kFloatBias  = -10000000000000000LL;
-static constexpr std::int64_t kStringBias = -9000000000000000000LL;
+// Issue #278 follow-up: STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2 (v2
+// string encoding, low 2 bits = 2). shape_profiler.cpp / shape.cpp use
+// STRING_BIAS_VAL_2 internally; tests need to align with that or the
+// boundary cases (kStringBias + 1) fall into the wrong branch.
+static constexpr std::int64_t kStringBias = -9000000000000000000LL + 2;
 
 // ── Helper: dummy AuraJIT for SpecJITController tests ─────────
 // Defines a minimal mock that captures compilation requests.
