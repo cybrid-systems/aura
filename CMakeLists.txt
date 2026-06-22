@@ -109,6 +109,7 @@ target_sources(aura PRIVATE
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
     src/core/ast_impl.cpp
+    src/core/mutation_impl.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
@@ -400,6 +401,7 @@ add_library(aura_test_objects STATIC
     src/core/ast_impl.cpp
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
+    src/core/mutation_impl.cpp
     src/core/type_impl.cpp
     src/compiler/value_impl.cpp
     src/parser/lexer_impl.cpp

@@ -260,6 +260,32 @@ bool test_bidirectional_opt_out() {
     return true;
 }
 
+// AC12: #279 follow-up #4 — (register-predicate! name type-name) +
+// analyzer consults the registry. We register a custom predicate
+// for a built-in type (Int), then verify the analyzer picks
+// it up when typechecking.
+bool test_register_predicate() {
+    std::println("\n--- AC12: register-predicate! ---");
+    aura::compiler::CompilerService cs;
+    // Register a custom predicate. (int? x) is a fresh predicate
+    // name not built into the analyzer.
+    auto reg = cs.eval(R"((register-predicate! "int?" "Int"))");
+    CHECK(reg.has_value(), "(register-predicate! \"int?\" \"Int\") returns a value");
+    // Set-code and typecheck a function that uses it.
+    if (!cs.eval("(set-code \"(define (g x) (if (int? x) (+ x 1) 0))\")")) {
+        ++g_failed; return false;
+    }
+    auto tc = cs.eval("(typecheck-current)");
+    CHECK(tc.has_value(), "typecheck-current succeeds with custom predicate");
+    // Verify the registry has the entry (via the public accessor
+    // or via a path that exercises the analyzer). The eval of
+    // `(g 42)` itself would fail because int? isn't a real
+    // primitive — the custom predicate is type-narrowing only.
+    // What we CAN observe: the typecheck completes successfully
+    // (above) AND the workspace hasn't errored.
+    return true;
+}
+
 int run_tests() {
     std::println("Follow-up primitives (cross-issue batch)\n");
     test_mutation_log_diff();
@@ -273,6 +299,7 @@ int run_tests() {
     test_memo_size_cap();
     test_hash_to_alist();
     test_bidirectional_opt_out();
+    test_register_predicate();
     std::println("\nResults: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -468,5 +468,16 @@ export struct LayerStableRef {
     std::uint32_t layer_id = 0;
 };
 
+// Issue #279 follow-up #4: custom-predicate registry. The
+// (register-predicate!) Aura primitive in the evaluator
+// module writes here, and the analyzer in the type_checker
+// module reads here. Putting it in aura.core.mutation (a
+// shared dependency of both) avoids the cross-module symbol
+// resolution problem.
+export void register_custom_predicate(const std::string& pred_name,
+                                      const std::string& type_name);
+export std::optional<std::string>
+lookup_custom_predicate_type(const std::string& pred_name);
+
 } // namespace mutation
 } // namespace aura::ast

@@ -16,6 +16,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.core.type;
+import aura.core.mutation;
 import aura.compiler.value;
 import aura.parser.parser;
 
@@ -1352,6 +1353,31 @@ void register_workspace_query_primitives(
             result = make_pair(cons_pair);
         }
         return result;
+    });
+
+    // Issue #279 follow-up #4: (register-predicate! name
+    // type-name) — register a custom Occurrence Typing
+    // predicate. After this, (if (name x) body) refines x to
+    // the named type in the then-branch (same path as built-in
+    // predicates like string?, pair?, list?).
+    //
+    // The mapping is stored in the aura.core.mutation module's
+    // process-global registry (declared in mutation.ixx,
+    // defined in mutation_impl.cpp). Both this module and the
+    // type_checker module share the same definition.
+    add("register-predicate!", [&ws, &string_heap, &pairs](std::span<const EvalValue> a) -> EvalValue {
+        (void)ws; (void)pairs;
+        if (a.size() != 2 || !is_string(a[0]) || !is_string(a[1])) {
+            return make_void();
+        }
+        auto nidx = as_string_idx(a[0]);
+        auto tidx = as_string_idx(a[1]);
+        if (nidx >= string_heap.size() || tidx >= string_heap.size()) {
+            return make_void();
+        }
+        aura::ast::mutation::register_custom_predicate(
+            string_heap[nidx], string_heap[tidx]);
+        return make_bool(true);
     });
 }
 
