@@ -343,12 +343,20 @@ failed_s = 0
 
 def test_cross_session():
     """Cross-session agent orchestration via --serve-async."""
+    # Issue p0-regression: bumped timeout from 20s → 60s. The
+    # internal test_cross_session.py has its own subprocess.run
+    # timeout of 30s, so 60s is well above that. The 20s value
+    # was a pre-existing flake source — when the outer 20s
+    # timeout hit first, the inner --serve-async subprocess
+    # was left orphaned, consuming 99% CPU and causing the
+    # next fuzz_edsl run to hit its 180s timeout (cascading
+    # p0 failure).
     try:
         r = subprocess.run(
             [sys.executable, str(REPO / "tests" / "test_cross_session.py")],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=60,
             cwd=str(REPO),
         )
         for line in r.stdout.split("\n"):
@@ -357,6 +365,18 @@ def test_cross_session():
                 break
         if r.returncode != 0:
             print(f"  ⚠ cross-session: rc={r.returncode} (non-critical — serve-async session model differs)")
+    except subprocess.TimeoutExpired:
+        # Issue p0-regression: if --serve-async times out, the
+        # subprocess leaves an orphan aura --serve-async process
+        # that consumes 99% CPU and breaks subsequent tests
+        # (fuzz_edsl etc.). Defensive cleanup: kill any aura
+        # subprocesses that may have been left over.
+        print(f"  ⚠ cross-session: outer 60s timeout hit — cleaning up orphans")
+        subprocess.run(
+            ["pkill", "-9", "-f", "aura --serve"],
+            capture_output=True,
+            timeout=5,
+        )
     except Exception as e:
         print(f"  ⚠ cross-session: {e} (non-critical)")
 
@@ -667,4 +687,20 @@ for case in load_regression_cases():
 print(
     f"\n{passed}/{passed + failed} Aura + {passed_s}/{passed_s + failed_s} subprocess = {passed + passed_s}/{passed + failed + passed_s + failed_s} all passed"
 )
+
+# Issue p0-regression: defensive cleanup. test_cross_session may
+# have left orphaned aura --serve-async processes (even on
+# success, depending on how stdin closed). Kill them all so the
+# next p0 run doesn't inherit a 99%-CPU process.
+subprocess.run(
+    ["pkill", "-9", "-f", "aura --serve"],
+    capture_output=True,
+    timeout=5,
+)
+subprocess.run(
+    ["pkill", "-9", "-f", "aura --serve-async"],
+    capture_output=True,
+    timeout=5,
+)
+
 sys.exit(1 if (failed > 0 or failed_s > 0) else 0)
