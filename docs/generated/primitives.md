@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**416** registrations scanned from `src/**/*.cpp`.
+**417** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -165,7 +165,7 @@ Runtime canonical list: `(api-reference)`.
 - `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (247)
+## Core builtins (248)
 
 - `abs` — `src/compiler/evaluator_primitives_math.cpp`
 - `acos` — `src/compiler/evaluator_primitives_math.cpp`
@@ -272,6 +272,7 @@ Runtime canonical list: `(api-reference)`.
 - `git-stage` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-status` — `src/compiler/evaluator_primitives_io.cpp`
 - `hash` — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash->alist` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-has-key?` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-keys` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-length` — `src/compiler/evaluator_primitives_vector.cpp`

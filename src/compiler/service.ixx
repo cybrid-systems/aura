@@ -720,6 +720,19 @@ public:
     void set_strict_mode(bool s) { strict_mode_ = s; }
     bool strict_mode() const { return strict_mode_; }
 
+    // ---- Issue #283 follow-up #5: bidirectional_mode flag -----------
+    // When enabled (default), check_flat's If branch applies
+    // Occurrence Typing narrowing the same way synthesize_flat_if
+    // does, and synthesize_flat_if's last_if_narrowing_ capture
+    // handles both 'or' and 'and' predicates. When disabled,
+    // check_flat falls back to the original uniform check
+    // (no narrowing) and synthesize_flat_if keeps the single-
+    // predicate capture path. Opt-out is useful for workspaces
+    // with many nested ifs where the bidirectional path is
+    // measurably slower than the legacy path.
+    void set_bidirectional_mode(bool b) { bidirectional_mode_ = b; }
+    bool bidirectional_mode() const { return bidirectional_mode_; }
+
     // ---- Unified evaluation (IR-first with fallback) -----------------
 
     // Check if an expression needs the tree-walker evaluator.
@@ -1230,8 +1243,12 @@ public:
         // Issue #280: tc_pass is declared at this scope (not in
         // an inner block) so the IR pipeline below can read the
         // narrowing evidence captured by the type check.
+        // Issue #283 follow-up #5: propagate bidirectional_mode_
+        // so the user-controlled opt-out flag flows into the
+        // typechecker.
         aura::compiler::TypeCheckWrap tc_pass;
         aura::diag::DiagnosticCollector diags;
+        tc_pass.set_bidirectional_mode(bidirectional_mode_);
         tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_,
                                       diags);
         {
@@ -5484,6 +5501,12 @@ public:
 
     // Strict mode: type errors → rejected instead of warnings only
     bool strict_mode_ = false;
+    // Issue #283 follow-up #5: bidirectional Occurrence Typing
+    // narrowing in check_flat. Default true (matches pre-#283
+    // behavior post-#283). Set false to disable the narrowing
+    // application in check_flat's If branch (falls back to the
+    // original uniform check).
+    bool bidirectional_mode_ = true;
 
     // Persistent JIT for --jit mode
     aura::jit::AuraJIT jit_;

@@ -323,6 +323,40 @@ void register_vector_and_hash_primitives(
             return make_bool(false);
         return make_bool(is_hash(a[0]));
     });
+
+    // Issue #278 follow-up #3: (hash->alist hash) — return the
+    // hash as a list of (key . value) pairs in arbitrary order.
+    // Pairs Aura's existing hash API (which has hash-ref /
+    // hash-set / hash-keys / hash-values but no enumeration
+    // primitive) with a way to iterate. Common use case: AI
+    // agent wants to render a mutation-log:summary hash as a
+    // string by iterating the alist.
+    add("hash->alist", [&pairs](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_hash(a[0]))
+            return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+            return make_void();
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        EvalValue result = make_void();
+        // Walk in reverse so the resulting alist is in
+        // insertion / hash order.
+        for (std::size_t i = ht->capacity; i > 0; --i) {
+            if (meta[i - 1] != 0xFF) {
+                // Build (key . value) cons cell.
+                auto kv_pid = pairs.size();
+                pairs.push_back({EvalValue{keys[i - 1]}, EvalValue{vals[i - 1]}});
+                // Prepend to the result list.
+                auto list_pid = pairs.size();
+                pairs.push_back({EvalValue{kv_pid}, result});
+                result = make_pair(list_pid);
+            }
+        }
+        return result;
+    });
     add("hash-remove!", [&string_heap](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_hash(a[0]))
             return make_void();

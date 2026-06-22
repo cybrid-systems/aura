@@ -224,7 +224,11 @@ public:
         // TypeCheckResult with the narrow_evidence field. We
         // call both — the member for diagnostics + coercions,
         // the pure for the narrowing capture.
-        auto result = aura::compiler::type_check_flat_pure(flat, pool, root, type_registry, diag);
+        auto result = aura::compiler::type_check_flat_pure(flat, pool, root, type_registry, diag,
+                                                    /*sigs=*/{}, /*module_src=*/{},
+                                                    /*strict=*/false, /*cache_epoch=*/0,
+                                                    /*metrics=*/nullptr,
+                                                    /*bidirectional_mode=*/bidirectional_mode_);
         last_narrowing_evidence_ = result.narrow_evidence;
         // Apply deferred coercions now, before lowering reads
         // the AST. apply_coercion_map is idempotent — calling
@@ -253,9 +257,24 @@ public:
         return last_narrowing_evidence_;
     }
 
+    // Issue #283 follow-up #5: opt-out flag for bidirectional
+    // Occurrence Typing narrowing in check_flat. Set false to
+    // disable the narrowing application (fall back to legacy
+    // uniform check). Default true (matches post-#283).
+    void set_bidirectional_mode(bool b) noexcept {
+        bidirectional_mode_ = b;
+    }
+    [[nodiscard]] bool bidirectional_mode() const noexcept {
+        return bidirectional_mode_;
+    }
+
 private:
     std::vector<aura::diag::Diagnostic> last_diags_;
     std::uint32_t last_narrowing_evidence_ = 0;
+    // Issue #283 follow-up #5: default true (matches post-#283
+    // behavior). CompilerService sets this from its own
+    // bidirectional_mode_ before each check_before_lowering call.
+    bool bidirectional_mode_ = true;
 };
 
 // ── TypeSpecializationWrap — type-aware IR pass ────────────────
