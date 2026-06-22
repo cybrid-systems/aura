@@ -521,7 +521,7 @@ private:
     aura::core::TypeId synthesize_flat_lambda(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                               aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_if(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                          aura::ast::NodeView v);
+                                          aura::ast::NodeId if_id, aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_let(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                            aura::ast::NodeId node_id, aura::ast::NodeView v,
                                            bool is_rec);

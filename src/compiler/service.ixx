@@ -22,6 +22,7 @@ import aura.compiler.ir_cache_pure;
 import aura.compiler.ast_walkers;
 import aura.core.type;
 import aura.parser.parser;
+import aura.core.mutation;
 import aura.compiler.evaluator;
 import aura.compiler.ir;
 import aura.compiler.lowering;
@@ -5458,6 +5459,23 @@ public:
                                                          const aura::ast::StringPool& pool,
                                                          aura::ast::NodeId root) const {
         return needs_tree_walker_fallback(flat, pool, root);
+    }
+
+    // Issue #282: public accessors for the Occurrence Typing
+    // provenance log. The Aura primitive (query:provenance-of)
+    // uses these under the hood; tests can also use them
+    // directly to verify the provenance-tracking contract.
+    [[nodiscard]] std::size_t narrowing_count() const noexcept {
+        if (!evaluator_.workspace_flat()) return 0;
+        return evaluator_.workspace_flat()->narrowing_count();
+    }
+    [[nodiscard]] const std::pmr::vector<aura::ast::NarrowingRecord>&
+    all_narrowings() const {
+        // The vector is always non-null when workspace_flat() is,
+        // but C++'s reference return requires a static.
+        static const std::pmr::vector<aura::ast::NarrowingRecord> empty_log;
+        if (!evaluator_.workspace_flat()) return empty_log;
+        return evaluator_.workspace_flat()->all_narrowings();
     }
 
     // Track names defined via value define (tree-walker path) so subsequent
