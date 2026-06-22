@@ -1280,6 +1280,11 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
 // (type_checker.ixx) so the InferenceEngine's predicate memo
 // can use it as a value type.
 
+// Forward decl for #280 follow-up #1: combine-bits path uses
+// compute_narrowing_evidence to walk each or-branch predicate.
+static std::optional<std::uint32_t> compute_narrowing_evidence(
+    const FlatAST& flat, const StringPool& pool, NodeId cond_id, TypeRegistry& reg);
+
 static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& flat,
                                                                 const StringPool& pool,
                                                                 NodeId cond_id, TypeRegistry& reg) {
@@ -1343,9 +1348,27 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
         //                                   caller's `if` walker.
         if (fn_name == "or") {
             std::optional<OccurrenceInfoFlat> result;
+            // Issue #280 follow-up #1: track all bitmasks for the
+            // OR's predicates (not just first-match). When the
+            // narrow_evidence bitmask is captured (Issue #280), the
+            // OR-disjunction records the union of all predicate bits
+            // so DeadCoercionEliminationPass / JIT see the full
+            // evidence for the then-branch. The refined_type field
+            // is still picked per the conservative LUB rules
+            // (#279) — only the bitmask changes here.
+            std::uint32_t combined_evidence = 0;
             for (std::size_t i = 1; i < cond.children.size(); i++) {
                 auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg);
                 if (!inner) continue;
+                // Compute the predicate name's bitmask and OR it in.
+                // The call to narrowing_bit_for walks the predicate
+                // node the same way Issue #280 does for the
+                // single-predicate case.
+                std::uint32_t branch_evidence = 0;
+                if (auto info = compute_narrowing_evidence(flat, pool, cond.child(i), reg)) {
+                    branch_evidence = *info;
+                }
+                combined_evidence |= branch_evidence;
                 if (!result) {
                     result = inner;
                 } else if (result->var_name == inner->var_name) {
@@ -1364,6 +1387,14 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                     return std::nullopt;
                 }
             }
+            // The combined_evidence is captured by the caller
+            // (synthesize_flat_if) via last_if_narrowing_. We don't
+            // attach it to the result here; the or-children get
+            // walked individually, and the bitmask accumulates in
+            // last_if_narrowing_ in synthesize_flat_if (line ~2493).
+            // This loop above is the per-branch piece; the per-if
+            // accumulation happens in synthesize_flat_if.
+            (void)combined_evidence;
             return result;
         }
 
@@ -2381,7 +2412,6 @@ TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, 
     env_.pop_scope();
     return reg_.register_func(std::move(param_types), body_type);
 }
-
 // Issue #280: narrow predicate → bitmask mapping. The bit values
 // are part of the public IR contract (consumed by
 // DeadCoercionEliminationPass / JIT), so they MUST stay stable.
@@ -2411,6 +2441,36 @@ static std::uint32_t narrowing_bit_for(const std::string& pred_name) {
     if (pred_name == "type?")
         return 1u << 10; // kNarrowCustom
     return 0;             // unknown / unrecognized predicate
+}
+
+
+// Issue #280 follow-up #1: compute the narrowing-evidence bitmask
+// for a single predicate cond node. Walks the same not-wrappers
+// as the single-predicate case, then maps the predicate name to
+// its kNarrow* bit. Returns std::nullopt if the cond doesn't
+// resolve to a recognized predicate.
+static std::optional<std::uint32_t> compute_narrowing_evidence(
+    const FlatAST& flat, const StringPool& pool, NodeId cond_id, TypeRegistry& /*reg*/) {
+    auto cond = flat.get(cond_id);
+    if (cond.tag != NodeTag::Call) return std::nullopt;
+    std::string pred_name;
+    auto c = cond;
+    for (std::uint32_t depth = 0; depth < 4 && c.tag == NodeTag::Call; ++depth) {
+        if (c.children.empty()) return std::nullopt;
+        auto fn_id = c.child(0);
+        auto fn = flat.get(fn_id);
+        if (fn.tag != NodeTag::Variable) return std::nullopt;
+        auto n = std::string(pool.resolve(fn.sym_id));
+        if (n == "not") {
+            if (c.children.size() < 2) return std::nullopt;
+            c = flat.get(c.child(1));
+            continue;
+        }
+        pred_name = n;
+        break;
+    }
+    if (pred_name.empty()) return std::nullopt;
+    return narrowing_bit_for(pred_name);
 }
 
 TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, NodeId if_id, NodeView v) {
@@ -2469,25 +2529,51 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
     //
     // The bitmask tells DeadCoercionEliminationPass / JIT which
     // predicates statically guarantee a type at this branch.
+    //
+    // Issue #280 follow-up #1: for `(or p1 p2 ...)`, combine the
+    // bitmasks of all branch predicates (not first-match). The
+    // analyze_predicate_flat path in the `or` branch already
+    // computes per-branch bits; here we accumulate.
     if (occ && !occ->is_negation) {
-        // Find the outermost predicate name (ignoring `not` wrappers).
-        auto c = flat.get(cond_id);
-        std::string pred_name;
-        for (std::uint32_t depth = 0; depth < 4 && c.tag == NodeTag::Call; ++depth) {
-            if (c.children.empty()) break;
-            auto fn_id = c.child(0);
+        auto cond = flat.get(cond_id);
+        if (cond.tag == NodeTag::Call && !cond.children.empty()) {
+            auto fn_id = cond.child(0);
             auto fn = flat.get(fn_id);
-            if (fn.tag != NodeTag::Variable) break;
-            auto n = std::string(pool.resolve(fn.sym_id));
-            if (n == "not") {
-                if (c.children.size() < 2) break;
-                c = flat.get(c.child(1));
-                continue;
+            if (fn.tag == NodeTag::Variable) {
+                std::string fname(pool.resolve(fn.sym_id));
+                if (fname == "or") {
+                    // OR: combine bits across all branch predicates.
+                    std::uint32_t combined = 0;
+                    for (std::size_t i = 1; i < cond.children.size(); ++i) {
+                        if (auto ev_bit = compute_narrowing_evidence(
+                                flat, pool, cond.child(i), reg_)) {
+                            combined |= *ev_bit;
+                        }
+                    }
+                    last_if_narrowing_ = combined;
+                } else {
+                    // Single predicate: use the same walk as
+                    // before (skip not-wrappers).
+                    auto c = cond;
+                    std::string pred_name;
+                    for (std::uint32_t depth = 0; depth < 4 && c.tag == NodeTag::Call; ++depth) {
+                        if (c.children.empty()) break;
+                        auto fn_id2 = c.child(0);
+                        auto fn2 = flat.get(fn_id2);
+                        if (fn2.tag != NodeTag::Variable) break;
+                        auto n = std::string(pool.resolve(fn2.sym_id));
+                        if (n == "not") {
+                            if (c.children.size() < 2) break;
+                            c = flat.get(c.child(1));
+                            continue;
+                        }
+                        pred_name = n;
+                        break;
+                    }
+                    last_if_narrowing_ = narrowing_bit_for(pred_name);
+                }
             }
-            pred_name = n;
-            break;
         }
-        last_if_narrowing_ = narrowing_bit_for(pred_name);
     }
 
     if (occ && !occ->is_negation) {

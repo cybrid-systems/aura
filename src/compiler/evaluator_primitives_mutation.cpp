@@ -247,6 +247,105 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
     });
+
+    // Issue #278 follow-up #1: (mutation-log:diff from-id to-id) —
+    // return a list of MutationRecords with mutation_id in the
+    // half-open range [from_id, to_id]. Returns () if from_id > to_id
+    // or no records match. from_id = 0 means "from the beginning";
+    // to_id = -1 (or any value > max_id) means "to the end".
+    //
+    // Use case: AI agent debugging "what happened between
+    // mutations N and M?" — gets the diff in one call instead
+    // of iterating the log manually.
+    add("mutation-log:diff", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (!ev.workspace_flat_) return make_void();
+        if (a.size() != 2 || !is_int(a[0]) || !is_int(a[1]))
+            return make_void();
+        auto from_id = static_cast<std::uint64_t>(as_int(a[0]));
+        auto to_id_raw = static_cast<std::int64_t>(as_int(a[1]));
+        // -1 (or any negative) means "to the end".
+        const auto& log = ev.workspace_flat_->all_mutations();
+        std::uint64_t max_id = log.empty() ? 0 : log.back().mutation_id;
+        std::uint64_t to_id = (to_id_raw < 0) ? max_id
+                                              : static_cast<std::uint64_t>(to_id_raw);
+        if (from_id > to_id) return make_void();
+        EvalValue result = make_void();
+        std::vector<EvalValue> entries;
+        for (const auto& rec : log) {
+            if (rec.mutation_id < from_id) continue;
+            if (rec.mutation_id > to_id) break;
+            // Each entry is a hash with the key fields
+            // (mutation_id, operator, target_node, status, summary).
+            // Push the key + value strings first.
+            std::string op_str = rec.operator_name;
+            std::string sum_str = rec.summary;
+            std::size_t op_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(op_str);
+            std::size_t sum_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(sum_str);
+            std::size_t k_id = ev.string_heap_.size();
+            ev.string_heap_.push_back("mutation-id");
+            std::size_t k_op = ev.string_heap_.size();
+            ev.string_heap_.push_back("operator");
+            std::size_t k_tgt = ev.string_heap_.size();
+            ev.string_heap_.push_back("target-node");
+            std::size_t k_st = ev.string_heap_.size();
+            ev.string_heap_.push_back("status");
+            std::size_t k_sum = ev.string_heap_.size();
+            ev.string_heap_.push_back("summary");
+            // 8-slot capacity is enough for 5 fields.
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) continue;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"mutation-id", make_int(static_cast<std::int64_t>(rec.mutation_id))},
+                {"operator", make_string(op_idx)},
+                {"target-node", make_int(static_cast<std::int64_t>(rec.target_node))},
+                {"status", make_int(static_cast<std::int64_t>(
+                                     rec.status == aura::ast::MutationStatus::Committed ? 1 : 0))},
+                {"summary", make_string(sum_idx)},
+            };
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto cap = ht->capacity;
+            bool ok = true;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                EvalValue key_ev = make_string(k == "mutation-id" ? k_id
+                                              : k == "operator"   ? k_op
+                                              : k == "target-node" ? k_tgt
+                                              : k == "status"     ? k_st
+                                              :                     k_sum);
+                bool inserted = false;
+                for (std::size_t at = 0; at < cap; ++at) {
+                    auto idx = ((h >> 1) + at) & (cap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { ok = false; break; }
+            }
+            if (!ok) { FlatHashTable::destroy(ht); continue; }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            entries.push_back(make_hash(hidx));
+        }
+        for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+            auto cons_pair = ev.pairs_.size();
+            ev.pairs_.push_back({*it, result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    });
 }
 
 } // namespace aura::compiler::primitives_detail
