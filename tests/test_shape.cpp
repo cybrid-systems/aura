@@ -27,7 +27,13 @@ static int tests_passed = 0;
 
 // ── Float/string bias constants (must match shape_profiler.cpp) ──
 static constexpr std::int64_t kFloatBias  = -10000000000000000LL;
-static constexpr std::int64_t kStringBias = -9000000000000000000LL;
+// Issue #278 follow-up: STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2 (low
+// 2 bits set to 2 for the v2 string encoding). The test used the raw
+// STRING_BIAS_VAL (-9e18), but shape_profiler.cpp's kStringBias is
+// STRING_BIAS_VAL_2 (-9e18 + 2). The boundary cases (kStringBias + 1,
+// kStringBias, etc.) need to align with the source-side constant or
+// the inline_shape_of checks fall into the wrong branch.
+static constexpr std::int64_t kStringBias = -9000000000000000000LL + 2;
 
 int main() {
     // ═══════════════════════════════════════════════════════════
