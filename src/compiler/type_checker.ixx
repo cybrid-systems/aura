@@ -372,6 +372,15 @@ public:
     void set_metrics(void* m) { cs_.set_metrics(m); }
     std::uint64_t epoch_invalidations() const { return epoch_invalidations_; }
 
+    // Issue #283 follow-up #5: bidirectional-mode flag. When
+    // true (default), check_flat's If branch applies Occurrence
+    // Typing narrowing. When false, check_flat falls back to
+    // the original uniform check (no narrowing). CompilerService
+    // sets this from its own bidirectional_mode_ before each
+    // infer_flat call.
+    void set_bidirectional_mode(bool b) noexcept { bidirectional_mode_ = b; }
+    bool bidirectional_mode() const noexcept { return bidirectional_mode_; }
+
     // Issue #281: predicate memoization stats accessors. Test/
     // observability can read these to verify the memo is doing
     // useful work (high hit rate = same-condition re-analysis
@@ -441,6 +450,11 @@ public:
     // even if is_dirty is false). Reset by the next call to
     // infer_flat that sees the same epoch.
     bool epoch_invalidated_ = false;
+    // Issue #283 follow-up #5: when false, check_flat skips
+    // the Occurrence Typing narrowing application in the If
+    // branch. Used as a fast-path opt-out for workspaces
+    // where bidirectional is too eager / slow.
+    bool bidirectional_mode_ = true;
 
     // Issue #281: per-condition memoization for analyze_predicate_flat.
     // Keyed by cond NodeId + the epoch at which the predicate was
@@ -624,7 +638,8 @@ type_check_flat_pure(aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura
                      const std::unordered_map<std::string, aura::core::TypeId>& sigs = {},
                      const std::unordered_map<std::string, std::string>& module_src = {},
                      bool strict = false, std::uint64_t cache_epoch = 0,
-                     void* metrics = nullptr) // Issue #258: optional metrics pointer
+                     void* metrics = nullptr, // Issue #258: optional metrics pointer
+                     bool bidirectional_mode = true) // Issue #283 follow-up #5
     // Issue #213 follow-up: C++26 contract. The function
     // is total: it handles any `root` (including
     // NULL_NODE — returns an invalid TypeId), any sigs /

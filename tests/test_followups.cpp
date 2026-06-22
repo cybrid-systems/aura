@@ -219,6 +219,47 @@ bool test_memo_size_cap() {
     return true;
 }
 
+// AC10: #278 follow-up #3 — (hash->alist hash) primitive.
+bool test_hash_to_alist() {
+    std::println("\n--- AC10: (hash->alist hash) ---");
+    aura::compiler::CompilerService cs;
+    if (!cs.eval("(set-code \"(define (f x) (+ x 1))\")")) {
+        ++g_failed; return false;
+    }
+    if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 2))\" \"bump-1\")")) {
+        ++g_failed; return false;
+    }
+    if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 3))\" \"bump-2\")")) {
+        ++g_failed; return false;
+    }
+    // hash->alist on (mutation-log:summary) should return a list
+    // of (key . value) pairs.
+    auto n = run_int(cs, "(length (hash->alist (mutation-log:summary)))");
+    CHECK(n >= 5, "hash->alist returns >= 5 entries (total/committed/rolled-back/by-operator/last-*)");
+    return true;
+}
+
+// AC11: #283 follow-up #5 — bidirectional_mode opt-out flag.
+bool test_bidirectional_opt_out() {
+    std::println("\n--- AC11: bidirectional_mode opt-out ---");
+    aura::compiler::CompilerService cs;
+    // Default: bidirectional_mode is true. typecheck still works.
+    if (!cs.eval("(set-code \"(define (f x) (if (string? x) (length x) 0))\")")) {
+        ++g_failed; return false;
+    }
+    auto tc1 = cs.eval("(typecheck-current)");
+    CHECK(tc1.has_value(), "typecheck works in default (bidirectional=true) mode");
+    // Disable bidirectional mode.
+    cs.set_bidirectional_mode(false);
+    auto tc2 = cs.eval("(typecheck-current)");
+    CHECK(tc2.has_value(), "typecheck works with bidirectional_mode=false");
+    // Re-enable.
+    cs.set_bidirectional_mode(true);
+    auto tc3 = cs.eval("(typecheck-current)");
+    CHECK(tc3.has_value(), "typecheck works after re-enabling");
+    return true;
+}
+
 int run_tests() {
     std::println("Follow-up primitives (cross-issue batch)\n");
     test_mutation_log_diff();
@@ -230,6 +271,8 @@ int run_tests() {
     test_check_mode_captures_provenance();
     test_or_and_inner_predicate();
     test_memo_size_cap();
+    test_hash_to_alist();
+    test_bidirectional_opt_out();
     std::println("\nResults: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

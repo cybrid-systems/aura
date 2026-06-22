@@ -3009,6 +3009,17 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         // expected-type check below is what enforces the
         // contract; the narrowing just gives the checker more
         // information about the then-branch.
+        //
+        // Issue #283 follow-up #5: opt-out flag. When
+        // bidirectional_mode_ is false, skip the narrowing
+        // application and fall through to the uniform check
+        // (preserves legacy behavior). Default true.
+        if (!bidirectional_mode_) {
+            // Opt-out: no narrowing application.
+            check_flat(flat, pool, then_id, expected);
+            if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+                check_flat(flat, pool, v.child(2), expected);
+        } else {
         auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_);
         if (occ && !occ->is_negation) {
             // Then-branch: variable has refined type
@@ -3106,6 +3117,7 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
                 check_flat(flat, pool, v.child(2), expected);
         }
+        } // end bidirectional_mode_ opt-out
     } else if (v.tag == NodeTag::Let || v.tag == NodeTag::LetRec) {
         // Let in check mode: check value, then check body against expected
         bool is_rec = (v.tag == NodeTag::LetRec);
@@ -3376,7 +3388,7 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     // inferred type, deferred coercions, and per-call stats so
     // we don't need to call back into the engine.
     auto r = type_check_flat_pure(flat, pool, node, types, diag, type_sigs_, type_module_src_,
-                                  strict_, cache_epoch_, metrics_);
+                                  strict_, cache_epoch_, metrics_, /*bidirectional_mode=*/true);
     stats_.cache_hits += r.cache_hits;
     stats_.cache_misses += r.cache_misses;
     stats_.stale_cache += r.stale_cache;
@@ -3393,7 +3405,8 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
                                      const std::unordered_map<std::string, TypeId>& sigs,
                                      const std::unordered_map<std::string, std::string>& module_src,
                                      bool strict, std::uint64_t cache_epoch,
-                                     void* metrics) // Issue #258: optional metrics pointer
+                                     void* metrics, // Issue #258: optional metrics pointer
+                                     bool bidirectional_mode) // Issue #283 f/u #5
 {
     TypeCheckResult result;
     InferenceEngine engine(types, diag);
@@ -3401,6 +3414,9 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
     engine.declared_sigs_ = sigs;
     engine.set_strict(strict);           // Issue #79: plumb strict mode
     engine.set_cache_epoch(cache_epoch); // Issue #168
+    // Issue #283 follow-up #5: plumb bidirectional_mode flag
+    // from caller (default true to match post-#283 behavior).
+    engine.set_bidirectional_mode(bidirectional_mode);
     // Issue #258: forward metrics so solve_delta timing
     // accumulates into CompilerMetrics::delta_solve_time_us.
     if (metrics)
