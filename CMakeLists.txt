@@ -525,6 +525,45 @@ aura_issue_test_link_llvm_jit(test_issue_159_bench)
 #   - Performance: incremental vs full typecheck cache behavior
 add_executable(test_gc_evaluator_integration tests/test_gc_evaluator_integration.cpp)
 set_property(TARGET test_gc_evaluator_integration PROPERTY CXX_MODULE_STD ON)
+# Issue #278 follow-up: pre-existing build fix. Without this
+# FILE_SET, the C++ module scanner produces empty modmap files
+# (e.g. `ast_impl.cpp.o.modmap` has only `$root .`), causing
+# "unknown compiled module interface" errors for every source
+# that uses `module aura.core.ast;` etc. Same set as test_ir
+# (line ~249). The launcher then symlinks the aura_test_objects
+# BMIs into this per-target dir, so the actual compilation
+# succeeds.
+target_sources(test_gc_evaluator_integration PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/reflect/reflect.ixx
+    src/core/arena.ixx src/core/mutation.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx src/core/type.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
+    src/compiler/macro_expansion.ixx
+    src/compiler/adt_runtime.ixx
+    src/compiler/cache.ixx
+    src/compiler/value.ixx
+    src/compiler/ir.ixx
+    src/compiler/lowering.ixx
+    src/compiler/ir_soa.ixx
+    src/compiler/ir_executor.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/hardware_backend.ixx
+    src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
+    src/compiler/diag.ixx
+    src/compiler/service.ixx
+    src/compiler/pass_manager.ixx
+    src/compiler/query.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
+    src/compiler/ast_walkers.ixx
+    src/compiler/ffi_primitives.ixx
+    src/compiler/type_checker.ixx
+    src/compiler/type_concepts.ixx)
+set_source_files_properties(src/reflect/reflect.ixx PROPERTIES COMPILE_FLAGS "-freflection")
 target_include_directories(test_gc_evaluator_integration PRIVATE src)
 target_sources(test_gc_evaluator_integration PRIVATE
     src/serve/fiber.cpp
@@ -556,12 +595,23 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/compiler/messaging_bridge_impl.cpp
 )
 aura_test_compile_options(test_gc_evaluator_integration)
+# Issue #278 follow-up: pre-existing build fix. The C++26 contract
+# violation handler (`__tu_has_violation`) lives in contract_handler.cpp
+# and was missing from the test_gc_evaluator_integration sources. Same
+# pattern as test_shape / test_spec_jit / test_jit_metrics.
+target_sources(test_gc_evaluator_integration PRIVATE src/core/contract_handler.cpp src/core/contract_stub.cpp)
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 target_link_libraries(test_gc_evaluator_integration PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME gc_evaluator_integration COMMAND ./test_gc_evaluator_integration)
 
 # Link JIT for test_gc_evaluator_integration when LLVM is available
 if(LLVM_FOUND)
     target_sources(test_gc_evaluator_integration PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)
+    # Issue #278 follow-up: aura_jit_prim_dispatch lives in
+    # service.ixx (which IS in our FILE_SET above) — no stub
+    # needed, unlike test_concurrent / test_spec_jit which don't
+    # compile service.ixx.
     target_include_directories(test_gc_evaluator_integration PRIVATE ${LLVM_INCLUDE_DIRS})
     set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
     set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -577,6 +627,10 @@ endif()
 add_executable(test_contracts tests/test_contracts.cpp)
 set_source_files_properties(tests/test_contracts.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
 target_compile_options(test_contracts PRIVATE -fcontracts)
+# Issue #278 follow-up: pre-existing build fix. contract_handler.cpp
+# provides `handle_contract_violation` for C++26 contract checks.
+target_sources(test_contracts PRIVATE src/core/contract_handler.cpp)
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 add_test(NAME contracts_holds
          COMMAND test_contracts holds)
 add_test(NAME contracts_fires
@@ -667,6 +721,13 @@ add_test(NAME tc_let
 add_executable(test_shape tests/test_shape.cpp src/compiler/shape_profiler.cpp)
 target_include_directories(test_shape PRIVATE src)
 target_link_libraries(test_shape PRIVATE stdc++)
+# Issue #278 follow-up: pre-existing build fix. shape_profiler.cpp
+# uses C++26 contracts whose violation handler is in
+# contract_handler.cpp. Without this, the link fails with
+# `undefined reference to handle_contract_violation`. Same pattern
+# as test_jit_metrics (line ~695).
+target_sources(test_shape PRIVATE src/core/contract_handler.cpp)
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 add_test(NAME test_shape COMMAND test_shape
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
@@ -676,6 +737,27 @@ add_executable(test_spec_jit tests/test_spec_jit.cpp
     src/compiler/shape_profiler.cpp)
 target_include_directories(test_spec_jit PRIVATE src)
 target_link_libraries(test_spec_jit PRIVATE stdc++)
+# Issue #278 follow-up: same contract_handler link fix as test_shape.
+target_sources(test_spec_jit PRIVATE src/core/contract_handler.cpp)
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+# Issue #278 follow-up: spec_jit_controller.cpp calls
+# AuraJIT::unhandled_opcode_count_for_function, which lives in
+# aura_jit.cpp. Link the JIT sources when LLVM is available
+# (same pattern as test_gc_evaluator_integration / test_ir).
+if(LLVM_FOUND)
+    target_sources(test_spec_jit PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)
+    # Issue #278 follow-up: aura_jit.cpp references
+    # aura_jit_prim_dispatch which lives in service.ixx. The
+    # per-test binary can't import service.ixx cleanly (the
+    # module is tied to CompilerService), so use the stub.
+    # See test_concurrent's identical pattern (~line 350).
+    target_sources(test_spec_jit PRIVATE src/compiler/aura_jit_prim_dispatch_stub.cpp)
+    target_include_directories(test_spec_jit PRIVATE ${LLVM_INCLUDE_DIRS})
+    set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    target_link_libraries(test_spec_jit PRIVATE ${llvm_libs})
+    target_compile_definitions(test_spec_jit PRIVATE AURA_HAVE_LLVM=1)
+endif()
 add_test(NAME test_spec_jit COMMAND test_spec_jit
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
@@ -749,6 +831,9 @@ target_link_libraries(aura PRIVATE linenoise)
 # Phase 2 pilot-24: converted using early helper. Base covers core + value/diag/value_impl; append heavy parser/serve/evaluator/JIT/LLVM + observability headers + rtti/LLVM bits.
 add_executable(issue_212_bench tests/bench/issue_212_bench.cpp)
 set_property(TARGET issue_212_bench PROPERTY CXX_MODULE_STD ON)
+# Issue #278 follow-up: contract_handler.cpp link fix.
+target_sources(issue_212_bench PRIVATE src/core/contract_handler.cpp)
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 
 # Issue #217 Cycle 14 P4: benchmark suite for the C++26 P2996
 # reflection + auto_serialize/auto_deserialize path. Measures
@@ -778,6 +863,9 @@ add_executable(cycle221_pcv_bench tests/bench/cycle221_pcv_bench.cpp)
 target_include_directories(cycle221_pcv_bench PRIVATE src)
 aura_test_compile_options(cycle221_pcv_bench)
 target_compile_features(cycle221_pcv_bench PUBLIC cxx_std_26)
+# Issue #278 follow-up: contract_handler.cpp link fix.
+target_sources(cycle221_pcv_bench PRIVATE src/core/contract_handler.cpp)
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 target_link_libraries(cycle221_pcv_bench PRIVATE stdc++ pthread)
 add_test(NAME cycle221_pcv_bench COMMAND ./cycle221_pcv_bench)
 target_include_directories(issue_212_bench PRIVATE src)
