@@ -125,6 +125,8 @@
   (make-eda:always3 'always_comb sensitivity body))
 (define (make-eda:always-ff sensitivity body)
   (make-eda:always3 'always_ff sensitivity body))
+(define (make-eda:always-latch sensitivity body)
+  (make-eda:always3 'always_latch sensitivity body))
 (define (eda:always? x)
   (and (pair? x) (equal? (car x) 'eda:always)))
 (define (eda:always-kind a) (car (cdr a)))
@@ -212,6 +214,7 @@
     ((eda:assign? ir) (eda:display-assign ir))
     ((eda:always? ir) (eda:display-always ir))
     ((eda:signal? ir) (eda:display-signal ir))
+    ((eda:assertion? ir) (eda:display-assertion ir))
     ((eda:expr? ir)   (eda:display-expr ir))
     ((list? ir) (map eda:display ir))
     (else (display ir))))
@@ -281,6 +284,14 @@
     (cond
       ((equal? kind 'always_comb)
        (display "always_comb")
+       (if (null? ss)
+           (display " begin\n")
+           (begin
+             (display " @(")
+             (map eda:display-sensitivity ss)
+             (display ") begin\n"))))
+      ((equal? kind 'always_latch)
+       (display "always_latch")
        (if (null? ss)
            (display " begin\n")
            (begin
@@ -603,6 +614,10 @@
                    (string-append "always_comb"
                                   (if (null? ss) "" (string-append " @(" ss-part ")"))
                                   " begin\n"))
+                  ((equal? kind 'always_latch)
+                   (string-append "always_latch"
+                                  (if (null? ss) "" (string-append " @(" ss-part ")"))
+                                  " begin\n"))
                   ((equal? kind 'always_ff)
                    (string-append "always_ff @("
                                   (if (null? ss) "*" ss-part)
@@ -754,6 +769,122 @@
     (else (cons (car body)
                 (eda:upgrade-body-alwayses (cdr body))))))
 
+; ═══════════════════════════════════════════════════════════
+; Issue #436 Phase 3: always_latch + SVA properties
+; ═══════════════════════════════════════════════════════════
+;
+; Phase 3a: always_latch (already shipped via make-eda:always-latch
+;          + emit-always / display-always routing above).
+;
+; Phase 3b: SVA property + assertion IR. Three flavors:
+;   assert  — runtime check:   assert property (p);
+;   assume  — input contract:  assume property (p);
+;   cover   — coverage goal:   cover property (p);
+;
+; Phase 3b is intentionally minimal: we only model the
+; top-level property + assertion IR and emit them. Full
+; SVA (sequence, implication |->, throughout, etc.) is
+; much larger; defer to a follow-up issue if the agent
+; needs it. For now, the property body is an eda:expr (the
+; same IR used for arithmetic / boolean expressions).
+;
+; Why this is enough for an EDSL-driven design loop:
+;   - Assertion gives runtime "did my mutation break X?"
+;   - Assume gives formal constraint input.
+;   - Cover gives coverage hole visibility.
+;   - The agent can mutate properties the same way it
+;     mutates assigns (via mutate:* + Aura list access).
+;   - The Emitter just dumps them as text. Synthesis
+;     tools (DC) and sim tools (VCS, Questa) take it
+;     from there.
+
+; ── eda:property ──
+;
+; IR: (eda:property name expr)
+;   name — symbol (property name, e.g. 'req_ack_handshake)
+;   expr — eda:expr (the property body — a boolean expr)
+;
+; Properties are NESTED under assertions. They can be
+; referenced by name from multiple assertions, or inlined
+; as anonymous properties (use '() for the name then).
+;
+; Phase 3b keeps this simple: no separate property
+; declaration. A property exists if some assertion
+; references its name. Inline anonymous properties are
+; also supported by storing the expr directly in the
+; assertion (without referencing an eda:property).
+(define (make-eda:property name expr)
+  (list 'eda:property name expr))
+(define (eda:property? x)
+  (and (pair? x) (equal? (car x) 'eda:property)))
+(define (eda:property-name p) (car (cdr p)))
+(define (eda:property-expr p) (car (cdr (cdr p))))
+
+; ── eda:assertion ──
+;
+; IR: (eda:assertion kind name property)
+;   kind     — 'assert | 'assume | 'cover
+;   name     — symbol (label for the assertion, used in
+;               simulator output and for hierarchical
+;               disable / coverage queries)
+;   property — eda:property (the property to assert /
+;               assume / cover)
+;
+; Direct construct: takes a property object. Convenience
+; helpers (make-eda:assert / make-eda:assume /
+; make-eda:cover) below wrap make-eda:assertion and
+; auto-build the property.
+(define (make-eda:assertion kind name property)
+  (list 'eda:assertion kind name property))
+(define (eda:assertion? x)
+  (and (pair? x) (equal? (car x) 'eda:assertion)))
+(define (eda:assertion-kind a) (car (cdr a)))
+(define (eda:assertion-name a) (car (cdr (cdr a))))
+(define (eda:assertion-property a) (car (cdr (cdr (cdr a)))))
+
+; Convenience constructors that auto-build the property
+; from a name + expr. Use these in 99% of cases.
+(define (make-eda:assert name expr)
+  (make-eda:assertion 'assert name (make-eda:property name expr)))
+(define (make-eda:assume name expr)
+  (make-eda:assertion 'assume name (make-eda:property name expr)))
+(define (make-eda:cover name expr)
+  (make-eda:assertion 'cover name (make-eda:property name expr)))
+
+; ── Assertion emitter ──
+;
+; "assert property (req |-> ack);\n"
+; "assume property (rst == 0);\n"
+; "cover property (handshake_done);\n"
+;
+; Aura quirk: nested string-append with 3+ args drops tail.
+; Use let-binding + 2-arg string-append throughout.
+(define (eda:emit-assertion a)
+  ; Aura quirk: nested 5-arg string-append drops tail args. Use
+  ; let-bound intermediates + 2-arg string-append throughout.
+  (let ((kind (eda:assertion-kind a))
+        (name (eda:name-str (eda:assertion-name a)))
+        (prop-expr-str (eda:emit-expr
+                         (eda:property-expr (eda:assertion-property a)))))
+    (let ((kw (cond
+                ((equal? kind 'assert) "assert")
+                ((equal? kind 'assume) "assume")
+                ((equal? kind 'cover) "cover")
+                (else (string-append "/* unknown kind: "
+                                     (eda:name-str kind) " */ assert")))))
+      (let ((core (string-append kw " property ("
+                                 prop-expr-str ");"))
+            (trailing (string-append " // " name "\n")))
+        (string-append core trailing)))))
+
+; Display form: "assert: name = <prop-expr>"  (no semicolon)
+(define (eda:display-assertion a)
+  (display (eda:assertion-kind a))
+  (display ": ")
+  (display (eda:assertion-name a))
+  (display " = ")
+  (display (eda:property-expr (eda:assertion-property a))))
+
 (define (eda:emit-signal s)
   (let ((kind (eda:signal-kind s))
         (name (eda:signal-name s))
@@ -770,6 +901,7 @@
     ((eda:assign? item) (string-append (eda:emit-assign item) "\n"))
     ((eda:always? item) (eda:emit-always item))
     ((eda:signal? item) (string-append (eda:emit-signal item) ";\n"))
+    ((eda:assertion? item) (eda:emit-assertion item))
     (else "")))
 
 (define (eda:emit-module-body body)
@@ -1097,10 +1229,14 @@
   ; IR constructors
   make-eda:module make-eda:port make-eda:wire make-eda:assign
   make-eda:always make-eda:always3 make-eda:always-comb make-eda:always-ff
+  make-eda:always-latch
   make-eda:signal make-eda:expr make-eda:sensitivity
+  make-eda:property make-eda:assertion
+  make-eda:assert make-eda:assume make-eda:cover
   ; IR predicates
   eda:module? eda:port? eda:wire? eda:assign?
   eda:always? eda:signal? eda:expr? eda:sensitivity?
+  eda:property? eda:assertion?
   ; IR accessors
   eda:module-name eda:module-ports eda:module-body
   eda:port-name eda:port-direction eda:port-width
@@ -1114,6 +1250,7 @@
   eda:display eda:display-module eda:display-port eda:display-wire
   eda:display-assign eda:display-always eda:display-sensitivity
   eda:display-signal eda:display-expr
+  eda:display-assertion
   ; Query helpers (Cycle 1-2)
   eda:query:ports eda:query:wires eda:query:assigns eda:query:module-name
   eda:query:bit-width eda:query:dependencies eda:query:dependents
@@ -1124,6 +1261,7 @@
   ; Verilog emitter (Cycle 3)
   eda:emit-verilog eda:emit-module eda:emit-port eda:emit-wire
   eda:emit-assign eda:emit-always eda:emit-sensitivity eda:emit-sensitivity-list eda:emit-signal
+  eda:emit-assertion
   eda:emit-expr eda:emit-body-item eda:name-str
   ; Interface + modport (Cycle 3 Phase 2 — Issue #284)
   make-eda:interface eda:interface? eda:interface-name
