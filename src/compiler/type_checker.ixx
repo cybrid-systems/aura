@@ -464,6 +464,16 @@ public:
     std::uint64_t predicate_memo_hits_ = 0;
     std::uint64_t predicate_memo_misses_ = 0;
     std::uint64_t predicate_memo_evictions_ = 0; // cleared on epoch change
+    // Issue #281 follow-up #5: bound the predicate memo. The
+    // memo is keyed by cond NodeId which is stable across
+    // mutations within an epoch. Without a cap, a workspace
+    // with many distinct (string? x) predicates across
+    // functions can grow the map unbounded. We evict the
+    // entire memo when it exceeds this threshold (cheap
+    // because the next call repopulates on demand).
+    // 4096 entries ≈ a few hundred functions, well below
+    // typical workspace sizes.
+    static constexpr std::size_t PREDICATE_MEMO_MAX_ENTRIES = 4096;
 
     // Issue #116: defer CoercionNode insertion to a separate
     // explicit pass. The type checker no longer mutates the

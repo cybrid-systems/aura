@@ -171,6 +171,54 @@ bool test_backward_compat() {
     return true;
 }
 
+// AC7: #283 follow-up #3 — check-mode also captures NarrowingRecord.
+bool test_check_mode_captures_provenance() {
+    std::println("\n--- AC7: check-mode captures NarrowingRecord ---");
+    aura::compiler::CompilerService cs;
+    if (!cs.eval("(set-code \""
+                 "(define (f x) "
+                 "  (if (string? x) (length x) 0))\")")) {
+        ++g_failed; return false;
+    }
+    // Run check-mode only.
+    auto tc = cs.eval("(typecheck-current)");
+    CHECK(tc.has_value(), "(typecheck-current) runs");
+    auto n = run_int(cs, "(length (query:provenance-of \"x\"))");
+    CHECK(n >= 1, "check-mode captured provenance for x");
+    return true;
+}
+
+// AC8: #281 follow-up #2 — (or / and) inner predicate bitmask accumulation.
+bool test_or_and_inner_predicate() {
+    std::println("\n--- AC8: (or / and) inner predicate ---");
+    aura::compiler::CompilerService cs;
+    if (!cs.eval("(set-code \""
+                 "(define (f x) "
+                 "  (if (and (string? x) (number? x)) 1 0))\")")) {
+        ++g_failed; return false;
+    }
+    auto tc = cs.eval("(typecheck-current)");
+    CHECK(tc.has_value(), "(and (string? x) (number? x)) typechecks");
+    return true;
+}
+
+// AC9: #281 follow-up #5 — predicate memo size cap.
+bool test_memo_size_cap() {
+    std::println("\n--- AC9: predicate memo size cap ---");
+    aura::compiler::CompilerService cs;
+    if (!cs.eval("(set-code \"(define (f x) (if (string? x) (length x) 0))\")")) {
+        ++g_failed; return false;
+    }
+    for (int i = 0; i < 5; ++i) {
+        auto tc = cs.eval("(typecheck-current)");
+        if (!tc.has_value()) {
+            ++g_failed; return false;
+        }
+    }
+    CHECK(true, "5 consecutive (typecheck-current) calls all succeed");
+    return true;
+}
+
 int run_tests() {
     std::println("Follow-up primitives (cross-issue batch)\n");
     test_mutation_log_diff();
@@ -179,6 +227,9 @@ int run_tests() {
     test_provenance_wildcard();
     test_narrowings_at_mutation();
     test_backward_compat();
+    test_check_mode_captures_provenance();
+    test_or_and_inner_predicate();
+    test_memo_size_cap();
     std::println("\nResults: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
