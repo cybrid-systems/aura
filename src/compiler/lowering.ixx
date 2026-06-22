@@ -78,6 +78,14 @@ export struct LoweringState {
     std::uint64_t soa_instructions_emitted = 0;
     std::uint64_t soa_functions_emitted = 0;
 
+    // Issue #280: narrowing evidence bitmask set by CompilerService
+    // before calling lower_to_ir. The IfExpr case reads this and
+    // attaches it to the emitted Branch instruction via
+    // emit_with_metadata. Default 0 = no narrowing (Branch instruction
+    // doesn't carry a narrowing hint, downstream passes behave as
+    // before #280).
+    std::uint32_t current_narrowing_evidence = 0;
+
     // RAII scope guard: saves/restores current_source_id.
     // Place at the top of lower_flat_expr so child processing
     // doesn't overwrite the parent's source node for the result emit.
@@ -223,7 +231,8 @@ export struct LoweringState {
 //             resolve to Primitive opcodes instead of ConstI64 0.
 export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat, ast::StringPool& pool,
                                       ast::ASTArena& arena, const Primitives* primitives = nullptr,
-                                      const aura::core::TypeRegistry* type_reg = nullptr);
+                                      const aura::core::TypeRegistry* type_reg = nullptr,
+                                      std::uint32_t narrowing_evidence = 0);
 
 // Lower with cached define support.
 // When cache is non-null, Call nodes whose callee is a VariableNode
@@ -239,7 +248,8 @@ export aura::ir::IRModule lower_to_ir_with_cache(
         nullptr,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
     const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr,
-    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr);
+    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
+    std::uint32_t narrowing_evidence = 0);
 
 // FlatAST → S-expression source code (reverse of parse_to_flat)
 export std::string unparse_node(const ast::FlatAST& flat, const ast::StringPool& pool,
@@ -260,7 +270,8 @@ export std::string unparse_node(const ast::FlatAST& flat, const ast::StringPool&
 export aura::diag::LowerResult<aura::ir::IRModule>
 lower_to_ir_result(ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
                    const Primitives* primitives = nullptr,
-                   const aura::core::TypeRegistry* type_reg = nullptr);
+                   const aura::core::TypeRegistry* type_reg = nullptr,
+                   std::uint32_t narrowing_evidence = 0);
 
 export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_with_cache_result(
     ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
@@ -270,7 +281,8 @@ export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_with_cache_result
         nullptr,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
     const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr,
-    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr);
+    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
+    std::uint32_t narrowing_evidence = 0);
 
 // ── Per-function lowering API (Issue #224 cycle 3) ──────────
 //

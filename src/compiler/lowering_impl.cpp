@@ -822,7 +822,26 @@ static std::uint32_t lower_flat_expr(
             auto then_blk = state.alloc_block();
             auto else_blk = state.alloc_block();
             auto merge_blk = state.alloc_block();
-            state.emit(IROpcode::Branch, cond_slot, then_blk, else_blk);
+
+            // Issue #280: if the IfExpr's narrowing evidence is
+            // set on the lowering state (from TypeCheckWrap's last
+            // check_before_lowering), attach it to the Branch via
+            // emit_with_metadata. The narrowing bitmask tells
+            // DeadCoercionEliminationPass / JIT which predicate(s)
+            // statically guarantee the then-branch's refinement.
+            // Default 0 = no hint; emit() is used instead of
+            // emit_with_metadata to avoid touching the
+            // narrow_evidence field when there's no narrowing.
+            if (state.current_narrowing_evidence != 0) {
+                state.emit_with_metadata(IROpcode::Branch, 0, 0, 0,
+                                         state.current_narrowing_evidence,
+                                         cond_slot, then_blk, else_blk);
+                // Reset so nested IfExprs don't inherit the
+                // narrowing hint from their enclosing one.
+                state.current_narrowing_evidence = 0;
+            } else {
+                state.emit(IROpcode::Branch, cond_slot, then_blk, else_blk);
+            }
 
             auto phi_slot = state.alloc_local();
 
@@ -1370,9 +1389,11 @@ static IRModule lower_to_ir_impl(
         nullptr,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
     const std::string* self_name = nullptr,
-    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr) {
+    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
+    std::uint32_t narrowing_evidence = 0) { // Issue #280
     LoweringState state(arena);
     state.value_cells = value_cells;
+    state.current_narrowing_evidence = narrowing_evidence;
 
     // Issue #150 Phase 2: automatic region inference pass.
     // Walk the FlatAST before main lowering. For each Define
@@ -1445,14 +1466,15 @@ static IRModule lower_to_ir_impl(
 
 // ── lower_to_ir (FlatAST path) — native, no full-tree reconstruct ──
 IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena, const Primitives* primitives,
-                     const aura::core::TypeRegistry* type_reg) {
+                     const aura::core::TypeRegistry* type_reg,
+                     std::uint32_t narrowing_evidence) { // Issue #280
     // Issue #127: delegate to the Result-returning version.
     // Lowering never reports an error today (it's all
     // fall-through: silently emits a ConstI64 0 for unknown
     // refs), so unwrap() is safe. When the lowering path
     // starts producing diagnostics (e.g., for type-registry
     // lookups), the unwrap becomes a real error channel.
-    return lower_to_ir_result(flat, pool, arena, primitives, type_reg).value();
+    return lower_to_ir_result(flat, pool, arena, primitives, type_reg, narrowing_evidence).value();
 }
 
 // ── lower_to_ir_with_cache ─────────────────────────────────────
@@ -1463,10 +1485,11 @@ IRModule lower_to_ir_with_cache(
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
     const std::string* self_name, const aura::core::TypeRegistry* type_reg,
-    const std::unordered_map<std::string, std::size_t>* value_cells) {
+    const std::unordered_map<std::string, std::size_t>* value_cells,
+    std::uint32_t narrowing_evidence) { // Issue #280
     return lower_to_ir_with_cache_result(flat, pool, arena, cache, cache_hits, primitives,
                                          cache_bridge, cache_strings, self_name, type_reg,
-                                         value_cells)
+                                         value_cells, narrowing_evidence)
         .value();
 }
 
@@ -1483,8 +1506,10 @@ IRModule lower_to_ir_with_cache(
 // those errors flow to the caller.
 aura::diag::LowerResult<IRModule> lower_to_ir_result(FlatAST& flat, StringPool& pool,
                                                      ASTArena& arena, const Primitives* primitives,
-                                                     const aura::core::TypeRegistry* type_reg) {
-    return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives, type_reg);
+                                                     const aura::core::TypeRegistry* type_reg,
+                                                     std::uint32_t narrowing_evidence) { // #280
+    return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives, type_reg,
+                            nullptr, nullptr, nullptr, nullptr, narrowing_evidence);
 }
 
 aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(
@@ -1494,9 +1519,11 @@ aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
     const std::string* self_name, const aura::core::TypeRegistry* type_reg,
-    const std::unordered_map<std::string, std::size_t>* value_cells) {
+    const std::unordered_map<std::string, std::size_t>* value_cells,
+    std::uint32_t narrowing_evidence) { // Issue #280
     return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives, type_reg,
-                            cache_bridge, cache_strings, self_name, value_cells);
+                            cache_bridge, cache_strings, self_name, value_cells,
+                            narrowing_evidence);
 }
 
 // ── lower_function_at — per-function lowering (Issue #224 cycle 3) ─
