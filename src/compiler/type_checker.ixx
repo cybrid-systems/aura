@@ -322,6 +322,21 @@ export class InferenceEngine {
     bool permissive_ = true;
 
     // ADT constructors are looked up via TypeRegistry::get_adt_constructors()
+
+    // Issue #280: most recent IfExpr's narrowing evidence bitmask.
+    // Bit assignments (match the bitmask tests in tests/test_issue_280.cpp):
+    //   kNarrowNumber = 1 << 0   (number? / integer?)
+    //   kNarrowString = 1 << 1   (string?)
+    //   kNarrowBool   = 1 << 2   (boolean?)
+    //   kNarrowVoid   = 1 << 3   (null? / void?)
+    //   kNarrowPair   = 1 << 4   (pair?)
+    //   kNarrowList   = 1 << 5   (list?)
+    //   kNarrowFloat  = 1 << 6   (float?)
+    //   kNarrowHash   = 1 << 7   (hash?)
+    //   kNarrowSymbol = 1 << 8   (symbol?)
+    //   kNarrowProc   = 1 << 9   (procedure?)
+    //   kNarrowCustom = 1 << 10  (type? "Name")
+    std::uint32_t last_if_narrowing_ = 0;
 public:
     // Issue #79: set strict mode. Called by TypeChecker::infer_flat
     // before delegating to the engine.
@@ -346,6 +361,21 @@ public:
     // into CompilerMetrics::delta_solve_time_us.
     void set_metrics(void* m) { cs_.set_metrics(m); }
     std::uint64_t epoch_invalidations() const { return epoch_invalidations_; }
+
+    // Issue #280: capture narrowing evidence from the most
+    // recent IfExpr synthesize. Bitmask values are defined
+    // below (kNarrowString = 1 << 1, kNarrowNumber = 1 << 2,
+    // etc.). When no narrowing was applied the value is 0.
+    //
+    // Lowering queries this in flatten_expr_if's Branch emit
+    // so the resulting Branch instruction can carry a hint
+    // to DeadCoercionEliminationPass / JIT.
+    void set_last_narrowing_evidence(std::uint32_t mask) noexcept {
+        last_if_narrowing_ = mask;
+    }
+    std::uint32_t last_narrowing_evidence() const noexcept {
+        return last_if_narrowing_;
+    }
 
 public:
     // declared_modules: name → module_path, 用于跨模块错误定位
@@ -506,6 +536,13 @@ export struct TypeCheckResult {
     std::uint64_t cache_hits = 0;
     std::uint64_t cache_misses = 0;
     std::uint64_t stale_cache = 0;
+
+    // Issue #280: narrowing evidence bitmask captured from the
+    // outermost IfExpr's predicate in the root expression. See
+    // kNarrow* constants and narrowing_bit_for() below.
+    // 0 = no narrowing applied (no predicate found, or the
+    //     predicate wasn't recognized).
+    std::uint32_t narrow_evidence = 0;
 };
 
 // Pure: type-check a FlatAST subtree and return the inferred

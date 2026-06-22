@@ -2374,22 +2374,94 @@ TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, 
     return reg_.register_func(std::move(param_types), body_type);
 }
 
+// Issue #280: narrow predicate → bitmask mapping. The bit values
+// are part of the public IR contract (consumed by
+// DeadCoercionEliminationPass / JIT), so they MUST stay stable.
+// See the kNarrow* constants in type_checker.ixx for the full
+// list.
+static std::uint32_t narrowing_bit_for(const std::string& pred_name) {
+    if (pred_name == "number?" || pred_name == "integer?")
+        return 1u << 0;  // kNarrowNumber
+    if (pred_name == "string?")
+        return 1u << 1;  // kNarrowString
+    if (pred_name == "boolean?")
+        return 1u << 2;  // kNarrowBool
+    if (pred_name == "null?" || pred_name == "void?")
+        return 1u << 3;  // kNarrowVoid
+    if (pred_name == "pair?")
+        return 1u << 4;  // kNarrowPair
+    if (pred_name == "list?")
+        return 1u << 5;  // kNarrowList
+    if (pred_name == "float?")
+        return 1u << 6;  // kNarrowFloat
+    if (pred_name == "hash?")
+        return 1u << 7;  // kNarrowHash
+    if (pred_name == "symbol?")
+        return 1u << 8;  // kNarrowSymbol
+    if (pred_name == "procedure?")
+        return 1u << 9;  // kNarrowProc
+    if (pred_name == "type?")
+        return 1u << 10; // kNarrowCustom
+    return 0;             // unknown / unrecognized predicate
+}
+
 TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, NodeView v) {
     // children: 0=condition, 1=then_branch, 2=else_branch (can be NULL_NODE)
-    if (v.children.empty())
+    if (v.children.empty()) {
+        last_if_narrowing_ = 0;
         return reg_.void_type();
+    }
 
     auto cond_id = v.child(0);
     check_flat(flat, pool, cond_id, reg_.bool_type());
 
-    if (v.children.size() < 2)
+    if (v.children.size() < 2) {
+        last_if_narrowing_ = 0;
         return reg_.void_type();
+    }
     auto then_id = v.child(1);
-    if (then_id == NULL_NODE)
+    if (then_id == NULL_NODE) {
+        last_if_narrowing_ = 0;
         return reg_.void_type();
+    }
+
+    // Issue #280: reset the narrowing capture at the start of each
+    // IfExpr. Any predicate call in the condition will overwrite it
+    // below.
+    last_if_narrowing_ = 0;
 
     // Occurrence typing: analyze condition for type predicates
     auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_);
+
+    // Issue #280: capture the narrowing bitmask from the predicate
+    // (or from the outermost not-wrapped predicate). Only positive
+    // (non-negated) predicates contribute — (not (string? x)) is a
+    // narrowing to non-String in the else-branch, but the Branch
+    // instruction's narrow_evidence is set by the THEN-branch only
+    // (the consumer's if-walker handles else-branch separately).
+    //
+    // The bitmask tells DeadCoercionEliminationPass / JIT which
+    // predicates statically guarantee a type at this branch.
+    if (occ && !occ->is_negation) {
+        // Find the outermost predicate name (ignoring `not` wrappers).
+        auto c = flat.get(cond_id);
+        std::string pred_name;
+        for (std::uint32_t depth = 0; depth < 4 && c.tag == NodeTag::Call; ++depth) {
+            if (c.children.empty()) break;
+            auto fn_id = c.child(0);
+            auto fn = flat.get(fn_id);
+            if (fn.tag != NodeTag::Variable) break;
+            auto n = std::string(pool.resolve(fn.sym_id));
+            if (n == "not") {
+                if (c.children.size() < 2) break;
+                c = flat.get(c.child(1));
+                continue;
+            }
+            pred_name = n;
+            break;
+        }
+        last_if_narrowing_ = narrowing_bit_for(pred_name);
+    }
 
     if (occ && !occ->is_negation) {
         // Then-branch: variable has refined type
@@ -3040,6 +3112,10 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
         engine.set_metrics(metrics);
     engine.bind_declared_sigs();
     result.inferred_type = engine.infer_flat(flat, pool, root);
+    // Issue #280: capture the most recent IfExpr's narrowing
+    // evidence bitmask. The lowering pass reads this to set
+    // `narrow_evidence` on the corresponding Branch instruction.
+    result.narrow_evidence = engine.last_narrowing_evidence();
     // Capture per-call stats (Issue #72) for the result.
     auto es = engine.stats();
     result.cache_hits = es.cache_hits;

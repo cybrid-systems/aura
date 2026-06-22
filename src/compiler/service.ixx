@@ -1226,11 +1226,14 @@ public:
         }
 
         // === Level 2: Type check via TypeCheckWrap pass ===
+        // Issue #280: tc_pass is declared at this scope (not in
+        // an inner block) so the IR pipeline below can read the
+        // narrowing evidence captured by the type check.
+        aura::compiler::TypeCheckWrap tc_pass;
+        aura::diag::DiagnosticCollector diags;
+        tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_,
+                                      diags);
         {
-            aura::compiler::TypeCheckWrap tc_pass;
-            aura::diag::DiagnosticCollector diags;
-            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_,
-                                          diags);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError ||
@@ -1293,7 +1296,8 @@ public:
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             *flat_ptr, *pool_ptr, arena_, cache_ptr, nullptr, &evaluator_.primitives(), nullptr,
-            cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
+            cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering(),
+            tc_pass.last_narrowing_evidence()); // Issue #280
 
         // Run passes (silent in default path — use eval_ir for debug)
         TypeSpecializationWrap ts(&type_registry_);

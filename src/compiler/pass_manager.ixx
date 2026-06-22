@@ -208,12 +208,24 @@ public:
     // pass. This is the ONE place where structural links are
     // rewritten to insert CoercionNodes; the type checker
     // itself is now read-only on the FlatAST.
+    //
+    // Issue #280: also captures the narrowing evidence bitmask
+    // from the most recent IfExpr's predicate. Stored in
+    // last_narrowing_evidence_ for the lowering pass to query.
     std::size_t check_before_lowering(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                       aura::ast::NodeId root,
                                       aura::core::TypeRegistry& type_registry,
                                       aura::diag::DiagnosticCollector& diag) {
         aura::compiler::TypeChecker tc(type_registry);
         tc.infer_flat(flat, pool, root, diag);
+        // Issue #280: run the pure typecheck variant to capture
+        // narrowing evidence. The TypeChecker member function
+        // returns TypeId (legacy); the pure variant returns
+        // TypeCheckResult with the narrow_evidence field. We
+        // call both — the member for diagnostics + coercions,
+        // the pure for the narrowing capture.
+        auto result = aura::compiler::type_check_flat_pure(flat, pool, root, type_registry, diag);
+        last_narrowing_evidence_ = result.narrow_evidence;
         // Apply deferred coercions now, before lowering reads
         // the AST. apply_coercion_map is idempotent — calling
         // it twice with the same map is a safe no-op the
@@ -233,8 +245,17 @@ public:
     // Access stored diagnostics from last check_before_lowering call
     std::span<const aura::diag::Diagnostic> diagnostics() const { return last_diags_; }
 
+    // Issue #280: read the narrowing evidence bitmask captured
+    // from the last check_before_lowering call. Lowering
+    // queries this in flatten_expr_if to set narrow_evidence
+    // on the resulting Branch instruction.
+    [[nodiscard]] std::uint32_t last_narrowing_evidence() const noexcept {
+        return last_narrowing_evidence_;
+    }
+
 private:
     std::vector<aura::diag::Diagnostic> last_diags_;
+    std::uint32_t last_narrowing_evidence_ = 0;
 };
 
 // ── TypeSpecializationWrap — type-aware IR pass ────────────────
