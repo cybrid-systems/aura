@@ -674,6 +674,13 @@ private:
     // exit.
     std::pmr::vector<std::int64_t> value_cache_;
     std::pmr::vector<MutationRecord> mutation_log_;
+    // Issue #282: Occurrence Typing provenance log. Each entry
+    // is captured when synthesize_flat_if applies a narrowing
+    // (predicate → refined type in a branch). Exposed via
+    // (query:provenance-of var-name) and all_narrowings() /
+    // narrowing_count() accessors. The log is cleared on
+    // full FlatAST reset, same lifecycle as mutation_log_.
+    std::pmr::vector<NarrowingRecord> narrowing_log_;
     std::pmr::vector<std::uint32_t> node_first_mutation_;
     std::uint64_t next_mutation_id_ = 1;
     std::uint16_t generation_ = 1;
@@ -1938,6 +1945,8 @@ public:
         ppa_dirty_.clear();
         type_id_.clear();
         mutation_log_.clear();
+        // Issue #282: clear narrowing provenance on FlatAST reset.
+        narrowing_log_.clear();
         node_first_mutation_.clear();
         node_gen_.clear();
         free_list_.clear();
@@ -2710,6 +2719,23 @@ public:
     // Get all mutation records (unfiltered).
     const std::pmr::vector<MutationRecord>& all_mutations() const { return mutation_log_; }
     std::pmr::vector<MutationRecord>& all_mutations() { return mutation_log_; }
+
+    // Issue #282: Occurrence Typing provenance accessors.
+    // narrowing_log_ is captured at synthesize_flat_if time
+    // (see type_checker_impl.cpp). Same lifecycle as
+    // mutation_log_: cleared on FlatAST reset, persists
+    // across typecheck cycles within a generation.
+    std::size_t narrowing_count() const { return narrowing_log_.size(); }
+    const std::pmr::vector<NarrowingRecord>& all_narrowings() const { return narrowing_log_; }
+    std::pmr::vector<NarrowingRecord>& all_narrowings() { return narrowing_log_; }
+    // Issue #282: append a new narrowing record. Called from
+    // type_checker_impl.cpp's synthesize_flat_if after a
+    // successful Occurrence Typing refinement. Monotonic
+    // record_id for ordering.
+    void record_narrowing(NarrowingRecord rec) {
+        rec.record_id = narrowing_log_.size() + 1;
+        narrowing_log_.push_back(std::move(rec));
+    }
 
     // Rollback a mutation by ID. Returns true if successful.
     // Current FlatAST generation. Incremented on rollback to invalidate stale NodeIds.

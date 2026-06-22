@@ -1592,7 +1592,7 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             result = synthesize_flat_call(flat, pool, v);
             break;
         case Tag::IfExpr:
-            result = synthesize_flat_if(flat, pool, v);
+            result = synthesize_flat_if(flat, pool, id, v);
             break;
         case Tag::Lambda:
             result = synthesize_flat_lambda(flat, pool, v);
@@ -2413,7 +2413,7 @@ static std::uint32_t narrowing_bit_for(const std::string& pred_name) {
     return 0;             // unknown / unrecognized predicate
 }
 
-TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, NodeView v) {
+TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, NodeId if_id, NodeView v) {
     // children: 0=condition, 1=then_branch, 2=else_branch (can be NULL_NODE)
     if (v.children.empty()) {
         last_if_narrowing_ = 0;
@@ -2504,6 +2504,58 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
         TypeId else_type = reg_.void_type();
         if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
             else_type = synthesize_flat(flat, pool, v.child(2), flat.get(v.child(2)));
+        // Issue #282: record provenance for the narrowing
+        // application. Captures: var name, predicate source,
+        // refined type as string, IfExpr + cond NodeIds,
+        // negation flag, narrow_evidence bitmask, and the
+        // capture epoch. The provenance log is queried via
+        // (query:provenance-of var-name) and used to build
+        // BlameInfo when a narrowing becomes stale after
+        // mutation. We only record positive (then-branch)
+        // narrowings; negation is handled symmetrically in
+        // the else-branch below.
+        {
+            std::string refined_str;
+            if (occ->refined_type.index != 0) {
+                auto name_opt = reg_.name_of(occ->refined_type);
+                if (!name_opt.empty()) refined_str = std::string(name_opt);
+            }
+            // Predicate source: stringify the cond node as a
+            // canonical source. For nested (and / or / not), the
+            // first 80 chars of the source are enough to identify
+            // the predicate uniquely for human reading.
+            std::string pred_src = "(...)";
+            if (cond_id < flat.size()) {
+                auto cond_node = flat.get(cond_id);
+                if (cond_node.tag == NodeTag::Call && !cond_node.children.empty()) {
+                    // Render a short textual representation.
+                    std::string s;
+                    auto fn_id = cond_node.child(0);
+                    auto fn = flat.get(fn_id);
+                    if (fn.tag == NodeTag::Variable) {
+                        s = std::string(pool.resolve(fn.sym_id));
+                        if (cond_node.children.size() >= 2) {
+                            auto arg = flat.get(cond_node.child(1));
+                            if (arg.tag == NodeTag::Variable) {
+                                s += " " + std::string(pool.resolve(arg.sym_id));
+                            }
+                        }
+                    }
+                    if (s.size() > 80) s.resize(80);
+                    pred_src = s;
+                }
+            }
+            NarrowingRecord rec;
+            rec.var_name = occ->var_name;
+            rec.predicate_src = pred_src;
+            rec.refined_type_str = refined_str;
+            rec.if_node = if_id;
+            rec.cond_node = cond_id;
+            rec.is_negation = false;
+            rec.narrow_evidence = last_if_narrowing_;
+            rec.capture_epoch = cache_epoch_;
+            flat.record_narrowing(std::move(rec));
+        }
         return lub(then_type, else_type);
     }
 

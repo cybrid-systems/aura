@@ -47,6 +47,46 @@ export struct MutationRecord {
     InvariantStatus invariant_status = InvariantStatus::NotChecked;
 };
 
+// Issue #282: provenance record for Occurrence Typing
+// narrowings. Captured when synthesize_flat_if applies a
+// refinement (e.g. (string? x) → x : String in the then-branch).
+// Side-channel to MutationRecord: this is about which
+// *predicate* caused the narrowing, not which mutation
+// changed the AST.
+//
+// Used by (query:provenance-of var-name) to answer "why does
+// this variable have type T in this scope?".
+export struct NarrowingRecord {
+    // The variable that was narrowed.
+    std::string var_name;
+    // The predicate that caused the narrowing (e.g. "string?",
+    // "pair?", "(and string? (> (length x) 2))").
+    std::string predicate_src;
+    // The refined type as a string ("Pair", "String", etc.).
+    std::string refined_type_str;
+    // The IfExpr node where the narrowing was applied. Lets
+    // the provenance query distinguish "this narrowing is
+    // live in this branch" from "this narrowing came from
+    // a previous IfExpr and may be stale".
+    NodeId if_node = NULL_NODE;
+    // The cond node that the predicate analyzer walked.
+    NodeId cond_node = NULL_NODE;
+    // True if the predicate was a (not p) wrapper. Lets the
+    // consumer reconstruct the narrowing source.
+    bool is_negation = false;
+    // Narrowing-evidence bitmask (kNarrow* values). Mirrors
+    // the Branch instruction's narrow_evidence (#280) so
+    // the provenance can be joined with the IR.
+    std::uint32_t narrow_evidence = 0;
+    // Epoch at capture. A narrowing is considered "stale" if
+    // the FlatAST's generation has advanced past this value.
+    // The consumer can filter on (record.epoch < flat.generation()).
+    std::uint64_t capture_epoch = 0;
+    // Sequence number so the consumer can iterate in
+    // application order.
+    std::uint64_t record_id = 0;
+};
+
 export enum class MutationSoAField : std::uint32_t {
     IntVal = 0,
     TypeId = 1,

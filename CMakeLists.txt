@@ -1040,6 +1040,8 @@ aura_add_issue_test(test_issue_280)
 aura_issue_test_link_llvm_jit(test_issue_280)
 aura_add_issue_test(test_issue_281)
 aura_issue_test_link_llvm_jit(test_issue_281)
+aura_add_issue_test(test_issue_282)
+aura_issue_test_link_llvm_jit(test_issue_282)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
 target_sources(test_issue_264 PRIVATE
     src/serve/fiber.cpp

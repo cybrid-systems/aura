@@ -1130,6 +1130,97 @@ void register_workspace_query_primitives(
 
         return result;
     });
+
+    // Issue #282: (query:provenance-of var-name) — return the
+    // list of NarrowingRecords that narrowed `var-name`. Each
+    // entry is a hash with keys: :predicate, :refined-type,
+    // :if-node, :cond-node, :is-negation, :narrow-evidence,
+    // :capture-epoch, :record-id. Empty list if no narrowing
+    // found or no workspace loaded.
+    //
+    // Use case: AI agent debugging "why does x have type T in
+    // this branch?" → calls (query:provenance-of "x") to get
+    // the predicates that refined x.
+    add("query:provenance-of", [ws, mev](const auto& a) -> EvalValue {
+        if (a.size() != 1 || !ws.workspace_flat) {
+            mev("bad-arg", "query:provenance-of expects 1 string arg");
+            return make_void();
+        }
+        if (!is_string(a[0])) {
+            mev("bad-arg", "query:provenance-of: arg must be a string");
+            return make_void();
+        }
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ws.string_heap.size()) {
+            return make_void();
+        }
+        std::string var_name = ws.string_heap[idx];
+        const auto& flat = *ws.workspace_flat;
+        const auto& log = flat.all_narrowings();
+        EvalValue result = make_void();
+        // Cons the results in reverse so they appear in
+        // application order.
+        std::vector<EvalValue> entries;
+        for (const auto& rec : log) {
+            if (rec.var_name != var_name) continue;
+            // Build the entry hash. 8-slot is enough for 7 fields
+            // (one slot of slack).
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) continue;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"predicate", make_string(ws.string_heap.size())},
+                {"refined-type", make_string(ws.string_heap.size() + 1)},
+                {"if-node", make_int(static_cast<std::int64_t>(rec.if_node))},
+                {"cond-node", make_int(static_cast<std::int64_t>(rec.cond_node))},
+                {"is-negation", make_bool(rec.is_negation)},
+                {"narrow-evidence", make_int(static_cast<std::int64_t>(rec.narrow_evidence))},
+                {"capture-epoch", make_int(static_cast<std::int64_t>(rec.capture_epoch))},
+                {"record-id", make_int(static_cast<std::int64_t>(rec.record_id))},
+            };
+            // Push the strings to the heap.
+            ws.string_heap.push_back(rec.predicate_src);
+            ws.string_heap.push_back(rec.refined_type_str);
+            // Insert into the hash.
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto cap = ht->capacity;
+            bool ok = true;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ws.string_heap.size();
+                ws.string_heap.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < cap; ++at) {
+                    auto idx = ((h >> 1) + at) & (cap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { ok = false; break; }
+            }
+            if (!ok) {
+                FlatHashTable::destroy(ht);
+                continue;
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            auto cons_pair = ws.pairs.size();
+            ws.pairs.push_back({make_hash(hidx), result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    });
 }
 
 } // namespace aura::compiler::primitives_detail
