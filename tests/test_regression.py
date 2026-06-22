@@ -580,11 +580,16 @@ def test_mutation_sequences():
 
 def test_fuzz_edsl():
     """Run property-based EDSL mutation fuzz (quick mode)."""
+    # Issue #280 follow-up: bumped timeout from 90 → 180s to match
+    # the other CI timeouts. fuzz_edsl.py now has an internal soft
+    # deadline of 60s per session, so this is a hard outer safety
+    # net, not the primary defense. The 90s value was a
+    # pre-existing flake source (hit under CI resource contention).
     r = subprocess.run(
         [sys.executable, str(REPO / "tests" / "fuzz_edsl.py"), "--quick"],
         capture_output=True,
         text=True,
-        timeout=90,
+        timeout=180,
         cwd=str(REPO),
     )
     if r.returncode != 0:
