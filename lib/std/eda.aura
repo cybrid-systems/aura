@@ -127,6 +127,48 @@
 (define (eda:sensitivity-edge s) (car (cdr s)))
 (define (eda:sensitivity-signal s) (car (cdr (cdr s))))
 
+; ── eda:interface ──
+;
+; SystemVerilog interface — bundles signals + modports.
+; Format: (eda:interface name ports modports)
+;   name     — symbol (interface name, e.g. 'bus_if)
+;   ports    — list of eda:port (the actual signal declarations)
+;   modports — list of eda:modport (named views)
+;
+; An interface declares physical signals once. modports then
+; expose different views to different modules (e.g. master
+; sees data as 'input, slave as 'output).
+;
+; Phased delivery (per Issue #284 umbrella):
+;   - This block = Phase 2 item 1 (foundation: interface + modport)
+;   - #435 will introduce dedicated SV NodeTag + builders
+;   - #436 will extend Verilog emitter with full SV coverage
+(define (make-eda:interface name ports modports)
+  (list 'eda:interface name ports modports))
+(define (eda:interface? x)
+  (and (pair? x) (equal? (car x) 'eda:interface)))
+(define (eda:interface-name i) (car (cdr i)))
+(define (eda:interface-ports i) (car (cdr (cdr i))))
+(define (eda:interface-modports i) (car (cdr (cdr (cdr i)))))
+
+; ── eda:modport ──
+;
+; Modport — named view of an interface's ports.
+; Format: (eda:modport name port-names)
+;   name       — symbol (modport name, e.g. 'master)
+;   port-names — list of symbols (subset of interface port names)
+;
+; Direction of each port-name is taken from the matching
+; eda:port in the parent interface (NOT stored redundantly).
+; This keeps modport data minimal — direction lives in the
+; port itself.
+(define (make-eda:modport name port-names)
+  (list 'eda:modport name port-names))
+(define (eda:modport? x)
+  (and (pair? x) (equal? (car x) 'eda:modport)))
+(define (eda:modport-name mp) (car (cdr mp)))
+(define (eda:modport-port-names mp) (car (cdr (cdr mp))))
+
 ; ═══════════════════════════════════════════════════════════
 ; Display / debug functions
 ; ═══════════════════════════════════════════════════════════
@@ -134,6 +176,8 @@
 (define (eda:display ir)
   (cond
     ((eda:module? ir) (eda:display-module ir))
+    ((eda:interface? ir) (eda:display-interface ir))
+    ((eda:modport? ir) (eda:display-modport ir))
     ((eda:port? ir)   (eda:display-port ir))
     ((eda:wire? ir)   (eda:display-wire ir))
     ((eda:assign? ir) (eda:display-assign ir))
@@ -157,6 +201,22 @@
   (display ");\n")
   (map eda:display (eda:module-body m))
   (display "endmodule"))
+
+(define (eda:display-interface i)
+  (display
+    (string-append "interface "
+                   (eda:name-str (eda:interface-name i)) ";\n"))
+  (map eda:display (eda:interface-ports i))
+  (map eda:display (eda:interface-modports i))
+  (display "endinterface"))
+
+(define (eda:display-modport mp)
+  (display
+    (string-append "  modport "
+                   (eda:name-str (eda:modport-name mp))
+                   " ("
+                   (eda:emit-modport-portnames mp)
+                   ");\n")))
 
 (define (eda:display-port p)
   (display (eda:port-direction p))
@@ -548,9 +608,116 @@
     (eda:emit-module-body (eda:module-body m))
     "endmodule"))
 
+; ── Interface + modport emitters (Cycle 3 Phase 2) ──
+;
+; SystemVerilog syntax:
+;   interface bus_if (input clk, input [7:0] data, output ready);
+;     modport master (input clk, output ready, inout data);
+;   endinterface
+;
+; Design:
+;   - Each eda:port owns its own direction. The interface
+;     header lists ports inline with their directions.
+;   - A modport only names which port NAMES belong to its
+;     view. To emit "input clk" inside a modport, we look up
+;     the port's direction from the parent interface's ports
+;     list. So the full emitter needs both the modport AND
+;     the parent ports.
+;   - eda:emit-modport-with takes (modport, ports) for full
+;     direction-aware emission.
+;   - eda:emit-modport takes (modport) alone and emits just
+;     "modport name (port1, port2, ...)" — useful for
+;     inspection and unit testing without a parent context.
+
+; Look up the direction of port-name in ports. Returns
+; 'unknown if not found.
+(define (eda:emit-modport-lookup port-name ports)
+  (cond
+    ((null? ports) 'unknown)
+    ((equal? (eda:port-name (car ports)) port-name)
+     (eda:port-direction (car ports)))
+    (else (eda:emit-modport-lookup port-name (cdr ports)))))
+
+; Emit "input clk" or "input clk, output ready" — the
+; entries inside a modport's parentheses.
+; Aura quirk: empty list is the integer 0 — check length
+; BEFORE car/cdr.
+(define (eda:emit-modport-entries pns ports)
+  (cond
+    ((null? pns) "")
+    ((null? (cdr pns))
+     (string-append (eda:name-str (eda:emit-modport-lookup (car pns) ports))
+                    " " (eda:name-str (car pns))))
+    (else (string-append
+            (eda:name-str (eda:emit-modport-lookup (car pns) ports))
+            " " (eda:name-str (car pns)) ", "
+            (eda:emit-modport-entries (cdr pns) ports)))))
+
+; Full modport emitter: takes (modport, ports).
+; Returns "modport master (input clk, output ready)".
+(define (eda:emit-modport-with mp ports)
+  (string-append "modport " (eda:name-str (eda:modport-name mp)) " ("
+                 (eda:emit-modport-entries
+                   (eda:modport-port-names mp) ports)
+                 ")"))
+
+; Emit comma-separated port names for the single-arg form
+; (no direction context).
+(define (eda:emit-modport-portnames mp)
+  (cond
+    ((null? (eda:modport-port-names mp)) "")
+    ((null? (cdr (eda:modport-port-names mp)))
+     (eda:name-str (car (eda:modport-port-names mp))))
+    (else (eda:join-names (eda:modport-port-names mp)))))
+
+; Join a list of symbols with ", " separator.
+(define (eda:join-names pns)
+  (cond
+    ((null? pns) "")
+    ((null? (cdr pns)) (eda:name-str (car pns)))
+    (else (string-append (eda:name-str (car pns)) ", "
+                         (eda:join-names (cdr pns)))))))
+
+; Single-arg modport emitter: no direction context.
+; Returns "modport master (clk, data, ready)".
+(define (eda:emit-modport mp)
+  (string-append "modport " (eda:name-str (eda:modport-name mp))
+                 " (" (eda:emit-modport-portnames mp) ")"))
+
+; Emit the interface header port list (no trailing newline).
+; "input clk, input [7:0] data, output ready"
+(define (eda:emit-interface-port-list ports)
+  (cond
+    ((null? ports) "")
+    ((null? (cdr ports)) (eda:emit-port (car ports)))
+    (else (string-append (eda:emit-port (car ports)) ", "
+                         (eda:emit-interface-port-list (cdr ports))))))
+
+; Emit the modport declarations for an interface. Each
+; modport gets "  modport ... ;\n".
+(define (eda:emit-interface-modports modports ports)
+  (cond
+    ((null? modports) "")
+    (else (string-append "  " (eda:emit-modport-with (car modports) ports)
+                         ";\n"
+                         (eda:emit-interface-modports (cdr modports) ports)))))
+
+; Full interface emitter.
+; "interface bus_if(\n  input clk, ...);\n  modport master (...);\nendinterface"
+(define (eda:emit-interface i)
+  (string-append
+    "interface " (eda:name-str (eda:interface-name i))
+    "(\n  "
+    (eda:emit-interface-port-list (eda:interface-ports i))
+    ");\n"
+    (eda:emit-interface-modports (eda:interface-modports i)
+                                 (eda:interface-ports i))
+    "endinterface"))
+
 (define (eda:emit-verilog ir)
   (cond
     ((eda:module? ir) (eda:emit-module ir))
+    ((eda:interface? ir) (eda:emit-interface ir))
     (else (eda:emit-body-item ir))))
 
 ; ═══════════════════════════════════════════════════════════
@@ -771,6 +938,14 @@
   eda:emit-verilog eda:emit-module eda:emit-port eda:emit-wire
   eda:emit-assign eda:emit-always eda:emit-sensitivity eda:emit-signal
   eda:emit-expr eda:emit-body-item eda:name-str
+  ; Interface + modport (Cycle 3 Phase 2 — Issue #284)
+  make-eda:interface eda:interface? eda:interface-name
+  eda:interface-ports eda:interface-modports
+  make-eda:modport eda:modport? eda:modport-name eda:modport-port-names
+  eda:emit-interface eda:emit-modport eda:emit-modport-with
+  eda:emit-interface-port-list eda:emit-interface-modports
+  eda:emit-modport-entries eda:emit-modport-portnames
+  eda:join-names eda:emit-modport-lookup
   ; Type-checked pipeline (Cycle 4)
   eda:port-to-typed-signal eda:wire-to-typed-signal
   eda:query:typed-signals eda:assign-widths-ok? eda:check-module-types
