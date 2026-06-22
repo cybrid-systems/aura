@@ -663,6 +663,97 @@
     (else (string-append (eda:emit-always-body-stmt (car body)) "\n"
                          (eda:emit-always-body (cdr body))))))
 
+; ═══════════════════════════════════════════════════════════
+; Issue #436 Phase 2: automatic always @(*) / always @(posedge) →
+; always_comb / always_ff upgrade based on sensitivity context.
+; ═══════════════════════════════════════════════════════════
+;
+; Heuristic:
+;   1. Empty sensitivity (always @(*) or always @()) →
+;      combinational → 'always_comb.
+;   2. Sensitivity is exactly one edge event (posedge or
+;      negedge on a single signal) → sequential →
+;      'always_ff. The edge is preserved; sensitivity is
+;      kept as-is.
+;   3. Anything else (level-sensitive, multiple edges,
+;      mixed posedge+level) → keep as 'always. Synth tools
+;      may or may not accept it; emit verbatim.
+;
+; Why heuristic not full inference: full SV latch/flip-flop
+; inference is a synth-tool job, not an emitter job. The
+; emitter's job is to write idiomatic SV when the intent
+; is clear from the sensitivity list. For complex cases
+; the user can set the kind explicitly via
+; make-eda:always-comb / make-eda:always-ff / make-eda:always3.
+
+; Is the given symbol an SV clock edge? (posedge or negedge)
+(define (eda:edge? sym)
+  (or (equal? sym 'posedge) (equal? sym 'negedge)))
+
+; Is the sensitivity list exactly one edge event?
+;   (length 1 AND the lone element is an edge)
+(define (eda:single-edge-sensitivity? ss)
+  (cond
+    ((null? ss) #f)
+    ((null? (cdr ss))
+     (eda:edge? (eda:sensitivity-edge (car ss))))
+    (else #f)))
+
+; Detect the best kind for an always block given its current
+; IR. Pure: reads the always, returns a symbol — does NOT
+; mutate. Use eda:upgrade-always to apply.
+;
+; Returns: 'always_comb, 'always_ff, or 'always.
+(define (eda:always-detect-kind a)
+  (let ((ss (eda:always-sensitivity a)))
+    (cond
+      ((null? ss) 'always_comb)
+      ((eda:single-edge-sensitivity? ss) 'always_ff)
+      (else 'always))))
+
+; Construct a new always with the given kind, preserving
+; the original sensitivity and body. Pure.
+;
+; If the new kind equals the current kind, returns the
+; original always unchanged (preserves any later mutations
+; to the body — the caller may have wired up other state).
+(define (eda:always-with-kind a kind)
+  (if (equal? (eda:always-kind a) kind)
+      a
+      (make-eda:always3 kind
+                        (eda:always-sensitivity a)
+                        (eda:always-body a))))
+
+; Upgrade a single always block to its best-fit kind.
+; Returns a new always (or the input unchanged if it's
+; already optimal). Pure.
+(define (eda:upgrade-always a)
+  (eda:always-with-kind a (eda:always-detect-kind a)))
+
+; Walk a module body and upgrade every always block in
+; place. Returns a new module. Non-always body items are
+; passed through unchanged. Pure.
+;
+; Usage:
+;   (eda:upgrade-module-alwayses old-module)
+;     → returns a module whose always blocks have been
+;       re-classified to the best kind.
+(define (eda:upgrade-module-alwayses m)
+  (make-eda:module
+    (eda:module-name m)
+    (eda:module-ports m)
+    (eda:upgrade-body-alwayses (eda:module-body m))))
+
+; Helper: walk a body list, upgrade any always.
+(define (eda:upgrade-body-alwayses body)
+  (cond
+    ((null? body) '())
+    ((eda:always? (car body))
+     (cons (eda:upgrade-always (car body))
+           (eda:upgrade-body-alwayses (cdr body))))
+    (else (cons (car body)
+                (eda:upgrade-body-alwayses (cdr body))))))
+
 (define (eda:emit-signal s)
   (let ((kind (eda:signal-kind s))
         (name (eda:signal-name s))
@@ -1042,6 +1133,11 @@
   eda:emit-interface-port-list eda:emit-interface-modports
   eda:emit-modport-entries eda:emit-modport-portnames
   eda:join-names eda:emit-modport-lookup
+  ; Always upgrade (Cycle 3 Phase 2 — Issue #436 Phase 2)
+  eda:edge? eda:single-edge-sensitivity?
+  eda:always-detect-kind eda:always-with-kind
+  eda:upgrade-always eda:upgrade-module-alwayses
+  eda:upgrade-body-alwayses
   ; Type-checked pipeline (Cycle 4)
   eda:port-to-typed-signal eda:wire-to-typed-signal
   eda:query:typed-signals eda:assign-widths-ok? eda:check-module-types
