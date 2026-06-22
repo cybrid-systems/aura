@@ -1325,14 +1325,48 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
             return result;
         }
 
-        // Check for (or p1 p2) — return first found (conservative: then-branch unknowns)
+        // Check for (or p1 p2) — conservative LUB over the same variable.
+        // Issue #279: previously took the first match, which is too narrow
+        // when the second branch narrows to a different type. Now we
+        // collect all OccurrenceInfoFlat entries for the same variable
+        // and pick the type that subsumes all of them. In the absence of
+        // a real union type system, the conservative choice is:
+        //   - 0 matches  → std::nullopt (no information)
+        //   - 1 match    → that type
+        //   - 2+ matches same type  → that type
+        //   - 2+ matches different types  → reg.dynamic_type() (Any) +
+        //                                   is_negation = false (this is
+        //                                   a then-branch disjunct, not a
+        //                                   negation). We then-branch
+        //                                   dynamic, but the *else-branch*
+        //                                   (when the disjunction is
+        //                                   exhausted) still gets the
+        //                                   pre-disjunction type via the
+        //                                   caller's `if` walker.
         if (fn_name == "or") {
+            std::optional<OccurrenceInfoFlat> result;
             for (std::size_t i = 1; i < cond.children.size(); i++) {
                 auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg);
-                if (inner)
-                    return inner;
+                if (!inner) continue;
+                if (!result) {
+                    result = inner;
+                } else if (result->var_name == inner->var_name) {
+                    if (result->refined_type != inner->refined_type) {
+                        // Multiple disambiguated branches for the same
+                        // variable: fall back to Any in the then-branch
+                        // (the *else*-branch of the surrounding `if` keeps
+                        // the pre-disjunction type because the disjunct
+                        // being false doesn't change the variable's type).
+                        result->refined_type = reg.dynamic_type();
+                    }
+                    // else: both branches narrow to the same type — keep it.
+                } else {
+                    // Different variables on each branch — can't combine.
+                    // Conservative: drop both, return std::nullopt.
+                    return std::nullopt;
+                }
             }
-            return std::nullopt;
+            return result;
         }
 
         // Check for (type? x "TypeName")
@@ -1366,9 +1400,29 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                 else if (fn_name == "null?" || fn_name == "void?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.void_type()};
                 else if (fn_name == "pair?")
-                    return OccurrenceInfoFlat{
-                        std::string(var_name),
-                        reg.register_func({reg.dynamic_type()}, reg.dynamic_type())};
+                    // Issue #279: pair? should refine to the Pair type,
+                    // not register a fresh (Dynamic)->Dynamic func type.
+                    // The pre-#279 behavior created a brand-new func TypeId
+                    // per (pair? x) site, which is wasteful and inaccurate
+                    // (the variable isn't a function — it's a cons pair).
+                    // We use lookup_type("Pair") for the pre-registered
+                    // PAIR type. lookup_type returns an invalid TypeId
+                    // only if Pair isn't registered; that shouldn't happen
+                    // given the TypeRegistry constructor pre-registers it,
+                    // but we fall back to dynamic_type() in the safety
+                    // case to avoid UB.
+                    return OccurrenceInfoFlat{std::string(var_name), [&]() {
+                        auto p = reg.lookup_type("Pair");
+                        return p.valid() ? p : reg.dynamic_type();
+                    }()};
+                else if (fn_name == "list?")
+                    // Issue #279: add list? predicate for Vector refinement
+                    // (was missing pre-#279). Same lookup_type fallback
+                    // pattern as pair?.
+                    return OccurrenceInfoFlat{std::string(var_name), [&]() {
+                        auto v = reg.lookup_type("Vector");
+                        return v.valid() ? v : reg.dynamic_type();
+                    }()};
                 else if (fn_name == "symbol?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
                 else if (fn_name == "float?")
