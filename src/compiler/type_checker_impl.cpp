@@ -2878,7 +2878,12 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         check_flat_lambda(flat, pool, v, expected);
     else if (v.tag == NodeTag::IfExpr) {
         // If in check mode: check condition is Bool, check both branches
-        // against expected, and unify them
+        // against expected, and unify them.
+        // Issue #283: also run analyze_predicate_flat on the
+        // condition so that the then-branch can see the
+        // narrowed type. This makes check-mode produce the
+        // same diagnostic precision as synthesize-mode for
+        // Occurrence Typing predicates.
         if (v.children.size() < 2)
             return;
         auto cond_id = v.child(0);
@@ -2886,10 +2891,48 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         // Condition must be Bool
         auto cond_type = synthesize_flat(flat, pool, cond_id, flat.get(cond_id));
         cs_.consistent_unify(cond_type, reg_.bool_type());
-        // Check both branches against expected
-        check_flat(flat, pool, then_id, expected);
-        if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
-            check_flat(flat, pool, v.child(2), expected);
+        // Issue #283: extract Occurrence Typing narrowing on the
+        // condition. Mirrors the synthesize_flat_if path
+        // (line ~2493) but in check-mode we only APPLY the
+        // narrowing; we don't recompute via synthesize. The
+        // expected-type check below is what enforces the
+        // contract; the narrowing just gives the checker more
+        // information about the then-branch.
+        auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_);
+        if (occ && !occ->is_negation) {
+            // Then-branch: variable has refined type
+            env_.push_scope();
+            ownership_env_.push_scope();
+            if (env_.is_bound(occ->var_name))
+                env_.bind(occ->var_name, occ->refined_type);
+            // Linear ownership: narrowed bindings are Owned
+            // (the predicate guarantees presence; use is
+            // permitted). This mirrors the original-type
+            // default of `Owned` for unknown vars.
+            ownership_env_.mark(occ->var_name, OwnershipState::Owned);
+            check_flat(flat, pool, then_id, expected);
+            ownership_env_.pop_scope();
+            env_.pop_scope();
+        } else if (occ && occ->is_negation) {
+            // Negation: else-branch gets the refinement.
+            env_.push_scope();
+            ownership_env_.push_scope();
+            if (env_.is_bound(occ->var_name))
+                env_.bind(occ->var_name, occ->refined_type);
+            ownership_env_.mark(occ->var_name, OwnershipState::Owned);
+            if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+                check_flat(flat, pool, v.child(2), expected);
+            ownership_env_.pop_scope();
+            env_.pop_scope();
+            // Then-branch: no refinement
+            check_flat(flat, pool, then_id, expected);
+        } else {
+            // No narrowing predicate — fall back to original
+            // uniform check.
+            check_flat(flat, pool, then_id, expected);
+            if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+                check_flat(flat, pool, v.child(2), expected);
+        }
     } else if (v.tag == NodeTag::Let || v.tag == NodeTag::LetRec) {
         // Let in check mode: check value, then check body against expected
         bool is_rec = (v.tag == NodeTag::LetRec);
