@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**51** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**52** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -31,13 +31,14 @@
 | `std/llm` | `aura-llm-call` `aura-verify` | Aura std/llm -- LLM 交互模块 |
 | `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+50) | Aura standard math library |
 | `std/maybe` | `maybe?` `maybe-ref` `maybe-default` `map-maybe` `filter-maybe` | maybe.aura — Maybe/Option type |
+| `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` | — |
 | `std/net` | `http-get-json` `http-post-json` `url-encode` `url-decode` `url-join` `fetch-try` | lib/std/net.aura — Network client library |
 | `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `agent:spawn` `agent:ask` `agent:list` … (+7) | — |
 | `std/pipeline` | `synthesize:pipeline` | Aura std/pipeline — 代码生成管线 |
 | `std/process` | `sh` `sh-ok?` `which` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
-| `std/query` | `query:filter` `query:uncalled` `query:callers-of` | — |
+| `std/query` | `query:filter` `query:uncalled` `query:callers-of` `query:defines-by-marker` `query:calls-by-marker` `query:node-marker` `query:defines` `query:calls` … (+1) | — |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (pair-based, immutable) |
 | `std/random` | `make-random` `random-next` `random-integer` `random-float` `random-range` `random-vector` `shuffle` `random-seed` | random.aura — Simple pseudo-random number generator |
 | `std/refactor` | `refactor:rename-var` `refactor:extract-function` `refactor:inline-function` | — |
