@@ -95,12 +95,41 @@
 (define (eda:assign-rhs a) (car (cdr (cdr a))))
 
 ; ── eda:always ──
+;
+; IR: (eda:always kind sensitivity body)
+;   kind       — 'always (default), 'always_comb (combinational),
+;                or 'always_ff (sequential with clock edge)
+;   sensitivity — list of eda:sensitivity (e.g. (posedge clk))
+;                For 'always_comb, sensitivity is typically '() (SV
+;                implicitly @(*)s everything).
+;   body       — list of statements (eda:assign, eda:wire, etc.)
+;
+; Two-arg form (legacy): make-eda:always sensitivity body
+;   — kept for backward compat; defaults kind to 'always.
+;
+; SystemVerilog-idiomatic variants:
+;   - always_comb: combinational logic (synthesizable @(*) equivalent
+;                  with lint checks for latch inference).
+;   - always_ff: sequential logic (clocked, edge-triggered).
+;
+; Phased delivery (Issue #436):
+;   - This block = Phase 1: IR + emitters for always_comb / always_ff.
+;   - #436 Phase 2: integrate with mutate:* (replace always @() forms
+;     with always_comb / always_ff based on context).
+;   - #436 Phase 3: always_latch + coverproperty + assert property.
+(define (make-eda:always3 kind sensitivity body)
+  (list 'eda:always kind sensitivity body))
 (define (make-eda:always sensitivity body)
-  (list 'eda:always sensitivity body))
+  (make-eda:always3 'always sensitivity body))
+(define (make-eda:always-comb sensitivity body)
+  (make-eda:always3 'always_comb sensitivity body))
+(define (make-eda:always-ff sensitivity body)
+  (make-eda:always3 'always_ff sensitivity body))
 (define (eda:always? x)
   (and (pair? x) (equal? (car x) 'eda:always)))
-(define (eda:always-sensitivity a) (car (cdr a)))
-(define (eda:always-body a) (car (cdr (cdr a))))
+(define (eda:always-kind a) (car (cdr a)))
+(define (eda:always-sensitivity a) (car (cdr (cdr a))))
+(define (eda:always-body a) (car (cdr (cdr (cdr a)))))
 
 ; ── eda:signal ──
 (define (make-eda:signal name width kind)
@@ -247,9 +276,26 @@
   (display ";\n"))
 
 (define (eda:display-always a)
-  (display "always @(")
-  (map eda:display-sensitivity (eda:always-sensitivity a))
-  (display ") begin\n")
+  (let ((kind (eda:always-kind a))
+        (ss (eda:always-sensitivity a)))
+    (cond
+      ((equal? kind 'always_comb)
+       (display "always_comb")
+       (if (null? ss)
+           (display " begin\n")
+           (begin
+             (display " @(")
+             (map eda:display-sensitivity ss)
+             (display ") begin\n"))))
+      ((equal? kind 'always_ff)
+       (display "always_ff @(")
+       (if (null? ss) (display "*")
+           (map eda:display-sensitivity ss))
+       (display ") begin\n"))
+      (else
+       (display "always @(")
+       (map eda:display-sensitivity ss)
+       (display ") begin\n"))))
   (map eda:display (eda:always-body a))
   (display "end"))
 
@@ -542,17 +588,66 @@
                  (eda:name-str (eda:sensitivity-signal s))))
 
 (define (eda:emit-always a)
-  (string-append
-    "always @("
-    (let loop ((ss (eda:always-sensitivity a)) (acc ""))
-      (cond
-        ((null? ss) (string-append acc ") begin\n"))
-        (else
-          (loop (cdr ss)
-                (if (string=? acc "")
-                    (eda:emit-sensitivity (car ss))
-                    (string-append acc ", " (eda:emit-sensitivity (car ss))))))))
-    (eda:emit-always-body (eda:always-body a))))
+  ; Aura quirk: 3-arg string-append silently drops tail args when the
+  ; middle arg is a (string-append ... ...) subexpression. We work around
+  ; it by let-binding intermediate strings and only ever calling
+  ; string-append with 2 args at a time. See eda:emit-always-body
+  ; below for the same pattern.
+  (let* ((kind (eda:always-kind a))
+         (ss (eda:always-sensitivity a))
+         (body (eda:always-body a))
+         (body-str (eda:emit-always-body body))
+         (ss-part (if (null? ss) "" (eda:emit-sensitivity-list ss)))
+         (kw+ss (cond
+                  ((equal? kind 'always_comb)
+                   (string-append "always_comb"
+                                  (if (null? ss) "" (string-append " @(" ss-part ")"))
+                                  " begin\n"))
+                  ((equal? kind 'always_ff)
+                   (string-append "always_ff @("
+                                  (if (null? ss) "*" ss-part)
+                                  ") begin\n"))
+                  (else
+                   (string-append "always @(" ss-part ") begin\n")))))
+    (string-append kw+ss body-str)))
+    (cond
+      ; always_comb: no @(...) needed; SV implicitly @(*)s.
+      ; If sensitivity is non-empty, emit it explicitly for clarity.
+      ((equal? kind 'always_comb)
+       (string-append
+         "always_comb"
+         (if (null? ss)
+             " begin\n"
+             (string-append " @("
+                            (eda:emit-sensitivity-list ss)
+                            ") begin\n"))
+         (eda:emit-always-body (eda:always-body a))))
+      ; always_ff: typically @ (posedge clk) or @ (negedge clk).
+      ; If sensitivity is empty, emit @(*) as a fallback.
+      ((equal? kind 'always_ff)
+       (string-append
+         "always_ff @("
+         (if (null? ss)
+             "*"
+             (eda:emit-sensitivity-list ss))
+         ") begin\n"
+         (eda:emit-always-body (eda:always-body a))))
+      ; Plain always: legacy form with explicit @(...) sensitivity.
+      (else
+       (string-append
+         "always @("
+         (eda:emit-sensitivity-list ss)
+         ") begin\n"
+         (eda:emit-always-body (eda:always-body a))))))
+
+; Helper: join a list of eda:sensitivity into a ", "-separated
+; string. Refactored out of the always emitter for reuse.
+(define (eda:emit-sensitivity-list ss)
+  (cond
+    ((null? ss) "")
+    ((null? (cdr ss)) (eda:emit-sensitivity (car ss)))
+    (else (string-append (eda:emit-sensitivity (car ss)) ", "
+                         (eda:emit-sensitivity-list (cdr ss))))))
 
 (define (eda:emit-always-body-stmt item)
   (cond
@@ -910,7 +1005,8 @@
 (export
   ; IR constructors
   make-eda:module make-eda:port make-eda:wire make-eda:assign
-  make-eda:always make-eda:signal make-eda:expr make-eda:sensitivity
+  make-eda:always make-eda:always3 make-eda:always-comb make-eda:always-ff
+  make-eda:signal make-eda:expr make-eda:sensitivity
   ; IR predicates
   eda:module? eda:port? eda:wire? eda:assign?
   eda:always? eda:signal? eda:expr? eda:sensitivity?
@@ -919,7 +1015,7 @@
   eda:port-name eda:port-direction eda:port-width
   eda:wire-name eda:wire-width
   eda:assign-lhs eda:assign-rhs
-  eda:always-sensitivity eda:always-body
+  eda:always-kind eda:always-sensitivity eda:always-body
   eda:signal-name eda:signal-width eda:signal-kind
   eda:expr-op eda:expr-args
   eda:sensitivity-edge eda:sensitivity-signal
@@ -936,7 +1032,7 @@
   eda:mutate:extract-common-expr eda:expr-equal?
   ; Verilog emitter (Cycle 3)
   eda:emit-verilog eda:emit-module eda:emit-port eda:emit-wire
-  eda:emit-assign eda:emit-always eda:emit-sensitivity eda:emit-signal
+  eda:emit-assign eda:emit-always eda:emit-sensitivity eda:emit-sensitivity-list eda:emit-signal
   eda:emit-expr eda:emit-body-item eda:name-str
   ; Interface + modport (Cycle 3 Phase 2 — Issue #284)
   make-eda:interface eda:interface? eda:interface-name
