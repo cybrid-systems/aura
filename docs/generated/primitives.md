@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**436** registrations scanned from `src/**/*.cpp`.
+**441** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -12,7 +12,7 @@ Runtime canonical list: `(api-reference)`.
 - `eval-current-output` — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (39)
+## Query: (40)
 
 - `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -51,10 +51,11 @@ Runtime canonical list: `(api-reference)`.
 - `query:siblings` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:verification-loop-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:verify-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
-## Mutate: (21)
+## Mutate: (23)
 
 - `mutate:atomic-batch` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:check-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
@@ -74,6 +75,8 @@ Runtime canonical list: `(api-reference)`.
 - `mutate:replace-value` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:set-body` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:splice` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:sv-add-coverpoint` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:sv-weaken-property` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:tweak-literal` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `mutate:wrap` — `src/compiler/evaluator_primitives_mutate.cpp`
@@ -520,7 +523,9 @@ Runtime canonical list: `(api-reference)`.
 
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Verify: (2)
+## Verify: (4)
 
 - `verify:assertion-failed` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-assert-failure` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-coverage-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:report-coverage` — `src/compiler/evaluator_primitives_compile.cpp`
