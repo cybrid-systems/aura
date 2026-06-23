@@ -871,6 +871,51 @@ public:
     void set_clear_block_dirty_fn(std::function<ClearBlockDirtyFn> fn) {
         clear_block_dirty_fn_ = std::move(fn);
     }
+    // Issue #460: per-instruction dirty hooks. Mirror the
+    // per-block pattern above. The 3 hooks are:
+    //   - is_instruction_dirty(name, i, b, k)        — is (i, b, k) dirty?
+    //   - mark_instruction_dirty(name, i, b, k)     — mark (i, b, k) dirty
+    //   - clear_instruction_dirty(name, i, b, k)    — clear (i, b, k) dirty
+    // Where (i, b, k) = (function-index, block-index, instruction-index).
+    // All return 0 / false if no hook is installed, so
+    // unit-test Evaluator instances stay default-safe.
+    using IsInstructionDirtyFn = bool(const char*, std::size_t, std::uint32_t, std::uint32_t);
+    std::function<IsInstructionDirtyFn> is_instruction_dirty_fn_ = nullptr;
+    void set_is_instruction_dirty_fn(std::function<IsInstructionDirtyFn> fn) {
+        is_instruction_dirty_fn_ = std::move(fn);
+    }
+    using MarkInstructionDirtyFn = bool(const char*, std::size_t, std::uint32_t, std::uint32_t);
+    std::function<MarkInstructionDirtyFn> mark_instruction_dirty_fn_ = nullptr;
+    void set_mark_instruction_dirty_fn(std::function<MarkInstructionDirtyFn> fn) {
+        mark_instruction_dirty_fn_ = std::move(fn);
+    }
+    using ClearInstructionDirtyFn = bool(const char*, std::size_t, std::uint32_t, std::uint32_t);
+    std::function<ClearInstructionDirtyFn> clear_instruction_dirty_fn_ = nullptr;
+    void set_clear_instruction_dirty_fn(std::function<ClearInstructionDirtyFn> fn) {
+        clear_instruction_dirty_fn_ = std::move(fn);
+    }
+    // Issue #460: partial-relower + impact-scope stats.
+    // Counters bumped by the partial-relower path and the
+    // impact-scope analysis. Stats-only (relaxed-ordering).
+    std::atomic<std::uint64_t> partial_relower_count_{0};
+    std::atomic<std::uint64_t> impact_scope_calls_{0};
+    std::atomic<std::uint64_t> total_affected_blocks_{0};
+    [[nodiscard]] std::uint64_t get_partial_relower_count() const noexcept {
+        return partial_relower_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_impact_scope_calls() const noexcept {
+        return impact_scope_calls_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_total_affected_blocks() const noexcept {
+        return total_affected_blocks_.load(std::memory_order_relaxed);
+    }
+    void bump_partial_relower_count() noexcept {
+        partial_relower_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_impact_scope_calls(std::uint64_t affected_blocks = 1) noexcept {
+        impact_scope_calls_.fetch_add(1, std::memory_order_relaxed);
+        total_affected_blocks_.fetch_add(affected_blocks, std::memory_order_relaxed);
+    }
 
     // Issue #240: per-node occurrence-dirty bit hooks.
     // Mutation primitives that affect occurrence narrowing

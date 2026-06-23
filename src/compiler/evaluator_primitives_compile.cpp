@@ -640,6 +640,72 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                                                static_cast<std::uint32_t>(bidx)));
     });
 
+    // Issue #460: (compile:is-instruction-dirty? name func-idx
+    // block-idx instr-idx) — per-instruction dirty query
+    // (mirrors is-block-dirty? for the per-instruction level).
+    // Returns #t if (i, b, k) is marked dirty in the named
+    // define's IR cache entry, #f otherwise.
+    add("compile:is-instruction-dirty?", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 4 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_bool(false);
+        if (!ev.is_instruction_dirty_fn_)
+            return make_bool(false);
+        return make_bool(ev.is_instruction_dirty_fn_(
+            ev.string_heap_[idx].c_str(),
+            static_cast<std::size_t>(as_int(a[1])),
+            static_cast<std::uint32_t>(as_int(a[2])),
+            static_cast<std::uint32_t>(as_int(a[3]))));
+    });
+
+    // Issue #460: (compile:mark-instruction-dirty! name
+    // func-idx block-idx instr-idx) — per-instruction dirty
+    // marker. Returns #t on success, #f if no hook.
+    add("compile:mark-instruction-dirty!", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 4 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_bool(false);
+        if (!ev.mark_instruction_dirty_fn_)
+            return make_bool(false);
+        return make_bool(ev.mark_instruction_dirty_fn_(
+            ev.string_heap_[idx].c_str(),
+            static_cast<std::size_t>(as_int(a[1])),
+            static_cast<std::uint32_t>(as_int(a[2])),
+            static_cast<std::uint32_t>(as_int(a[3]))));
+    });
+
+    // Issue #460: (compile:clear-instruction-dirty! name
+    // func-idx block-idx instr-idx) — per-instruction clear.
+    add("compile:clear-instruction-dirty!", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 4 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_bool(false);
+        if (!ev.clear_instruction_dirty_fn_)
+            return make_bool(false);
+        return make_bool(ev.clear_instruction_dirty_fn_(
+            ev.string_heap_[idx].c_str(),
+            static_cast<std::size_t>(as_int(a[1])),
+            static_cast<std::uint32_t>(as_int(a[2])),
+            static_cast<std::uint32_t>(as_int(a[3]))));
+    });
+
+    // Issue #460: (query:compiler-incremental-stats) — return
+    // the current partial-relower / impact-scope counters.
+    // P0 ship: returns the partial_relower_count as an int.
+    // Follow-up: returns a 3-tuple
+    // (partial-relower impact-scope-calls total-affected-blocks).
+    add("query:compiler-incremental-stats", [&ev](const auto& a) -> EvalValue {
+        (void)a;
+        return make_int(static_cast<std::int64_t>(
+            ev.get_partial_relower_count()));
+    });
+
     // Issue #240: (compile:mark-narrowing-dirty! node-id
     // [set-or-clear]) — Set or clear the per-node
     // kOccurrenceDirty bit in the workspace FlatAST's

@@ -441,6 +441,26 @@ public:
                 std::string n = name ? std::string(name) : std::string();
                 return clear_block_dirty_v2(n, func_idx, block_idx);
             });
+        // Issue #460: per-instruction dirty hooks. The
+        // P0 ship wires no-op implementations (always
+        // return false) because the underlying
+        // ir_cache_v2_ doesn't have an instruction-level
+        // dirty bitmask yet. The hooks are exposed so
+        // the primitive path is exercisable; the
+        // follow-up adds the bitmask and the
+        // mark/clear implementations.
+        evaluator_.set_is_instruction_dirty_fn(
+            [](const char*, std::size_t, std::uint32_t, std::uint32_t) -> bool {
+                return false; // P0: no per-instruction dirty yet
+            });
+        evaluator_.set_mark_instruction_dirty_fn(
+            [](const char*, std::size_t, std::uint32_t, std::uint32_t) -> bool {
+                return false; // P0: no per-instruction dirty yet
+            });
+        evaluator_.set_clear_instruction_dirty_fn(
+            [](const char*, std::size_t, std::uint32_t, std::uint32_t) -> bool {
+                return false; // P0: no per-instruction dirty yet
+            });
         // Issue #240: per-node occurrence-dirty hook. The
         // hook reads / writes the kOccurrenceDirty bit on
         // the workspace FlatAST's dirty bitmask
