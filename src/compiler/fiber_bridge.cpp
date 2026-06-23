@@ -1,55 +1,40 @@
 // fiber_bridge.cpp — C-linkage shims for the
 // per-fiber migration / GC safepoint / mutation
 // boundary hooks used by Fiber::check_gc_safepoint
-// (from src/serve/fiber.cpp) + Fiber::resume() + the
-// (query:orchestration-metrics) primitive (Issue #451).
+// (from src/serve/fiber.cpp) + Fiber::resume().
 //
 // This file is intentionally NOT a module partition —
 // it's a standalone .cpp so non-module binaries
 // (test_concurrent, test_issue_*) can include it
-// directly via the CMake source list. The 3
-// GC-safepoint + mutation-boundary-depth shims
-// (aura_evaluator_mutation_boundary_depth,
-// aura_evaluator_request_gc_safepoint,
-// aura_evaluator_wait_for_safepoint) are defined in
-// the module partition evaluator_fiber_mutation.cpp
-// (compiled into the module's binary); the
-// standalone .cpp version is only needed because
-// non-module binaries (test_concurrent,
-// test_issue_*) can't link to a module partition
-// directly.
+// directly via the CMake source list.
 //
-// The standalone-binary shims for the 3 above live
-// in a non-module wrapper; see the previous
-// version of this file (now removed) for the
-// no-op implementations.
+// Module binaries (aura, test_ir, aura_test_objects)
+// also link this file; the weak no-op stubs below are
+// overridden by the strong implementations in
+// evaluator_fiber_mutation.cpp.
 //
-// For test_concurrent + test_issue_* the #438/#439
-// shims are resolved from evaluator_fiber_mutation.cpp
-// via the test_issue_*'s source list (test_concurrent
-// has its own minimal shim path that delegates to
-// the module's static state via the C-linkage).
-//
-// Issue #451: this file now provides the
-// aura_fiber_static_gc_pause_attributed_to_mutation
-// shim used by the (query:orchestration-metrics)
-// primitive. The standalone-binary version returns
-// 0 (no module state); the module binary resolves
-// the real symbol at link time.
+// Issue #451's aura_fiber_static_gc_pause_attributed_to_mutation
+// lives in fiber.cpp (next to the static counter).
 
 #include <cstddef>
 #include <cstdint>
 
 extern "C" {
 
-// Issue #451: C-linkage shim for the static
-// gc_pause_attributed_to_mutation_count_ on Fiber.
-// The (query:orchestration-metrics) primitive
-// (registered in evaluator_primitives_query.cpp)
-// reads this via the shim. Returns 0 in standalone
-// binary context (no module state).
-std::uint64_t aura_fiber_static_gc_pause_attributed_to_mutation() {
+// Issue #438: per-thread mutation boundary depth.
+__attribute__((weak)) std::size_t
+aura_evaluator_mutation_boundary_depth() {
     return 0;
+}
+
+// Issue #439: GC safepoint request.
+__attribute__((weak)) int aura_evaluator_request_gc_safepoint() {
+    return 0;
+}
+
+// Issue #439: GC safepoint wait.
+__attribute__((weak)) void
+aura_evaluator_wait_for_safepoint(std::uint64_t /*timeout_ms*/) {
 }
 
 } // extern "C"
