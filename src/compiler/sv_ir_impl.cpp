@@ -210,6 +210,45 @@ std::string debug_modport(const ModportIR& m) {
     return out;
 }
 
+// ── ConstraintIR ──
+
+ConstraintIR make_constraint(std::string_view name,
+                             std::vector<std::string> expressions) noexcept {
+    ConstraintIR c;
+    c.name = std::string(name);
+    c.expressions = std::move(expressions);
+    return c;
+}
+
+std::string emit_constraint(const ConstraintIR& c) {
+    std::string out;
+    out.reserve(48 + c.name.size() + c.expressions.size() * 16);
+    out.append("constraint ");
+    out.append(c.name);
+    out.append(" { ");
+    if (!c.expressions.empty()) {
+        for (std::size_t i = 0; i < c.expressions.size(); ++i) {
+            if (i > 0) {
+                out.append("; ");
+            }
+            out.append(c.expressions[i]);
+        }
+    }
+    out.append(" }");
+    return out;
+}
+
+std::string debug_constraint(const ConstraintIR& c) {
+    std::string out;
+    out.reserve(48 + c.name.size() + c.expressions.size() * 16);
+    out.append("constraint(name=");
+    out.append(c.name);
+    out.append(", exprs=[");
+    append_joined(out, c.expressions, ",");
+    out.append("])");
+    return out;
+}
+
 // ── CoverpointIR ──
 
 CoverpointIR make_coverpoint(std::string_view var,
