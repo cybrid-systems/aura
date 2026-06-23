@@ -52,6 +52,14 @@ void (*g_fiber_yield_checkpoint_deleter_)(void*) = nullptr;
 extern "C" std::uint64_t aura_fiber_current_id() {
     return g_current_fiber ? g_current_fiber->id() : 0;
 }
+
+// Issue #451: C-linkage shim for the static aggregate
+// counter bumped in check_gc_safepoint(). The
+// (query:orchestration-metrics) primitive reads this
+// from evaluator_primitives_query.cpp.
+extern "C" std::uint64_t aura_fiber_static_gc_pause_attributed_to_mutation() {
+    return Fiber::static_gc_pause_attributed_to_mutation_total();
+}
 // The runtime-side hook installer (defined in
 // aura_jit_runtime.cpp).
 extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*)());

@@ -183,6 +183,11 @@ public:
     [[nodiscard]] std::uint64_t gc_pause_attributed_to_mutation_count() const noexcept {
         return gc_pause_attributed_to_mutation_count_.load(std::memory_order_relaxed);
     }
+    [[nodiscard]] static std::uint64_t
+    static_gc_pause_attributed_to_mutation_total() noexcept {
+        return static_gc_pause_attributed_to_mutation_count_.load(
+            std::memory_order_relaxed);
+    }
     // Issue #451: bump helpers (called by Fiber::yield()
     // + Fiber::check_gc_safepoint() + the work-steal path
     // follow-up).
