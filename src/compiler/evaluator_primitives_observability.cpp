@@ -78,6 +78,16 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(idx);
     });
 
+    // Issue #478: query:primitive-error-stats — returns a pair
+    // (error-count . error-values-size) for Agent recovery loops.
+    add("query:primitive-error-stats", [&ev](const auto&) -> EvalValue {
+        auto count = static_cast<std::int64_t>(ev.get_primitive_error_count());
+        auto stored = static_cast<std::int64_t>(ev.get_primitive_error_values_size());
+        auto pid = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(count), make_int(stored)});
+        return make_pair(pid);
+    });
+
     // (atomic-batch:stats) — Issue #192: observability for
     // mutate:atomic-batch. Hash with batch-count, ops-total,
     // rollback-count, ops-per-batch (avg).

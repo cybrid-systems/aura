@@ -7,6 +7,7 @@
 module;
 
 #include <functional>
+#include <atomic>
 #include <cstdint>
 #include <span>
 
@@ -29,7 +30,8 @@ using namespace types;
 
 void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                          std::pmr::vector<std::string>& string_heap,
-                                         std::vector<EvalValue>& error_values) {
+                                         std::vector<EvalValue>& error_values,
+                                         std::atomic<std::uint64_t>* primitive_error_counter) {
     add("string-copy", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
@@ -122,15 +124,11 @@ void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pairs.push_back({a[0], a[1]});
         return make_pair(id);
     });
-    add("car", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("car", [&pairs, &string_heap, &error_values, primitive_error_counter](
+                   std::span<const EvalValue> a) {
         if (a.empty() || !is_pair(a[0])) {
-            do {
-                auto __e_sidx = string_heap.size();
-                string_heap.push_back("car: not a pair");
-                auto __e_eidx = error_values.size();
-                error_values.push_back(make_string(__e_sidx));
-                return make_error(__e_eidx);
-            } while (0);
+            return make_primitive_error(string_heap, error_values, "car: not a pair",
+                                        primitive_error_counter);
         }
         auto id = as_pair_idx(a[0]);
         if (id < pairs.size())
@@ -140,15 +138,11 @@ void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return types::EvalValue{g_pair_slots[id]->car};
         return make_int(0);
     });
-    add("cdr", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("cdr", [&pairs, &string_heap, &error_values, primitive_error_counter](
+                   std::span<const EvalValue> a) {
         if (a.empty() || !is_pair(a[0])) {
-            do {
-                auto __e_sidx = string_heap.size();
-                string_heap.push_back("cdr: not a pair");
-                auto __e_eidx = error_values.size();
-                error_values.push_back(make_string(__e_sidx));
-                return make_error(__e_eidx);
-            } while (0);
+            return make_primitive_error(string_heap, error_values, "cdr: not a pair",
+                                        primitive_error_counter);
         }
         auto id = as_pair_idx(a[0]);
         if (id < pairs.size())

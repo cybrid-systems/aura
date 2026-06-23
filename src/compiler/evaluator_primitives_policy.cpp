@@ -117,19 +117,15 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
 
     add("with-capability", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {
-            auto es = ev.string_heap_.size();
-            ev.string_heap_.push_back(
-                "with-capability: first argument must be a string or list of strings");
-            auto err_idx = ev.error_values_.size();
-            ev.error_values_.push_back(make_string(es));
-            return make_error(err_idx);
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "with-capability: first argument must be a string or list of strings",
+                ev.primitive_error_counter_ptr());
         }
         if (a.size() < 2) {
-            auto es = ev.string_heap_.size();
-            ev.string_heap_.push_back("with-capability: requires at least 2 args");
-            auto err_idx = ev.error_values_.size();
-            ev.error_values_.push_back(make_string(es));
-            return make_error(err_idx);
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "with-capability: requires at least 2 args",
+                                        ev.primitive_error_counter_ptr());
         }
         auto cap_val = a[0];
         std::vector<std::string> caps;
@@ -180,11 +176,9 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
 
     add("check-capability", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {
-            auto es = ev.string_heap_.size();
-            ev.string_heap_.push_back("check-capability: first argument must be a string");
-            auto err_idx = ev.error_values_.size();
-            ev.error_values_.push_back(make_string(es));
-            return make_error(err_idx);
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "check-capability: first argument must be a string",
+                                        ev.primitive_error_counter_ptr());
         }
         auto sidx = types::as_string_idx(a[0]);
         std::string needed;

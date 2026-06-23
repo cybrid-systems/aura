@@ -4,6 +4,7 @@
 module;
 #include <span>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -37,7 +38,7 @@ std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap
 
 void register_math_regex_and_arithmetic_primitives(
     PrimRegistrar add, std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
-    std::vector<EvalValue>& error_values) {
+    std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter) {
 
     // ── M4 linear-type primitives (Issue #108 part 3) ─────────────
     add("m4-move", [](std::span<const EvalValue> a) -> EvalValue {
@@ -226,18 +227,13 @@ void register_math_regex_and_arithmetic_primitives(
     });
 
     // ── Arithmetic extensions ─────────────────────────────────────
-    add("modulo", [&string_heap, &error_values](std::span<const EvalValue> a) {
+    add("modulo", [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(0);
         auto divisor = coerce_to_int(a[1], string_heap);
         if (divisor == 0) {
-            do {
-                auto __e_sidx = string_heap.size();
-                string_heap.push_back("modulo: division by zero");
-                auto __e_eidx = error_values.size();
-                error_values.push_back(make_string(__e_sidx));
-                return make_error(__e_eidx);
-            } while (0);
+            return make_primitive_error(string_heap, error_values, "modulo: division by zero",
+                                      primitive_error_counter);
         }
         auto n = coerce_to_int(a[0], string_heap);
         auto r = n % divisor;
@@ -245,18 +241,13 @@ void register_math_regex_and_arithmetic_primitives(
             r += (divisor > 0 ? divisor : -divisor);
         return make_int(r);
     });
-    add("mod", [&string_heap, &error_values](std::span<const EvalValue> a) {
+    add("mod", [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(0);
         auto divisor = coerce_to_int(a[1], string_heap);
         if (divisor == 0) {
-            do {
-                auto __e_sidx = string_heap.size();
-                string_heap.push_back("mod: division by zero");
-                auto __e_eidx = error_values.size();
-                error_values.push_back(make_string(__e_sidx));
-                return make_error(__e_eidx);
-            } while (0);
+            return make_primitive_error(string_heap, error_values, "mod: division by zero",
+                                      primitive_error_counter);
         }
         auto n = coerce_to_int(a[0], string_heap);
         auto r = n % divisor;
@@ -264,33 +255,23 @@ void register_math_regex_and_arithmetic_primitives(
             r += (divisor > 0 ? divisor : -divisor);
         return make_int(r);
     });
-    add("quotient", [&string_heap, &error_values](std::span<const EvalValue> a) {
+    add("quotient", [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(0);
         auto divisor = coerce_to_int(a[1], string_heap);
         if (divisor == 0) {
-            do {
-                auto __e_sidx = string_heap.size();
-                string_heap.push_back("quotient: division by zero");
-                auto __e_eidx = error_values.size();
-                error_values.push_back(make_string(__e_sidx));
-                return make_error(__e_eidx);
-            } while (0);
+            return make_primitive_error(string_heap, error_values, "quotient: division by zero",
+                                      primitive_error_counter);
         }
         return make_int(coerce_to_int(a[0], string_heap) / divisor);
     });
-    add("remainder", [&string_heap, &error_values](std::span<const EvalValue> a) {
+    add("remainder", [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(0);
         auto divisor = coerce_to_int(a[1], string_heap);
         if (divisor == 0) {
-            do {
-                auto __e_sidx = string_heap.size();
-                string_heap.push_back("remainder: division by zero");
-                auto __e_eidx = error_values.size();
-                error_values.push_back(make_string(__e_sidx));
-                return make_error(__e_eidx);
-            } while (0);
+            return make_primitive_error(string_heap, error_values, "remainder: division by zero",
+                                      primitive_error_counter);
         }
         return make_int(coerce_to_int(a[0], string_heap) % divisor);
     });
