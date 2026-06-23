@@ -98,4 +98,116 @@ std::string debug_wire(const WireIR& w) {
     return out;
 }
 
+// ── Internal helpers (Phase 1) ─────────────────────────────
+//
+// Manual itoa for a non-negative int (widths/port counts are
+// always small and non-negative).
+namespace {
+
+void append_int(std::string& out, int n) {
+    char buf[12];
+    int len = 0;
+    if (n == 0) {
+        buf[len++] = '0';
+    } else {
+        char tmp[12];
+        int tlen = 0;
+        while (n > 0) {
+            tmp[tlen++] = static_cast<char>('0' + (n % 10));
+            n /= 10;
+        }
+        while (tlen > 0) {
+            buf[len++] = tmp[--tlen];
+        }
+    }
+    out.append(buf, len);
+}
+
+void append_joined(std::string& out, const std::vector<std::string>& items,
+                   const char* sep) {
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (i > 0) {
+            out.append(sep);
+        }
+        out.append(items[i]);
+    }
+}
+
+} // anonymous namespace
+
+// ── InterfaceIR ──
+
+InterfaceIR make_interface(std::string_view name,
+                           std::vector<std::string> ports,
+                           std::vector<std::string> modport_names) noexcept {
+    InterfaceIR i;
+    i.name = std::string(name);
+    i.ports = std::move(ports);
+    i.modport_names = std::move(modport_names);
+    return i;
+}
+
+std::string emit_interface(const InterfaceIR& i) {
+    std::string out;
+    out.reserve(96);
+    out.append("interface ");
+    out.append(i.name);
+    out.append("(\n  ");
+    append_joined(out, i.ports, ", ");
+    out.append(");\n");
+    // Modport declarations (without bodies) for the header.
+    for (const auto& m : i.modport_names) {
+        out.append("  modport ");
+        out.append(m);
+        out.append("();\n");
+    }
+    out.append("endinterface");
+    return out;
+}
+
+std::string debug_interface(const InterfaceIR& i) {
+    std::string out;
+    out.reserve(64);
+    out.append("interface ");
+    out.append(i.name);
+    out.append(" ports=[");
+    append_joined(out, i.ports, ",");
+    out.append("] modports=[");
+    append_joined(out, i.modport_names, ",");
+    out.push_back(']');
+    return out;
+}
+
+// ── ModportIR ──
+
+ModportIR make_modport(std::string_view name,
+                       std::vector<std::string> port_names) noexcept {
+    ModportIR m;
+    m.name = std::string(name);
+    m.port_names = std::move(port_names);
+    return m;
+}
+
+std::string emit_modport(const ModportIR& m) {
+    std::string out;
+    out.reserve(48);
+    out.append("modport ");
+    out.append(m.name);
+    out.append("(");
+    append_joined(out, m.port_names, ", ");
+    out.append(");");
+    return out;
+}
+
+std::string debug_modport(const ModportIR& m) {
+    std::string out;
+    out.reserve(48);
+    out.append("modport ");
+    out.append(m.name);
+    out.append(" ports=[");
+    append_joined(out, m.port_names, ",");
+    out.push_back(']');
+    return out;
+}
+
 } // namespace aura::compiler::sv_ir
