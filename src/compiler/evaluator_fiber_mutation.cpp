@@ -406,4 +406,14 @@ bool Evaluator::pending_panic_checkpoint() const noexcept {
     return !panic_safe_source_.empty();
 }
 
+// Issue #438: C-linkage shim so fiber.h can call the
+// per-thread mutation boundary depth without pulling in
+// the Evaluator module (fiber.h is a low-level header
+// included by tests that don't have the Evaluator
+// module available).
+extern "C" std::size_t
+aura_evaluator_mutation_boundary_depth() {
+    return Evaluator::mutation_boundary_depth();
+}
+
 } // namespace aura::compiler

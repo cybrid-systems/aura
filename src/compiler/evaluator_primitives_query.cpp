@@ -279,6 +279,30 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             wraps + invalidations + stale));
     });
 
+    // Issue #438: query:fiber-migration-stats. Returns
+    // the sum of the 2 fiber-migration + work-stealing
+    // observability counters:
+    //   - mutation_steal_attempts_  (lifetime # of
+    //     steal attempts the scheduler logged)
+    //   - boundary_violation_count_  (lifetime # of
+    //     attempts at an unsafe boundary that were
+    //     deferred or skipped)
+    //
+    // P0: returns an integer = sum of the 2 counters.
+    // Follow-up: returns a 2-tuple
+    // (steal-attempts boundary-violations) so the AI
+    // Agent can compute steal_efficiency and
+    // boundary_violation_rate.
+    add("query:fiber-migration-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t attempts = ev->get_mutation_steal_attempts();
+        const std::uint64_t violations = ev->get_boundary_violation_count();
+        return make_int(static_cast<std::int64_t>(
+            attempts + violations));
+    });
+
     // Issue #447: query:query-stats. Returns the sum
     // of the 3 tag+arity index counters (hits / misses /
     // rebuilds) as an integer. P0 ships the sum; the
