@@ -44,6 +44,46 @@ export const char* wire_kind_to_symbol(WireKind k) noexcept;
 // Convert Aura-symbol name to enum; returns Wire on no match.
 export WireKind wire_kind_from_symbol(std::string_view s) noexcept;
 
+// ── InterfaceIR ──
+//
+// Issue #435 Phase 1 — structured IR for SV interface
+// declarations. Mirrors the list-based
+// `(eda:interface name ports modports)` representation but
+// uses a fixed-shape struct that the optimizer, formatter,
+// and (eventual) mutation primitives can target without
+// pattern-matching on tagged-list layout.
+//
+// Layout:
+//   "interface NAME(\n  <port-list>);\n  <modports>\nendinterface"
+export struct InterfaceIR {
+    std::string name;
+    std::vector<std::string> ports;
+    std::vector<std::string> modport_names;
+};
+
+export InterfaceIR make_interface(std::string_view name,
+                                  std::vector<std::string> ports,
+                                  std::vector<std::string> modport_names) noexcept;
+
+export std::string emit_interface(const InterfaceIR& i);
+export std::string debug_interface(const InterfaceIR& i);
+
+// ── ModportIR ──
+//
+// Issue #435 Phase 2 — named view of an interface's ports.
+// Layout (per modport):
+//   "modport NAME(input clk, output data);"
+export struct ModportIR {
+    std::string name;
+    std::vector<std::string> port_names;
+};
+
+export ModportIR make_modport(std::string_view name,
+                              std::vector<std::string> port_names) noexcept;
+
+export std::string emit_modport(const ModportIR& m);
+export std::string debug_modport(const ModportIR& m);
+
 // ── WireIR ──
 //
 // A single SystemVerilog wire/logic/reg/bit declaration.
