@@ -170,6 +170,15 @@ export struct IRInstruction {
     // generic type-checks for predicates in the evidence
     // mask; the JIT can use precise unboxed representations.
     std::uint32_t narrow_evidence = 0;
+    // Issue #455: per-instruction SyntaxMarker snapshot
+    // (0=User, 1=MacroIntroduced, 2=BoolLiteral). Populated
+    // by the lowering pass from the source AST node's marker
+    // (aura::ast::FlatAST::marker). The inliner consults this
+    // to apply macro-hygiene policy at the call-site level
+    // (in addition to the existing per-function check on
+    // IRFunction::marker). A call site marked MacroIntroduced
+    // is not inlined into user code by default.
+    std::uint8_t source_marker = 0;
 };
 
 // ── Opcode metadata table ─────────────────────────────────────
