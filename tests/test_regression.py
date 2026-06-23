@@ -371,7 +371,7 @@ def test_cross_session():
         # that consumes 99% CPU and breaks subsequent tests
         # (fuzz_edsl etc.). Defensive cleanup: kill any aura
         # subprocesses that may have been left over.
-        print(f"  ⚠ cross-session: outer 60s timeout hit — cleaning up orphans")
+        print("  ⚠ cross-session: outer 60s timeout hit — cleaning up orphans")
         subprocess.run(
             ["pkill", "-9", "-f", "aura --serve"],
             capture_output=True,
