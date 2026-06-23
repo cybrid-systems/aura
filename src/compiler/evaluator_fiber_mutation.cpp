@@ -38,6 +38,16 @@ thread_local void* aura::compiler::Evaluator::g_current_fiber_void;
 // Issue #264: Evaluator instance for yield/resume hooks (set by
 // outermost MutationBoundaryGuard; cleared on guard exit).
 thread_local aura::compiler::Evaluator* g_yield_hook_evaluator = nullptr;
+// Issue #456: per-thread pointer to the active Evaluator
+// for observability primitives. Set by CompilerService
+// ctor and used by (query:mutation-impact) /
+// (query:epoch-stats) / (query:dirty-subtree) so they
+// can find the Evaluator even when no
+// MutationBoundaryGuard is currently active. Without
+// this, primitives that read counters bumped in
+// guard dtors would see nullptr (yield_hook_evaluator
+// is only bound inside a guard).
+thread_local aura::compiler::Evaluator* g_query_evaluator = nullptr;
 
 // Implementation of active_mutation_stack() — the
 // header has the declaration only (to avoid pulling
@@ -221,6 +231,14 @@ int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev) {
 // non-module header that the module interface cannot include.
 //
 void Evaluator::bind_yield_hook_evaluator() { g_yield_hook_evaluator = this; }
+
+// Issue #456: per-thread query-evaluator accessors.
+void Evaluator::set_query_evaluator(Evaluator* ev) noexcept {
+    g_query_evaluator = ev;
+}
+Evaluator* Evaluator::get_query_evaluator() noexcept {
+    return g_query_evaluator;
+}
 
 void Evaluator::unbind_yield_hook_evaluator() {
     if (g_yield_hook_evaluator == this)
