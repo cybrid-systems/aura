@@ -529,6 +529,15 @@ void register_ast_primitives(std::function<void(std::string, PrimFn)> add, Evalu
 void register_compile_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_eval_observability_primitives(std::function<void(std::string, PrimFn)> add,
                                             Evaluator& ev);
+void register_verify_tool_primitives(
+    std::function<void(std::string,
+                       std::function<aura::compiler::types::EvalValue(
+                           std::span<const aura::compiler::types::EvalValue>)>)> add,
+    Evaluator& ev,
+    std::function<aura::compiler::types::EvalValue(std::int32_t)> make_string,
+    std::function<aura::compiler::types::EvalValue(std::int64_t)> make_int,
+    std::function<aura::compiler::types::EvalValue(
+        const std::string&, const std::string&)> mev);
 void register_jit_arena_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_messaging_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_git_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
@@ -624,6 +633,15 @@ export class Evaluator {
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_eval_observability_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_verify_tool_primitives(
+        std::function<void(std::string,
+                           std::function<aura::compiler::types::EvalValue(
+                               std::span<const aura::compiler::types::EvalValue>)>)> add,
+        Evaluator& ev,
+        std::function<aura::compiler::types::EvalValue(std::int32_t)> make_string,
+        std::function<aura::compiler::types::EvalValue(std::int64_t)> make_int,
+        std::function<aura::compiler::types::EvalValue(
+            const std::string&, const std::string&)> mev);
     friend void primitives_detail::register_jit_arena_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_messaging_primitives(
@@ -1897,6 +1915,37 @@ private:
     // wait_for_safepoint implementation that
     // records the duration.
     std::atomic<std::uint64_t> gc_safepoint_wait_total_ns_{0};
+    // Issue #443: external simulator tool-calling
+    // observability. Bumped in
+    // (verify:run-external-sim) /
+    // (verify:parse-coverage) /
+    // (verify:parse-failures) primitives.
+    //   verify_tool_calls_total_  (lifetime # of
+    //     run-external-sim calls)
+    //   verify_tool_cache_hits_total_  (lifetime # of
+    //     cache hits on (cmd, generation_) lookup)
+    //   verify_tool_parse_errors_total_  (lifetime # of
+    //     parse errors in cov-data / fail-data)
+    // All stats-only (relaxed-ordering). Exposed via
+    // the (query:verify-tool-stats) primitive.
+    std::atomic<std::uint64_t> verify_tool_calls_total_{0};
+    std::atomic<std::uint64_t> verify_tool_cache_hits_total_{0};
+    std::atomic<std::uint64_t> verify_tool_parse_errors_total_{0};
+    // Issue #443: result cache keyed by (cmd, gen).
+    // Bounded LRU (P0: 64 entries, FIFO eviction; the
+    // follow-up uses a proper LRU). Used by
+    // (verify:run-external-sim) to cache results so
+    // repeated calls in the same generation don't
+    // re-execute the tool.
+    struct VerifyToolCacheEntry {
+        std::string cmd;
+        std::uint16_t gen;
+        std::string result;
+    };
+    // Issue #443: result cache (P0 = private field, only
+    // accessible via friend register_verify_tool_primitives).
+    std::deque<VerifyToolCacheEntry> verify_tool_cache_;
+    static constexpr std::size_t kVerifyToolCacheMax = 64;
     // Issue #391: stale-ref policy. Default 'warn' for
     // production AI agent loops (logs the violation but
     // does not block). Use 'strict' for safety-critical
@@ -2228,6 +2277,71 @@ public:
     }
     void bump_gc_safepoint_wait_ns(std::uint64_t delta_ns) noexcept {
         gc_safepoint_wait_total_ns_.fetch_add(delta_ns, std::memory_order_relaxed);
+    }
+    // Issue #443: external simulator tool-calling
+    // observability accessors + bump helpers. Public
+    // so the (query:verify-tool-stats) primitive can
+    // read them, and the verify:run-external-sim /
+    // verify:parse-coverage / verify:parse-failures
+    // primitives can bump them.
+    [[nodiscard]] std::uint64_t get_verify_tool_calls_total() const noexcept {
+        return verify_tool_calls_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_verify_tool_cache_hits_total() const noexcept {
+        return verify_tool_cache_hits_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_verify_tool_parse_errors_total() const noexcept {
+        return verify_tool_parse_errors_total_.load(std::memory_order_relaxed);
+    }
+    void bump_verify_tool_call() noexcept {
+        verify_tool_calls_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_verify_tool_cache_hit() noexcept {
+        verify_tool_cache_hits_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_verify_tool_parse_error() noexcept {
+        verify_tool_parse_errors_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #443: public cache accessors (called from
+    // verify_tool.cpp's lambdas, which don't get
+    // friend access because they're not class members).
+    [[nodiscard]] std::optional<std::string>
+    lookup_verify_tool_cache(const std::string& cmd) const noexcept {
+        auto* ws = workspace_flat();
+        if (!ws) return std::nullopt;
+        const auto gen = ws->generation();
+        for (const auto& entry : verify_tool_cache_) {
+            if (entry.cmd == cmd && entry.gen == gen) {
+                return entry.result;
+            }
+        }
+        return std::nullopt;
+    }
+    void insert_verify_tool_cache(const std::string& cmd,
+                                  const std::string& result) {
+        auto* ws = workspace_flat();
+        if (!ws) return;
+        const auto gen = ws->generation();
+        verify_tool_cache_.push_back({cmd, gen, result});
+        while (verify_tool_cache_.size() > kVerifyToolCacheMax) {
+            verify_tool_cache_.pop_front();
+        }
+    }
+    // Issue #443: public string-heap append helper (for
+    // verify_tool.cpp to push a result string + return
+    // its index). The lambdas in verify_tool.cpp can't
+    // access the private string_heap_ directly, so
+    // they use this wrapper.
+    [[nodiscard]] std::size_t string_heap_size() const noexcept {
+        return string_heap_.size();
+    }
+    const std::string& string_heap_at(std::size_t idx) const {
+        return string_heap_[idx];
+    }
+    std::int32_t push_string_heap(const std::string& s) {
+        const auto idx = static_cast<std::int32_t>(string_heap_.size());
+        string_heap_.push_back(s);
+        return idx;
     }
     // Issue #439: request_gc_safepoint() — the
     // pre-requisite helper for safe GC coordination.

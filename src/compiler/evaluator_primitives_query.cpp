@@ -329,6 +329,31 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             requests + waits + deferred));
     });
 
+    // Issue #443: query:verify-tool-stats. Returns the
+    // sum of the 3 external simulator tool-calling
+    // observability counters:
+    //   - verify_tool_calls_total_  (lifetime # of
+    //     run-external-sim calls)
+    //   - verify_tool_cache_hits_total_  (lifetime # of
+    //     cache hits on (cmd, generation_) lookup)
+    //   - verify_tool_parse_errors_total_  (lifetime # of
+    //     parse errors in cov-data / fail-data)
+    //
+    // P0: returns an integer = sum of the 3 counters.
+    // Follow-up: returns a 3-tuple
+    // (calls cache-hits parse-errors) so the AI Agent
+    // can compute cache_hit_rate and parse_error_rate.
+    add("query:verify-tool-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t calls = ev->get_verify_tool_calls_total();
+        const std::uint64_t hits = ev->get_verify_tool_cache_hits_total();
+        const std::uint64_t errors = ev->get_verify_tool_parse_errors_total();
+        return make_int(static_cast<std::int64_t>(
+            calls + hits + errors));
+    });
+
     // Issue #447: query:query-stats. Returns the sum
     // of the 3 tag+arity index counters (hits / misses /
     // rebuilds) as an integer. P0 ships the sum; the
