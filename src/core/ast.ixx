@@ -539,6 +539,13 @@ private:
         // Issue #437: reset verify_dirty_ alongside ppa_dirty_
         if (id < verify_dirty_.size())
             verify_dirty_[id] = 0;
+        // Issue #469: reset verification_dirty_ alongside the
+        // other dirty columns. Populated by
+        // apply_verification_dirty_bits (from
+        // (verify:parse-coverage-feedback) /
+        // (verify:parse-assert-failure)).
+        if (id < verification_dirty_.size())
+            verification_dirty_[id] = 0;
         error_kind_[id] = 0;
         if (id < value_cache_.size())
             value_cache_[id] = kNotCached;
@@ -599,6 +606,12 @@ private:
         // Issue #437: verify_dirty_ column. Mirrors ppa_dirty_'s
         // push_back(0) pattern; populated by apply_verify_dirty_bits.
         verify_dirty_.push_back(0);
+        // Issue #469: verification_dirty_ column. Mirrors
+        // verify_dirty_'s push_back(0) pattern; populated by
+        // apply_verification_dirty_bits (from the
+        // verify:parse-coverage-feedback /
+        // verify:parse-assert-failure primitives).
+        verification_dirty_.push_back(0);
         // Issue #79: per-node error kind (0 = no error, non-zero = ErrorKind).
         // Populated by the type-checker and runtime evaluator; queryable via
         // the AuraQuery `(has-error? N)` clause.
@@ -689,6 +702,14 @@ private:
     // OR'd with kGeneralDirty on dirty_ when set so legacy
     // is_dirty() callers still see "this node needs work".
     std::pmr::vector<std::uint8_t> verify_dirty_;
+    // Issue #469: verification_dirty_ column. Mirrors
+    // verify_dirty_'s pattern; populated by
+    // apply_verification_dirty_bits (called from
+    // (verify:parse-coverage-feedback) /
+    // (verify:parse-assert-failure)). 2 bits defined:
+    //   kCoverageFeedbackDirty = 0x01
+    //   kAssertFailureDirty = 0x02
+    std::pmr::vector<std::uint8_t> verification_dirty_;
     std::pmr::vector<std::uint32_t> type_id_;
     // Issue #79: per-node error kind, 0 = no error, non-zero = ErrorKind
     // enum value. Populated by the type-checker and runtime evaluator;
@@ -781,6 +802,18 @@ private:
     mutable std::atomic<std::uint64_t> verify_coverage_dirty_total_{0};
     mutable std::atomic<std::uint64_t> verify_sva_dirty_total_{0};
     mutable std::atomic<std::uint64_t> verify_formal_cex_dirty_total_{0};
+    // Issue #469: verification_dirty_ observability counters.
+    // Bumped by apply_verification_dirty_bits. Stats-only
+    // (relaxed-ordering). Exposed via the
+    // (query:verification-loop-stats) primitive.
+    mutable std::atomic<std::uint64_t> verification_coverage_feedback_total_{0};
+    mutable std::atomic<std::uint64_t> verification_assert_failure_total_{0};
+    // Issue #469: structured-mutate success/failure counters
+    // (used by (query:verification-loop-stats) to compute
+    // mutate_success_rate).
+    mutable std::atomic<std::uint64_t> sv_mutate_attempts_total_{0};
+    mutable std::atomic<std::uint64_t> sv_mutate_success_total_{0};
+    mutable std::atomic<std::uint64_t> verify_loop_cycles_total_{0};
 
 public:
     // Issue #437: per-reason verify-dirty stat accessors.
@@ -797,6 +830,35 @@ public:
     }
     [[nodiscard]] std::uint64_t verify_formal_cex_dirty_total() const noexcept {
         return verify_formal_cex_dirty_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #469: verification_dirty_ stat accessors.
+    [[nodiscard]] std::uint64_t verification_coverage_feedback_total() const noexcept {
+        return verification_coverage_feedback_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t verification_assert_failure_total() const noexcept {
+        return verification_assert_failure_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #469: structured-mutate stat accessors.
+    [[nodiscard]] std::uint64_t sv_mutate_attempts_total() const noexcept {
+        return sv_mutate_attempts_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t sv_mutate_success_total() const noexcept {
+        return sv_mutate_success_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t verify_loop_cycles_total() const noexcept {
+        return verify_loop_cycles_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #469: bump helpers for the structured-mutate
+    // counters (called from the (mutate:sv-add-coverpoint) /
+    // (mutate:sv-weaken-property) primitives).
+    void bump_sv_mutate_attempt() noexcept {
+        sv_mutate_attempts_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_sv_mutate_success() noexcept {
+        sv_mutate_success_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_verify_loop_cycle() noexcept {
+        verify_loop_cycles_total_.fetch_add(1, std::memory_order_relaxed);
     }
 
 public:
@@ -830,6 +892,30 @@ public:
             verify_sva_dirty_total_.fetch_add(1, std::memory_order_relaxed);
         if (newly_set & kFormalCounterexampleDirty)
             verify_formal_cex_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+        mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
+    }
+    // Issue #469: verification_dirty_ accessor (public, used
+    // by the (query:verification-loop-stats) primitive).
+    [[nodiscard]] std::uint8_t verification_dirty(NodeId id) const noexcept {
+        if (id >= verification_dirty_.size()) return 0;
+        return verification_dirty_[id];
+    }
+    // Issue #469: apply verification-dirty bits to a node.
+    // Mirrors apply_verify_dirty_bits (from #437) but for
+    // the verification_dirty_ column (separate column to
+    // avoid collision with the VerifyDirtyReason bits).
+    void apply_verification_dirty_bits(NodeId id, std::uint8_t reasons) {
+        if (reasons == 0)
+            return;
+        if (id >= verification_dirty_.size())
+            verification_dirty_.resize(id + 1, 0);
+        // Detect newly-set bits (for per-reason counters).
+        const auto newly_set = reasons & ~verification_dirty_[id];
+        verification_dirty_[id] |= reasons;
+        if (newly_set & kCoverageFeedbackDirty)
+            verification_coverage_feedback_total_.fetch_add(1, std::memory_order_relaxed);
+        if (newly_set & kAssertFailureDirty)
+            verification_assert_failure_total_.fetch_add(1, std::memory_order_relaxed);
         mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
     }
 
@@ -891,6 +977,11 @@ public:
         , is_valid_check_count_(other.is_valid_check_count_.load())
         , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
         , atomic_batch_commits_(other.atomic_batch_commits_.load())
+        , verification_coverage_feedback_total_(other.verification_coverage_feedback_total_.load())
+        , verification_assert_failure_total_(other.verification_assert_failure_total_.load())
+        , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
+        , sv_mutate_success_total_(other.sv_mutate_success_total_.load())
+        , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
         , generation_wrap_count_(other.generation_wrap_count_.load())
         , node_gen_stale_access_count_(other.node_gen_stale_access_count_.load())
         , children_call_count_(other.children_call_count_.load())
@@ -934,6 +1025,11 @@ public:
             is_valid_check_count_.store(other.is_valid_check_count_.load());
             stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
             atomic_batch_commits_.store(other.atomic_batch_commits_.load());
+            verification_coverage_feedback_total_.store(other.verification_coverage_feedback_total_.load());
+            verification_assert_failure_total_.store(other.verification_assert_failure_total_.load());
+            sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
+            sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
+            verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
             generation_wrap_count_.store(other.generation_wrap_count_.load());
             node_gen_stale_access_count_.store(other.node_gen_stale_access_count_.load());
             children_call_count_.store(other.children_call_count_.load());
@@ -984,6 +1080,11 @@ public:
         , is_valid_check_count_(other.is_valid_check_count_.load())
         , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
         , atomic_batch_commits_(other.atomic_batch_commits_.load())
+        , verification_coverage_feedback_total_(other.verification_coverage_feedback_total_.load())
+        , verification_assert_failure_total_(other.verification_assert_failure_total_.load())
+        , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
+        , sv_mutate_success_total_(other.sv_mutate_success_total_.load())
+        , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
         , children_call_count_(other.children_call_count_.load())
         , parent_of_call_count_(other.parent_of_call_count_.load())
         , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
@@ -1025,6 +1126,11 @@ public:
             is_valid_check_count_.store(other.is_valid_check_count_.load());
             stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
             atomic_batch_commits_.store(other.atomic_batch_commits_.load());
+            verification_coverage_feedback_total_.store(other.verification_coverage_feedback_total_.load());
+            verification_assert_failure_total_.store(other.verification_assert_failure_total_.load());
+            sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
+            sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
+            verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
             children_call_count_.store(other.children_call_count_.load());
             parent_of_call_count_.store(other.parent_of_call_count_.load());
             mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
@@ -1889,6 +1995,8 @@ public:
         std::pmr::vector<std::uint8_t> new_ppa_dirty(alloc);
         // Issue #437: COW scratch for verify_dirty_
         std::pmr::vector<std::uint8_t> new_verify_dirty(alloc);
+        // Issue #469: COW scratch for verification_dirty_
+        std::pmr::vector<std::uint8_t> new_verification_dirty(alloc);
         std::pmr::vector<std::uint32_t> new_type_id(alloc);
         std::pmr::vector<std::uint8_t> new_error_kind(alloc);
         std::pmr::vector<std::uint32_t> new_node_first_mutation(alloc);
@@ -1946,6 +2054,11 @@ public:
                 new_verify_dirty.push_back(verify_dirty_[id]);
             else
                 new_verify_dirty.push_back(0);
+            // Issue #469: COW the verification_dirty_ bitmask.
+            if (id < verification_dirty_.size())
+                new_verification_dirty.push_back(verification_dirty_[id]);
+            else
+                new_verification_dirty.push_back(0);
             new_type_id.push_back(type_id_[id]);
             new_error_kind.push_back(error_kind_[id]);
             new_node_first_mutation.push_back(node_first_mutation_[id]);
@@ -1972,6 +2085,8 @@ public:
         ppa_dirty_ = std::move(new_ppa_dirty);
         // Issue #437: COW the verify_dirty_ column
         verify_dirty_ = std::move(new_verify_dirty);
+        // Issue #469: COW the verification_dirty_ column
+        verification_dirty_ = std::move(new_verification_dirty);
         type_id_ = std::move(new_type_id);
         error_kind_ = std::move(new_error_kind);
         node_first_mutation_ = std::move(new_node_first_mutation);
@@ -2056,6 +2171,12 @@ public:
         ppa_dirty_.clear();
         // Issue #437: clear verify_dirty_ alongside ppa_dirty_
         verify_dirty_.clear();
+        // Issue #469: clear verification_dirty_ alongside the
+        // other dirty columns. Populated by
+        // apply_verification_dirty_bits (from
+        // (verify:parse-coverage-feedback) /
+        // (verify:parse-assert-failure)).
+        verification_dirty_.clear();
         type_id_.clear();
         mutation_log_.clear();
         // Issue #282: clear narrowing provenance on FlatAST reset.
@@ -2527,6 +2648,14 @@ public:
         kFormalCounterexampleDirty = 0x08, // formal proof counterexample
     };
 
+    // Issue #469: verification_dirty_ enum (separate from
+    // VerifyDirtyReason so we can use 2 bits without
+    // collision with the #437 / #455 / #458 bits).
+    enum VerificationDirtyReason : std::uint8_t {
+        kCoverageFeedbackDirty = 0x01, // coverage hole from external tool
+        kAssertFailureDirty = 0x02,    // assertion failure from external tool
+    };
+
     // Issue #437: OR verify bits into verify_dirty_ and mirror
     // kGeneralDirty on dirty_ so legacy is_dirty() callers still
     // see "this node needs work". The public definition is
@@ -2534,6 +2663,11 @@ public:
     // (No forward declaration needed; the public definition
     //  at line ~775 is reachable from the dirty_observability
     //  path via class-internal lookup.)
+
+    // Issue #469: OR verification bits into
+    // verification_dirty_ and mirror kGeneralDirty on dirty_.
+    // Defined in the public section below alongside the
+    // other Issue #437/469 accessors.
 
     // Issue #188: mark a node dirty for one or more specific reasons.
     // The `kGeneralDirty` bit is set automatically so existing
