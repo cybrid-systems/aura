@@ -29,6 +29,7 @@ module;
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -63,6 +64,65 @@ bool should_relower(std::size_t source_hash, std::size_t cached_source_hash, boo
     if (cached_mutation_count < current_mutation_count)
         return true;
     return false;
+}
+
+// ── compute_impact_scope ──────────────────────────────────
+// Issue #460: pure walker that computes the per-block /
+// per-instruction impact of a mutation rooted at `root`.
+// Returns the list of (function-index, block-index) pairs
+// that are affected by the mutation. The decision is
+// based on:
+//   1. The AST subtree rooted at `root` (the mutated node)
+//   2. The `source_to_ir_map` (maps each source AST NodeId
+//      to its corresponding IR function/block/instruction)
+//   3. The `ir_cache_index` (maps each function name to
+//      its index in the IR module)
+//
+// For the P0 ship we return the affected blocks only
+// (function-block pairs). Per-instruction impact is a
+// follow-up (#460 follow-up 1).
+//
+// The function is pure: same inputs → same output.
+struct ImpactScope {
+    struct BlockRef {
+        std::size_t function_index; // index in ir_cache_index
+        std::uint32_t block_index;
+    };
+    std::vector<BlockRef> affected_blocks;
+    // Number of AST nodes walked (for observability).
+    std::size_t ast_nodes_visited = 0;
+};
+ImpactScope compute_impact_scope(
+    const aura::ast::FlatAST& flat, aura::ast::NodeId root,
+    const std::unordered_map<aura::ast::NodeId,
+                             std::pair<std::size_t, std::uint32_t>>& source_to_ir_map,
+    const std::unordered_map<std::string, std::size_t>& ir_cache_index) {
+    ImpactScope result;
+    if (root == aura::ast::NULL_NODE || root >= flat.size()) {
+        return result;
+    }
+    // Walk the AST subtree and collect affected blocks
+    // (function_index, block_index) pairs. Dedupe via a set.
+    std::unordered_set<std::uint64_t> seen;
+    auto walk = [&](auto self, aura::ast::NodeId id) -> void {
+        if (id == aura::ast::NULL_NODE || id >= flat.size()) return;
+        result.ast_nodes_visited++;
+        auto it = source_to_ir_map.find(id);
+        if (it != source_to_ir_map.end()) {
+            auto key = (static_cast<std::uint64_t>(it->second.first) << 32) |
+                       static_cast<std::uint64_t>(it->second.second);
+            if (seen.insert(key).second) {
+                result.affected_blocks.push_back({it->second.first, it->second.second});
+            }
+        }
+        auto node = flat.get(id);
+        for (std::size_t ci = 0; ci < node.children.size(); ++ci) {
+            self(self, node.child(ci));
+        }
+    };
+    walk(walk, root);
+    (void)ir_cache_index; // used by follow-up for cross-function cascade
+    return result;
 }
 
 // ── compute_dependencies ──────────────────────────────────
