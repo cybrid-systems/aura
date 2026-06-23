@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**449** registrations scanned from `src/**/*.cpp`.
+**451** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -12,7 +12,7 @@ Runtime canonical list: `(api-reference)`.
 - `eval-current-output` — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (47)
+## Query: (48)
 
 - `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -30,6 +30,7 @@ Runtime canonical list: `(api-reference)`.
 - `query:fiber-migration-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:filter` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:find` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:gc-safepoint-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:index-stats` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ir-marker-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -62,7 +63,7 @@ Runtime canonical list: `(api-reference)`.
 - `query:verify-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
-## Mutate: (24)
+## Mutate: (25)
 
 - `mutate:atomic-batch` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:check-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
@@ -80,6 +81,7 @@ Runtime canonical list: `(api-reference)`.
 - `mutate:replace-subtree` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:replace-type` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:replace-value` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:request-gc-safepoint` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:set-body` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:set-stale-ref-policy` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:splice` — `src/compiler/evaluator_primitives_mutate.cpp`
