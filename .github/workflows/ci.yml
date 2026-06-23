@@ -1,8 +1,12 @@
 # Aura CI
 #
 # Wall-time layout (approx):
-#   gate (~1m) ──► build-test (~10–12m)
-#   asan-build (~8m, parallel with gate+build-test) ──► asan-verify (~5m)
+#   gate (~1m) ──► build-test (~12–18m, no cross-run compile cache)
+#   asan-build (~10m, parallel with gate+build-test) ──► asan-verify (~5m)
+#
+# Reproducibility-first: ccache is disabled in CI and we do not restore
+# stale compile artifacts from prior runs. pip cache uses an exact key only
+# (requirements-dev.txt hash) — no restore-keys fallback.
 #
 # PRs skip the ASAN track; main runs the full matrix.
 
@@ -19,8 +23,8 @@ env:
   AURA_BUILD_JOBS: "0"  # 0 → use all host CPUs in build.py
   AURA_TEST_JOBS: "4"
   AURA_ISSUES_JOBS: "4"
-  CCACHE_MAXSIZE: 2G
-  CCACHE_COMPRESS: 1
+  # Cross-run ccache caused stale-object flakes; compile fresh every job.
+  CCACHE_DISABLE: 1
 
 jobs:
   gate:
@@ -33,8 +37,7 @@ jobs:
     - uses: actions/cache@v4
       with:
         path: ~/.cache/pip
-        key: pip-${{ hashFiles('requirements-dev.txt') }}
-        restore-keys: pip-
+        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -54,28 +57,17 @@ jobs:
 
     - uses: actions/cache@v4
       with:
-        path: |
-          ~/.cache/ccache
-          ~/.cache/pip
-        key: ccache-${{ runner.os }}-${{ hashFiles('**/*.cpp', '**/*.ixx', '**/*.hh', 'CMakeLists.txt', 'cmake/**') }}
-        restore-keys: |
-          ccache-${{ runner.os }}-
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
-
-    - name: ccache stats (before)
-      run: ccache -s || true
 
     - name: Build & Test
       env:
         AURA_ISSUES_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
         AURA_GIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
       run: python3 build.py ci
-
-    - name: ccache stats (after)
-      if: always()
-      run: ccache -s || true
 
   # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
   asan-build:
@@ -85,14 +77,6 @@ jobs:
       image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
     steps:
     - uses: actions/checkout@v4
-
-    - uses: actions/cache@v4
-      with:
-        path: ~/.cache/ccache
-        key: ccache-asan-${{ runner.os }}-${{ hashFiles('**/*.cpp', '**/*.ixx', '**/*.hh', 'CMakeLists.txt', 'cmake/**') }}
-        restore-keys: |
-          ccache-asan-${{ runner.os }}-
-          ccache-${{ runner.os }}-
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
