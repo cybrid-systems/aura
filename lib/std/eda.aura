@@ -1015,6 +1015,118 @@
   (display (eda:property-expr (eda:assertion-property a))))
 
 ; ═══════════════════════════════════════════════════════════
+; Issue #435 Phase 4: covergroup + coverpoint (SVA coverage)
+; ═══════════════════════════════════════════════════════════
+;
+; Phase 4 is the coverage-construct layer. We model:
+;   - coverpoint : a single variable with bins
+;   - covergroup : a named group of coverpoints
+;
+; Both IRs follow the same "infrastructure first" pattern as
+; the prior phases: list-based IR + predicates + accessors +
+; display + emitter. The C++ parallel types live in
+; aura::compiler::sv_ir (CoverpointIR + CovergroupIR).
+;
+; Scope notes:
+;   - coverpoint carries a variable symbol + a list of bins
+;     (just symbol names for now; bin expressions are a
+;     follow-up — full SVA bin expressions { [W:0] }
+;     overlap with #436 P7 / #435 P3 and are deferred).
+;   - coverpoint has an optional `iff` expression (condition
+;     gate). We model iff as a list-of-symbols-or-empty
+;     marker; a future mutation pass can replace it with a
+;     proper conditional.
+;   - covergroup carries a name + a list of coverpoints +
+;     an optional event trigger (a list of sensitivity-list
+;     symbols, empty means "@(*)").
+
+; ── eda:coverpoint ──
+
+(define (make-eda:coverpoint var bins)
+  (list 'eda:coverpoint var bins '()))
+
+(define (eda:coverpoint? x)
+  (and (pair? x) (equal? (car x) 'eda:coverpoint)))
+
+(define (eda:coverpoint-var cp) (car (cdr cp)))
+(define (eda:coverpoint-bins cp) (car (cdr (cdr cp))))
+(define (eda:coverpoint-iff cp) (car (cdr (cdr (cdr cp)))))
+
+; ── eda:covergroup ──
+
+(define (make-eda:covergroup name coverpoints)
+  (list 'eda:covergroup name coverpoints '()))
+
+(define (eda:covergroup? x)
+  (and (pair? x) (equal? (car x) 'eda:covergroup)))
+
+(define (eda:covergroup-name cg) (car (cdr cg)))
+(define (eda:covergroup-coverpoints cg) (car (cdr (cdr cg))))
+(define (eda:covergroup-event cg) (car (cdr (cdr (cdr cg)))))
+
+; ── Emitters ──
+
+(define (eda:emit-coverpoint cp)
+  (let ((var (eda:name-str (eda:coverpoint-var cp)))
+        (bins (eda:coverpoint-bins cp)))
+    (if (null? bins)
+        (string-append var " : coverpoint { /* no bins */ }")
+        (let ((b0 (car bins))
+              (rest (cdr bins)))
+          (let ((prefix (string-append var " : coverpoint { "
+                                      (eda:name-str b0)))
+                (body (if (null? rest)
+                          ""
+                          (eda:join-coverpoint-bins rest ""))))
+            (string-append prefix body " }"))))))
+
+(define (eda:join-coverpoint-bins bins acc)
+  (if (null? bins)
+      acc
+      (let ((b (car bins))
+            (rest (cdr bins)))
+        (let ((sep (if (equal? acc "") "" ", "))
+              (next (string-append acc sep (eda:name-str b))))
+          (eda:join-coverpoint-bins rest next)))))
+
+(define (eda:emit-covergroup cg)
+  (let ((nm (eda:name-str (eda:covergroup-name cg)))
+        (cps (eda:covergroup-coverpoints cg))
+        (ev (eda:covergroup-event cg)))
+    (let ((header (string-append "covergroup " nm
+                                 (if (null? ev) "" "@(*)")
+                                 " {")))
+        (let ((cp0 (if (null? cps) "" (eda:emit-coverpoint (car cps))))
+              (rest (if (null? cps) '() (cdr cps)))
+              (body (eda:join-covergroup-cps rest "")))
+          (string-append header cp0 body " }")))))
+
+(define (eda:join-covergroup-cps cps acc)
+  (if (null? cps)
+      (if (equal? acc "") acc (string-append acc " "))
+      (let ((cp-str (eda:emit-coverpoint (car cps)))
+            (rest (cdr cps)))
+        (let ((sep (if (equal? acc "") "" " "))
+              (next (string-append acc sep cp-str)))
+          (eda:join-covergroup-cps rest next)))))
+
+; ── Display ──
+
+(define (eda:display-coverpoint cp)
+  (display "coverpoint(")
+  (display (eda:coverpoint-var cp))
+  (display ", bins=[")
+  (display (eda:coverpoint-bins cp))
+  (display "])"))
+
+(define (eda:display-covergroup cg)
+  (display "covergroup(")
+  (display (eda:covergroup-name cg))
+  (display ", coverpoints=[")
+  (display (eda:covergroup-coverpoints cg))
+  (display "])"))
+
+; ═══════════════════════════════════════════════════════════
 ; Issue #436 Phase 5: typedef / enum / struct / package / import
 ; ═══════════════════════════════════════════════════════════
 ;
@@ -1640,6 +1752,14 @@
   eda:emit-verilog eda:emit-module eda:emit-port eda:emit-wire
   eda:emit-assign eda:emit-always eda:emit-sensitivity eda:emit-sensitivity-list eda:emit-signal
   eda:emit-assertion
+  ; Coverage (Issue #435 Phase 4)
+  make-eda:coverpoint eda:coverpoint? eda:coverpoint-var eda:coverpoint-bins
+  eda:coverpoint-iff
+  make-eda:covergroup eda:covergroup? eda:covergroup-name
+  eda:covergroup-coverpoints eda:covergroup-event
+  eda:emit-coverpoint eda:emit-covergroup
+  eda:display-coverpoint eda:display-covergroup
+  eda:join-coverpoint-bins eda:join-covergroup-cps
   eda:emit-typedef eda:emit-enum eda:emit-struct
   eda:emit-package eda:emit-import
   eda:emit-logic-type eda:enum-width

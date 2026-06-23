@@ -84,6 +84,48 @@ export ModportIR make_modport(std::string_view name,
 export std::string emit_modport(const ModportIR& m);
 export std::string debug_modport(const ModportIR& m);
 
+// ── CoverpointIR ──
+//
+// Issue #435 Phase 4 — structured IR for SV coverpoint.
+// Mirrors the list-based
+// `(eda:coverpoint var bins)` representation.
+//
+// Layout:
+//   "VAR : coverpoint { BIN1, BIN2, BIN3 }"
+// (or "VAR : coverpoint { /* no bins */ }" when bins is empty)
+export struct CoverpointIR {
+    std::string var;
+    std::vector<std::string> bins;
+};
+
+export CoverpointIR make_coverpoint(std::string_view var,
+                                    std::vector<std::string> bins) noexcept;
+
+export std::string emit_coverpoint(const CoverpointIR& cp);
+export std::string debug_coverpoint(const CoverpointIR& cp);
+
+// ── CovergroupIR ──
+//
+// Issue #435 Phase 4 — structured IR for SV covergroup.
+// Mirrors the list-based
+// `(eda:covergroup name coverpoints event)` representation.
+//
+// Layout:
+//   "covergroup NAME@(*) { cp1; cp2; }"
+// (event defaults to "@(*)" when empty)
+export struct CovergroupIR {
+    std::string name;
+    std::vector<std::string> coverpoint_strs;
+    std::string event;
+};
+
+export CovergroupIR make_covergroup(std::string_view name,
+                                    std::vector<std::string> coverpoint_strs,
+                                    std::string_view event = "") noexcept;
+
+export std::string emit_covergroup(const CovergroupIR& cg);
+export std::string debug_covergroup(const CovergroupIR& cg);
+
 // ── SequenceIR ──
 //
 // Issue #435 Phase 3 — structured IR for SV sequence

@@ -210,6 +210,90 @@ std::string debug_modport(const ModportIR& m) {
     return out;
 }
 
+// ── CoverpointIR ──
+
+CoverpointIR make_coverpoint(std::string_view var,
+                             std::vector<std::string> bins) noexcept {
+    CoverpointIR cp;
+    cp.var = std::string(var);
+    cp.bins = std::move(bins);
+    return cp;
+}
+
+std::string emit_coverpoint(const CoverpointIR& cp) {
+    std::string out;
+    out.reserve(48 + cp.var.size() + cp.bins.size() * 8);
+    out.append(cp.var);
+    out.append(" : coverpoint { ");
+    if (cp.bins.empty()) {
+        out.append("/* no bins */");
+    } else {
+        append_joined(out, cp.bins, ", ");
+    }
+    out.append(" }");
+    return out;
+}
+
+std::string debug_coverpoint(const CoverpointIR& cp) {
+    std::string out;
+    out.reserve(32 + cp.var.size() + cp.bins.size() * 8);
+    out.append("coverpoint(var=");
+    out.append(cp.var);
+    out.append(", bins=[");
+    append_joined(out, cp.bins, ",");
+    out.append("])");
+    return out;
+}
+
+// ── CovergroupIR ──
+
+CovergroupIR make_covergroup(std::string_view name,
+                             std::vector<std::string> coverpoint_strs,
+                             std::string_view event) noexcept {
+    CovergroupIR cg;
+    cg.name = std::string(name);
+    cg.coverpoint_strs = std::move(coverpoint_strs);
+    cg.event = std::string(event);
+    return cg;
+}
+
+std::string emit_covergroup(const CovergroupIR& cg) {
+    std::string out;
+    out.reserve(64 + cg.name.size());
+    out.append("covergroup ");
+    out.append(cg.name);
+    if (!cg.event.empty()) {
+        out.append(cg.event);
+    } else {
+        out.append("@(*)");
+    }
+    out.append(" {");
+    for (const auto& cp : cg.coverpoint_strs) {
+        out.push_back(' ');
+        out.append(cp);
+        out.push_back(';');
+    }
+    out.append(" }");
+    return out;
+}
+
+std::string debug_covergroup(const CovergroupIR& cg) {
+    std::string out;
+    out.reserve(48 + cg.name.size() + cg.coverpoint_strs.size() * 16);
+    out.append("covergroup(name=");
+    out.append(cg.name);
+    out.append(", event=");
+    if (cg.event.empty()) {
+        out.append("@(*)");
+    } else {
+        out.append(cg.event);
+    }
+    out.append(", cps=[");
+    append_joined(out, cg.coverpoint_strs, "; ");
+    out.append("])");
+    return out;
+}
+
 // ── SequenceIR ──
 
 SequenceIR make_sequence(std::string_view name,
