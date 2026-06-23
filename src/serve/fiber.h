@@ -9,6 +9,12 @@
 #include <memory>
 #include <atomic>
 
+// Issue #438: C-linkage forward declaration of the
+// per-thread mutation boundary depth probe. Defined
+// in evaluator_fiber_mutation.cpp.
+extern "C" std::size_t
+aura_evaluator_mutation_boundary_depth();
+
 namespace aura::serve {
 
 // ── Yield reason — why a fiber yielded (Issue #31) ────
@@ -107,6 +113,26 @@ public:
         // The follow-up will use the Evaluator API to
         // probe the per-fiber boundary depth.
         return false;
+    }
+
+    // Issue #438: is_at_mutation_boundary_safe() — a more
+    // precise version that probes the per-thread mutation
+    // boundary depth via a C-linkage function
+    // (aura_evaluator_mutation_boundary_depth) defined
+    // in evaluator_fiber_mutation.cpp. The C-linkage
+    // shim keeps fiber.h free of Evaluator include
+    // dependencies (fiber.h is a low-level header
+    // included by tests that don't pull in the
+    // Evaluator module).
+    //
+    // Returns true if the fiber is at a safe mutation
+    // boundary point (depth == 0 OR the fiber is yielded
+    // for a non-MutationBoundary reason).
+    bool is_at_mutation_boundary_safe() const {
+        auto r = last_yield_reason_.load(std::memory_order_acquire);
+        if (r != YieldReason::MutationBoundary)
+            return true;
+        return aura_evaluator_mutation_boundary_depth() == 0;
     }
 
     // Worker affinity (P2): -1 = any worker, 0..N-1 = specific worker

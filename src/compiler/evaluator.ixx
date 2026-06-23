@@ -1861,6 +1861,20 @@ private:
     // (query:stale-ref-stats) primitive.
     std::atomic<std::uint64_t> stale_ref_blocked_count_{0};
     std::atomic<std::uint64_t> stale_ref_warned_count_{0};
+    // Issue #438: fiber migration + work-stealing
+    // observability. Bumped in
+    // transfer_mutation_stack_to_current_fiber
+    // (called by Fiber::resume() before migration) +
+    // the scheduler work-steal path (follow-up).
+    //   mutation_steal_attempts_  (lifetime # of steal
+    //     attempts the scheduler logged)
+    //   boundary_violation_count_  (lifetime # of
+    //     attempts at an unsafe boundary that were
+    //     either deferred or skipped)
+    // Both stats-only (relaxed-ordering). Exposed via
+    // the (query:fiber-migration-stats) primitive.
+    std::atomic<std::uint64_t> mutation_steal_attempts_{0};
+    std::atomic<std::uint64_t> boundary_violation_count_{0};
     // Issue #391: stale-ref policy. Default 'warn' for
     // production AI agent loops (logs the violation but
     // does not block). Use 'strict' for safety-critical
@@ -2145,6 +2159,35 @@ public:
     }
     void bump_stale_ref_warned_count() noexcept {
         stale_ref_warned_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #438: fiber-migration observability
+    // accessors + bump helpers. Public so the
+    // (query:fiber-migration-stats) primitive can read
+    // them, and the scheduler / fiber hooks (the
+    // follow-up) can bump them.
+    [[nodiscard]] std::uint64_t get_mutation_steal_attempts() const noexcept {
+        return mutation_steal_attempts_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_boundary_violation_count() const noexcept {
+        return boundary_violation_count_.load(std::memory_order_relaxed);
+    }
+    void bump_mutation_steal_attempt() noexcept {
+        mutation_steal_attempts_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_boundary_violation_count() noexcept {
+        boundary_violation_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #438: transfer_mutation_stack_to_current_fiber
+    // — the pre-requisite helper for safe fiber migration
+    // across workers. P0 scope-limited ship: this method
+    // is a no-op that bumps the migration-attempt counter
+    // + logs the request, because each Evaluator already
+    // owns its own per-thread mutation stack (the
+    // transfer is trivially a no-op at the data level).
+    // The follow-up wires the call from Fiber::resume()
+    // before g_fiber_setter_ runs.
+    void transfer_mutation_stack_to_current_fiber() noexcept {
+        bump_mutation_steal_attempt();
     }
     // Issue #391: validate a (id . gen) stable-ref pair
     // against the current workspace's generation. Returns
