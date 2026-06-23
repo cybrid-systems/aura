@@ -1189,6 +1189,92 @@
   (display "])"))
 
 ; ═══════════════════════════════════════════════════════════
+; Issue #435 Phase 6: class (OOP / randomization container)
+; ═══════════════════════════════════════════════════════════
+;
+; Phase 6 is the container form that bundles properties,
+; constraints, and covergroups together. The IR shape:
+;
+;   (eda:class name base items)
+;
+; where:
+;   name   — symbol (e.g. 'packet)
+;   base   — symbol or '() for no base class
+;            (single inheritance only; multiple inheritance
+;            is out of scope — SV doesn't support it either)
+;   items  — list of class members. Each item is either:
+;            - (eda:property "logic [7:0] data;")    (string body)
+;            - (eda:constraint eda-record)             (constraint record)
+;            - (eda:covergroup eda-record)             (covergroup record)
+;            - (eda:function "void print();")          (string body)
+;
+; Class members are heterogeneous; we model them as a list
+; of records (one per item kind) so the emitter can route
+; each one through its own emit path.
+;
+; Layout:
+;   "class NAME extends BASE;\n"
+;   "  <member1>\n"
+;   "  <member2>\n"
+;   "endclass"
+; (base clause omitted when base is empty)
+
+; ── eda:class ──
+
+(define (make-eda:class name base items)
+  (list 'eda:class name base items))
+
+(define (eda:class? x)
+  (and (pair? x) (equal? (car x) 'eda:class)))
+
+(define (eda:class-name c) (car (cdr c)))
+(define (eda:class-base c) (car (cdr (cdr c))))
+(define (eda:class-items c) (car (cdr (cdr (cdr c)))))
+
+; ── Emitters ──
+
+(define (eda:emit-class c)
+  (let ((nm (eda:name-str (eda:class-name c)))
+        (base (eda:class-base c))
+        (items (eda:class-items c)))
+    (let ((header (string-append "class " nm
+                                 (if (null? base)
+                                     ""
+                                     (string-append " extends "
+                                                    (eda:name-str base)))
+                                 ";")))
+      (let ((m0 (if (null? items) "" (eda:emit-class-item (car items))))
+            (rest (if (null? items) '() (cdr items)))
+            (body (eda:join-class-items rest "")))
+        (string-append header m0 body "endclass")))))
+
+(define (eda:emit-class-item item)
+  (cond
+    ((eda:constraint? item) (eda:emit-constraint item))
+    ((eda:covergroup? item) (eda:emit-covergroup item))
+    (else item)))
+
+(define (eda:join-class-items items acc)
+  (if (null? items)
+      (if (equal? acc "") acc (string-append acc "\n  "))
+      (let ((it (car items))
+            (rest (cdr items)))
+        (let ((sep (if (equal? acc "") "" "\n  "))
+              (next (string-append acc sep (eda:emit-class-item it))))
+          (eda:join-class-items rest next)))))
+
+; ── Display ──
+
+(define (eda:display-class c)
+  (display "class(")
+  (display (eda:class-name c))
+  (display ", base=")
+  (display (eda:class-base c))
+  (display ", items=")
+  (display (eda:class-items c))
+  (display ")"))
+
+; ═══════════════════════════════════════════════════════════
 ; Issue #436 Phase 5: typedef / enum / struct / package / import
 ; ═══════════════════════════════════════════════════════════
 ;
@@ -1826,6 +1912,10 @@
   make-eda:constraint eda:constraint? eda:constraint-name
   eda:constraint-expressions eda:emit-constraint
   eda:display-constraint eda:join-constraint-exprs
+  ; Classes (Issue #435 Phase 6)
+  make-eda:class eda:class? eda:class-name eda:class-base eda:class-items
+  eda:emit-class eda:emit-class-item eda:join-class-items
+  eda:display-class
   eda:emit-typedef eda:emit-enum eda:emit-struct
   eda:emit-package eda:emit-import
   eda:emit-logic-type eda:enum-width
