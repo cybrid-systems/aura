@@ -630,12 +630,29 @@ bool test_orch_parallel_all_succeed() {
 bool test_many_fibers() {
     std::println("\n--- Test 5.1: 100 fiber:spawn+fiber:join cycles (memory sanity) ---");
     aura::compiler::CompilerService cs;
+    // Issue #289 follow-up: convert the recursive `loop` to an
+    // iterative `while` loop. The pre-#289 recursive shape
+    // (loop 100 0) re-entered eval_flat 100 deep, exhausting the
+    // 8MB stack on CI (and the 256MB-1MB-RedZone ASAN stack
+    // locally) — see test_issues_jit segfault in 2026-06-24 CI
+    // logs. Same observable: 100 fibers spawned, joined, results
+    // summed. Sum of 2..101 = 100*103/2 = 5150.
+    //
+    // Aura's `while` takes two closure args (predicate, body); we
+    // need explicit `(lambda () ...)` so they pass `is_closure`,
+    // not the bare form (which gets eagerly evaluated before while
+    // checks its arg type).
     int64_t total = run_int(cs, R"(
-        (define (loop n acc)
-          (if (= n 0) acc
-            (let ((v (fiber:join (fiber:spawn (lambda () (+ n 1))))))
-              (loop (- n 1) (+ acc v)))))
-        (loop 100 0)
+        (begin
+          (define n 100)
+          (define acc 0)
+          (while (lambda () (not (= n 0)))
+                 (lambda ()
+                   (let ((v (fiber:join (fiber:spawn (lambda () (+ n 1))))))
+                     (begin
+                       (set! acc (+ acc v))
+                       (set! n (- n 1))))))
+          acc)
     )");
     // Sum of 2..101 = 100*103/2 = 5150
     CHECK(total == 5150, "100 fibers complete and sum to 5150");

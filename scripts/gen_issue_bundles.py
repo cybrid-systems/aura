@@ -282,6 +282,14 @@ def render_bundle_main(profile: str, members: list[str]) -> str:
             "",
             "    for (int i = 0; i < n_members; ++i) {",
             '        std::fprintf(stdout, "\\n════ Bundle member: %s ════\\n", members[i].name);',
+            # Issue #289 follow-up: reset the global g_passed / g_failed
+            # counters before each member's run() so one member's failure
+            # doesn't cascade into "failed > 0" for every subsequent
+            # member. (Pre-#289 bug: a single real fail in member N
+            # would surface as `failed = n_members - N` in the bundle
+            # summary, hiding the actual cause.)
+            "        ::aura::test::g_passed = 0;",
+            "        ::aura::test::g_failed = 0;",
             "        const int rc = members[i].run();",
             "        if (rc == 0) {",
             "            ++passed;",

@@ -28,6 +28,8 @@ int main() {
 
     for (int i = 0; i < n_members; ++i) {
         std::fprintf(stdout, "\n════ Bundle member: %s ════\n", members[i].name);
+        ::aura::test::g_passed = 0;
+        ::aura::test::g_failed = 0;
         const int rc = members[i].run();
         if (rc == 0) {
             ++passed;
