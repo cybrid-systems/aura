@@ -388,6 +388,16 @@ target_sources(test_concurrent PRIVATE
     # returns 0 (no primitive found). See
     # src/compiler/aura_jit_prim_dispatch_stub.cpp for details.
     src/compiler/aura_jit_prim_dispatch_stub.cpp
+    # Issue #439: fiber_bridge.cpp provides the
+    # C-linkage shims (aura_evaluator_request_gc_safepoint,
+    # aura_evaluator_wait_for_safepoint,
+    # aura_evaluator_mutation_boundary_depth) called
+    # by Fiber::check_gc_safepoint (from fiber.cpp).
+    # Without this, test_concurrent fails to link with
+    # "undefined reference to aura_evaluator_request_gc_safepoint".
+    # Note: this is a non-module .cpp (not a module
+    # partition) so non-module binaries can include it.
+    src/compiler/fiber_bridge.cpp
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
