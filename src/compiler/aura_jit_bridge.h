@@ -51,6 +51,12 @@ std::uint64_t aura_get_module_version(void);
 // (follow-up to #287).
 bool aura_reload_aot_module(const char* path, std::uint64_t version);
 
+// Issue #461: read-only accessor for the JIT fallback counter
+// (defined in aura_jit_bridge.cpp). Exposed as C linkage so
+// module GMF partitions can #include this header instead of
+// bare extern "C" declarations.
+std::uint64_t aura_jit_fallback_count_v_read(void);
+
 } // extern "C"
 
 #endif // AURA_COMPILER_AURA_JIT_BRIDGE_H

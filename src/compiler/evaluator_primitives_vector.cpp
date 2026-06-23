@@ -343,7 +343,7 @@ void register_vector_and_hash_primitives(
                 pairs.push_back({EvalValue{keys[i - 1]}, EvalValue{vals[i - 1]}});
                 // Prepend to the result list.
                 auto list_pid = pairs.size();
-                pairs.push_back({EvalValue{kv_pid}, result});
+                pairs.push_back({EvalValue{static_cast<std::int64_t>(kv_pid)}, result});
                 result = make_pair(list_pid);
             }
         }

@@ -12,23 +12,8 @@ module;
 #include <vector>
 #include <atomic>
 #include "runtime_shared.h"
-
-// Issue #461: forward declaration of the fallback counter
-// (defined in aura_jit_bridge.cpp as extern "C"). The bridge
-// keeps a `std::atomic<std::uint64_t>` and exposes a plain
-// `std::uint64_t*` alias for cross-module access. This avoids
-// the `std::atomic` redefinition problem when this header is
-// included by tests that import <atomic> themselves.
-extern "C" std::uint64_t aura_jit_fallback_count_v_read();
-
-// Issue #451: forward declaration of the C-linkage
-// shim for the static Fiber
-// static_gc_pause_attributed_to_mutation_count_.
-// The shim is defined in src/compiler/fiber_bridge.cpp
-// (non-module .cpp) so non-module binaries can link
-// it.
-extern "C" std::uint64_t
-aura_fiber_static_gc_pause_attributed_to_mutation();
+#include "compiler/aura_jit_bridge.h"
+#include "serve/fiber.h"
 
 module aura.compiler.evaluator;
 
