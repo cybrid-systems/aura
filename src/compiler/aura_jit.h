@@ -171,6 +171,21 @@ public:
         // function). Provides a single number for observability +
         // perf regression detection.
         std::atomic<std::uint64_t> intrinsic_count{0};
+        // Issue #461: explicit IRInterpreter fallback counter.
+        // Bumped by the runtime stub `aura_jit_fallback_to_interpreter`
+        // each time the JIT lower() default case routes through
+        // it instead of writing a sentinel. The P0 ship doesn't
+        // yet emit an LLVM call to the stub (that requires
+        // module-level function declaration; out of scope). The
+        // metric is observable now and ready to be wired into
+        // the lower() default case in the follow-up.
+        std::atomic<std::uint64_t> fallback_count{0};
+        // Issue #461: consistency violations — set by the
+        // post-mutation consistency harness (follow-up that
+        // runs JIT and IRInterpreter side-by-side and compares
+        // outputs). Starts at 0; the harness bumps it when
+        // results differ.
+        std::atomic<std::uint64_t> consistency_violations{0};
 
         // Format as a single-line string for telemetry / log output.
         // Caller-provided buffer; returns the same pointer.
