@@ -192,6 +192,14 @@ extern GCSweepFn g_gc_sweep;
 using HeapMutexFn = std::function<std::mutex&()>;
 extern HeapMutexFn g_heap_mutex;
 
+// Issue #285: Evaluator::flush_mutation_boundary indirection.
+// Set by evaluator at module init; called by Fiber::yield right
+// before swapcontext when the yield reason is MutationBoundary.
+// nullptr means "no active evaluator" (test-binary / no-mutation
+// paths), in which case Fiber::yield treats it as a no-op.
+using FlushMutationBoundaryFn = void (*)();
+extern FlushMutationBoundaryFn g_flush_mutation_boundary;
+
 } // namespace aura::messaging
 
 #endif // AURA_MESSAGING_BRIDGE_H

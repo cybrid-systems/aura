@@ -25,6 +25,10 @@ aura::messaging::GCRootFlushFn aura::messaging::g_gc_flush_root_set;
 aura::messaging::GCCollectFn aura::messaging::g_gc_collect;
 aura::messaging::GCSweepFn aura::messaging::g_gc_sweep;
 aura::messaging::HeapMutexFn aura::messaging::g_heap_mutex;
+
+// Issue #285: flush hook implementation.
+aura::messaging::FlushMutationBoundaryFn
+    aura::messaging::g_flush_mutation_boundary = nullptr;
 aura::messaging::MailboxCountFn aura::messaging::g_mailbox_count = nullptr;
 aura::messaging::SessionIdFn aura::messaging::g_session_id = nullptr;
 aura::messaging::SessionExistsFn aura::messaging::g_session_exists = nullptr;
