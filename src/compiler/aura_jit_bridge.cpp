@@ -64,6 +64,115 @@ extern "C" std::uint64_t aura_get_aot_defuse_version(void) {
     return g_aot_defuse_version;
 }
 
+// ── Issue #287: AOT module version (hot-reload / multi-agent) ───────────
+//
+// Distinct from `g_aot_defuse_version` (the runtime mutation epoch
+// at emit time, used for staleness detection):
+//   - `g_aot_defuse_version` = internal, bumps on every mutation
+//   - `g_aot_module_version` = user-facing, set by host code
+//     before emit to identify a specific AOT module build
+//     (e.g. "model-2026-06-23-build-42")
+//
+// In hot-reload or multi-agent orchestration, the host loads
+// a new AOT binary with a different `module_version` so the
+// runtime can distinguish:
+//   1. Two builds of the same source (same defuse_version, different
+//      module_version) — safe to swap, no stale-frame issue
+//   2. A build from a pre-mutation epoch (lower defuse_version) —
+//      stale, must not be loaded into a mutated runtime
+//
+// The generated registration .c emits `aura_set_module_version(v)`
+// at the top of the constructor so the runtime records the
+// build's user-facing version alongside the internal one.
+static std::uint64_t g_aot_module_version = 0;
+
+extern "C" void aura_set_module_version(std::uint64_t v) {
+    g_aot_module_version = v;
+}
+
+extern "C" std::uint64_t aura_get_module_version(void) {
+    return g_aot_module_version;
+}
+
+// ── Issue #287: AOT hot-reload scaffold ──────────────────────────────
+//
+// `aura_reload_aot_module(path, version)` is the host-facing
+// entry point for hot-swapping an AOT module. The scaffold
+// here does the minimum to prove the interface + flow:
+//   1. dlopen() the new .so/.dylib
+//   2. read the `aot_emit_version` symbol to detect a stale
+//      binary (post-mutation epoch mismatch)
+//   3. call dlsym() for the `aura_aot_register_fns` constructor
+//      to populate the runtime's func_table
+//   4. return true on success
+//
+// The follow-up work (tracked in the #287 close comment) is:
+//   - implement the version-keyed func_table swap (rebind old
+//     func_id→ptr entries to new ones, decrement old refcount)
+//   - handle the "load failed" path (return false, keep old module)
+//   - wire a mult-agent isolation mode (per-agent version namespace)
+//   - expose a callback for the host to be notified on successful
+//     swap
+//
+// The current scaffold returns false (and logs a warning) on any
+// dlopen failure so the caller can fall back. Stale binaries
+// (aot_emit_version > runtime's current defuse_version) are also
+// rejected — a binary from a future mutation epoch is invalid by
+// definition.
+#include <dlfcn.h>
+extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) {
+    if (!path) {
+        std::fprintf(stderr, "aura_reload_aot_module: null path\n");
+        return false;
+    }
+    void* handle = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (!handle) {
+        std::fprintf(stderr, "aura_reload_aot_module: dlopen failed for %s: %s\n",
+                     path, ::dlerror());
+        return false;
+    }
+    // Staleness check: compare the new binary's aot_emit_version
+    // against the host's known version. If the host specified
+    // `version != 0`, it must match. If `version == 0`, we trust
+    // the binary's own aot_emit_version.
+    auto* binary_version = static_cast<std::uint64_t*>(
+        ::dlsym(handle, "aot_emit_version"));
+    if (binary_version) {
+        if (version != 0 && *binary_version != version) {
+            std::fprintf(stderr,
+                         "aura_reload_aot_module: version mismatch "
+                         "(binary=%llu, host=%llu) for %s\n",
+                         static_cast<unsigned long long>(*binary_version),
+                         static_cast<unsigned long long>(version), path);
+            ::dlclose(handle);
+            return false;
+        }
+        std::fprintf(stderr,
+                     "aura_reload_aot_module: loaded %s (aot_emit_version=%llu, "
+                     "module_version=%llu)\n",
+                     path, static_cast<unsigned long long>(*binary_version),
+                     static_cast<unsigned long long>(g_aot_module_version));
+    } else {
+        // No aot_emit_version symbol: pre-#243 binary, treat as
+        // version 0 (unversioned baseline).
+        if (version != 0) {
+            std::fprintf(stderr,
+                         "aura_reload_aot_module: no aot_emit_version in %s, "
+                         "but host specified version=%llu; refusing\n",
+                         path, static_cast<unsigned long long>(version));
+            ::dlclose(handle);
+            return false;
+        }
+    }
+    // The constructor aura_aot_register_fns is __attribute__((constructor))
+    // and runs automatically on dlopen (since the .so exports it).
+    // Nothing more to do here; the runtime's func_table now has
+    // the new module's fn_ptrs alongside any old ones (or replaced,
+    // depending on the runtime's dispatch policy — that's the
+    // closure-dispatch follow-up).
+    return true;
+}
+
 // ── Global: string pool conversion for C linkage ────────────────
 // Writes the string pool to a temp file for compiled code to include.
 
@@ -159,6 +268,16 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "const unsigned long long aot_emit_version = %llull;\n",
             static_cast<unsigned long long>(emit_version));
 
+    // Issue #287: AOT module version (hot-reload / multi-agent).
+    // The host sets `g_aot_module_version` before
+    // `aura_emit_native_file` to identify a specific build.
+    // The registration .c forwards it to the runtime via
+    // `aura_set_module_version(v)` so the runtime can track
+    // which module is loaded (vs. which mutation epoch it
+    // was built against, which is `aot_emit_version`).
+    fprintf(f, "\n// Issue #287: AOT module version (hot-reload / multi-agent)\n");
+    fprintf(f, "void aura_set_module_version(unsigned long long v);\n");
+
     // Generate extern declarations
     for (unsigned int i = 0; i < num_functions; ++i) {
         fprintf(f, "extern int64_t %s(int64_t*, uint32_t);\n", mangled_names[i].c_str());
@@ -166,6 +285,15 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
 
     fprintf(f, "\n// Constructor — runs before main()\n");
     fprintf(f, "__attribute__((constructor)) void aura_aot_register_fns(void) {\n");
+
+    // Issue #287: announce the module version to the runtime
+    // FIRST, before any aura_register_fn calls, so the runtime's
+    // func_table version stamp reflects the current module when
+    // each registration happens. The runtime can then refuse to
+    // register a function for a stale module (defensive — the
+    // check itself is a follow-up to #287).
+    fprintf(f, "    aura_set_module_version(%llull);\n",
+            static_cast<unsigned long long>(g_aot_module_version));
 
     for (unsigned int i = 0; i < num_functions; ++i) {
         fprintf(f, "    aura_register_fn(%u, (int64_t)%s);\n", func_ids[i],

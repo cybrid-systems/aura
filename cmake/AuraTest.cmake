@@ -50,6 +50,8 @@ function(aura_issue_test_link_llvm_jit TARGET)
     target_include_directories(${TARGET} PRIVATE ${LLVM_INCLUDE_DIRS})
     target_compile_definitions(${TARGET} PRIVATE AURA_HAVE_LLVM=1)
     target_link_libraries(${TARGET} PRIVATE ${llvm_libs})
+    # #287: aura_reload_aot_module uses dlopen/dlsym/dlclose.
+    target_link_libraries(${TARGET} PRIVATE ${CMAKE_DL_LIBS})
 endfunction()
 
 # LLVM JIT without observability headers (light JIT API tests).
