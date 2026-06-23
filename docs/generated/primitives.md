@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**427** registrations scanned from `src/**/*.cpp`.
+**431** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -12,7 +12,7 @@ Runtime canonical list: `(api-reference)`.
 - `eval-current-output` — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (33)
+## Query: (34)
 
 - `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -46,6 +46,7 @@ Runtime canonical list: `(api-reference)`.
 - `query:schema-of-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:siblings` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:verify-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
 ## Mutate: (21)
@@ -136,7 +137,7 @@ Runtime canonical list: `(api-reference)`.
 - `synthesize:optimize` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (22)
+## Compile: (23)
 
 - `compile:ast-ops-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
@@ -160,6 +161,7 @@ Runtime canonical list: `(api-reference)`.
 - `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:status` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:type-propagation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:verify-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## C FFI (10)
 
@@ -512,3 +514,8 @@ Runtime canonical list: `(api-reference)`.
 ## Thread_Pool: (1)
 
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
+
+## Verify: (2)
+
+- `verify:assertion-failed` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:report-coverage` — `src/compiler/evaluator_primitives_compile.cpp`

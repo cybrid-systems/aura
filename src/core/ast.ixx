@@ -519,6 +519,9 @@ private:
         dirty_[id] = 0;
         if (id < ppa_dirty_.size())
             ppa_dirty_[id] = 0;
+        // Issue #437: reset verify_dirty_ alongside ppa_dirty_
+        if (id < verify_dirty_.size())
+            verify_dirty_[id] = 0;
         error_kind_[id] = 0;
         if (id < value_cache_.size())
             value_cache_[id] = kNotCached;
@@ -576,6 +579,9 @@ private:
         type_id_.push_back(0);
         dirty_.push_back(0);
         ppa_dirty_.push_back(0);
+        // Issue #437: verify_dirty_ column. Mirrors ppa_dirty_'s
+        // push_back(0) pattern; populated by apply_verify_dirty_bits.
+        verify_dirty_.push_back(0);
         // Issue #79: per-node error kind (0 = no error, non-zero = ErrorKind).
         // Populated by the type-checker and runtime evaluator; queryable via
         // the AuraQuery `(has-error? N)` clause.
@@ -657,6 +663,15 @@ private:
     // Issue #277: per-node PPA dirty bitmask (orthogonal to DirtyReason
     // which is full at 8 bits). OR'd with kPpaHintDirty on dirty_ when set.
     std::pmr::vector<std::uint8_t> ppa_dirty_;
+    // Issue #437: per-node verification dirty bitmask (orthogonal to
+    // DirtyReason which is full at 8 bits). Bit definitions:
+    //   0x01 = Assertion (assertion failed / SVA property violated)
+    //   0x02 = Coverage (coverage hole detected)
+    //   0x04 = SVA (SVA property / sequence affected)
+    //   0x08 = FormalCounterexample (formal proof counterexample)
+    // OR'd with kGeneralDirty on dirty_ when set so legacy
+    // is_dirty() callers still see "this node needs work".
+    std::pmr::vector<std::uint8_t> verify_dirty_;
     std::pmr::vector<std::uint32_t> type_id_;
     // Issue #79: per-node error kind, 0 = no error, non-zero = ErrorKind
     // enum value. Populated by the type-checker and runtime evaluator;
@@ -733,8 +748,59 @@ private:
     mutable std::atomic<std::uint64_t> node_recycle_total_{0};
     mutable std::atomic<std::uint64_t> node_slot_reuse_count_{0};
     mutable std::atomic<std::uint64_t> node_compact_total_{0};
+    // Issue #437: verification-dirty observability counters.
+    // Bumped by apply_verify_dirty_bits. Stats-only
+    // (relaxed-ordering). Exposed via the
+    // (query:verify-dirty-stats) primitive.
+    mutable std::atomic<std::uint64_t> verify_assertion_dirty_total_{0};
+    mutable std::atomic<std::uint64_t> verify_coverage_dirty_total_{0};
+    mutable std::atomic<std::uint64_t> verify_sva_dirty_total_{0};
+    mutable std::atomic<std::uint64_t> verify_formal_cex_dirty_total_{0};
 
-private:
+public:
+    // Issue #437: per-reason verify-dirty stat accessors.
+    // Public so the (query:verify-dirty-stats) primitive
+    // can read them from evaluator_primitives_compile.cpp.
+    [[nodiscard]] std::uint64_t verify_assertion_dirty_total() const noexcept {
+        return verify_assertion_dirty_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t verify_coverage_dirty_total() const noexcept {
+        return verify_coverage_dirty_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t verify_sva_dirty_total() const noexcept {
+        return verify_sva_dirty_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t verify_formal_cex_dirty_total() const noexcept {
+        return verify_formal_cex_dirty_total_.load(std::memory_order_relaxed);
+    }
+
+public:
+    // Issue #437: verify_dirty_ accessor (public, used by
+    // the (compile:verify-dirty?) primitive).
+    [[nodiscard]] std::uint8_t verify_dirty(NodeId id) const noexcept {
+        if (id >= verify_dirty_.size()) return 0;
+        return verify_dirty_[id];
+    }
+    // Issue #437: apply verify-dirty bits to a node.
+    void apply_verify_dirty_bits(NodeId id, std::uint8_t verify_reasons) {
+        if (verify_reasons == 0)
+            return;
+        if (id >= verify_dirty_.size())
+            verify_dirty_.resize(id + 1, 0);
+        // Detect newly-set bits (for per-reason counters).
+        const auto newly_set = verify_reasons & ~verify_dirty_[id];
+        verify_dirty_[id] |= verify_reasons;
+        if (newly_set & kAssertionDirty)
+            verify_assertion_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+        if (newly_set & kCoverageDirty)
+            verify_coverage_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+        if (newly_set & kSvaDirty)
+            verify_sva_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+        if (newly_set & kFormalCounterexampleDirty)
+            verify_formal_cex_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+        mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
+    }
+
 public:
     // Low-level raw node creation (for advanced mutation).
     // Creates a minimal node with the given tag and default fields.
@@ -1785,6 +1851,8 @@ public:
         std::pmr::vector<SyntaxMarker> new_marker(alloc);
         std::pmr::vector<std::uint8_t> new_dirty(alloc);
         std::pmr::vector<std::uint8_t> new_ppa_dirty(alloc);
+        // Issue #437: COW scratch for verify_dirty_
+        std::pmr::vector<std::uint8_t> new_verify_dirty(alloc);
         std::pmr::vector<std::uint32_t> new_type_id(alloc);
         std::pmr::vector<std::uint8_t> new_error_kind(alloc);
         std::pmr::vector<std::uint32_t> new_node_first_mutation(alloc);
@@ -1837,6 +1905,11 @@ public:
                 new_ppa_dirty.push_back(ppa_dirty_[id]);
             else
                 new_ppa_dirty.push_back(0);
+            // Issue #437: COW the verify_dirty_ bitmask.
+            if (id < verify_dirty_.size())
+                new_verify_dirty.push_back(verify_dirty_[id]);
+            else
+                new_verify_dirty.push_back(0);
             new_type_id.push_back(type_id_[id]);
             new_error_kind.push_back(error_kind_[id]);
             new_node_first_mutation.push_back(node_first_mutation_[id]);
@@ -1861,6 +1934,8 @@ public:
         marker_ = std::move(new_marker);
         dirty_ = std::move(new_dirty);
         ppa_dirty_ = std::move(new_ppa_dirty);
+        // Issue #437: COW the verify_dirty_ column
+        verify_dirty_ = std::move(new_verify_dirty);
         type_id_ = std::move(new_type_id);
         error_kind_ = std::move(new_error_kind);
         node_first_mutation_ = std::move(new_node_first_mutation);
@@ -1943,6 +2018,8 @@ public:
         marker_.clear();
         dirty_.clear();
         ppa_dirty_.clear();
+        // Issue #437: clear verify_dirty_ alongside ppa_dirty_
+        verify_dirty_.clear();
         type_id_.clear();
         mutation_log_.clear();
         // Issue #282: clear narrowing provenance on FlatAST reset.
@@ -2172,6 +2249,11 @@ public:
         write_column(col_);
         write_column(marker_);
         write_column(dirty_);
+        // Issue #437: serialize verify_dirty_ alongside ppa_dirty_
+        // (the serializer writes the columns in lockstep, so we
+        // need to add it here to keep binary compat). Insert
+        // before type_id_ to match the read order.
+        write_column(verify_dirty_);
         write_column(type_id_);
         write_column(error_kind_);
         write_column(value_cache_);
@@ -2287,6 +2369,13 @@ public:
         read_column(ast.col_);
         read_column(ast.marker_);
         read_column(ast.dirty_);
+        // Issue #437: read verify_dirty_ alongside dirty_. The
+        // read is conditional on the remaining buffer size —
+        // older binaries won't have this column, so we treat
+        // an empty read as "all zeros" (default-initialized).
+        if (pos < buf.size()) {
+            read_column(ast.verify_dirty_);
+        }
         read_column(ast.type_id_);
         read_column(ast.error_kind_);
         read_column(ast.value_cache_);
@@ -2391,6 +2480,24 @@ public:
         ppa_dirty_[id] |= ppa_reasons;
         mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty | kPpaHintDirty));
     }
+
+    // Issue #437: verification-specific dirty bits stored in the
+    // orthogonal verify_dirty_ column. Setting any verify bit also
+    // ORs kGeneralDirty on dirty_ for backward-compat.
+    enum VerifyDirtyReason : std::uint8_t {
+        kAssertionDirty = 0x01,        // assertion failed
+        kCoverageDirty = 0x02,         // coverage hole detected
+        kSvaDirty = 0x04,              // SVA property/sequence affected
+        kFormalCounterexampleDirty = 0x08, // formal proof counterexample
+    };
+
+    // Issue #437: OR verify bits into verify_dirty_ and mirror
+    // kGeneralDirty on dirty_ so legacy is_dirty() callers still
+    // see "this node needs work". The public definition is
+    // in the public section below.
+    // (No forward declaration needed; the public definition
+    //  at line ~775 is reachable from the dirty_observability
+    //  path via class-internal lookup.)
 
     // Issue #188: mark a node dirty for one or more specific reasons.
     // The `kGeneralDirty` bit is set automatically so existing
