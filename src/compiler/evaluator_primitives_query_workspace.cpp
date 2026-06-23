@@ -50,7 +50,7 @@ void register_workspace_query_primitives(
     std::pmr::vector<std::string>& string_heap, aura::ast::ASTArena*& temp_arena,
     std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
     std::function<aura::ast::StringPool*()> canonical_pool, std::function<void()> build_tag_arity_index,
-    MakeErrorVal mev) {
+    MakeErrorVal mev, Evaluator& ev) {
     WorkspaceQueryState ws{workspace_mtx,     workspace_flat,   workspace_pool, type_registry,
                          keyword_table,       pairs,            string_heap,    temp_arena,
                          tag_arity_index,     canonical_pool,   build_tag_arity_index};
@@ -938,7 +938,7 @@ void register_workspace_query_primitives(
     //   :include-macro-introduced [#t|#f]
     // When absent or #f, macro-introduced root positions are skipped
     // (Issue #140 hygiene default). When #t, they are included.
-    add("query:pattern", [ws, mev](const auto& a) -> EvalValue {
+    add("query:pattern", [ws, mev, &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty())
             return mev("bad-arg",
@@ -1103,12 +1103,20 @@ void register_workspace_query_primitives(
                 return make_void();
             }
             const auto& bucket = it->second;
+            ev.bump_total_query_calls();
             for (aura::ast::NodeId id : bucket) {
                 if (id >= flat.size())
                     continue;
                 if (!include_macro_introduced &&
-                    flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
+                    flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+                    // Issue #458: hygiene-skip stats. Bumped
+                    // each time the traversal skips a
+                    // macro-introduced node (whether for
+                    // include_macro_introduced=false or for
+                    // marker==MacroIntroduced).
+                    ev.bump_macro_introduced_skipped_in_query();
                     continue;
+                }
                 if (match_subtree(id, pr.root)) {
                     auto pid = ws.pairs.size();
                     ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
@@ -1118,10 +1126,13 @@ void register_workspace_query_primitives(
         } else {
             // Wildcard pattern: full walk (the index doesn't
             // help for wildcards).
+            ev.bump_total_query_calls();
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
                 if (!include_macro_introduced &&
-                    flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
+                    flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+                    ev.bump_macro_introduced_skipped_in_query();
                     continue;
+                }
                 if (match_subtree(id, pr.root)) {
                     auto pid = ws.pairs.size();
                     ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});

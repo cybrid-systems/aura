@@ -114,7 +114,7 @@ void Evaluator::register_all_primitives() {
         prim_registrar(),
         workspace_mtx_, workspace_flat_, workspace_pool_, type_registry_, keyword_table_, pairs_,
         string_heap_, temp_arena_, tag_arity_index_, [this]() { return canonical_pool(); },
-        [this]() { build_tag_arity_index(); }, mev);
+        [this]() { build_tag_arity_index(); }, mev, *this);
 
     primitives_detail::register_mutate_primitives(
         prim_registrar(),
