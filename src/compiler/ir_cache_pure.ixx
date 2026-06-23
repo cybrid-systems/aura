@@ -25,6 +25,7 @@ module;
 
 #include <cstddef>
 #include <cstdint>
+#include <bit>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -208,6 +209,85 @@ std::size_t fnv1a_64(std::string_view s) noexcept {
         h *= 0x100000001b3ULL;
     }
     return h;
+}
+
+// ── Issue #426: count_dirty_blocks + relower_affected_blocks
+// Pure functions for fine-grained re-lower decision + estimate.
+// Both take the per-function block_dirty_ bitmask (a vector
+// of uint8_t, 1 bit per block) and return a count.
+// The "pure" guarantee: same input → same output, no
+// global state, no I/O, no this.
+
+// Count the number of set bits in a block_dirty_ mask.
+// P0: popcount via std::popcount (C++20).
+[[nodiscard]] inline std::size_t
+count_dirty_blocks(const std::vector<std::uint8_t>& block_dirty) noexcept {
+    std::size_t n = 0;
+    for (auto byte : block_dirty) {
+        n += static_cast<std::size_t>(std::popcount(byte));
+    }
+    return n;
+}
+
+// Issue #426: estimate the re-lower cost of a dirty
+// function. Returns the number of blocks that need
+// re-lowering. If the function is fully clean (no dirty
+// bits), returns 0. If the function is "fully dirty"
+// (all blocks are dirty), returns std::size_t(-1) as a
+// sentinel meaning "re-lower the whole function".
+//
+// Heuristic:
+//   - 0 dirty blocks → 0 (skip)
+//   - 1..7 dirty blocks → exact count (incremental)
+//   - 8+ dirty blocks → std::size_t(-1) (full re-lower)
+//
+// P0: this is a decision function, not an actual
+// re-lower. The follow-up wires the call to the lowering
+// pipeline + JIT incremental update.
+[[nodiscard]] constexpr std::size_t
+estimate_relower_blocks(std::size_t dirty_count) noexcept {
+    if (dirty_count == 0) return 0;
+    if (dirty_count >= 8) return static_cast<std::size_t>(-1);
+    return dirty_count;
+}
+
+// Issue #426: aggregate stats over many functions'
+// block_dirty_ masks. Returns the total dirty count
+// across all functions (for the dirty_rate observability
+// primitive) + the number of functions that have at
+// least one dirty block (for the "incremental candidates"
+// count).
+struct BlockDirtySummary {
+    std::size_t total_dirty_blocks = 0;
+    std::size_t functions_with_dirty = 0;
+    std::size_t functions_total = 0;
+    // Number of functions that would be incremental
+    // re-lower candidates (1..7 dirty blocks).
+    std::size_t incremental_candidates = 0;
+    // Number of functions that would be full re-lower
+    // candidates (8+ dirty blocks).
+    std::size_t full_relower_candidates = 0;
+};
+
+[[nodiscard]] inline BlockDirtySummary
+summarize_block_dirty(
+    const std::vector<std::vector<std::uint8_t>>&
+        block_dirty_per_func) noexcept {
+    BlockDirtySummary s;
+    s.functions_total = block_dirty_per_func.size();
+    for (const auto& mask : block_dirty_per_func) {
+        const auto n = count_dirty_blocks(mask);
+        s.total_dirty_blocks += n;
+        if (n > 0) {
+            ++s.functions_with_dirty;
+            const auto est = estimate_relower_blocks(n);
+            if (est == static_cast<std::size_t>(-1))
+                ++s.full_relower_candidates;
+            else
+                ++s.incremental_candidates;
+        }
+    }
+    return s;
 }
 
 } // namespace aura::compiler

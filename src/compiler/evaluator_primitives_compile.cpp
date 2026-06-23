@@ -18,6 +18,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
+import aura.compiler.service;
 
 namespace aura::compiler::primitives_detail {
 
@@ -703,6 +704,42 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         (void)a;
         return make_int(static_cast<std::int64_t>(
             ev.get_partial_relower_count()));
+    });
+
+    // Issue #426: (query:compiler-cache-stats) — return
+    // the current per-block dirty counts across the
+    // compiler cache. P0 ship: returns the total dirty
+    // block count (sum over all functions) as an int.
+    // Follow-up: returns a 3-tuple
+    // (dirty-blocks dirty-functions incremental-candidates)
+    // so the AI Agent can decide whether the next
+    // (compile:relower) should be a full re-lower or
+    // an incremental one.
+    add("query:compiler-cache-stats", [&ev](const auto& a) -> EvalValue {
+        (void)a;
+        // The per-function block_dirty_ bitmask is held
+        // by CompilerService; we don't have direct access
+        // from the query primitive context. P0 returns 0
+        // when the CompilerService doesn't expose it; the
+        // follow-up exposes a public accessor + wires the
+        // real count.
+        // P0 contract: the primitive is wired and returns
+        // an integer (= the total dirty block count from
+        // CompilerService::dirty_block_count, when the
+        // service is reachable via ev.compiler_service_).
+        auto* svc_void = ev.compiler_service();
+        if (!svc_void) return make_int(0);
+        // Cast back to CompilerService*. Pattern is
+        // identical to the (compile:linear-elide-count)
+        // primitive above (static_cast<StructType*>
+        // from a void*).
+        auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
+        // P0: return the count from the service's
+        // total_dirty_block_count() helper. The full
+        // summary (with incremental-candidates count)
+        // is a follow-up.
+        return make_int(static_cast<std::int64_t>(
+            svc->total_dirty_block_count()));
     });
 
     // Issue #459: (query:atomic-batch-stats) — return
