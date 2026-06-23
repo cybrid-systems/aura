@@ -84,6 +84,25 @@ export ModportIR make_modport(std::string_view name,
 export std::string emit_modport(const ModportIR& m);
 export std::string debug_modport(const ModportIR& m);
 
+// ── ConstraintIR ──
+//
+// Issue #435 Phase 5 — structured IR for SV constraints
+// (class randomization). Mirrors the list-based
+// `(eda:constraint name expressions)` representation.
+//
+// Layout:
+//   "constraint NAME { EXPR1; EXPR2; }"
+export struct ConstraintIR {
+    std::string name;
+    std::vector<std::string> expressions;
+};
+
+export ConstraintIR make_constraint(std::string_view name,
+                                     std::vector<std::string> expressions) noexcept;
+
+export std::string emit_constraint(const ConstraintIR& c);
+export std::string debug_constraint(const ConstraintIR& c);
+
 // ── CoverpointIR ──
 //
 // Issue #435 Phase 4 — structured IR for SV coverpoint.

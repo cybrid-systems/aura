@@ -1127,6 +1127,68 @@
   (display "])"))
 
 ; ═══════════════════════════════════════════════════════════
+; Issue #435 Phase 5: constraint (randomization)
+; ═══════════════════════════════════════════════════════════
+;
+; Phase 5 models randomization constraints. SV classes use
+; constraints to limit the random-value space for class
+; properties. The IR shape:
+;
+;   (eda:constraint name expressions)
+;
+; where:
+;   name        — symbol (label, e.g. 'valid_lengths)
+;   expressions — list of expressions; each is a string (the
+;                 constraint body — e.g. "len < 128")
+;
+; Phase 5 keeps expressions as opaque strings (no expr
+; record parsing). The class randomize() pipeline can
+; later convert each string into an eda:expr if needed for
+; type-checking; that's a follow-up.
+;
+; Layout:
+;   "constraint NAME { EXPR1; EXPR2; }"
+
+; ── eda:constraint ──
+
+(define (make-eda:constraint name expressions)
+  (list 'eda:constraint name expressions))
+
+(define (eda:constraint? x)
+  (and (pair? x) (equal? (car x) 'eda:constraint)))
+
+(define (eda:constraint-name c) (car (cdr c)))
+(define (eda:constraint-expressions c) (car (cdr (cdr c))))
+
+; ── Emitters ──
+
+(define (eda:emit-constraint c)
+  (let ((nm (eda:name-str (eda:constraint-name c)))
+        (exprs (eda:constraint-expressions c)))
+    (let ((prefix (string-append "constraint " nm " { "))
+          (body (eda:join-constraint-exprs exprs ""))
+          (suffix " }"))
+      (string-append prefix body suffix))))
+
+(define (eda:join-constraint-exprs exprs acc)
+  (if (null? exprs)
+      acc
+      (let ((e (car exprs))
+            (rest (cdr exprs)))
+        (let ((sep (if (equal? acc "") "" "; "))
+              (next (string-append acc sep e)))
+          (eda:join-constraint-exprs rest next)))))
+
+; ── Display ──
+
+(define (eda:display-constraint c)
+  (display "constraint(")
+  (display (eda:constraint-name c))
+  (display ", exprs=[")
+  (display (eda:constraint-expressions c))
+  (display "])"))
+
+; ═══════════════════════════════════════════════════════════
 ; Issue #436 Phase 5: typedef / enum / struct / package / import
 ; ═══════════════════════════════════════════════════════════
 ;
@@ -1760,6 +1822,10 @@
   eda:emit-coverpoint eda:emit-covergroup
   eda:display-coverpoint eda:display-covergroup
   eda:join-coverpoint-bins eda:join-covergroup-cps
+  ; Constraints (Issue #435 Phase 5)
+  make-eda:constraint eda:constraint? eda:constraint-name
+  eda:constraint-expressions eda:emit-constraint
+  eda:display-constraint eda:join-constraint-exprs
   eda:emit-typedef eda:emit-enum eda:emit-struct
   eda:emit-package eda:emit-import
   eda:emit-logic-type eda:enum-width
