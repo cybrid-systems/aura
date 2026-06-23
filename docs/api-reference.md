@@ -19,6 +19,7 @@
 | 加载 | `set-code` `current-source` `eval-current` `eval-current-output` |
 | Query | `query:find` `query:pattern` `query:where` `query:calls` `query:def-use` … |
 | Mutate | `mutate:rebind` `mutate:query-and-replace` `mutate:extract-function` … |
+| 验证 | `query:schema` `mutate:validate-against-schema` |
 | 版本 | `ast:snapshot` `ast:restore` `rollback` `mutation-history` |
 | Workspace | `workspace:create` `workspace:switch` `workspace:merge` `workspace:lock` … |
 
