@@ -233,6 +233,18 @@ private:
     // registered with an Evaluator (top_, modules_).
     Evaluator* owner_ = nullptr;
     EnvId parent_id_ = NULL_ENV_ID;
+    // Issue #286: snapshot of `owner_->defuse_version_` at the
+    // time this Env was materialized (for envs created via
+    // materialize_call_env). The SoA walk in
+    // `Env::lookup_cell_ptr` checks this against each frame's
+    // version_ to detect a stale chain — same staleness
+    // semantic as EnvFrame. Stale Envs (env_version_ <
+    // current defuse_version_) still produce correct results
+    // because each frame is independently stamped, but the
+    // env-level stamp lets us surface a one-time warning in
+    // materialize_call_env and skip re-walking already-validated
+    // subchains.
+    std::uint64_t env_version_ = 0;
     // Issue #207 (Cycle 1): bindings_legacy_uses_ counter.
     // Bumped on every access to the legacy bindings() accessor.
     // Provides observability for the migration from
@@ -247,6 +259,11 @@ public:
         return bindings_legacy_uses_;
     }
     void reset_bindings_legacy_uses() noexcept { bindings_legacy_uses_ = 0; }
+    // Issue #286: accessors for the env_version_ snapshot stamp
+    // (set by materialize_call_env; read by lookup_cell_ptr and
+    // observability code).
+    [[nodiscard]] std::uint64_t env_version() const noexcept { return env_version_; }
+    void set_env_version(std::uint64_t v) noexcept { env_version_ = v; }
 };
 
 export using ClosureId = std::uint64_t;

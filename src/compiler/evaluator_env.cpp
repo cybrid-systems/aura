@@ -516,6 +516,17 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         ne.set_owner(this);
         ne.set_parent_id(fr.parent_id);
     }
+    // Issue #286: stamp the new Env with the current
+    // defuse_version_. This gives the materialized Env the same
+    // snapshot semantics as the EnvFrame it was built from,
+    // and lets future lookups via walk_env_frames (or
+    // Env::lookup_cell_ptr) cheaply detect a stale chain by
+    // comparing this stamp against the owner's current
+    // defuse_version_. The stamp is captured AFTER the frame
+    // version_ check above so a stale frame's bindings are
+    // re-stamped to current, and the new Env reflects that
+    // current value.
+    ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
     return ne;
 }
 
@@ -695,9 +706,20 @@ EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* ce
     //    envs). Cache-friendly index lookup replaces pointer
     //    chase; shadowing semantics preserved (closest frame
     //    wins, walk_env_frames stops at first match).
+    //
+    //    Issue #286: snapshot defuse_version_ once at walk
+    //    start, then skip frames whose version_ is older than
+    //    the snapshot (the stale-frames check from #242). This
+    //    keeps lookup behavior consistent with
+    //    lookup_by_symid_chain (which already does the check).
     if (owner_ && parent_id_ != NULL_ENV_ID) {
+        const auto version_snap =
+            owner_->get_defuse_version();
         EvalValue* result = nullptr;
         owner_->walk_env_frames(parent_id_, [&](EnvId, const EnvFrame& f) {
+            // Skip frames stamped before the current mutation epoch.
+            if (f.version_ < version_snap)
+                return true; // continue walking past the stale frame
             for (auto& b : f.bindings_) {
                 if (b.first == n) {
                     if (is_cell(b.second)) {
