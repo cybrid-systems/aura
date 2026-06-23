@@ -169,6 +169,92 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             ev->get_macro_introduced_skipped_in_query()));
     });
 
+    // Issue #456: query:dirty-subtree root-node-id
+    // [reason-mask]. Walks the dirty-subtree rooted at
+    // root-node-id and returns the number of dirty
+    // nodes found. The optional 2nd arg is a dirty-reason
+    // bitmask to AND against each node's dirty_ byte (0
+    // = count all dirty nodes).
+    //
+    // P0: returns an integer (= count of dirty nodes in
+    // the ancestor chain up to root). The follow-up
+    // returns a list of (NodeId . dirty-bit) pairs.
+    add("query:dirty-subtree", [](std::span<const EvalValue> a) -> EvalValue {
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        if (a.empty() || !is_int(a[0]))
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        if (!ws) return make_int(0);
+        auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        const std::uint8_t reason_mask = (a.size() >= 2 && is_int(a[1]))
+            ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
+            : 0xFF; // 0xFF = all reasons
+        if (root >= ws->size()) return make_int(0);
+        // Walk the parent chain from root upward; count nodes
+        // that have at least one dirty bit intersecting
+        // reason_mask. (P0: this is the ancestor chain, not
+        // the full BFS over children — the impact is
+        // recorded by mark_dirty_upward, which already walks
+        // ancestors. The follow-up will do a real subtree
+        // BFS once we have a per-child lookup.)
+        std::uint64_t count = 0;
+        auto cur = root;
+        while (cur != aura::ast::NULL_NODE && cur < ws->size()) {
+            const auto dirty_bits = ws->dirty(cur);
+            if ((dirty_bits & reason_mask) != 0)
+                ++count;
+            cur = ws->parent_of(cur);
+        }
+        return make_int(static_cast<std::int64_t>(count));
+    });
+
+    // Issue #456: query:mutation-impact. Returns the
+    // most-recent successful mutation-impact summary
+    // recorded by exit_mutation_boundary.
+    //
+    // P0: returns an integer = mutation_impact_count_
+    // (the total number of successful boundaries that
+    // recorded an impact summary). The follow-up returns
+    // a 4-tuple (epoch-after epoch-delta nodes-changed
+    // reasons-mask) of the most-recent ring-buffer entry.
+    add("query:mutation-impact", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        return make_int(static_cast<std::int64_t>(
+            ev->get_mutation_impact_count()));
+    });
+
+    // Issue #456: query:epoch-stats. Returns the current
+    // defuse_version_ epoch (the global counter bumped
+    // on every mutation boundary entry/exit). Stamps
+    // last_queried_epoch_ so a follow-up
+    // (query:epoch-delta-since-last-query) can return
+    // the delta from a previous query. P0: returns
+    // the current epoch.
+    add("query:epoch-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev->get_defuse_version()));
+    });
+
+    // Issue #456: query:epoch-delta-since-last-query.
+    // Returns (current_epoch - last_queried_epoch_) and
+    // then updates last_queried_epoch_ to the current
+    // value. 0 on the first call (or when no evaluator
+    // is active).
+    add("query:epoch-delta-since-last-query", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t cur = ev->get_defuse_version();
+        const std::uint64_t last = ev->get_last_queried_epoch();
+        ev->record_epoch_query();
+        return make_int(static_cast<std::int64_t>(cur - last));
+    });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);

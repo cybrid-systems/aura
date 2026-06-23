@@ -296,6 +296,13 @@ public:
     CompilerService()
         : user_bindings_{"#t", "#f", "nil"}
         , session_id_("default") {
+        // Issue #456: register this service's Evaluator as
+        // the active query-evaluator for the current thread.
+        // query:mutation-impact / query:epoch-stats /
+        // query:dirty-subtree read counters from it; without
+        // this registration, those primitives see nullptr
+        // whenever no MutationBoundaryGuard is active.
+        Evaluator::set_query_evaluator(&evaluator_);
         evaluator_.set_arena(&arena_);
         evaluator_.set_temp_arena(&temp_arena_);
         evaluator_.set_type_registry(&type_registry_);

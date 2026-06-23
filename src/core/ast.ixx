@@ -781,6 +781,13 @@ public:
         if (id >= verify_dirty_.size()) return 0;
         return verify_dirty_[id];
     }
+    // Issue #456: public accessor for the main dirty_ byte
+    // (used by (query:dirty-subtree) to check each node's
+    // dirty bitmask against a reason filter).
+    [[nodiscard]] std::uint8_t dirty(NodeId id) const noexcept {
+        if (id >= dirty_.size()) return 0;
+        return dirty_[id];
+    }
     // Issue #437: apply verify-dirty bits to a node.
     void apply_verify_dirty_bits(NodeId id, std::uint8_t verify_reasons) {
         if (verify_reasons == 0)

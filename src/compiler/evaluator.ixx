@@ -1809,6 +1809,34 @@ private:
     std::atomic<std::uint64_t> hygiene_violation_count_{0};
     std::atomic<std::uint64_t> macro_introduced_skipped_in_query_{0};
     std::atomic<std::uint64_t> total_query_calls_{0};
+    // Issue #456: mutation-impact observability. Bumped in
+    // exit_mutation_boundary (success path) when the outermost
+    // guard flushes. The deltas track: how many nodes were
+    // touched, what reasons were seen, and the epoch delta
+    // (defuse_version_ increment since boundary entry).
+    // Exposed via (query:mutation-impact) + (query:epoch-stats).
+    std::atomic<std::uint64_t> mutation_impact_count_{0};
+    std::atomic<std::uint64_t> mutation_impact_nodes_changed_total_{0};
+    std::atomic<std::uint64_t> mutation_impact_reasons_seen_mask_{0};
+    // Issue #456: small ring buffer (8 entries) of the most
+    // recent successful mutation-impact summaries. Written
+    // under workspace_mtx_ (outermost guard) + relaxed-atomic
+    // flag for new-data notification. Used by
+    // (query:mutation-impact) to return the head entry as an
+    // int. P0: each entry is a 4-tuple of (count, delta,
+    // reasons_mask, seq); we encode as 1 int = total
+    // impact_events_count for the simplest P0 contract.
+    // Follow-up: return 4-tuple / list.
+    struct MutationImpactEntry {
+        std::uint64_t epoch_after;
+        std::uint64_t epoch_delta;
+        std::uint64_t nodes_changed;
+        std::uint8_t reasons_mask;
+    };
+    static constexpr std::size_t kMutationImpactRingSize = 8;
+    std::array<MutationImpactEntry, kMutationImpactRingSize> mutation_impact_ring_{};
+    std::atomic<std::uint64_t> mutation_impact_ring_seq_{0};
+    std::atomic<std::uint64_t> last_queried_epoch_{0};
     // Issue #266: fine-grained SoA rollback request + stats.
     bool fine_rollback_for_next_boundary_ = false;
     BoundaryRollbackStats last_boundary_rollback_stats_{};
@@ -2311,6 +2339,69 @@ public:
         // We bump it even on rollback so dashboards can see
         // "the boundary attempted to mutate, then rolled back".
         total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #456: record mutation-impact summary on
+        // success only. Walk the workspace mutation log
+        // from `mutation_log_size` (pre-mutation) to
+        // current size (post-mutation) and count entries.
+        // Skip on rollback (the rolled-back mutations
+        // don't actually affect state).
+        //
+        // P0: the per-record DirtyReason bitmask is NOT
+        // stored on MutationRecord (issue #188 stores it
+        // on the AST node's dirty_ column, not on the
+        // log entry). So we count log entries (= nodes
+        // touched) and use the defuse_version_ delta as
+        // the "reasons seen" surrogate: any delta >= 2
+        // implies a structural change (kStructuralDirty
+        // equivalent). Follow-up: extend MutationRecord
+        // to carry a dirty_reasons byte so we can OR the
+        // actual reasons in here.
+        if (success && workspace_flat_) {
+            const auto post_size =
+                workspace_flat_->all_mutations().size();
+            std::uint64_t nodes_changed = 0;
+            if (post_size > cp.mutation_log_size) {
+                nodes_changed = post_size - cp.mutation_log_size;
+            }
+            const std::uint64_t epoch_after =
+                defuse_version_.load(std::memory_order_acquire);
+            const std::uint64_t epoch_delta =
+                epoch_after - cp.version;
+            // Surrogate reasons mask: bit 0 = any node was
+            // touched (kGeneralDirty equivalent).
+            // Higher bits reserved for follow-up
+            // MutationRecord reason bytes.
+            const std::uint8_t reasons_mask =
+                nodes_changed > 0 ? 0x01 : 0x00;
+            mutation_impact_count_.fetch_add(1, std::memory_order_relaxed);
+            if (nodes_changed > 0) {
+                mutation_impact_nodes_changed_total_.fetch_add(
+                    nodes_changed, std::memory_order_relaxed);
+            }
+            // OR the new reasons into the running mask
+            // (relaxed atomic CAS loop; the mask is for
+            // observability only).
+            std::uint64_t cur = mutation_impact_reasons_seen_mask_.load(
+                std::memory_order_relaxed);
+            while (!mutation_impact_reasons_seen_mask_.compare_exchange_weak(
+                       cur, cur | reasons_mask,
+                       std::memory_order_relaxed)) {}
+            // Append to the ring buffer (lockless; the
+            // 8-slot ring tolerates torn writes from
+            // concurrent boundaries — worst case is one
+            // stale entry visible to (query:mutation-impact)
+            // for one read, which is acceptable for
+            // observability). We index by ring_seq_
+            // modulo the ring size.
+            const auto seq =
+                mutation_impact_ring_seq_.fetch_add(1, std::memory_order_relaxed);
+            auto& slot = mutation_impact_ring_[
+                seq % kMutationImpactRingSize];
+            slot.epoch_after = epoch_after;
+            slot.epoch_delta = epoch_delta;
+            slot.nodes_changed = nodes_changed;
+            slot.reasons_mask = reasons_mask;
+        }
         return cp;
     }
     // Get the current checkpoint stack depth (for testing /
@@ -2350,6 +2441,14 @@ public:
     static std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack_static();
     void bind_yield_hook_evaluator();
     void unbind_yield_hook_evaluator();
+
+    // Issue #456: per-thread Evaluator pointer for
+    // observability primitives. Set once at
+    // CompilerService ctor; read by query:* primitives
+    // that need the Evaluator outside any
+    // MutationBoundaryGuard.
+    static void set_query_evaluator(Evaluator* ev) noexcept;
+    static Evaluator* get_query_evaluator() noexcept;
 
     // Issue #285: getter for the thread-local yield-hook
     // evaluator pointer (set by bind_yield_hook_evaluator).
@@ -2450,6 +2549,28 @@ public:
     }
     void bump_suppressed_bump_lost_on_gc() noexcept {
         suppressed_bump_lost_on_gc_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #456: mutation-impact observability accessors.
+    [[nodiscard]] std::uint64_t get_mutation_impact_count() const noexcept {
+        return mutation_impact_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_mutation_impact_nodes_changed_total() const noexcept {
+        return mutation_impact_nodes_changed_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_mutation_impact_reasons_seen_mask() const noexcept {
+        return mutation_impact_reasons_seen_mask_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_defuse_version() const noexcept {
+        return defuse_version_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t get_last_queried_epoch() const noexcept {
+        return last_queried_epoch_.load(std::memory_order_acquire);
+    }
+    void record_epoch_query() noexcept {
+        last_queried_epoch_.store(
+            defuse_version_.load(std::memory_order_acquire),
+            std::memory_order_release);
     }
 
 
@@ -2751,9 +2872,9 @@ public:
     // Issue #184: the accessor uses acquire ordering so the JIT
     // runtime's version check synchronizes with any release-store
     // performed by enter_mutation_boundary() on another thread.
-    std::uint64_t get_defuse_version() const {
-        return defuse_version_.load(std::memory_order_acquire);
-    }
+    // (Note: a public `get_defuse_version()` already exists
+    //  at line ~2555; this internal-scope copy has been removed
+    //  to avoid overload collision.)
 
     // Issue #157 Phase 1: yield-mutation-boundary hook for the JIT.
     // High-level mutate primitives call g_fiber_yield_mutation_boundary
