@@ -702,9 +702,94 @@ void register_mutate_primitives(
         if (!is_int(ev.pairs_[inner].car))
             return mev("bad-arg", "stable-ref gen must be an int");
         auto captured_gen = static_cast<std::uint16_t>(as_int(ev.pairs_[inner].car));
-        // Validity check: in-range AND same generation
+        // Issue #391: consult the StaleRefPolicy. The
+        // validity check is identical; the policy only
+        // affects whether a stale ref blocks the mutate
+        // (Strict) or just bumps the warned counter
+        // (Warn). Disabled skips both.
         bool valid = (node < flat.size()) && (flat.generation() == captured_gen);
+        if (!valid) {
+            const auto policy = ev.get_stale_ref_policy();
+            if (policy == aura::compiler::Evaluator::StaleRefPolicy::Disabled) {
+                // No-op: don't bump counters, don't block.
+            } else if (policy == aura::compiler::Evaluator::StaleRefPolicy::Strict) {
+                ev.bump_stale_ref_blocked_count();
+                // Tagged stale-ref error so the Agent can
+                // distinguish from other mutate errors.
+                auto idx = ev.string_heap_.size();
+                ev.string_heap_.push_back("stale-ref");
+                return mev(ev.string_heap_[idx].c_str(),
+                           "stable-ref is stale (Strict policy blocked)");
+            } else {
+                // Warn
+                ev.bump_stale_ref_warned_count();
+            }
+        }
         return make_bool(valid);
+    });
+
+    // Issue #391: (mutate:set-stale-ref-policy "warn"|"strict"|"disabled")
+    // — set the global StaleRefPolicy for automatic
+    // staleness checks in core mutate primitives.
+    // P0: 3 policies. Disabled = no checks; Warn =
+    // observe but don't block; Strict = block (return
+    // tagged stale-ref error) on stale detection.
+    add("mutate:set-stale-ref-policy", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto& s = ev.string_heap_[idx];
+        if (s == "disabled" || s == "off" || s == "false") {
+            ev.set_stale_ref_policy(
+                aura::compiler::Evaluator::StaleRefPolicy::Disabled);
+            return make_bool(true);
+        }
+        if (s == "strict" || s == "hard") {
+            ev.set_stale_ref_policy(
+                aura::compiler::Evaluator::StaleRefPolicy::Strict);
+            return make_bool(true);
+        }
+        if (s == "warn" || s == "observe" || s == "soft") {
+            ev.set_stale_ref_policy(
+                aura::compiler::Evaluator::StaleRefPolicy::Warn);
+            return make_bool(true);
+        }
+        return make_bool(false);
+    });
+
+    // Issue #391: (query:stale-ref-policy) — return the
+    // current StaleRefPolicy as a string ("disabled" /
+    // "warn" / "strict"). Used by the AI Agent to
+    // verify the policy before a long mutating run.
+    add("query:stale-ref-policy", [&ev](const auto& a) -> EvalValue {
+        (void)a;
+        const char* name = "warn";
+        switch (ev.get_stale_ref_policy()) {
+            case aura::compiler::Evaluator::StaleRefPolicy::Disabled:
+                name = "disabled"; break;
+            case aura::compiler::Evaluator::StaleRefPolicy::Warn:
+                name = "warn"; break;
+            case aura::compiler::Evaluator::StaleRefPolicy::Strict:
+                name = "strict"; break;
+        }
+        auto idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(name);
+        return make_string(static_cast<std::int32_t>(idx));
+    });
+
+    // Issue #391: (query:stale-ref-stats) — return the
+    // sum of stale_ref_blocked_count_ +
+    // stale_ref_warned_count_ as an integer. Follow-up:
+    // return a 2-tuple (blocked warned) so the AI Agent
+    // can distinguish Strict-mode blocks from
+    // Warn-mode observations.
+    add("query:stale-ref-stats", [&ev](const auto& a) -> EvalValue {
+        (void)a;
+        return make_int(static_cast<std::int64_t>(
+            ev.get_stale_ref_blocked_count() +
+            ev.get_stale_ref_warned_count()));
     });
 
     // (mutate:rebind name new-code-string "summary") — Replace function definition by name
