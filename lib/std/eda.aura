@@ -241,6 +241,11 @@
     ((eda:always? ir) (eda:display-always ir))
     ((eda:signal? ir) (eda:display-signal ir))
     ((eda:assertion? ir) (eda:display-assertion ir))
+    ((eda:typedef? ir) (eda:display-typedef ir))
+    ((eda:enum? ir) (eda:display-enum ir))
+    ((eda:struct? ir) (eda:display-struct ir))
+    ((eda:package? ir) (eda:display-package ir))
+    ((eda:import? ir) (eda:display-import ir))
     ((eda:expr? ir)   (eda:display-expr ir))
     ((list? ir) (map eda:display ir))
     (else (display ir))))
@@ -919,6 +924,233 @@
   (display " = ")
   (display (eda:property-expr (eda:assertion-property a))))
 
+; ═══════════════════════════════════════════════════════════
+; Issue #436 Phase 5: typedef / enum / struct / package / import
+; ═══════════════════════════════════════════════════════════
+;
+; Phase 5 is intentionally minimal. We model the three core
+; type-definition IRs (typedef, enum, struct) plus the two
+; encapsulation forms (package, import). Each ships with
+; constructors, predicates, accessors, display, and emit.
+;
+; Scope notes:
+;   - typedef aliases a width-based logic type. No chained
+;     typedef support (typedef byte_t = uint8_t) — defer to
+;     a follow-up if needed.
+;   - enum uses logic[W-1:0] as the base type, where W is
+;     large enough to hold all members. Width is auto-computed
+;     as ceil(log2(N)) where N is the member count.
+;   - struct is packed only. Unpacked structs (with array
+;     fields) are out of scope for Phase 5.
+;   - package holds a list of typedefs / enums / structs
+;     inside its body. import aliases a package name.
+;   - packages live OUTSIDE modules (SV: declared at the
+;     $unit scope). We model them as standalone IR; modules
+;     can reference imported names via the eda:import IR.
+
+; ── eda:typedef ──
+;
+; IR: (eda:typedef name width)
+;   name  — symbol (the new type alias, e.g. 'byte_t)
+;   width — integer (the bit-width of the underlying logic type)
+;
+; Emits: "typedef logic [W-1:0] name;"
+(define (make-eda:typedef name width)
+  (list 'eda:typedef name width))
+(define (eda:typedef? x)
+  (and (pair? x) (equal? (car x) 'eda:typedef)))
+(define (eda:typedef-name t) (car (cdr t)))
+(define (eda:typedef-width t) (car (cdr (cdr t))))
+
+; ── eda:enum ──
+;
+; IR: (eda:enum name members)
+;   name    — symbol (the new enum type, e.g. 'state_t)
+;   members — list of symbols (the enum values, e.g. '(IDLE BUSY DONE))
+;
+; Emits: "typedef enum logic [W-1:0] { m1, m2, ... } name;"
+; where W = max(1, ceil(log2(length members))).
+(define (make-eda:enum name members)
+  (list 'eda:enum name members))
+(define (eda:enum? x)
+  (and (pair? x) (equal? (car x) 'eda:enum)))
+(define (eda:enum-name e) (car (cdr e)))
+(define (eda:enum-members e) (car (cdr (cdr e))))
+
+; ── eda:struct ──
+;
+; IR: (eda:struct name fields)
+;   name   — symbol (the new struct type, e.g. 'packet_t)
+;   fields — list of (eda:wire name width) — each field is a
+;            mini-wire IR so we get a name + width + kind for free.
+;            For Phase 5 we treat all fields as 'logic (packed).
+;
+; Emits: "typedef struct packed { logic [W-1:0] f1; logic [W-1:0] f2; ... } name;"
+(define (make-eda:struct name fields)
+  (list 'eda:struct name fields))
+(define (eda:struct? x)
+  (and (pair? x) (equal? (car x) 'eda:struct)))
+(define (eda:struct-name s) (car (cdr s)))
+(define (eda:struct-fields s) (car (cdr (cdr s))))
+
+; ── eda:package ──
+;
+; IR: (eda:package name body)
+;   name — symbol (package name, e.g. 'my_pkg)
+;   body — list of eda:typedef / eda:enum / eda:struct IRs
+;
+; Emits: "package name;\n  typedef ...;\n  enum ...;\n  struct ...;\nendpackage"
+(define (make-eda:package name body)
+  (list 'eda:package name body))
+(define (eda:package? x)
+  (and (pair? x) (equal? (car x) 'eda:package)))
+(define (eda:package-name p) (car (cdr p)))
+(define (eda:package-body p) (car (cdr (cdr p))))
+
+; ── eda:import ──
+;
+; IR: (eda:import package-name)
+;   package-name — symbol (the package to import, e.g. 'my_pkg)
+;
+; Emits: "import package-name::*;"
+(define (make-eda:import package-name)
+  (list 'eda:import package-name))
+(define (eda:import? x)
+  (and (pair? x) (equal? (car x) 'eda:import)))
+(define (eda:import-package i) (car (cdr i)))
+
+; ── Type-def emitters ──
+
+; Compute the enum width: enough bits to hold all members.
+; For N members: W = max(1, ceil(log2(N))).
+; Since Aura has no log2, we compute via a loop.
+(define (eda:enum-width members)
+  ; Compute W = max(1, ceil(log2(N))) by tracking 2^W in a
+  ; helper variable instead of using expt (which has an Aura
+  ; quirk that returns empty for some inputs).
+  (let ((n (length members)))
+    (let loop ((w 1) (pow 2))
+      (if (>= pow n)
+          w
+          (loop (+ w 1) (+ pow pow))))))
+
+; Emit "logic [W-1:0] " (or "logic " if W=1).
+(define (eda:emit-logic-type w)
+  (let ((W (eda:name-str "")))
+    (let ((H1 (string-append "logic")))
+      (let ((H2 (if (= w 1)
+                    H1
+                    (let ((D (string-append "[" (number->string w) "-1:0]")))
+                      (string-append H1 " " D)))))
+        H2)))))
+
+; Join a list of names with ", ". Pure helper.
+(define (eda:join-symbol-names syms)
+  (cond
+    ((null? syms) "")
+    ((null? (cdr syms)) (eda:name-str (car syms)))
+    (else (string-append
+            (eda:name-str (car syms))
+            ", "
+            (eda:join-symbol-names (cdr syms))))))
+
+(define (eda:emit-typedef t)
+  (let ((T-name (eda:name-str (eda:typedef-name t)))
+        (T-width (eda:typedef-width t))
+        (T-type (eda:emit-logic-type T-width)))
+    (let ((H1 (string-append "typedef " T-type " ")))
+      (let ((H2 (string-append H1 T-name ";")))
+        H2))))
+
+(define (eda:emit-enum e)
+  (let ((E-name (eda:name-str (eda:enum-name e)))
+        (E-mem-list (eda:enum-members e))
+        (E-n (length E-mem-list))
+        (E-w (eda:enum-width E-mem-list))
+        (E-type (eda:emit-logic-type E-w))
+        (E-mem-str (eda:join-symbol-names E-mem-list)))
+    (let ((H1 (string-append "typedef enum " E-type " {")))
+      (let ((H2 (string-append H1 " " E-mem-str " }")))
+        (let ((H3 (string-append H2 " " E-name ";")))
+          H3)))))
+
+; Emit one struct field: "logic [W-1:0] name;"
+(define (eda:emit-struct-field f)
+  (let ((F-name (eda:name-str (eda:wire-name f)))
+        (F-width (eda:wire-width f))
+        (F-type (eda:emit-logic-type F-width)))
+    (string-append F-type " " F-name ";")))
+
+; Join struct fields with " " separator.
+(define (eda:join-struct-fields fields)
+  (cond
+    ((null? fields) "")
+    ((null? (cdr fields)) (eda:emit-struct-field (car fields)))
+    (else (string-append
+            (eda:emit-struct-field (car fields))
+            " "
+            (eda:join-struct-fields (cdr fields))))))
+
+(define (eda:emit-struct s)
+  (let ((S-name (eda:name-str (eda:struct-name s)))
+        (S-body (eda:join-struct-fields (eda:struct-fields s))))
+    (let ((H1 (string-append "typedef struct packed {")))
+      (let ((H2 (string-append H1 " " S-body " }")))
+        (let ((H3 (string-append H2 " " S-name ";")))
+          H3)))))
+
+; Emit each item in a package body, joined with newlines.
+(define (eda:emit-package-body-items items)
+  (cond
+    ((null? items) "")
+    ((null? (cdr items)) (eda:emit-package-item (car items)))
+    (else (string-append
+            (eda:emit-package-item (car items))
+            "\n"
+            (eda:emit-package-body-items (cdr items))))))
+
+; Dispatch one package body item.
+(define (eda:emit-package-item item)
+  (cond
+    ((eda:typedef? item) (eda:emit-typedef item))
+    ((eda:enum? item) (eda:emit-enum item))
+    ((eda:struct? item) (eda:emit-struct item))
+    (else "")))
+
+(define (eda:emit-package p)
+  (let ((P-name (eda:name-str (eda:package-name p)))
+        (P-body (eda:emit-package-body-items (eda:package-body p))))
+    (let ((H1 (string-append "package " P-name ";")))
+      (let ((H2 (if (= (length (eda:package-body p)) 0)
+                    (string-append H1 "\n")
+                    (string-append H1 "\n" P-body "\n"))))
+        (let ((H3 (string-append H2 "endpackage")))
+          H3)))))
+
+(define (eda:emit-import i)
+  (let ((I-pkg (eda:name-str (eda:import-package i))))
+    (string-append "import " I-pkg "::*;")))
+
+; ── Display functions ──
+
+(define (eda:display-typedef t)
+  (display "typedef ") (display (eda:emit-logic-type (eda:typedef-width t)))
+  (display " ") (display (eda:typedef-name t)))
+
+(define (eda:display-enum e)
+  (display "enum ") (display (eda:enum-name e))
+  (display " = (") (display (eda:enum-members e)) (display ")"))
+
+(define (eda:display-struct s)
+  (display "struct ") (display (eda:struct-name s))
+  (display " = (") (display (eda:struct-fields s)) (display ")"))
+
+(define (eda:display-package p)
+  (display "package ") (display (eda:package-name p)))
+
+(define (eda:display-import i)
+  (display "import ") (display (eda:import-package i)))
+
 (define (eda:emit-signal s)
   (let ((kind (eda:signal-kind s))
         (name (eda:signal-name s))
@@ -936,6 +1168,10 @@
     ((eda:always? item) (eda:emit-always item))
     ((eda:signal? item) (string-append (eda:emit-signal item) ";\n"))
     ((eda:assertion? item) (eda:emit-assertion item))
+    ((eda:typedef? item) (string-append (eda:emit-typedef item) "\n"))
+    ((eda:enum? item) (string-append (eda:emit-enum item) "\n"))
+    ((eda:struct? item) (string-append (eda:emit-struct item) "\n"))
+    ((eda:import? item) (string-append (eda:emit-import item) "\n"))
     (else "")))
 
 (define (eda:emit-module-body body)
@@ -1269,10 +1505,14 @@
   make-eda:signal make-eda:expr make-eda:sensitivity
   make-eda:property make-eda:assertion
   make-eda:assert make-eda:assume make-eda:cover
+  make-eda:typedef make-eda:enum make-eda:struct
+  make-eda:package make-eda:import
   ; IR predicates
   eda:module? eda:port? eda:wire? eda:assign?
   eda:always? eda:signal? eda:expr? eda:sensitivity?
   eda:property? eda:assertion?
+  eda:typedef? eda:enum? eda:struct?
+  eda:package? eda:import?
   ; IR accessors
   eda:module-name eda:module-ports eda:module-body
   eda:port-name eda:port-direction eda:port-width
@@ -1282,11 +1522,18 @@
   eda:signal-name eda:signal-width eda:signal-kind
   eda:expr-op eda:expr-args
   eda:sensitivity-edge eda:sensitivity-signal
+  eda:typedef-name eda:typedef-width
+  eda:enum-name eda:enum-members eda:enum-width
+  eda:struct-name eda:struct-fields
+  eda:package-name eda:package-body
+  eda:import-package
   ; Display / debug
   eda:display eda:display-module eda:display-port eda:display-wire
   eda:display-assign eda:display-always eda:display-sensitivity
   eda:display-signal eda:display-expr
   eda:display-assertion
+  eda:display-typedef eda:display-enum eda:display-struct
+  eda:display-package eda:display-import
   ; Query helpers (Cycle 1-2)
   eda:query:ports eda:query:wires eda:query:assigns eda:query:module-name
   eda:query:bit-width eda:query:dependencies eda:query:dependents
@@ -1298,6 +1545,10 @@
   eda:emit-verilog eda:emit-module eda:emit-port eda:emit-wire
   eda:emit-assign eda:emit-always eda:emit-sensitivity eda:emit-sensitivity-list eda:emit-signal
   eda:emit-assertion
+  eda:emit-typedef eda:emit-enum eda:emit-struct
+  eda:emit-package eda:emit-import
+  eda:emit-logic-type eda:enum-width
+  eda:join-symbol-names eda:join-struct-fields
   eda:emit-expr eda:emit-body-item eda:name-str
   ; Interface + modport (Cycle 3 Phase 2 — Issue #284)
   make-eda:interface eda:interface? eda:interface-name
