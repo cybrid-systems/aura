@@ -7,6 +7,7 @@
 #include "fiber.h"
 #include "mailbox.h"
 #include "thread_pool.h"
+#include "aura_platform.h"
 
 #include <print>
 #include <iostream>
@@ -16,7 +17,9 @@
 #include <unistd.h>
 #include <vector>
 #include <array>
+#if AURA_HAVE_EPOLL
 #include <sys/epoll.h>
+#endif
 #include <cstdio>
 #include <cerrno>
 #include <cstring>
@@ -427,7 +430,9 @@ void run_serve_async(int num_workers) {
 
             if (local_eof) {
                 // EOF — remove stdin from epoll so it doesn't keep firing
+#if AURA_HAVE_EPOLL
                 ::epoll_ctl(sched.epoll_fd(), EPOLL_CTL_DEL, STDIN_FILENO, nullptr);
+#endif
                 stdin_eof = true;
                 break;
             }

@@ -1,5 +1,7 @@
 module;
 
+#include <cstdint>
+
 module aura.compiler.hardware_backend;
 
 import std;

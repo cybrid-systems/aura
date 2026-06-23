@@ -20,6 +20,13 @@
 //
 // The C++ type is allocated in the module's pmr arena so
 // the lifetime matches the existing IR lifecycle.
+module;
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
 export module aura.compiler.sv_ir;
 import std;
 

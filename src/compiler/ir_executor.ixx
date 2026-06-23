@@ -1,4 +1,14 @@
 module;
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <variant>
+#include <vector>
 #include "observability_metrics.h"
 export module aura.compiler.ir_executor;
 import std;

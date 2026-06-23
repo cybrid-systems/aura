@@ -1,3 +1,20 @@
+module;
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cctype>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
 module aura.compiler.type_checker;
 import aura.core.mutation;
 

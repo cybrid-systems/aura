@@ -35,6 +35,12 @@
 // Related: Issue #58 (archived: git tag docs-archive-pre-2026-06)
 //
 module;
+#include <compare>
+#include <cstddef>
+#include <cstdint>
+#include <format>
+#include <string>
+#include <vector>
 #include "value_tags.h"
 export module aura.compiler.value;
 import std;

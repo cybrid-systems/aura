@@ -3,6 +3,7 @@
 
 module;
 
+#include <cstdint>
 #include <string>
 
 module aura.compiler.evaluator;

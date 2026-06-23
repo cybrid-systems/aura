@@ -26,6 +26,11 @@
 // This module ships Phase 1c (constant_folding). Type_checker
 // is a separate, larger extract (Phase 1d — deferred).
 
+module;
+#include <cstddef>
+#include <cstdint>
+#include <unordered_map>
+
 export module aura.compiler.constant_folding;
 import std;
 import aura.compiler.ir;

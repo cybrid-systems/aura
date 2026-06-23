@@ -4,10 +4,10 @@
 module;
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
-#include <contracts>
 #include "runtime_shared.h"
 
 module aura.compiler.evaluator;

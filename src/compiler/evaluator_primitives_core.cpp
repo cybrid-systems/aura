@@ -5,6 +5,11 @@
 // Registration uses a callback to avoid friending or exposing Evaluator
 // internals — mirrors ffi_primitives_impl.cpp / adt_runtime_impl.cpp.
 
+module;
+
+#include <functional>
+#include <string>
+
 module aura.compiler.evaluator;
 
 import std;
@@ -13,7 +18,6 @@ import aura.compiler.value;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
 void register_type_and_char_primitives(PrimRegistrar add) {

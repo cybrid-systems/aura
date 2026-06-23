@@ -1,6 +1,12 @@
 module;
 #include <cstdlib>
 #include <cstdio>
+#include <filesystem>
+#include <functional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 #include <unistd.h>
 #include "../linenoise/linenoise.h"
 

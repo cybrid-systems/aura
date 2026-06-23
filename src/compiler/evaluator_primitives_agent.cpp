@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include <atomic>
 
 #include <chrono>
 #include <cstdint>
@@ -26,7 +27,6 @@ import aura.compiler.value;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
 using namespace types;
@@ -1048,7 +1048,7 @@ void register_strategy_primitives(PrimRegistrar add, Evaluator& ev) {
 
         // Call a closure, return string result
         auto call_fn = [&](std::uint64_t cid,
-                           std::span<const types::EvalValue> args) -> std::string {
+                           std::initializer_list<types::EvalValue> args) -> std::string {
             auto opt = ev.apply_closure(cid, args);
             if (!opt)
                 return {};

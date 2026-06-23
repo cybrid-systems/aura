@@ -1,13 +1,18 @@
 // serve/scheduler.cpp — Multi-threaded fiber scheduler
 #include "scheduler.h"
 #include "gc_coordinator.h"
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
+#include "aura_platform.h"
 #include <unistd.h>
 #include <cstdio>
 #include <cerrno>
 #include <cstring>
 #include <system_error>
+#if AURA_HAVE_EPOLL
+#include <sys/epoll.h>
+#endif
+#if AURA_HAVE_EVENTFD
+#include <sys/eventfd.h>
+#endif
 
 namespace aura::serve {
 
@@ -27,6 +32,7 @@ Scheduler::Scheduler(int num_workers) {
     num_workers_ = num_workers;
 
     // Create epoll instance
+#if AURA_HAVE_EPOLL
     epoll_fd_ = ::epoll_create1(0);
     if (epoll_fd_ == -1)
         throw std::system_error(errno, std::generic_category(), "scheduler epoll_create");
@@ -50,6 +56,12 @@ Scheduler::Scheduler(int num_workers) {
                      errno, std::strerror(errno));
         stdin_fd_ = -1; // mark as not registered
     }
+#else
+    // macOS: no epoll. serve-async is disabled; the scheduler can
+    // still be constructed (workers spin up) but run() is a no-op.
+    epoll_fd_ = -1;
+    stdin_fd_ = -1;
+#endif
 
     // Also register the scheduler's own wakeup eventfd for fast shutdown
     // (self-wake from stop())
@@ -88,10 +100,12 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
     auto* ptr = fb.get();
 
     // Register eventfd with epoll
+#if AURA_HAVE_EPOLL
     struct epoll_event ee;
     ee.events = EPOLLIN;
     ee.data.ptr = ptr;
     ::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, ptr->eventfd(), &ee);
+#endif
 
     {
         std::lock_guard<std::mutex> lock(wait_map_mutex_);
@@ -136,10 +150,12 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
         ptr->set_affinity(worker_id);
     }
 
+#if AURA_HAVE_EPOLL
     struct epoll_event ee;
     ee.events = EPOLLIN;
     ee.data.ptr = ptr;
     ::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, ptr->eventfd(), &ee);
+#endif
 
     {
         std::lock_guard<std::mutex> lock(wait_map_mutex_);
@@ -176,10 +192,12 @@ void Scheduler::stop() {
 // ── register_event_fiber ─────────────────────────────
 
 void Scheduler::register_event_fiber(int eventfd, Fiber* fiber) {
+#if AURA_HAVE_EPOLL
     struct epoll_event ee;
     ee.events = EPOLLIN;
     ee.data.ptr = fiber;
     ::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, eventfd, &ee);
+#endif
 
     std::lock_guard<std::mutex> lock(wait_map_mutex_);
     wait_map_[eventfd] = fiber;
@@ -188,7 +206,9 @@ void Scheduler::register_event_fiber(int eventfd, Fiber* fiber) {
 // ── unregister_fiber ─────────────────────────────────
 
 void Scheduler::unregister_fiber(int eventfd) {
+#if AURA_HAVE_EPOLL
     ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, eventfd, nullptr);
+#endif
     std::lock_guard<std::mutex> lock(wait_map_mutex_);
     wait_map_.erase(eventfd);
 }
@@ -201,7 +221,9 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
         return;
     int evfd = fiber->eventfd();
     if (evfd >= 0) {
+#if AURA_HAVE_EPOLL
         ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, evfd, nullptr);
+#endif
         std::lock_guard<std::mutex> lock(wait_map_mutex_);
         wait_map_.erase(evfd);
     }
@@ -381,6 +403,7 @@ void Scheduler::run() {
         w->start();
     }
 
+#if AURA_HAVE_EPOLL
     struct epoll_event events[64];
 
     while (running_.load(std::memory_order_acquire)) {
@@ -494,6 +517,11 @@ void Scheduler::run() {
             }
         }
     }
+#else
+    // macOS: no epoll. Workers start then immediately stop.
+    // serve-async is disabled; main.cpp blocks --serve-async.
+    std::fprintf(stderr, "scheduler: serve-async not supported on macOS\n");
+#endif
 
     // Stop all workers
     for (auto& w : workers_) {

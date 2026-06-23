@@ -3,6 +3,10 @@
 
 module;
 
+#include <functional>
+#include <cstdint>
+#include <span>
+
 #include <string>
 #include <vector>
 
@@ -15,7 +19,6 @@ import aura.compiler.evaluator_pure;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
 using namespace types;

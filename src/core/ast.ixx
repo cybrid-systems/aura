@@ -5,8 +5,25 @@
 // persistent_child_vector.hh don't conflict with `import std;`.
 module;
 
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <expected>
+#include <memory_resource>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 #include "core/persistent_child_vector.hh"
-#include <contracts>
 #include <shared_mutex>
 
 export module aura.core.ast;

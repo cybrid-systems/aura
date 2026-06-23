@@ -1,3 +1,8 @@
+module;
+#include <cstddef>
+#include <span>
+#include <vector>
+
 module aura.compiler.compute_kind;
 import std;
 
