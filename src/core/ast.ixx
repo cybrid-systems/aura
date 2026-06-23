@@ -735,6 +735,14 @@ private:
     mutable std::atomic<std::uint64_t> bump_generation_count_{0};
     mutable std::atomic<std::uint64_t> is_valid_check_count_{0};
     mutable std::atomic<std::uint64_t> stable_ref_invalidations_{0};
+    // Issue #457: generation_ / node_gen_ lifecycle
+    // observability counters. All stats-only (relaxed
+    // ordering). Bumped in bump_generation() (wrap
+    // detection), is_valid() (stale access), and
+    // StableNodeRef validation (invalidation).
+    // Exposed via the (query:stable-ref-stats) primitive.
+    mutable std::atomic<std::uint64_t> generation_wrap_count_{0};
+    mutable std::atomic<std::uint64_t> node_gen_stale_access_count_{0};
     mutable std::atomic<std::uint64_t> atomic_batch_commits_{0};
     // Issue #256: AST operation observability counters.
     // The hand-written AST operations (children, parent_of,
@@ -883,6 +891,8 @@ public:
         , is_valid_check_count_(other.is_valid_check_count_.load())
         , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
         , atomic_batch_commits_(other.atomic_batch_commits_.load())
+        , generation_wrap_count_(other.generation_wrap_count_.load())
+        , node_gen_stale_access_count_(other.node_gen_stale_access_count_.load())
         , children_call_count_(other.children_call_count_.load())
         , parent_of_call_count_(other.parent_of_call_count_.load())
         , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
@@ -924,6 +934,8 @@ public:
             is_valid_check_count_.store(other.is_valid_check_count_.load());
             stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
             atomic_batch_commits_.store(other.atomic_batch_commits_.load());
+            generation_wrap_count_.store(other.generation_wrap_count_.load());
+            node_gen_stale_access_count_.store(other.node_gen_stale_access_count_.load());
             children_call_count_.store(other.children_call_count_.load());
             parent_of_call_count_.store(other.parent_of_call_count_.load());
             mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
@@ -2883,7 +2895,27 @@ public:
                       node_gen_[id] == generation_)) {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
-        return id < tag_.size() && id < node_gen_.size() && node_gen_[id] == generation_;
+        if (id == NULL_NODE) return false;
+        if (id >= tag_.size() || id >= node_gen_.size()) {
+            // Issue #457: stale access (out-of-range
+            // NodeId) — bump the stale counter. This
+            // catches dangling references that escaped
+            // a structural mutation without going
+            // through a StableNodeRef.
+            node_gen_stale_access_count_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        if (node_gen_[id] != generation_) {
+            // Issue #457: stale access (gen mismatch) —
+            // same path as out-of-range. The caller
+            // should have used a StableNodeRef which
+            // would have caught this; raw NodeId
+            // access is dangerous in long-running
+            // mutates.
+            node_gen_stale_access_count_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        return true;
     }
 
     // Validate NodeId — panics on stale/dangling NodeIds.
@@ -3015,8 +3047,18 @@ public:
             return;
         }
         ++generation_;
-        if (generation_ == 0)
+        if (generation_ == 0) {
             generation_ = 1;
+            // Issue #457: detected a uint16_t wrap-around.
+            // generation_ is uint16_t (1..65535) and we
+            // wrap 65535 → 0 → 1. After 65K structural
+            // mutations in the same FlatAST, every
+            // outstanding StableNodeRef becomes invalid
+            // (gen mismatch). Bump the wrap counter so
+            // the AI Agent can (query:stable-ref-stats)
+            // and decide whether to checkpoint / compact.
+            generation_wrap_count_.fetch_add(1, std::memory_order_relaxed);
+        }
         // Issue #255: only count actual bumps (suppressed
         // ones are accounted for via atomic_batch_commits_).
         bump_generation_count_.fetch_add(1, std::memory_order_relaxed);
@@ -3100,6 +3142,19 @@ public:
     }
     std::uint64_t stable_ref_invalidations() const noexcept {
         return stable_ref_invalidations_.load(std::memory_order_relaxed);
+    }
+    // Issue #457: generation_ / node_gen_ lifecycle
+    // observability accessors. Public so the
+    // (query:stable-ref-stats) primitive can read them
+    // from evaluator_primitives_query.cpp.
+    [[nodiscard]] std::uint64_t generation_wrap_count() const noexcept {
+        return generation_wrap_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t node_gen_stale_access_count() const noexcept {
+        return node_gen_stale_access_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint16_t current_generation() const noexcept {
+        return generation_;
     }
     std::uint64_t atomic_batch_commits_v() const noexcept {
         return atomic_batch_commits_.load(std::memory_order_relaxed);
