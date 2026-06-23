@@ -4,6 +4,8 @@
 module;
 
 #include <functional>
+#include <iostream>
+#include <cstdint>
 #include <span>
 #include <string>
 #include "runtime_shared.h"
@@ -16,7 +18,6 @@ import aura.compiler.value;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
 using namespace types;

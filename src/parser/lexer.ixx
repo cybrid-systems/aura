@@ -1,3 +1,9 @@
+module;
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
+
 export module aura.parser.lexer;
 import std;
 

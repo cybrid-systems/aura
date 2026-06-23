@@ -28,8 +28,8 @@
 # disk), never a corrupt one.
 set -u
 
-SHARED_GCM_ROOT="${AURA_SHARED_GCM_DIR:-/home/dev/code/aura/build/module_cache}"
-BUILD_DIR="${AURA_BUILD_DIR:-/home/dev/code/aura/build}"
+BUILD_DIR="${AURA_BUILD_DIR:-$PWD}"
+SHARED_GCM_ROOT="${AURA_SHARED_GCM_DIR:-$BUILD_DIR/module_cache}"
 
 # Extract the per-target dir from the -o path. e.g.
 #   CMakeFiles/test_issue_130.dir/src/compiler/lowering.ixx.o
@@ -51,11 +51,19 @@ while [ $i -lt $# ]; do
     i=$((i+1))
 done
 
+if [ $# -lt 1 ]; then
+    echo "aura_module_launcher.sh: missing compiler argument" >&2
+    exit 127
+fi
+
+COMPILER="$1"
+shift
+
 # Optional ccache layer (CI sets CCACHE_DIR; local dev may skip).
 if command -v ccache >/dev/null 2>&1; then
-    CXX=(ccache /usr/bin/c++)
+    CXX=(ccache "$COMPILER")
 else
-    CXX=(/usr/bin/c++)
+    CXX=("$COMPILER")
 fi
 
 # GCC emits a noisy scan-phase warning when CMake's CXX module scanner

@@ -24,6 +24,22 @@
 // remaining 5-7 functions to hit the #146 acceptance criteria
 // (6-8 pure functions total).
 
+module;
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
+#include <expected>
+#include <memory_resource>
+#include <ostream>
+#include <span>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
 export module aura.compiler.evaluator_pure;
 
 import std;

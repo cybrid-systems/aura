@@ -24,7 +24,6 @@
 //   shared.
 //
 module;
-#include <contracts>
 #include <cstddef>
 #include <memory>
 #include <new>

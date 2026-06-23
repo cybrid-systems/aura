@@ -2,6 +2,12 @@
 // Extracted from evaluator_eval_flat.cpp for isolated testing.
 // No Evaluator state — operates only on FlatAST + StringPool.
 
+module;
+
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 export module aura.compiler.macro_expansion;
 
 import std;

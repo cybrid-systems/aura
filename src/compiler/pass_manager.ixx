@@ -1,3 +1,22 @@
+module;
+#include <algorithm>
+#include <array>
+#include <concepts>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <iostream>
+#include <map>
+#include <optional>
+#include <print>
+#include <span>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
 export module aura.compiler.pass_manager;
 import std;
 import aura.core;

@@ -1,14 +1,17 @@
 // serve/worker.cpp — Worker thread with work-stealing
 #include "worker.h"
 #include "scheduler.h"
+#include "aura_platform.h"
 
-#include <sys/eventfd.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cerrno>
 #include <cstring>
 #include <system_error>
-#include <cstdlib> // random() for steal victim selection
+#include <cstdlib>  // random() for steal victim selection
+#if AURA_HAVE_EVENTFD
+#include <sys/eventfd.h>
+#endif
 
 namespace aura::serve {
 
@@ -19,10 +22,14 @@ WorkerThread::WorkerThread(int id, Scheduler* scheduler)
     , scheduler_(scheduler) {
 
     // Create wake eventfd
+#if AURA_HAVE_EVENTFD
     wake_evfd_ = ::eventfd(0, EFD_NONBLOCK);
     if (wake_evfd_ == -1)
         throw std::system_error(errno, std::generic_category(),
                                 "worker[" + std::to_string(id) + "] eventfd");
+#else
+    wake_evfd_ = -1;  // macOS: no eventfd
+#endif
 }
 
 // ── Destructor ────────────────────────────────────────
@@ -84,8 +91,10 @@ void WorkerThread::enqueue(Fiber* fiber) {
     }
 
     // Wake the worker if it was sleeping
-    uint64_t val = 1;
-    ::write(wake_evfd_, &val, sizeof(val));
+    if (wake_evfd_ >= 0) {
+        uint64_t val = 1;
+        ::write(wake_evfd_, &val, sizeof(val));
+    }
     wake_cv_.notify_one();
 }
 
@@ -308,8 +317,10 @@ void WorkerThread::run() {
 
             // Drain the wake eventfd before sleeping
             {
-                uint64_t val;
-                ::read(wake_evfd_, &val, sizeof(val));
+                uint64_t val = 0;
+                if (wake_evfd_ >= 0) {
+                    ::read(wake_evfd_, &val, sizeof(val));
+                }
                 if (val > 0 && my_metrics) {
                     my_metrics->wake_events.fetch_add(val, std::memory_order_relaxed);
                 }

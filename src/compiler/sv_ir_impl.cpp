@@ -2,6 +2,12 @@
 //
 // Implementation of aura::compiler::sv_ir (Issue #436 Phase 7).
 // See sv_ir.ixx for the design rationale.
+module;
+
+#include <string>
+#include <string_view>
+#include <vector>
+
 module aura.compiler.sv_ir;
 import std;
 

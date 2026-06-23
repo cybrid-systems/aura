@@ -19,6 +19,15 @@
 // it yet. The existing IRModule paths continue to work
 // unchanged.
 
+module;
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory_resource>
+#include <string>
+#include <vector>
+
 export module aura.compiler.ir_soa;
 
 import std;

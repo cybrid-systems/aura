@@ -1,3 +1,15 @@
+module;
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
+#include <format>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 module aura.parser.parser;
 
 namespace aura::parser::detail {
@@ -1472,15 +1484,18 @@ NodeId parse_datatype(ParserState& s) {
     for (auto it = ctor_entries.rbegin(); it != ctor_entries.rend(); ++it) {
         // Each entry: (cons "Name" arity)  — a single cons cell
         auto arity_lit = s.flat.add_literal(static_cast<std::int64_t>(it->second));
-        auto entry = s.flat.add_call(cons_var, {it->first, arity_lit});
+        std::array<aura::ast::NodeId, 2> entry_args{it->first, arity_lit};
+        auto entry = s.flat.add_call(cons_var, entry_args);
         // cons the entry onto the running list
-        name_list = s.flat.add_call(cons_var, {entry, name_list});
+        std::array<aura::ast::NodeId, 2> list_args{entry, name_list};
+        name_list = s.flat.add_call(cons_var, list_args);
     }
 
     // Build (adt:register-constructors <name_list>)
     auto prim_sym = s.pool.intern("adt:register-constructors");
     auto prim_var = s.flat.add_variable(prim_sym);
-    auto call_id = s.flat.add_call(prim_var, {name_list});
+    std::array<aura::ast::NodeId, 1> call_args{name_list};
+    auto call_id = s.flat.add_call(prim_var, call_args);
     s.flat.set_loc(call_id, tok.line, tok.column);
     return call_id;
 }

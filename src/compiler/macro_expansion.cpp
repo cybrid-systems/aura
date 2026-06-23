@@ -5,6 +5,7 @@ module;
 
 #include <cstdint>
 #include <functional>
+#include <iostream>
 #include <print>
 #include <string>
 #include <unordered_map>

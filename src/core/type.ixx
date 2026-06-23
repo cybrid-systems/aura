@@ -30,8 +30,13 @@
 //
 module;
 #include <cstdint>
+#include <functional>
+#include <optional>
+#include <string>
 #include <string_view>
-#include <contracts>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 export module aura.core.type;
 

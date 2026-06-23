@@ -7,6 +7,31 @@
 module;
 
 #include "../core/persistent_child_vector.hh"
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <condition_variable>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <expected>
+#include <format>
+#include <functional>
+#include <initializer_list>
+#include <limits>
+#include <memory>
+#include <memory_resource>
+#include <mutex>
+#include <optional>
+#include <print>
+#include <shared_mutex>
+#include <span>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 export module aura.compiler.evaluator;
 import aura.compiler.macro_expansion;
@@ -22,7 +47,24 @@ namespace aura::compiler {
 
 
 using EvalValue = types::EvalValue;
-using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
+
+export class PrimFn {
+    std::function<EvalValue(std::span<const EvalValue>)> fn_;
+
+public:
+    PrimFn() = default;
+
+    template <class F>
+    PrimFn(F&& fn) : fn_(std::forward<F>(fn)) {}
+
+    EvalValue operator()(std::span<const EvalValue> args) const { return fn_(args); }
+
+    EvalValue operator()(std::initializer_list<EvalValue> args) const {
+        return fn_(std::span<const EvalValue>(args.begin(), args.size()));
+    }
+
+    explicit operator bool() const noexcept { return static_cast<bool>(fn_); }
+};
 
 export class Primitives {
 public:
@@ -704,6 +746,10 @@ public:
     // Look up a closure and apply it with given args.
     // Tries closures_ first, then IR bridge.
     std::optional<EvalValue> apply_closure(ClosureId cid, std::span<const EvalValue> args);
+    std::optional<EvalValue> apply_closure(ClosureId cid,
+                                           std::initializer_list<EvalValue> args) {
+        return apply_closure(cid, std::span<const EvalValue>(args.begin(), args.size()));
+    }
 
     // Module loaded callback: called after a module file is successfully loaded.
     using ModuleLoadedFn = std::function<void(const std::string& source, const std::string& path)>;

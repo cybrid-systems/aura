@@ -2,6 +2,10 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include <span>
+#include <shared_mutex>
+#include <atomic>
+#include <algorithm>
 
 #include <cstdint>
 #include <functional>
@@ -26,7 +30,6 @@ namespace aura::compiler::primitives_detail {
 
 using WorkspaceTree = aura::compiler::WorkspaceTree;
 using EvalValue = types::EvalValue;
-using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 using DefUseSummaryStats =
     std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>;
