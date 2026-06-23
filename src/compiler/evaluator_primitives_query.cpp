@@ -255,6 +255,30 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(cur - last));
     });
 
+    // Issue #457: query:stable-ref-stats. Returns
+    // observability counters for the generation_ /
+    // node_gen_ / StableNodeRef lifecycle:
+    //   - generation_wrap_count_  (uint16_t wraps)
+    //   - stable_ref_invalidations_  (StableNodeRef rejections)
+    //   - node_gen_stale_access_count_  (raw NodeId stale access)
+    //
+    // P0: returns an integer = sum of all three
+    // counters. Follow-up: returns a 3-tuple
+    // (wraps invalidations stale-accesses) so the AI
+    // Agent can react to each category independently.
+    add("query:stable-ref-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        auto* ws = ev->workspace_flat();
+        if (!ws) return make_int(0);
+        const std::uint64_t wraps = ws->generation_wrap_count();
+        const std::uint64_t invalidations = ws->stable_ref_invalidations();
+        const std::uint64_t stale = ws->node_gen_stale_access_count();
+        return make_int(static_cast<std::int64_t>(
+            wraps + invalidations + stale));
+    });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
