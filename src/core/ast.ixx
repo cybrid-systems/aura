@@ -715,6 +715,34 @@ private:
     // enum value. Populated by the type-checker and runtime evaluator;
     // queryable via the AuraQuery `(has-error? N)` clause.
     std::pmr::vector<std::uint8_t> error_kind_;
+    // Issue #447: tag+arity pre-index for query:pattern.
+    // Index: (NodeTag, arity) → list of NodeIds matching.
+    // arity is a 16-bit value (high byte = min children,
+    // low byte = max children; both 0xFF for "any"). We
+    // use a flat vector of (key, value) entries for
+    // simplicity in the P0; the follow-up switches to a
+    // hash map (tag, arity) → vector<NodeId> for O(1)
+    // lookup. P0 builds the index lazily on first
+    // query:pattern call (bumped by the primitive).
+    struct TagArityKey {
+        std::uint32_t tag;
+        std::uint16_t arity_min;
+        std::uint16_t arity_max;
+        bool operator==(const TagArityKey& o) const noexcept {
+            return tag == o.tag &&
+                   arity_min == o.arity_min &&
+                   arity_max == o.arity_max;
+        }
+    };
+    std::pmr::vector<std::pair<TagArityKey,
+                               std::pmr::vector<NodeId>>>
+        tag_arity_index_;
+    // Issue #447: index hit/miss counters (stats-only,
+    // relaxed-ordering). Exposed via (query:query-stats)
+    // primitive.
+    mutable std::atomic<std::uint64_t> tag_arity_index_hits_{0};
+    mutable std::atomic<std::uint64_t> tag_arity_index_misses_{0};
+    mutable std::atomic<std::uint64_t> tag_arity_index_rebuilds_{0};
     // Module-level eval result cache (int64_t = EvalValue serialization).
     // Used by Evaluator::eval_flat for incremental evaluation (Issue #32b).
     // Indexed by NodeId. Zero = not cached. Stored at module level (not arena)
@@ -874,6 +902,77 @@ public:
     [[nodiscard]] std::uint8_t dirty(NodeId id) const noexcept {
         if (id >= dirty_.size()) return 0;
         return dirty_[id];
+    }
+    // Issue #447: tag+arity pre-index for query:pattern.
+    // Rebuilds the (tag, arity) → vector<NodeId> index
+    // over all live nodes. Idempotent. Stats-only
+    // counter bumped. The follow-up will hook this
+    // into mark_dirty_upward to maintain incrementally.
+    void rebuild_tag_arity_index() noexcept {
+        tag_arity_index_.clear();
+        const std::size_t n = size();
+        for (NodeId id = 0; id < n; ++id) {
+            const auto tag = static_cast<std::uint32_t>(tag_[id]);
+            const std::size_t ar = children_[id].size();
+            const TagArityKey key{tag,
+                                  static_cast<std::uint16_t>(ar),
+                                  static_cast<std::uint16_t>(ar)};
+            // Linear scan to find the bucket (P0 — the
+            // follow-up uses a hash map).
+            bool found = false;
+            for (auto& [k, v] : tag_arity_index_) {
+                if (k == key) {
+                    v.push_back(id);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                std::pmr::vector<NodeId> bucket;
+                bucket.push_back(id);
+                tag_arity_index_.push_back({key, std::move(bucket)});
+            }
+        }
+        tag_arity_index_rebuilds_.fetch_add(1,
+                                            std::memory_order_relaxed);
+    }
+    // Issue #447: find all NodeIds matching (tag,
+    // arity_min, arity_max). Returns a copy of the
+    // bucket. Bumps hit/miss counter accordingly.
+    // The P0 build of the index is lazy: callers
+    // should call rebuild_tag_arity_index() first
+    // (the (query:query-stats) primitive does this
+    // implicitly on the first call).
+    [[nodiscard]] std::pmr::vector<NodeId>
+    find_by_tag_arity(std::uint32_t tag,
+                      std::uint16_t arity_min,
+                      std::uint16_t arity_max) const {
+        std::pmr::vector<NodeId> out;
+        const TagArityKey key{tag, arity_min, arity_max};
+        for (const auto& [k, v] : tag_arity_index_) {
+            if (k == key) {
+                out = v;
+                tag_arity_index_hits_.fetch_add(1,
+                                                std::memory_order_relaxed);
+                return out;
+            }
+        }
+        tag_arity_index_misses_.fetch_add(1,
+                                          std::memory_order_relaxed);
+        return out;
+    }
+    // Issue #447: query-stats accessors.
+    [[nodiscard]] std::uint64_t tag_arity_index_hits() const noexcept {
+        return tag_arity_index_hits_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t tag_arity_index_misses() const noexcept {
+        return tag_arity_index_misses_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t tag_arity_index_rebuilds() const noexcept {
+        return tag_arity_index_rebuilds_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
+        return tag_arity_index_.size();
     }
     // Issue #437: apply verify-dirty bits to a node.
     void apply_verify_dirty_bits(NodeId id, std::uint8_t verify_reasons) {
@@ -2092,6 +2191,11 @@ public:
         node_first_mutation_ = std::move(new_node_first_mutation);
         node_gen_ = std::move(new_node_gen);
         value_cache_ = std::move(new_value_cache);
+        // Issue #447: invalidate the tag+arity index after
+        // COW. The follow-up hooks the COW path into a
+        // rebuild, but P0 just clears (next query call
+        // triggers a lazy rebuild).
+        tag_arity_index_.clear();
 
         root = remap(root);
 
@@ -2177,6 +2281,10 @@ public:
         // (verify:parse-coverage-feedback) /
         // (verify:parse-assert-failure)).
         verification_dirty_.clear();
+        // Issue #447: clear the tag+arity index on full
+        // reset. The next query:pattern call will rebuild
+        // it lazily.
+        tag_arity_index_.clear();
         type_id_.clear();
         mutation_log_.clear();
         // Issue #282: clear narrowing provenance on FlatAST reset.

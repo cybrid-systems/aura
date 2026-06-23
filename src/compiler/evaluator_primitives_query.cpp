@@ -279,6 +279,48 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             wraps + invalidations + stale));
     });
 
+    // Issue #447: query:query-stats. Returns the sum
+    // of the 3 tag+arity index counters (hits / misses /
+    // rebuilds) as an integer. P0 ships the sum; the
+    // follow-up returns a 3-tuple so the AI Agent can
+    // compute hit_rate = hits / (hits + misses) and
+    // decide when to trigger a rebuild.
+    add("query:query-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        auto* ws = ev->workspace_flat();
+        if (!ws) return make_int(0);
+        const std::uint64_t hits = ws->tag_arity_index_hits();
+        const std::uint64_t misses = ws->tag_arity_index_misses();
+        const std::uint64_t rebuilds = ws->tag_arity_index_rebuilds();
+        return make_int(static_cast<std::int64_t>(
+            hits + misses + rebuilds));
+    });
+
+    // Issue #447: (query:tag-arity-count tag-int arity-int)
+    // — count of nodes matching (tag, arity) using the
+    // pre-built index. Bumps the hits or misses counter
+    // accordingly. P0: 0 on miss (the follow-up falls
+    // back to a linear scan on miss).
+    add("query:tag-arity-count", [](std::span<const EvalValue> a) -> EvalValue {
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
+            return make_int(0);
+        auto* ws = ev->workspace_flat();
+        if (!ws) return make_int(0);
+        // Lazy rebuild on first call: if the index is
+        // empty, build it from the current AST.
+        if (ws->tag_arity_index_size() == 0) {
+            ws->rebuild_tag_arity_index();
+        }
+        const auto tag = static_cast<std::uint32_t>(as_int(a[0]));
+        const auto ar = static_cast<std::uint16_t>(as_int(a[1]));
+        const auto nodes = ws->find_by_tag_arity(tag, ar, ar);
+        return make_int(static_cast<std::int64_t>(nodes.size()));
+    });
+
     // Issue #469: query:verification-loop-stats. Returns
     // observability counters for the closed-loop
     // verification-driven self-evolution pipeline:
