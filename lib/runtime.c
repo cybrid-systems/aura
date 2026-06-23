@@ -22,6 +22,23 @@
 //   tag 1 = #t (= 0b111 = 7)
 //   tag 2 = void () (= 0b1011 = 11)
 
+// Issue #287: AOT module version stubs.
+// The generated registration .c (aura_aot_register_fns)
+// emits `aura_set_module_version(v)` at the top of its
+// constructor. In the host (interpreter / JIT) process
+// this symbol is provided by src/compiler/aura_jit_bridge.cpp.
+// In a standalone AOT-linked binary the host-side bridge
+// is NOT linked, so we need a C-linkage stub here to
+// satisfy the linker. The standalone AOT binary has no
+// hot-reload, so the stub is a no-op.
+static unsigned long long g_aot_module_version = 0;
+void aura_set_module_version(unsigned long long v) {
+    g_aot_module_version = v;
+}
+unsigned long long aura_get_module_version(void) {
+    return g_aot_module_version;
+}
+
 #define IS_PAIR(v)  (((v) & 3) == 1)
 #define IS_SPECIAL(v) (((v) & 3) == 3)
 #define IS_FIXNUM(v) (((v) & 1) == 0)
