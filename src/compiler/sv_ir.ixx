@@ -84,6 +84,44 @@ export ModportIR make_modport(std::string_view name,
 export std::string emit_modport(const ModportIR& m);
 export std::string debug_modport(const ModportIR& m);
 
+// ── SequenceIR ──
+//
+// Issue #435 Phase 3 — structured IR for SV sequence
+// declarations (SVA). Mirrors the list-based
+// `(eda:sequence name expr)` representation.
+//
+// Layout:
+//   "sequence NAME;\n  EXPR\nendsequence"
+export struct SequenceIR {
+    std::string name;
+    std::string expr;
+};
+
+export SequenceIR make_sequence(std::string_view name,
+                                std::string_view expr) noexcept;
+
+export std::string emit_sequence(const SequenceIR& s);
+export std::string debug_sequence(const SequenceIR& s);
+
+// ── PropertyIR ──
+//
+// Issue #435 Phase 3 — structured IR for SV property
+// declarations (SVA). Mirrors the list-based
+// `(eda:property name expr)` representation.
+//
+// Layout:
+//   "property NAME;\n  EXPR\nendproperty"
+export struct PropertyIR {
+    std::string name;
+    std::string expr;
+};
+
+export PropertyIR make_property(std::string_view name,
+                                std::string_view expr) noexcept;
+
+export std::string emit_property(const PropertyIR& p);
+export std::string debug_property(const PropertyIR& p);
+
 // ── WireIR ──
 //
 // A single SystemVerilog wire/logic/reg/bit declaration.

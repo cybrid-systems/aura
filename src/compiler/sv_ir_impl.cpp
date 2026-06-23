@@ -210,4 +210,68 @@ std::string debug_modport(const ModportIR& m) {
     return out;
 }
 
+// ── SequenceIR ──
+
+SequenceIR make_sequence(std::string_view name,
+                         std::string_view expr) noexcept {
+    SequenceIR s;
+    s.name = std::string(name);
+    s.expr = std::string(expr);
+    return s;
+}
+
+std::string emit_sequence(const SequenceIR& s) {
+    std::string out;
+    out.reserve(64 + s.expr.size());
+    out.append("sequence ");
+    out.append(s.name);
+    out.append(";\n  ");
+    out.append(s.expr);
+    out.append("\nendsequence");
+    return out;
+}
+
+std::string debug_sequence(const SequenceIR& s) {
+    std::string out;
+    out.reserve(32 + s.expr.size());
+    out.append("sequence ");
+    out.append(s.name);
+    out.append(" expr=|");
+    out.append(s.expr);
+    out.push_back('|');
+    return out;
+}
+
+// ── PropertyIR ──
+
+PropertyIR make_property(std::string_view name,
+                         std::string_view expr) noexcept {
+    PropertyIR p;
+    p.name = std::string(name);
+    p.expr = std::string(expr);
+    return p;
+}
+
+std::string emit_property(const PropertyIR& p) {
+    std::string out;
+    out.reserve(64 + p.expr.size());
+    out.append("property ");
+    out.append(p.name);
+    out.append(";\n  ");
+    out.append(p.expr);
+    out.append("\nendproperty");
+    return out;
+}
+
+std::string debug_property(const PropertyIR& p) {
+    std::string out;
+    out.reserve(32 + p.expr.size());
+    out.append("property ");
+    out.append(p.name);
+    out.append(" expr=|");
+    out.append(p.expr);
+    out.push_back('|');
+    return out;
+}
+
 } // namespace aura::compiler::sv_ir
