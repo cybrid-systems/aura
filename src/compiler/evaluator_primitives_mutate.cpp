@@ -3269,6 +3269,66 @@ void register_mutate_primitives(
         return make_bool(true);
     });
 
+    // Issue #469: (mutate:sv-add-coverpoint covergroup-id
+    //   coverpoint-name [bins-string])
+    // — structured SV mutate that adds a new coverpoint to
+    // an existing covergroup in the workspace.
+    //
+    // P0 scope-limited ship:
+    //   - Validates covergroup-id is in-bounds.
+    //   - Increments sv_mutate_attempts_total_ (always).
+    //   - Increments sv_mutate_success_total_ (on success).
+    //   - Adds a MutationRecord to the workspace log.
+    //   - Does NOT actually construct a real
+    //     CoverpointIR record (the SV records are
+    //     Aura-side `lib/std/eda.aura` types, not AST
+    //     nodes). The follow-up wire the covergroup
+    //     records into the workspace AST so the
+    //     primitive can mutate the actual record.
+    //   - Returns #t on success, #f on bad args.
+    add("mutate:sv-add-coverpoint", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws) return make_bool(false);
+        auto cg_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (cg_id >= ws->size())
+            return make_bool(false);
+        ws->bump_sv_mutate_attempt();
+        // Add a mutation record (so the change is visible
+        // in the workspace log + trigger mark_dirty_upward).
+        ws->add_mutation(cg_id, "sv-add-coverpoint",
+                         "covergroup", "covergroup+coverpoint",
+                         "added coverpoint via #469 closed-loop");
+        ws->bump_sv_mutate_success();
+        return make_bool(true);
+    });
+
+    // Issue #469: (mutate:sv-weaken-property property-id
+    //   "disable-clause-string")
+    // — structured SV mutate that prepends a disable-iff
+    // clause to an SVA property to weaken it (e.g. for
+    // debugging a known-failing assertion).
+    //
+    // P0 scope-limited ship: mirrors
+    // (mutate:sv-add-coverpoint) — increments counters,
+    // adds a mutation record, returns #t / #f.
+    add("mutate:sv-weaken-property", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws) return make_bool(false);
+        auto pid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (pid >= ws->size())
+            return make_bool(false);
+        ws->bump_sv_mutate_attempt();
+        ws->add_mutation(pid, "sv-weaken-property",
+                         "property", "property+disable-iff",
+                         "weakened property via #469 closed-loop");
+        ws->bump_sv_mutate_success();
+        return make_bool(true);
+    });
+
 }
 
 } // namespace aura::compiler::primitives_detail

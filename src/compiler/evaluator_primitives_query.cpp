@@ -279,6 +279,39 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             wraps + invalidations + stale));
     });
 
+    // Issue #469: query:verification-loop-stats. Returns
+    // observability counters for the closed-loop
+    // verification-driven self-evolution pipeline:
+    //   - verification_coverage_feedback_total_  (# of
+    //     coverage-hole marks applied)
+    //   - verification_assert_failure_total_  (# of
+    //     assert-failure marks applied)
+    //   - sv_mutate_attempts_total_  (total structured
+    //     SV mutates called)
+    //   - sv_mutate_success_total_  (successful SV
+    //     mutates)
+    //   - verify_loop_cycles_total_  (manual loop ticks
+    //     from the AI Agent)
+    //
+    // P0: returns an integer = sum of all 5 counters.
+    // Follow-up: returns a 5-tuple so the AI Agent can
+    // compute mutate_success_rate + coverage_delta
+    // independently.
+    add("query:verification-loop-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        auto* ws = ev->workspace_flat();
+        if (!ws) return make_int(0);
+        const std::uint64_t cov = ws->verification_coverage_feedback_total();
+        const std::uint64_t ass = ws->verification_assert_failure_total();
+        const std::uint64_t att = ws->sv_mutate_attempts_total();
+        const std::uint64_t suc = ws->sv_mutate_success_total();
+        const std::uint64_t cyc = ws->verify_loop_cycles_total();
+        return make_int(static_cast<std::int64_t>(
+            cov + ass + att + suc + cyc));
+    });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);

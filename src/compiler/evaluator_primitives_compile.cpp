@@ -787,6 +787,103 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(ws->verify_dirty(node_id)));
     });
 
+    // Issue #469: (verify:parse-coverage-feedback text-string)
+    // — parse a text blob describing coverage holes from an
+    // external SV simulator and mark the affected AST nodes
+    // dirty with the kCoverageFeedbackDirty bit.
+    //
+    // Format (one per line): "node_id hole_name"
+    // Example:
+    //   "0 hit_rate=0.45"
+    //   "3 miss_var_x"
+    //
+    // P0: the text is parsed line-by-line. Each line
+    // starts with a non-negative integer (the NodeId).
+    // Anything after the integer is ignored (it's a
+    // human-readable hole name; P0 doesn't use it).
+    // Lines that don't start with an integer are
+    // skipped.
+    //
+    // Returns: the count of nodes successfully marked
+    // dirty. #f on bad args.
+    add("verify:parse-coverage-feedback", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws) return make_int(0);
+        auto text_idx = as_string_idx(a[0]);
+        if (text_idx >= ev.string_heap_.size())
+            return make_int(0);
+        const std::string& text = ev.string_heap_[text_idx];
+        std::uint64_t marked = 0;
+        std::size_t i = 0;
+        while (i < text.size()) {
+            // Find end of line.
+            std::size_t j = i;
+            while (j < text.size() && text[j] != '\n') ++j;
+            const std::string_view line(text.data() + i, j - i);
+            // Skip leading whitespace.
+            std::size_t k = 0;
+            while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+            // Parse the first integer (NodeId).
+            if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                std::size_t val = 0;
+                while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                    val = val * 10 + (line[k] - '0');
+                    ++k;
+                }
+                const auto nid = static_cast<aura::ast::NodeId>(val);
+                if (nid < ws->size()) {
+                    ws->apply_verification_dirty_bits(
+                        nid, aura::ast::FlatAST::kCoverageFeedbackDirty);
+                    ++marked;
+                }
+            }
+            i = (j < text.size()) ? j + 1 : j;
+        }
+        return make_int(static_cast<std::int64_t>(marked));
+    });
+
+    // Issue #469: (verify:parse-assert-failure text-string)
+    // — parse a text blob describing assertion failures
+    // from an external SV simulator and mark the affected
+    // AST nodes dirty with the kAssertFailureDirty bit.
+    // Same format as (verify:parse-coverage-feedback).
+    add("verify:parse-assert-failure", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws) return make_int(0);
+        auto text_idx = as_string_idx(a[0]);
+        if (text_idx >= ev.string_heap_.size())
+            return make_int(0);
+        const std::string& text = ev.string_heap_[text_idx];
+        std::uint64_t marked = 0;
+        std::size_t i = 0;
+        while (i < text.size()) {
+            std::size_t j = i;
+            while (j < text.size() && text[j] != '\n') ++j;
+            const std::string_view line(text.data() + i, j - i);
+            std::size_t k = 0;
+            while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+            if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                std::size_t val = 0;
+                while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                    val = val * 10 + (line[k] - '0');
+                    ++k;
+                }
+                const auto nid = static_cast<aura::ast::NodeId>(val);
+                if (nid < ws->size()) {
+                    ws->apply_verification_dirty_bits(
+                        nid, aura::ast::FlatAST::kAssertFailureDirty);
+                    ++marked;
+                }
+            }
+            i = (j < text.size()) ? j + 1 : j;
+        }
+        return make_int(static_cast<std::int64_t>(marked));
+    });
+
     // Issue #240: (compile:mark-narrowing-dirty! node-id
     // [set-or-clear]) — Set or clear the per-node
     // kOccurrenceDirty bit in the workspace FlatAST's
