@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**443** registrations scanned from `src/**/*.cpp`.
+**446** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -12,7 +12,7 @@ Runtime canonical list: `(api-reference)`.
 - `eval-current-output` — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (42)
+## Query: (44)
 
 - `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -53,11 +53,13 @@ Runtime canonical list: `(api-reference)`.
 - `query:siblings` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stale-ref-policy` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `query:stale-ref-stats` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:verification-loop-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:verify-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
-## Mutate: (23)
+## Mutate: (24)
 
 - `mutate:atomic-batch` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:check-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
@@ -76,6 +78,7 @@ Runtime canonical list: `(api-reference)`.
 - `mutate:replace-type` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:replace-value` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:set-body` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:set-stale-ref-policy` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:splice` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:sv-add-coverpoint` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:sv-weaken-property` — `src/compiler/evaluator_primitives_mutate.cpp`
