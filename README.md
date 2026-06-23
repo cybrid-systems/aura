@@ -60,6 +60,21 @@ Aura 遵循三个原则：
 
 贡献运行时：[`docs/contributing.md`](docs/contributing.md)。
 
+## Platform Notes
+
+| 平台 | 核心功能 | 限制 |
+|------|---------|------|
+| **Linux** | 全功能可用 | — |
+| **macOS (Apple Silicon / Homebrew GCC)** | REPL、evaluator、IR、type-checker、JIT fallback 均可用 | `--serve-async`、`--concurrent-metrics`、`--serve-async-bench` 不可用（缺少 eventfd / epoll）；fiber scheduler 编译但不运行 |
+
+macOS 构建需 Homebrew GCC ≥ 14（推荐 gcc@16，C++20 module 支持最完善）：
+
+```bash
+brew install gcc@16 cmake ninja
+cmake --preset macos && cmake --build build-mac -j
+echo '(+ 1 2)' | ./build-mac/aura   # → 3
+```
+
 ## License
 
 Apache 2.0
