@@ -37,6 +37,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_ast.cpp
     src/compiler/evaluator_primitives_compile.cpp
     src/compiler/evaluator_primitives_observability.cpp
+    src/compiler/verify_tool.cpp
     src/compiler/evaluator_primitives_messaging.cpp
     src/compiler/evaluator_primitives_io.cpp
     src/compiler/evaluator_primitives_agent.cpp
@@ -1156,6 +1157,8 @@ aura_add_issue_test(test_issue_438)
 aura_issue_test_link_llvm_jit(test_issue_438)
 aura_add_issue_test(test_issue_439)
 aura_issue_test_link_llvm_jit(test_issue_439)
+aura_add_issue_test(test_issue_443)
+aura_issue_test_link_llvm_jit(test_issue_443)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

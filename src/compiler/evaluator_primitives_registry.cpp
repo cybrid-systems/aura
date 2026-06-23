@@ -130,6 +130,15 @@ void Evaluator::register_all_primitives() {
     primitives_detail::register_eval_observability_primitives(
         prim_registrar(),
         *this);
+
+    // Issue #443: external simulator tool-calling +
+    // structured result parsing primitives.
+    primitives_detail::register_verify_tool_primitives(
+        prim_registrar(),
+        *this,
+        [this](std::int32_t idx) { return make_string(idx); },
+        [this](std::int64_t v) { return make_int(v); },
+        mev);
 }
 
 } // namespace aura::compiler
