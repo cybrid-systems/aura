@@ -18,6 +18,30 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
+        },
+        {
+            "name": "macos",
+            "displayName": "macOS Debug (Ninja, Homebrew GCC 16)",
+            "description": "Builds the core evaluator + REPL on macOS. serve-async (fiber scheduler) is disabled because macOS lacks eventfd/epoll. Requires: brew install gcc@16 cmake ninja",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-mac",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_COMPILER": "gcc-16",
+                "CMAKE_CXX_COMPILER": "g++-16"
+            }
+        },
+        {
+            "name": "macos-release",
+            "displayName": "macOS Release (Ninja, Homebrew GCC 16)",
+            "description": "Release build on macOS with Homebrew GCC 16. Requires: brew install gcc@16 cmake ninja",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-mac",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_COMPILER": "gcc-16",
+                "CMAKE_CXX_COMPILER": "g++-16"
+            }
         }
     ],
     "buildPresets": [
@@ -28,12 +52,24 @@
         {
             "name": "release",
             "configurePreset": "release"
+        },
+        {
+            "name": "macos",
+            "configurePreset": "macos"
+        },
+        {
+            "name": "macos-release",
+            "configurePreset": "macos-release"
         }
     ],
     "testPresets": [
         {
             "name": "default",
             "configurePreset": "default"
+        },
+        {
+            "name": "macos",
+            "configurePreset": "macos"
         }
     ]
 }

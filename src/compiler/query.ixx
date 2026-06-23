@@ -1,3 +1,15 @@
+module;
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <ranges>
+#include <span>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
 export module aura.compiler.query;
 import std;
 import aura.core;

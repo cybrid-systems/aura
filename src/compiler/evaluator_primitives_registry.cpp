@@ -20,7 +20,6 @@ import aura.compiler.value;
 namespace aura::compiler {
 
 using EvalValue = types::EvalValue;
-using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using namespace types;
 
 void Evaluator::register_all_primitives() {

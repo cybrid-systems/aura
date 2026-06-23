@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition.
 
 module;
+#include <iostream>
 
 #include <algorithm>
 #include <cmath>

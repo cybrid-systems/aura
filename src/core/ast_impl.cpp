@@ -1,3 +1,12 @@
+module;
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
 module aura.core.ast;
 import aura.core.type;
 

@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition.
 
 module;
+#include <atomic>
 
 #include <thread>
 #include <unordered_map>

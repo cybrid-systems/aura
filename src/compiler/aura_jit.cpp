@@ -2781,6 +2781,8 @@ bool emit_object_module(void* /*ir_module*/, const std::string& out_path) {
 
 namespace aura::jit {
 
+struct AuraJIT::Impl {};
+
 AuraJIT::AuraJIT()
     : impl_(nullptr) {}
 AuraJIT::~AuraJIT() = default;
@@ -2797,6 +2799,9 @@ void AuraJIT::register_symbol(const char*, void*) {}
 void AuraJIT::set_string_pool(const std::vector<std::string>*) {}
 void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t) {}
 void AuraJIT::invalidate(const char*) {}
+std::uint64_t AuraJIT::unhandled_opcode_count_for_function(const char*) const {
+    return 0;
+}
 const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
     static std::vector<FunctionMeta> empty;
     return empty;
@@ -2828,6 +2833,12 @@ bool emit_object_module(void* /*ir_module*/, const std::string& out_path) {
         return true;
     }
     return false;
+}
+
+void run_escape_analysis(const std::vector<std::vector<FlatInstruction>>&,
+                         uint32_t local_count,
+                         std::vector<uint8_t>& escape_map) {
+    escape_map.assign(local_count, 0);
 }
 
 } // namespace aura::jit

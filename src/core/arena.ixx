@@ -1,5 +1,13 @@
 module;
-#include <contracts>
+#include <algorithm>
+#include <cstddef>
+#include <format>
+#include <memory>
+#include <memory_resource>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 #include "core/gc_hooks.h"
 export module aura.core.arena;
 import std;

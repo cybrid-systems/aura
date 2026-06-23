@@ -7,6 +7,12 @@
 // can see the same definition. No cross-module symbol
 // resolution problems.
 
+module;
+
+#include <optional>
+#include <string>
+#include <unordered_map>
+
 module aura.core.mutation;
 
 import std;

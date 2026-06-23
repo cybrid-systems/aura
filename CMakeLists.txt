@@ -67,6 +67,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # has a symlink to the shared .gcm.
 set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_SOURCE_DIR}/cmake/aura_module_launcher.sh")
 
+# macOS: ucontext.h functions (getcontext/makecontext/swapcontext) are
+# deprecated but still functional. Suppress the deprecation warnings
+# globally so the fiber scheduler compiles cleanly.
+#
+# Two macros are needed together:
+#  - _XOPEN_SOURCE: <ucontext.h> #errors out without it ("The deprecated
+#    ucontext routines require _XOPEN_SOURCE to be defined").
+#  - _DARWIN_C_SOURCE: keeps all Darwin/POSIX extensions visible that
+#    _XOPEN_SOURCE alone would hide (at_quick_exit in <cstdlib>,
+#    strcasecmp in <strings.h>, etc.).
+# Using _XOPEN_SOURCE=700 alone breaks cstdlib/linenoise; using
+# _DARWIN_C_SOURCE alone doesn't satisfy ucontext.h's #ifdef check.
+if(APPLE)
+    add_compile_options(-Wno-deprecated-declarations)
+    add_compile_definitions(_XOPEN_SOURCE _DARWIN_C_SOURCE)
+endif()
+
 add_executable(aura)
 set_property(TARGET aura PROPERTY CXX_MODULE_STD ON)
 
@@ -183,9 +200,17 @@ if(LLVM_FOUND)
     # handful of public dynamic symbols are visible and we get just
     # hex addresses, not source locations. Cost: ~5-10% binary size,
     # worth it for a Debug build with crash diagnostics.
-    target_link_options(aura PRIVATE -rdynamic)
+    # macOS note: the crash handler is already #if'd to Linux-only
+    # (execinfo.h + dladdr), and macOS ld uses -export_dynamic instead
+    # of -rdynamic. Skip on Apple to avoid an "unknown option" link error.
+    if(NOT APPLE)
+        target_link_options(aura PRIVATE -rdynamic)
+    endif()
 else()
     message(STATUS "LLVM JIT: disabled (not found)")
+    target_sources(aura PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)
+    set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 endif()
 
 # libgit2 for in-process Git operations (faster + safer than popen)
@@ -319,6 +344,8 @@ target_sources(test_ir PRIVATE
     # query:jit-fallback-stats in evaluator_primitives_query.cpp).
     # Without this the test_ir link fails with
     # "undefined reference to aura_jit_fallback_count_v_read".
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp)
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")

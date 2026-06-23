@@ -13,6 +13,16 @@
 // of the Issue #131 refactor: reduce the size of
 // the evaluator partition by extracting focused modules.
 
+module;
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory_resource>
+#include <span>
+#include <string>
+#include <vector>
+
 export module aura.compiler.ffi_primitives;
 
 import std;

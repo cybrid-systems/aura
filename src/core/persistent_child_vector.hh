@@ -65,7 +65,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <contracts>
 #include <initializer_list>
 #include <iterator>
 #include <memory>
