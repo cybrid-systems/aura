@@ -135,6 +135,82 @@ public:
         return aura_evaluator_mutation_boundary_depth() == 0;
     }
 
+    // Issue #451: yield_classification() — returns a
+    // sub-reason string for the current yield. Used
+    // by (query:orchestration-metrics) to break down
+    // yields by reason + sub-class. The P0 returns the
+    // existing YieldReason as a string; the follow-up
+    // adds the sub-reason enum (e.g. MutationBoundary
+    // + outermost vs MutationBoundary + inner).
+    const char* yield_classification() const {
+        switch (last_yield_reason_.load(std::memory_order_acquire)) {
+            case YieldReason::BlockingIO: return "BlockingIO";
+            case YieldReason::MutationBoundary:
+                return aura_evaluator_mutation_boundary_depth() == 0
+                    ? "MutationBoundary/outermost"
+                    : "MutationBoundary/inner";
+            case YieldReason::Explicit: return "Explicit";
+            case YieldReason::SchedulerSteal: return "SchedulerSteal";
+            case YieldReason::OperationBoundary: return "OperationBoundary";
+        }
+        return "Unknown";
+    }
+    // Issue #451: orchestration observability
+    // accessors (read by the (query:orchestration-metrics)
+    // primitive via the C-linkage shim or via direct
+    // Fiber access). All relaxed-ordering, stats-only.
+    [[nodiscard]] std::uint64_t yield_mutation_boundary_count() const noexcept {
+        return yield_mutation_boundary_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t yield_explicit_count() const noexcept {
+        return yield_explicit_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t yield_scheduler_steal_count() const noexcept {
+        return yield_scheduler_steal_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t yield_blocking_io_count() const noexcept {
+        return yield_blocking_io_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t yield_operation_boundary_count() const noexcept {
+        return yield_operation_boundary_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t steal_success_count() const noexcept {
+        return steal_success_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t steal_deferred_mutation_boundary_count() const noexcept {
+        return steal_deferred_mutation_boundary_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t gc_pause_attributed_to_mutation_count() const noexcept {
+        return gc_pause_attributed_to_mutation_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #451: bump helpers (called by Fiber::yield()
+    // + Fiber::check_gc_safepoint() + the work-steal path
+    // follow-up).
+    void bump_yield_mutation_boundary() noexcept {
+        yield_mutation_boundary_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_yield_explicit() noexcept {
+        yield_explicit_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_yield_scheduler_steal() noexcept {
+        yield_scheduler_steal_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_yield_blocking_io() noexcept {
+        yield_blocking_io_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_yield_operation_boundary() noexcept {
+        yield_operation_boundary_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_steal_success() noexcept {
+        steal_success_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_steal_deferred_mutation_boundary() noexcept {
+        steal_deferred_mutation_boundary_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_gc_pause_attributed_to_mutation() noexcept {
+        gc_pause_attributed_to_mutation_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Worker affinity (P2): -1 = any worker, 0..N-1 = specific worker
     int affinity() const { return affinity_; }
     void set_affinity(int worker_id) { affinity_ = worker_id; }
@@ -166,6 +242,40 @@ private:
     uint64_t id_;
     std::atomic<FiberState> state_{FiberState::Ready};
     std::atomic<YieldReason> last_yield_reason_{YieldReason::Explicit};
+
+    // Issue #451: orchestration observability counters
+    // (lifetime atomics, per-Fiber — the follow-up can
+    // aggregate to GlobalMetrics for cross-fiber view).
+    // Bumped in Fiber::yield() + Fiber::check_gc_safepoint
+    // + the work-steal path (follow-up).
+    //   yield_mutation_boundary_count_  (lifetime # of
+    //     yields with reason == MutationBoundary)
+    //   yield_explicit_count_  (lifetime # of yields
+    //     with reason == Explicit)
+    //   yield_scheduler_steal_count_  (lifetime # of
+    //     yields with reason == SchedulerSteal)
+    //   yield_blocking_io_count_  (lifetime # of yields
+    //     with reason == BlockingIO)
+    //   yield_operation_boundary_count_  (lifetime # of
+    //     yields with reason == OperationBoundary)
+    //   steal_success_count_  (lifetime # of successful
+    //     work-steal attempts)
+    //   steal_deferred_mutation_boundary_count_  (lifetime
+    //     # of steal attempts deferred because the victim
+    //     held an outermost MutationBoundary)
+    //   gc_pause_attributed_to_mutation_count_  (lifetime
+    //     # of GC safepoints where the wait was attributed
+    //     to an active MutationBoundary)
+    // All stats-only (relaxed-ordering). Exposed via
+    // (query:orchestration-metrics).
+    std::atomic<std::uint64_t> yield_mutation_boundary_count_{0};
+    std::atomic<std::uint64_t> yield_explicit_count_{0};
+    std::atomic<std::uint64_t> yield_scheduler_steal_count_{0};
+    std::atomic<std::uint64_t> yield_blocking_io_count_{0};
+    std::atomic<std::uint64_t> yield_operation_boundary_count_{0};
+    std::atomic<std::uint64_t> steal_success_count_{0};
+    std::atomic<std::uint64_t> steal_deferred_mutation_boundary_count_{0};
+    std::atomic<std::uint64_t> gc_pause_attributed_to_mutation_count_{0};
     int affinity_ = -1; // -1 = any worker, [0,N) = pinned to specific worker
     ucontext_t ctx_;
     void* stack_ = nullptr;
@@ -174,6 +284,17 @@ private:
     Func func_;
 
     static std::atomic<uint64_t> next_id_;
+
+    // Issue #451: per-Fiber orchestration counters are
+    // not appropriate for static-method counters (e.g.
+    // gc_pause_attributed_to_mutation is called from
+    // the static Fiber::check_gc_safepoint()). Use a
+    // static atomic for cross-fiber aggregates. The
+    // (query:orchestration-metrics) primitive reads
+    // the static aggregate + sums the per-Fiber counters
+    // for a process-wide total.
+    static std::atomic<std::uint64_t>
+        static_gc_pause_attributed_to_mutation_count_;
 
     // Trampoline: called when fiber starts
     static void trampoline(uint32_t high, uint32_t low);

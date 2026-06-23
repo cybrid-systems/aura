@@ -17,6 +17,8 @@
 namespace aura::serve {
 
 std::atomic<uint64_t> Fiber::next_id_{1};
+std::atomic<std::uint64_t>
+    Fiber::static_gc_pause_attributed_to_mutation_count_{0};
 
 // TLS: current running fiber (nullptr = worker loop context)
 thread_local Fiber* g_current_fiber = nullptr;
@@ -77,6 +79,16 @@ void Fiber::check_gc_safepoint() {
     // the actual yield+retry into the wait path.
     if (phase == GCPhase::Requested) {
         (void)aura_evaluator_request_gc_safepoint();
+        // Issue #451: attribute the safepoint wait to
+        // a MutationBoundary if one is currently held
+        // by the active thread. The C-linkage shim
+        // returns the current depth; if > 0, the
+        // wait is attributable to the active
+        // MutationBoundary guard.
+        if (aura_evaluator_mutation_boundary_depth() > 0) {
+            static_gc_pause_attributed_to_mutation_count_
+                .fetch_add(1, std::memory_order_relaxed);
+        }
     }
     if (phase == GCPhase::Requested) {
         // Arrive at safepoint: increment counter
@@ -278,6 +290,17 @@ void Fiber::yield(YieldReason reason) {
 
     // Record the yield reason for scheduler inspection
     fb->set_yield_reason(reason);
+
+    // Issue #451: bump the per-reason orchestration
+    // observability counter. The (query:orchestration-metrics)
+    // primitive reads these to compute yield breakdown.
+    switch (reason) {
+        case YieldReason::BlockingIO:        fb->bump_yield_blocking_io();        break;
+        case YieldReason::MutationBoundary:  fb->bump_yield_mutation_boundary();  break;
+        case YieldReason::Explicit:          fb->bump_yield_explicit();          break;
+        case YieldReason::SchedulerSteal:    fb->bump_yield_scheduler_steal();   break;
+        case YieldReason::OperationBoundary: fb->bump_yield_operation_boundary(); break;
+    }
 
     // If blocking IO, set state to Waiting (IO thread will wake via epoll)
     if (reason == YieldReason::BlockingIO) {
