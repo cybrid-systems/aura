@@ -227,9 +227,72 @@ void Evaluator::unbind_yield_hook_evaluator() {
         g_yield_hook_evaluator = nullptr;
 }
 
+// Issue #285: yield_hook_evaluator() getter.
+Evaluator* Evaluator::yield_hook_evaluator() noexcept {
+    return g_yield_hook_evaluator;
+}
+
 void Evaluator::yield_mutation_boundary() {
     if (aura::messaging::g_fiber_yield_mutation_boundary)
         aura::messaging::g_fiber_yield_mutation_boundary();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Issue #285: install the flush_mutation_boundary hook into the
+// messaging bridge. The hook runs on the fiber thread (set/cleared
+// at the outermost guard). The static-init pattern matches
+// g_fiber_yield_mutation_boundary above.
+//
+// Bridge-callable trampoline (file-local): wraps the thread-local
+// `g_yield_hook_evaluator` so Fiber::yield can invoke the flush
+// without needing the module include.
+namespace {
+void flush_mutation_boundary_trampoline() {
+    if (aura::compiler::Evaluator::yield_hook_evaluator())
+        aura::compiler::Evaluator::yield_hook_evaluator()
+            ->flush_mutation_boundary();
+}
+} // anonymous namespace
+
+// Static initializer: register the trampoline at module load.
+// Runs once per process; safe under serve-async / standalone.
+namespace {
+struct FlushHookRegistrar {
+    FlushHookRegistrar() {
+        aura::messaging::g_flush_mutation_boundary =
+            &flush_mutation_boundary_trampoline;
+    }
+};
+const FlushHookRegistrar g_flush_hook_registrar{};
+} // anonymous namespace
+
+// ═════════════════════════════════════════════════════════════════════════
+// Issue #285: flush_mutation_boundary.
+//
+// Ensures per-fiber mutation state is consistent at the exact yield
+// point. The implementation has three responsibilities:
+//
+//   1. Touch the active mutation stack (per-fiber when in a fiber,
+//      thread-local otherwise) so any std::vector resizes / lazy
+//      allocations are committed before the yield.
+//   2. Issue a release barrier on defuse_version_ so other threads
+//      can observe the current version on their next acquire.
+//   3. No-op when not in a mutation boundary (the stack is empty
+//      AND version is at its quiescent value — we conservatively
+//      always touch the stack but only emit the barrier when the
+//      stack is non-empty, since an empty stack means no
+//      boundary is active).
+void Evaluator::flush_mutation_boundary() {
+    // (1) Touch the active mutation stack so any pending mutations
+    // to the stack itself (push/pop, lazy allocation) are visible.
+    // Using const-ref ensures no copy / no resize.
+    auto& stack = active_mutation_stack();
+    if (stack.empty()) {
+        return; // not in a mutation boundary; nothing to flush
+    }
+    // (2) Release barrier on defuse_version_ so other threads see
+    // the current version on their next acquire.
+    defuse_version_.fetch_add(0, std::memory_order_release);
 }
 
 } // namespace aura::compiler

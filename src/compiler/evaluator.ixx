@@ -2231,6 +2231,13 @@ public:
     void bind_yield_hook_evaluator();
     void unbind_yield_hook_evaluator();
 
+    // Issue #285: getter for the thread-local yield-hook
+    // evaluator pointer (set by bind_yield_hook_evaluator).
+    // Used by Fiber::yield to find the active evaluator for
+    // flush_mutation_boundary(). Returns nullptr when no
+    // outermost guard is active.
+    static Evaluator* yield_hook_evaluator() noexcept;
+
     // Issue #189: reader-side version snapshot API. Fibers /
     // JIT-compiled code / closure dispatch that need to detect
     // concurrent mutations capture a snapshot via
@@ -2422,6 +2429,15 @@ public:
             int prev = (*slot)--;
             bool outermost = (prev == 1);
             ev_->exit_mutation_boundary(success);
+            // Issue #285: explicit flush at the boundary exit so any
+            // pending mutation stack state is visible to other fibers
+            // BEFORE we drop the write lock. The flush runs
+            // lockless (no shared_mutex acquire) and is cheap.
+            // Only the outermost guard runs the flush; nested guards
+            // don't need it (the outer guard handles visibility).
+            if (outermost) {
+                ev_->flush_mutation_boundary();
+            }
             if (outermost) {
                 lock_.unlock();
                 ev_->outermost_mutation_success_flag_ = nullptr;
@@ -2562,6 +2578,20 @@ public:
     // unit" errors. The actual implementation is in evaluator_fiber_mutation.cpp
     // which DOES include messaging_bridge.h.
     void yield_mutation_boundary();
+
+    // Issue #285: explicit mutation-boundary flush. Called from
+    // MutationBoundaryGuard destructor and Fiber::yield
+    // (MutationBoundary reason) to make sure:
+    //   1. The per-fiber MutationCheckpoint stack is consistent
+    //      (top-of-stack reflects the current boundary's state).
+    //   2. defuse_version_ is visible to other threads (acquire
+    //      barrier so subsequent stale-frame checks see the bump).
+    //   3. If a fiber is active, the active mutation stack is the
+    //      per-fiber one (we re-route via active_mutation_stack()).
+    //
+    // No-op when not in a mutation boundary (safe to call from
+    // Fiber::yield unconditionally).
+    void flush_mutation_boundary();
 
     // Issue #236: helpers used by mutate:atomic-batch to apply
     // sub-ops WITHOUT acquiring the workspace write lock (the

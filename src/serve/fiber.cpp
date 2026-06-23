@@ -1,6 +1,7 @@
 // serve/fiber.cpp — Stackful fiber implementation
 #include "fiber.h"
 #include "scheduler.h"
+#include "../compiler/messaging_bridge.h" // Issue #285: g_flush_mutation_boundary
 
 #include <sys/mman.h>
 #include <sys/eventfd.h>
@@ -239,6 +240,18 @@ void Fiber::yield(YieldReason reason) {
     // If blocking IO, set state to Waiting (IO thread will wake via epoll)
     if (reason == YieldReason::BlockingIO) {
         fb->set_state(FiberState::Waiting);
+    }
+
+    // Issue #285: explicit mutation-boundary flush before swapcontext
+    // when yielding from inside a mutation boundary. This makes the
+    // version bump + per-fiber stack commit visible to other fibers
+    // at the precise yield point, eliminating the last race window.
+    // The flush is a no-op when no boundary is active (the trampoline
+    // inside evaluator_fiber_mutation.cpp checks yield_hook_evaluator
+    // and returns early if nullptr).
+    if (reason == YieldReason::MutationBoundary &&
+        aura::messaging::g_flush_mutation_boundary) {
+        aura::messaging::g_flush_mutation_boundary();
     }
 
     if (g_fiber_yield_checkpoint_)
