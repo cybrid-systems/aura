@@ -2426,6 +2426,31 @@ public:
     [[nodiscard]] std::uint64_t atomic_batch_bumps_saved_total() const noexcept {
         return atomic_batch_bumps_saved_total_.load(std::memory_order_relaxed);
     }
+    // Issue #459: nested atomic-batch + suppressed-bump
+    // observability. Bumped when:
+    //   - atomic_batch_steal_violation_ — a fiber steal
+    //     happens while a MutationBoundaryGuard with
+    //     atomic_batch_active=true is held (defensive)
+    //   - suppressed_bump_lost_on_gc_ — a GC safepoint
+    //     wait while a suppressed bump is pending (the
+    //     bump should be flushed before the safepoint;
+    //     this counter catches the violation case)
+    // Stats-only (relaxed-ordering). The P0 ship exposes
+    // them via the new query:atomic-batch-stats primitive.
+    std::atomic<std::uint64_t> atomic_batch_steal_violation_{0};
+    std::atomic<std::uint64_t> suppressed_bump_lost_on_gc_{0};
+    [[nodiscard]] std::uint64_t get_atomic_batch_steal_violation() const noexcept {
+        return atomic_batch_steal_violation_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_suppressed_bump_lost_on_gc() const noexcept {
+        return suppressed_bump_lost_on_gc_.load(std::memory_order_relaxed);
+    }
+    void bump_atomic_batch_steal_violation() noexcept {
+        atomic_batch_steal_violation_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_suppressed_bump_lost_on_gc() noexcept {
+        suppressed_bump_lost_on_gc_.fetch_add(1, std::memory_order_relaxed);
+    }
 
 
     // ── Issue #184: MutationBoundaryGuard (RAII) ─────────────
@@ -2479,6 +2504,14 @@ public:
         //  or if (current-source) isn't registered.)
         bool had_panic_checkpoint_ = false;
         bool fine_rollback_ = false;
+        // Issue #459: was this guard entered under a
+        // (mutate:atomic-batch) — i.e. should the guard
+        // suppress its own generation bump? The flag is
+        // set by `suppress_generation_bump(true)` before
+        // construction. Nested atomic batches stack
+        // (any non-zero nesting → atomic_batch_active).
+        bool atomic_batch_active_ = false;
+        bool suppress_bump_ = false;
 
     public:
         // Issue #266: enable fine-grained column snapshots for the
@@ -2624,6 +2657,27 @@ public:
         // (nested guards never call save_panic_checkpoint).
         [[nodiscard]] bool has_pending_checkpoint() const noexcept {
             return had_panic_checkpoint_;
+        }
+        // Issue #459: per-guard atomic-batch accessors.
+        // `is_atomic_batch_active()` returns true when this
+        // guard was entered under a (mutate:atomic-batch)
+        // — the caller can use this to detect a violation
+        // (e.g. a fiber steal happening while an atomic
+        // guard is held).
+        [[nodiscard]] bool is_atomic_batch_active() const noexcept {
+            return atomic_batch_active_;
+        }
+        // `suppress_generation_bump(true)` marks this guard
+        // as a suppressed-bump guard. The ctor reads the
+        // flag to decide whether to skip the defuse_version_
+        // bump on enter (the (mutate:atomic-batch) primitive
+        // does a single bump on commit instead, saving N-1
+        // bumps for N ops in a batch).
+        void suppress_generation_bump(bool v) noexcept {
+            suppress_bump_ = v;
+        }
+        [[nodiscard]] bool is_suppress_bump_set() const noexcept {
+            return suppress_bump_;
         }
 
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
