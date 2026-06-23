@@ -84,6 +84,34 @@ export ModportIR make_modport(std::string_view name,
 export std::string emit_modport(const ModportIR& m);
 export std::string debug_modport(const ModportIR& m);
 
+// ── ClassIR ──
+//
+// Issue #435 Phase 6 — structured IR for SV class
+// declarations (OOP + randomization container). Mirrors the
+// list-based `(eda:class name base items)` representation.
+//
+// Layout:
+//   "class NAME extends BASE;\n"
+//   "  <member1>\n"
+//   "  <member2>\n"
+//   "endclass"
+// (base clause omitted when base is empty; member string
+// items are joined with "\n  " and routed via
+// emit_class_item — constraints and covergroups use their
+// own structured emit, plain strings are emitted as-is.)
+export struct ClassIR {
+    std::string name;
+    std::string base;
+    std::vector<std::string> items;
+};
+
+export ClassIR make_class(std::string_view name,
+                          std::string_view base,
+                          std::vector<std::string> items) noexcept;
+
+export std::string emit_class(const ClassIR& c);
+export std::string debug_class(const ClassIR& c);
+
 // ── ConstraintIR ──
 //
 // Issue #435 Phase 5 — structured IR for SV constraints

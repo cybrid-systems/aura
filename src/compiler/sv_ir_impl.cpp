@@ -210,6 +210,51 @@ std::string debug_modport(const ModportIR& m) {
     return out;
 }
 
+// ── ClassIR ──
+
+ClassIR make_class(std::string_view name,
+                   std::string_view base,
+                   std::vector<std::string> items) noexcept {
+    ClassIR c;
+    c.name = std::string(name);
+    c.base = std::string(base);
+    c.items = std::move(items);
+    return c;
+}
+
+std::string emit_class(const ClassIR& c) {
+    std::string out;
+    out.reserve(64 + c.name.size());
+    out.append("class ");
+    out.append(c.name);
+    if (!c.base.empty()) {
+        out.append(" extends ");
+        out.append(c.base);
+    }
+    out.append(";\n  ");
+    for (std::size_t i = 0; i < c.items.size(); ++i) {
+        if (i > 0) {
+            out.append("\n  ");
+        }
+        out.append(c.items[i]);
+    }
+    out.append("\nendclass");
+    return out;
+}
+
+std::string debug_class(const ClassIR& c) {
+    std::string out;
+    out.reserve(48 + c.name.size() + c.items.size() * 16);
+    out.append("class(name=");
+    out.append(c.name);
+    out.append(", base=");
+    out.append(c.base.empty() ? "()" : c.base);
+    out.append(", items=[");
+    append_joined(out, c.items, ",");
+    out.append("])");
+    return out;
+}
+
 // ── ConstraintIR ──
 
 ConstraintIR make_constraint(std::string_view name,
