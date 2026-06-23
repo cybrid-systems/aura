@@ -219,7 +219,7 @@ extern "C" int64_t aura_jit_test() {
 // bumps the counter. The real interpreter dispatch is a
 // follow-up that requires the JIT to pass the closure_id
 // (currently a separate channel — not yet wired).
-extern "C" std::atomic<std::uint64_t> aura_jit_fallback_count_v_{0};
+std::atomic<std::uint64_t> aura_jit_fallback_count_v_{0};
 // Issue #461: accessor for the counter so other modules can
 // read it without needing to re-include <atomic> in their
 // global module fragment. Returns a copy of the current

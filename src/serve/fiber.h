@@ -15,6 +15,11 @@
 extern "C" std::size_t
 aura_evaluator_mutation_boundary_depth();
 
+// Issue #451: C-linkage shim for Fiber's static GC-pause
+// counter (defined in fiber.cpp / fiber_bridge.cpp).
+extern "C" std::uint64_t
+aura_fiber_static_gc_pause_attributed_to_mutation();
+
 namespace aura::serve {
 
 // ── Yield reason — why a fiber yielded (Issue #31) ────

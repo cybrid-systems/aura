@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cassert>
 #include <string>
+#include <type_traits>
 #include <cstdint>
 #include "../src/compiler/shape.h"
 #include "../src/compiler/shape_profiler.h"
@@ -15,13 +16,23 @@ using namespace aura::compiler::shape;
 static int tests_run = 0;
 static int tests_passed = 0;
 
+template<typename T>
+const char* test_name_cstr(const T& name) {
+    if constexpr (std::is_same_v<std::decay_t<T>, std::string>)
+        return name.c_str();
+    else
+        return name;
+}
+
 #define TEST(name, expr) do { \
+    const auto _test_name_tmp = (name); \
+    const char* _test_name_cstr = test_name_cstr(_test_name_tmp); \
     tests_run++; \
     if (!(expr)) { \
-        std::fprintf(stderr, "FAIL: %s (%s)\n", name, #expr); \
+        std::fprintf(stderr, "FAIL: %s (%s)\n", _test_name_cstr, #expr); \
     } else { \
         tests_passed++; \
-        std::fprintf(stdout, "PASS: %s\n", name); \
+        std::fprintf(stdout, "PASS: %s\n", _test_name_cstr); \
     } \
 } while(0)
 
