@@ -747,7 +747,39 @@ void register_mutate_primitives(
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return mev("bad-arg", "usage: (mutate:rebind name new-code-string [summary])");
+            return mev("bad-arg", "usage: (mutate:rebind name new-code-string [summary] [validate: type-name])");
+        }
+        // Issue #288: optional `validate: <type-name>` 4th arg.
+        // When present, run the best-effort schema shape check on
+        // the new code string before any workspace mutation. A
+        // failure returns a tagged `schema-violation` error pair
+        // and sets `ok = false` so the MutationBoundaryGuard dtor
+        // rolls back (preserves the original binding).
+        std::string validate_type;
+        if (a.size() >= 4 && is_string(a[3])) {
+            auto vidx = as_string_idx(a[3]);
+            if (vidx < ev.string_heap_.size())
+                validate_type = ev.string_heap_[vidx];
+        }
+        if (!validate_type.empty()) {
+            auto validate_fn = ev.primitives_.lookup("mutate:validate-against-schema");
+            if (validate_fn) {
+                auto ci = ev.string_heap_.size();
+                ev.string_heap_.push_back(ev.string_heap_[as_string_idx(a[1])]);
+                auto ti = ev.string_heap_.size();
+                ev.string_heap_.push_back(validate_type);
+                auto vresult = (*validate_fn)({make_string(ci), make_string(ti)});
+                if (is_string(vresult)) {
+                    // tagged schema-violation — rejected
+                    ok = false;
+                    return vresult; // already a "(schema-violation ...)" string
+                }
+                if (is_bool(vresult) && !as_bool(vresult)) {
+                    ok = false;
+                    return mev("schema-violation", "schema check returned #f (no schema registered)");
+                }
+                // is_bool(vresult) == true → proceed
+            }
         }
         // Issue #141 AC: lazy COW — trigger clone on first mutate, not on switch.
         if (ev.workspace_tree_) {

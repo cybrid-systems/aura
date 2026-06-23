@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**418** registrations scanned from `src/**/*.cpp`.
+**419** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -43,7 +43,7 @@ Runtime canonical list: `(api-reference)`.
 - `query:stable-ref` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
-## Mutate: (20)
+## Mutate: (21)
 
 - `mutate:atomic-batch` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:check-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
@@ -64,6 +64,7 @@ Runtime canonical list: `(api-reference)`.
 - `mutate:set-body` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:splice` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:tweak-literal` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `mutate:wrap` — `src/compiler/evaluator_primitives_mutate.cpp`
 
 ## Ast: (20)
