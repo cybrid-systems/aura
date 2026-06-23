@@ -464,7 +464,7 @@ void register_workspace_query_primitives(
     std::pmr::vector<std::string>& string_heap, aura::ast::ASTArena*& temp_arena,
     std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
     std::function<aura::ast::StringPool*()> canonical_pool, std::function<void()> build_tag_arity_index,
-    std::function<EvalValue(const std::string&, const std::string&)> mev);
+    std::function<EvalValue(const std::string&, const std::string&)> mev, Evaluator& ev);
 void register_defuse_query_primitives(
     std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
     aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
@@ -1757,6 +1757,13 @@ private:
     std::atomic<std::uint64_t> panic_checkpoint_transfer_count_{0};
     std::atomic<std::uint64_t> panic_checkpoint_lost_on_steal_{0};
     std::atomic<std::uint64_t> gc_blocked_by_pending_panic_{0};
+    // Issue #458: query hygiene metrics. Bumped by query:pattern
+    // (and friends) when they skip a MacroIntroduced node during
+    // traversal. Stats-only (relaxed-ordering). Exposed via
+    // the new `query:hygiene-stats` primitive.
+    std::atomic<std::uint64_t> hygiene_violation_count_{0};
+    std::atomic<std::uint64_t> macro_introduced_skipped_in_query_{0};
+    std::atomic<std::uint64_t> total_query_calls_{0};
     // Issue #266: fine-grained SoA rollback request + stats.
     bool fine_rollback_for_next_boundary_ = false;
     BoundaryRollbackStats last_boundary_rollback_stats_{};
@@ -1956,6 +1963,25 @@ public:
     }
     void bump_gc_blocked_by_pending_panic() noexcept {
         gc_blocked_by_pending_panic_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #458: query hygiene accessors + bump helpers.
+    [[nodiscard]] std::uint64_t get_hygiene_violation_count() const noexcept {
+        return hygiene_violation_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_macro_introduced_skipped_in_query() const noexcept {
+        return macro_introduced_skipped_in_query_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_total_query_calls() const noexcept {
+        return total_query_calls_.load(std::memory_order_relaxed);
+    }
+    void bump_hygiene_violation_count() noexcept {
+        hygiene_violation_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_macro_introduced_skipped_in_query() noexcept {
+        macro_introduced_skipped_in_query_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_total_query_calls() noexcept {
+        total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] const ast::FlatAST* tag_arity_index_workspace() const noexcept {
         return tag_arity_index_workspace_;

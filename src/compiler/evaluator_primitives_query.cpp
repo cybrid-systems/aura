@@ -153,6 +153,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(0); // 0 = unpopulated; follow-up returns a list
     });
 
+    // Issue #458: query:hygiene-stats. Returns an integer
+    // equal to the total macro-introduced nodes skipped by
+    // query:pattern so far (a single observable counter).
+    // Future: returns a 3-tuple (violations skipped total-queries).
+    // P0: returns the skipped count as an int.
+    add("query:hygiene-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        // Read via the thread-local yield-hook evaluator (same
+        // pattern as the #453 hooks). Returns 0 when no
+        // evaluator is active.
+        auto* ev = Evaluator::yield_hook_evaluator();
+        if (!ev) return make_int(0);
+        return make_int(static_cast<std::int64_t>(
+            ev->get_macro_introduced_skipped_in_query()));
+    });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
