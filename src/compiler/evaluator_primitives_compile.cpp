@@ -717,6 +717,77 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             ev.get_atomic_batch_steal_violation()));
     });
 
+    // Issue #437: (verify:assertion-failed node-id
+    // [assert-name-string]) — Mark the given AST node with
+    // the kAssertionDirty verify bit. The optional 2nd arg
+    // is the assertion name (string, for observability
+    // only — the P0 ship doesn't propagate the name into
+    // the dirty bitmask). Returns the new verify_dirty
+    // bitmask for the node (0 if no bits set after apply,
+    // or the bitmask). On any failure (bad args, no
+    // workspace) returns #f.
+    add("verify:assertion-failed", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_bool(false);
+        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (node_id >= ws->size())
+            return make_bool(false);
+        ws->apply_verify_dirty_bits(node_id, aura::ast::FlatAST::kAssertionDirty);
+        return make_int(static_cast<std::int64_t>(ws->verify_dirty(node_id)));
+    });
+
+    // Issue #437: (verify:report-coverage node-id
+    // [coverage-hole-name-string]) — Mark the given AST
+    // node with the kCoverageDirty verify bit. Same
+    // signature + return-value convention as
+    // verify:assertion-failed.
+    add("verify:report-coverage", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_bool(false);
+        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (node_id >= ws->size())
+            return make_bool(false);
+        ws->apply_verify_dirty_bits(node_id, aura::ast::FlatAST::kCoverageDirty);
+        return make_int(static_cast<std::int64_t>(ws->verify_dirty(node_id)));
+    });
+
+    // Issue #437: (query:verify-dirty-stats) — return
+    // the current per-reason verify-dirty counters as
+    // a 4-tuple (assertion coverage sva formal-cex).
+    // P0 ship: returns an integer = sum of all four
+    // counters. Follow-up: returns the 4-tuple.
+    add("query:verify-dirty-stats", [&ev](const auto& a) -> EvalValue {
+        (void)a;
+        auto* ws = ev.workspace_flat();
+        if (!ws) return make_int(0);
+        auto sum = ws->verify_assertion_dirty_total() +
+                   ws->verify_coverage_dirty_total() +
+                   ws->verify_sva_dirty_total() +
+                   ws->verify_formal_cex_dirty_total();
+        return make_int(static_cast<std::int64_t>(sum));
+    });
+
+    // Issue #437: (compile:verify-dirty? node-id) — query
+    // the verify_dirty_ bitmask for a node. Returns the
+    // bitmask (0 if not set or no bits). #f on bad args.
+    add("compile:verify-dirty?", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_bool(false);
+        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (node_id >= ws->size())
+            return make_bool(false);
+        return make_int(static_cast<std::int64_t>(ws->verify_dirty(node_id)));
+    });
+
     // Issue #240: (compile:mark-narrowing-dirty! node-id
     // [set-or-clear]) — Set or clear the per-node
     // kOccurrenceDirty bit in the workspace FlatAST's
