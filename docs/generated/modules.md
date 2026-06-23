@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**34** `export module` declarations in `src/**/*.ixx`.
+**35** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -27,6 +27,7 @@
 | `aura.compiler.pass_manager` | `src/compiler/pass_manager.ixx` |
 | `aura.compiler.query` | `src/compiler/query.ixx` |
 | `aura.compiler.service` | `src/compiler/service.ixx` |
+| `aura.compiler.sv_ir` | `src/compiler/sv_ir.ixx` |
 | `aura.compiler.type_checker` | `src/compiler/type_checker.ixx` |
 | `aura.compiler.type_concepts` | `src/compiler/type_concepts.ixx` |
 | `aura.compiler.value` | `src/compiler/value.ixx` |

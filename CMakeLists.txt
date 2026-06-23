@@ -92,6 +92,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/compute_kind.ixx
     src/compiler/hardware_backend.ixx
     src/compiler/arity.ixx
+    src/compiler/sv_ir.ixx
     src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
@@ -127,6 +128,7 @@ target_sources(aura PRIVATE
     src/compiler/shape_profiler.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
+    src/compiler/sv_ir_impl.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/spec_jit_controller.cpp
     src/compiler/messaging_bridge_impl.cpp
@@ -268,6 +270,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/compute_kind.ixx
     src/compiler/hardware_backend.ixx
     src/compiler/arity.ixx
+    src/compiler/sv_ir.ixx
     src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
@@ -309,6 +312,7 @@ target_sources(test_ir PRIVATE
     src/compiler/spec_jit_controller.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
+    src/compiler/sv_ir_impl.cpp
     src/compiler/messaging_bridge_impl.cpp)
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
@@ -423,6 +427,7 @@ add_library(aura_test_objects STATIC
     src/compiler/spec_jit_controller.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
+    src/compiler/sv_ir_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp
@@ -452,6 +457,7 @@ target_sources(aura_test_objects PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/compute_kind.ixx
     src/compiler/hardware_backend.ixx
     src/compiler/arity.ixx
+    src/compiler/sv_ir.ixx
     src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
@@ -554,6 +560,7 @@ target_sources(test_gc_evaluator_integration PUBLIC FILE_SET CXX_MODULES BASE_DI
     src/compiler/compute_kind.ixx
     src/compiler/hardware_backend.ixx
     src/compiler/arity.ixx
+    src/compiler/sv_ir.ixx
     src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
@@ -596,6 +603,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/compiler/spec_jit_controller.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
+    src/compiler/sv_ir_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
 )
 aura_test_compile_options(test_gc_evaluator_integration)
@@ -880,6 +888,7 @@ target_sources(issue_212_bench PRIVATE
     src/compiler/constant_folding_impl.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
+    src/compiler/sv_ir_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/hardware_backend_impl.cpp
     tests/_stubs/issue_212_runtime_stubs.cpp)
@@ -1062,6 +1071,8 @@ aura_add_issue_test(test_issue_436_phase5)
 aura_issue_test_link_llvm_jit(test_issue_436_phase5)
 aura_add_issue_test(test_issue_436_phase6)
 aura_issue_test_link_llvm_jit(test_issue_436_phase6)
+aura_add_issue_test(test_issue_436_phase7)
+aura_issue_test_link_llvm_jit(test_issue_436_phase7)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
