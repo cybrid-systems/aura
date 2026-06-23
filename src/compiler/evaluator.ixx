@@ -764,6 +764,10 @@ public:
     // Both paths use the same single source of truth.
     void set_compiler_metrics(void* m) { compiler_metrics_ = m; }
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
+    // Issue #426: public getter for compiler_service_ (as
+    // void*). The (query:compiler-cache-stats) primitive
+    // uses it to call CompilerService::dirty_block_count().
+    [[nodiscard]] void* compiler_service() const noexcept { return compiler_service_; }
     // Issue #223: returns the current bridge_epoch from the
     // service (or 0 if no service is bound). Closure-construction
     // sites capture this at construction time; apply_closure

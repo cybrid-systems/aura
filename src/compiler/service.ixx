@@ -5513,6 +5513,19 @@ public:
     // through mark_define_dirty / invalidate_function /
     // hot_swap_function_impl / reset(). Tests can call
     // this directly to verify the helper's behavior.
+    // Issue #426: total dirty block count across the
+    // entire ir_cache_v2_. Used by the
+    // (query:compiler-cache-stats) primitive. Public so
+    // the query layer (which holds a void* to this
+    // service) can call it without a friend
+    // declaration.
+    [[nodiscard]] std::size_t total_dirty_block_count() const noexcept {
+        std::size_t n = 0;
+        for (const auto& [name, entry] : ir_cache_v2_) {
+            n += entry.dirty_block_count();
+        }
+        return n;
+    }
     void public_invalidate_bridges_for(const std::string& name) { invalidate_bridge_for(name); }
 
     // Issue #272: test/observability accessor.
