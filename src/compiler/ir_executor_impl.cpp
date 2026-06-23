@@ -1,4 +1,20 @@
 module;
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <expected>
+#include <format>
+#include <iostream>
+#include <optional>
+#include <print>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <variant>
+#include <vector>
 #include "runtime_shared.h"
 #include "observability_logger.h"
 module aura.compiler.ir_executor;

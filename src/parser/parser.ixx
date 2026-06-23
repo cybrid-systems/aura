@@ -1,3 +1,11 @@
+module;
+#include <cstddef>
+#include <format>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 export module aura.parser.parser;
 import std;
 import aura.core;

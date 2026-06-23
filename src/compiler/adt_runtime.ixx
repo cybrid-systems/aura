@@ -12,6 +12,18 @@
 // To avoid cyclic import with evaluator.ixx, we use RegisterFn callback
 // (same as FFIRuntime).
 
+module;
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory_resource>
+#include <optional>
+#include <span>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 export module aura.compiler.adt_runtime;
 
 import std;

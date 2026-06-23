@@ -2,6 +2,9 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include <span>
+#include <shared_mutex>
+#include <atomic>
 
 #include <cstdint>
 #include <cstring>
@@ -28,7 +31,6 @@ import aura.compiler.hardware_backend;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 using MakeErrorVal = std::function<EvalValue(const std::string&, const std::string&)>;
 

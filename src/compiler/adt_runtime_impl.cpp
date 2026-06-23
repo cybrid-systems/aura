@@ -15,6 +15,7 @@ module;
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>

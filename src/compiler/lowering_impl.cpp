@@ -1,3 +1,16 @@
+module;
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <functional>
+#include <memory>
+#include <print>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
 module aura.compiler.lowering;
 import aura.core.ast;
 import aura.compiler.lowering_linear_types;

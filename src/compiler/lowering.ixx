@@ -1,3 +1,12 @@
+module;
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
 export module aura.compiler.lowering;
 import std;
 import aura.core;

@@ -2,8 +2,10 @@
 // aura.compiler.evaluator module partition.
 
 module;
+#include <atomic>
 
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <span>

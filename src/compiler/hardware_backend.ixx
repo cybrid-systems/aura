@@ -1,6 +1,11 @@
 // Issue #277: Hardware / Verilog backend mutation hook surface.
 // Orthogonal to #182 backend implementation — provides the callback
 // registration point for PPA-aware incremental RTL refresh.
+module;
+
+#include <cstdint>
+#include <functional>
+
 export module aura.compiler.hardware_backend;
 import std;
 import aura.core.ast;

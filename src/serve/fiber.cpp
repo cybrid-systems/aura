@@ -2,14 +2,17 @@
 #include "fiber.h"
 #include "scheduler.h"
 #include "../compiler/messaging_bridge.h" // Issue #285: g_flush_mutation_boundary
+#include "aura_platform.h"
 
 #include <sys/mman.h>
-#include <sys/eventfd.h>
 #include <unistd.h>
 #include <cstring>
 #include <cstdio>
 #include <cerrno>
 #include <system_error>
+#if AURA_HAVE_EVENTFD
+#include <sys/eventfd.h>
+#endif
 
 namespace aura::serve {
 
@@ -85,16 +88,23 @@ Fiber::Fiber(Func func, size_t stack_size)
     stack_ = static_cast<char*>(base) + guard_size; // usable starts after guard
 
     // 2. Create eventfd
+#if AURA_HAVE_EVENTFD
     eventfd_ = ::eventfd(0, EFD_NONBLOCK);
     if (eventfd_ == -1) {
         ::munmap(base, alloc_size);
         throw std::system_error(errno, std::generic_category(), "fiber eventfd");
     }
+#else
+    // macOS: eventfd unavailable; serve-async disabled. fiber can still
+    // be constructed (evaluator registers hooks), but eventfd() == -1
+    // means no wakeup mechanism — spawn will never be called in core mode.
+    eventfd_ = -1;
+#endif
 
     // 3. Initialize ucontext
     if (::getcontext(&ctx_) == -1) {
         ::munmap(base, alloc_size);
-        ::close(eventfd_);
+        if (eventfd_ >= 0) ::close(eventfd_);
         throw std::system_error(errno, std::generic_category(), "fiber getcontext");
     }
 

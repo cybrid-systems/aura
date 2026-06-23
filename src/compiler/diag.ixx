@@ -1,3 +1,15 @@
+module;
+#include <cctype>
+#include <cstdint>
+#include <expected>
+#include <format>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 export module aura.diag;
 import std;
 

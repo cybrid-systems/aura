@@ -3,7 +3,14 @@
 #include "compiler/runtime_shared.h"
 #include "compiler/observability_snapshot.h"
 #include "compiler/observability_metrics.h"
-#include "compiler/observability_logger.h" // for snapshot_to_json
+#include "compiler/observability_logger.h"  // for snapshot_to_json
+#include <cstdio>
+#include <filesystem>
+#include <format>
+#include <future>
+#include <iostream>
+#include <print>
+#include <set>
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -13,6 +20,7 @@
 #endif
 #include "serve/serve_async.h"
 #include "serve/scheduler.h"
+#include "serve/aura_platform.h"
 
 import std;
 import aura.core;
@@ -528,7 +536,11 @@ int main(int argc, char* argv[]) {
     // Uses ucontext fibers + epoll for non-blocking multi-session support.
     // Same JSON-line protocol as --serve, but with non-blocking I/O.
     if (argc > 1 && std::string_view(argv[1]) == "--serve-async") {
+#if AURA_HAVE_EPOLL
         aura::serve::run_serve_async(num_workers);
+#else
+        std::println(std::cerr, "aura: --serve-async not supported on macOS (requires epoll)");
+#endif
         return 0;
     }
 
@@ -536,6 +548,7 @@ int main(int argc, char* argv[]) {
     // Spawns fibers under various load patterns and prints scheduler metrics.
     // Usage: ./build/aura --concurrent-metrics [--worker-threads=N]
     if (argc > 1 && std::string_view(argv[1]) == "--concurrent-metrics") {
+#if AURA_HAVE_EPOLL
         aura::serve::Scheduler sched(num_workers);
         constexpr int N = 200;
         std::atomic<int> completed{0};
@@ -567,6 +580,9 @@ int main(int argc, char* argv[]) {
 
         std::println("Completed: {}/{}", completed.load(), N * 2);
         sched.metrics().dump();
+#else
+        std::println(std::cerr, "aura: --concurrent-metrics not supported on macOS (requires epoll)");
+#endif
         return 0;
     }
 
@@ -575,8 +591,12 @@ int main(int argc, char* argv[]) {
     // enabling fiber:spawn parallelism without going through the JSON protocol.
     // Usage: ./build/aura --serve-async-bench tests/bench.aura
     if (argc > 1 && std::string_view(argv[1]) == "--serve-async-bench") {
+#if AURA_HAVE_EPOLL
         std::string file_path = (argc > 2) ? argv[2] : "tests/bench.aura";
         aura::serve::run_serve_async_bench(file_path, num_workers);
+#else
+        std::println(std::cerr, "aura: --serve-async-bench not supported on macOS (requires epoll)");
+#endif
         return 0;
     }
 
@@ -943,9 +963,8 @@ int main(int argc, char* argv[]) {
                             if (result) {
                                 try {
                                     auto& v = *result;
-                                    if (is_closure(v)) {
-                                        std::println("{{\"status\":\"closure\",\"value\":\"#<"
-                                                     "procedure>\"}}");
+                                    if (aura::compiler::types::is_closure(v)) {
+                                        std::println("{{\"status\":\"closure\",\"value\":\"#<procedure>\"}}");
                                     } else {
                                         std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
                                                      json_escape(fmt_val(v, cs)));
@@ -1023,9 +1042,8 @@ int main(int argc, char* argv[]) {
                             auto result = future.get();
                             if (result) {
                                 auto& v = *result;
-                                if (is_closure(v)) {
-                                    std::println(
-                                        "{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
+                                if (aura::compiler::types::is_closure(v)) {
+                                    std::println("{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
                                 } else {
                                     std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
                                                  json_escape(fmt_val(v, cs)));
