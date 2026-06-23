@@ -28,6 +28,16 @@ thread_local WorkerContext* g_worker_ctx = nullptr;
 void* (*g_fiber_setter_)(void*) = nullptr;
 void (*g_fiber_storage_deleter_)(void*) = nullptr;
 void (*g_fiber_yield_checkpoint_)(uint8_t) = nullptr;
+
+// Issue #439: C-linkage forward declarations for the
+// GC safepoint coordination hooks (defined in
+// evaluator_fiber_mutation.cpp). The P0 check_gc_safepoint
+// calls aura_evaluator_request_gc_safepoint() to bump
+// the requests counter and check whether a guard is
+// held (in which case the request is deferred).
+extern "C" int aura_evaluator_request_gc_safepoint();
+extern "C" void
+aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms);
 void (*g_fiber_resume_validate_)() = nullptr;
 void (*g_fiber_yield_checkpoint_deleter_)(void*) = nullptr;
 
@@ -58,6 +68,16 @@ void Fiber::check_gc_safepoint() {
     if (!gc)
         return;
     auto phase = gc->phase.load(std::memory_order_acquire);
+    // Issue #439: bump the requests counter + check
+    // whether the current thread holds an outermost
+    // MutationBoundary guard. The C-linkage shim
+    // returns 1 if the request is deferred (caller
+    // should yield + retry). The P0 records the
+    // request + the deferral; the follow-up wires
+    // the actual yield+retry into the wait path.
+    if (phase == GCPhase::Requested) {
+        (void)aura_evaluator_request_gc_safepoint();
+    }
     if (phase == GCPhase::Requested) {
         // Arrive at safepoint: increment counter
         gc->fibers_at_safepoint.fetch_add(1, std::memory_order_release);

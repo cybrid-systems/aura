@@ -416,4 +416,22 @@ aura_evaluator_mutation_boundary_depth() {
     return Evaluator::mutation_boundary_depth();
 }
 
+// Issue #439: C-linkage shims for GC safepoint
+// coordination. Same rationale as
+// aura_evaluator_mutation_boundary_depth above: the
+// fiber.cpp / scheduler.cpp code calls these without
+// pulling in the Evaluator module.
+extern "C" int aura_evaluator_request_gc_safepoint() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev) return 0; // no evaluator → no guard
+    return ev->request_gc_safepoint();
+}
+
+extern "C" void
+aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms) {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev) return; // no evaluator → no wait
+    ev->wait_for_safepoint(timeout_ms);
+}
+
 } // namespace aura::compiler
