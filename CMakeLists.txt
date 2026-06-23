@@ -313,7 +313,13 @@ target_sources(test_ir PRIVATE
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
     src/compiler/sv_ir_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp)
+    src/compiler/messaging_bridge_impl.cpp
+    # Issue #461: aura_jit_bridge.cpp provides
+    # aura_jit_fallback_count_v_read (used by
+    # query:jit-fallback-stats in evaluator_primitives_query.cpp).
+    # Without this the test_ir link fails with
+    # "undefined reference to aura_jit_fallback_count_v_read".
+    src/compiler/aura_jit_bridge.cpp)
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
