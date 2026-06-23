@@ -312,6 +312,34 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             cov + ass + att + suc + cyc));
     });
 
+    // Issue #448: query:mutation-coordination-stats.
+    // Returns observability counters for the fiber /
+    // scheduler / GC coordination layer:
+    //   - mutation_steal_violation_count_  (work-steal
+    //     attempts deferred because the victim fiber
+    //     is in an unsafe MutationBoundary state)
+    //   - gc_blocked_by_mutation_boundary_  (GC safepoint
+    //     requests deferred because an outermost guard
+    //     is held)
+    //   - safepoint_mutation_wait_total_ns_  (total ns
+    //     spent waiting for fibers to reach a safe
+    //     mutation boundary during a safepoint)
+    //
+    // P0: returns an integer = sum of all 3 counters.
+    // Follow-up: returns a 3-tuple
+    // (steal-violations gc-blocks wait-ns) so the AI
+    // Agent can react to each category independently.
+    add("query:mutation-coordination-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t steals = ev->get_mutation_steal_violation_count();
+        const std::uint64_t gc_blocks = ev->get_gc_blocked_by_mutation_boundary();
+        const std::uint64_t wait_ns = ev->get_safepoint_mutation_wait_total_ns();
+        return make_int(static_cast<std::int64_t>(
+            steals + gc_blocks + wait_ns));
+    });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);

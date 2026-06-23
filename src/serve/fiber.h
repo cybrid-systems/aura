@@ -84,6 +84,31 @@ public:
                r == YieldReason::OperationBoundary;
     }
 
+    // Issue #448: is_at_safe_mutation_boundary() returns true
+    // when this fiber is currently in a state where work-
+    // stealing is safe even if a MutationBoundary guard is
+    // active. The P0 contract: the fiber is considered
+    // "safe" if (a) it has not yielded for a MutationBoundary
+    // reason, OR (b) it has yielded for a MutationBoundary
+    // but the per-fiber mutation boundary depth is 0
+    // (i.e. the outermost guard has already been released).
+    //
+    // P0: we use a relaxed best-effort check by reading
+    // the last_yield_reason_ + a thread_local depth probe.
+    // The follow-up will use the proper
+    // MutationBoundaryGuard::current_depth() to gate
+    // scheduler steal attempts.
+    bool is_at_safe_mutation_boundary() const {
+        auto r = last_yield_reason_.load(std::memory_order_acquire);
+        if (r != YieldReason::MutationBoundary)
+            return true;
+        // Currently yielded at a MutationBoundary — assume
+        // unsafe (the scheduler should defer or skip).
+        // The follow-up will use the Evaluator API to
+        // probe the per-fiber boundary depth.
+        return false;
+    }
+
     // Worker affinity (P2): -1 = any worker, 0..N-1 = specific worker
     int affinity() const { return affinity_; }
     void set_affinity(int worker_id) { affinity_ = worker_id; }

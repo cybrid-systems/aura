@@ -1848,6 +1848,22 @@ private:
     std::atomic<std::uint64_t> panic_checkpoint_transfer_count_{0};
     std::atomic<std::uint64_t> panic_checkpoint_lost_on_steal_{0};
     std::atomic<std::uint64_t> gc_blocked_by_pending_panic_{0};
+    // Issue #448: mutation coordination observability. Bumped
+    // by the scheduler / fiber hooks when:
+    //   - a work-steal attempt is deferred or skipped
+    //     because the victim fiber is in an unsafe
+    //     MutationBoundary state
+    //   - a GC safepoint request is deferred because an
+    //     outermost MutationBoundary guard is held
+    //   - a scheduler waits for a fiber to reach a safe
+    //     mutation boundary (sum of wait times, in ns)
+    //
+    // P0: only the counter fields + bump accessors
+    // ship. The actual scheduler/GC wiring (the
+    // production coordination logic) is a follow-up.
+    std::atomic<std::uint64_t> mutation_steal_violation_count_{0};
+    std::atomic<std::uint64_t> gc_blocked_by_mutation_boundary_{0};
+    std::atomic<std::uint64_t> safepoint_mutation_wait_total_ns_{0};
     // Issue #458: query hygiene metrics. Bumped by query:pattern
     // (and friends) when they skip a MacroIntroduced node during
     // traversal. Stats-only (relaxed-ordering). Exposed via
@@ -2617,6 +2633,29 @@ public:
         last_queried_epoch_.store(
             defuse_version_.load(std::memory_order_acquire),
             std::memory_order_release);
+    }
+    // Issue #448: mutation-coordination observability
+    // accessors + bump helpers. Public so the
+    // (query:mutation-coordination-stats) primitive can
+    // read them, and the scheduler / fiber hooks (the
+    // follow-up) can bump them.
+    [[nodiscard]] std::uint64_t get_mutation_steal_violation_count() const noexcept {
+        return mutation_steal_violation_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_gc_blocked_by_mutation_boundary() const noexcept {
+        return gc_blocked_by_mutation_boundary_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_safepoint_mutation_wait_total_ns() const noexcept {
+        return safepoint_mutation_wait_total_ns_.load(std::memory_order_relaxed);
+    }
+    void bump_mutation_steal_violation_count() noexcept {
+        mutation_steal_violation_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_gc_blocked_by_mutation_boundary() noexcept {
+        gc_blocked_by_mutation_boundary_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_safepoint_mutation_wait_ns(std::uint64_t delta_ns) noexcept {
+        safepoint_mutation_wait_total_ns_.fetch_add(delta_ns, std::memory_order_relaxed);
     }
 
 
