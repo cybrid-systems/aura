@@ -79,12 +79,38 @@
 (define (eda:port-width p) (car (cdr (cdr (cdr p)))))
 
 ; ── eda:wire ──
+;
+; IR layout: (eda:wire name width kind) — 4 elements.
+;   name  — symbol
+;   width — integer
+;   kind  — 'wire | 'logic | 'reg | 'bit
+;
+; Backward compat: the legacy 2-arg (make-eda:wire name width) still
+; works and defaults kind to 'wire. The legacy 3-elem layout
+; (eda:wire name width) — produced by older code — is detected by
+; eda:wire-kind below, which falls back to 'wire for 3-elem wires.
+;
+; Cycle 3 Phase 4 (Issue #436): added logic / reg / bit variants.
+(define (make-eda:wire3 name width kind)
+  (list 'eda:wire name width kind))
 (define (make-eda:wire name width)
-  (list 'eda:wire name width))
+  (make-eda:wire3 name width 'wire))
+(define (make-eda:logic name width)
+  (make-eda:wire3 name width 'logic))
+(define (make-eda:reg name width)
+  (make-eda:wire3 name width 'reg))
+(define (make-eda:bit name width)
+  (make-eda:wire3 name width 'bit))
 (define (eda:wire? x)
   (and (pair? x) (equal? (car x) 'eda:wire)))
 (define (eda:wire-name w) (car (cdr w)))
 (define (eda:wire-width w) (car (cdr (cdr w))))
+; Robust 3-or-4-elem accessor: if there's no 4th element, fall
+; back to 'wire (legacy 3-elem default).
+(define (eda:wire-kind w)
+  (if (= (length w) 4)
+      (car (cdr (cdr (cdr w))))
+      'wire))
 
 ; ── eda:assign ──
 (define (make-eda:assign lhs rhs)
@@ -262,7 +288,8 @@
     (else '())))
 
 (define (eda:display-wire w)
-  (display "wire ")
+  (display (eda:wire-kind w))
+  (display " ")
   (cond
     ((> (eda:wire-width w) 1)
      (display "[")
@@ -583,12 +610,19 @@
         (string-append dir " " (eda:name-str name)))))
 
 (define (eda:emit-wire w)
-  (let ((name (eda:wire-name w))
-        (width (eda:wire-width w)))
-    (if (> width 1)
-        (string-append "wire [" (number->string width) "-1:0] "
-                       (eda:name-str name) ";")
-        (string-append "wire " (eda:name-str name) ";"))))
+  (let ((N (eda:name-str (eda:wire-name w)))
+        (K (eda:name-str (eda:wire-kind w)))
+        (W (eda:wire-width w)))
+    (let ((H1 (string-append K " ")))
+      (let ((H2
+              (if (= W 1)
+                  H1
+                  (let ((D (string-append "[" (number->string W) "-1:0] ")))
+                    (string-append H1 D)))))
+        (let ((H3 (string-append H2 N)))
+          (string-append H3 ";"))))))
+
+
 
 (define (eda:emit-assign a)
   (string-append "assign " (eda:emit-expr (eda:assign-lhs a))
@@ -1227,7 +1261,9 @@
 
 (export
   ; IR constructors
-  make-eda:module make-eda:port make-eda:wire make-eda:assign
+  make-eda:module make-eda:port make-eda:wire make-eda:wire3
+  make-eda:logic make-eda:reg make-eda:bit
+  make-eda:assign
   make-eda:always make-eda:always3 make-eda:always-comb make-eda:always-ff
   make-eda:always-latch
   make-eda:signal make-eda:expr make-eda:sensitivity
@@ -1240,7 +1276,7 @@
   ; IR accessors
   eda:module-name eda:module-ports eda:module-body
   eda:port-name eda:port-direction eda:port-width
-  eda:wire-name eda:wire-width
+  eda:wire-name eda:wire-width eda:wire-kind
   eda:assign-lhs eda:assign-rhs
   eda:always-kind eda:always-sensitivity eda:always-body
   eda:signal-name eda:signal-width eda:signal-kind
