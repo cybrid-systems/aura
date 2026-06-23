@@ -128,31 +128,22 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         return make_int(n);
     });
-    add("list-ref", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("list-ref", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
+        auto* counter = ev.primitive_error_counter_ptr();
         if (a.size() < 2) {
-            auto __s = string_heap.size();
-            string_heap.push_back("list-ref: too few args");
-            auto __e = error_values.size();
-            error_values.push_back(make_string(__s));
-            return make_error(__e);
+            return make_primitive_error(string_heap, error_values, "list-ref: too few args", counter);
         }
         auto v = a[0];
         auto pos = static_cast<std::size_t>(as_int(a[1]));
         for (std::size_t i = 0; i < pos; ++i) {
             if (!is_pair(v)) {
-                auto __s = string_heap.size();
-                string_heap.push_back("list-ref: index out of bounds");
-                auto __e = error_values.size();
-                error_values.push_back(make_string(__s));
-                return make_error(__e);
+                return make_primitive_error(string_heap, error_values, "list-ref: index out of bounds",
+                                            counter);
             }
             auto idx = as_pair_idx(v);
             if (idx >= pairs.size()) {
-                auto __s = string_heap.size();
-                string_heap.push_back("list-ref: corrupted pair");
-                auto __e = error_values.size();
-                error_values.push_back(make_string(__s));
-                return make_error(__e);
+                return make_primitive_error(string_heap, error_values, "list-ref: corrupted pair",
+                                            counter);
             }
             v = pairs[idx].cdr;
         }

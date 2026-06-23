@@ -4,6 +4,7 @@
 module;
 #include <span>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -25,48 +26,39 @@ using namespace types;
 void register_vector_and_hash_primitives(
     PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
-    std::vector<std::vector<EvalValue>>& vector_heap) {
+    std::vector<std::vector<EvalValue>>& vector_heap,
+    std::atomic<std::uint64_t>* primitive_error_counter) {
     add("vector", [&vector_heap](std::span<const EvalValue> a) {
         std::vector<EvalValue> elems(a.begin(), a.end());
         auto idx = vector_heap.size();
         vector_heap.push_back(std::move(elems));
         return make_vector(idx);
     });
-    add("vector-ref", [&vector_heap, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("vector-ref", [&vector_heap, &string_heap, &error_values, primitive_error_counter](
+                          std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_vector(a[0])) {
-            auto __s = string_heap.size();
-            string_heap.push_back("vector-ref: not a vector");
-            auto __e = error_values.size();
-            error_values.push_back(make_string(__s));
-            return make_error(__e);
+            return make_primitive_error(string_heap, error_values, "vector-ref: not a vector",
+                                        primitive_error_counter);
         }
         auto idx = as_vector_idx(a[0]);
         auto pos = static_cast<std::size_t>(as_int(a[1]));
         if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
-            auto __s = string_heap.size();
-            string_heap.push_back("vector-ref: index out of bounds");
-            auto __e = error_values.size();
-            error_values.push_back(make_string(__s));
-            return make_error(__e);
+            return make_primitive_error(string_heap, error_values,
+                                        "vector-ref: index out of bounds", primitive_error_counter);
         }
         return vector_heap[idx][pos];
     });
-    add("vector-set!", [&vector_heap, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("vector-set!", [&vector_heap, &string_heap, &error_values, primitive_error_counter](
+                           std::span<const EvalValue> a) {
         if (a.size() < 3 || !is_vector(a[0])) {
-            auto __s = string_heap.size();
-            string_heap.push_back("vector-set!: not a vector");
-            auto __e = error_values.size();
-            error_values.push_back(make_string(__s));
-            return make_error(__e);
+            return make_primitive_error(string_heap, error_values, "vector-set!: not a vector",
+                                        primitive_error_counter);
         }
         auto idx = as_vector_idx(a[0]);
         auto pos = static_cast<std::size_t>(as_int(a[1]));
         if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
-            auto __s = string_heap.size();
-            string_heap.push_back("vector-set!: index out of bounds");
-            auto __e = error_values.size();
-            error_values.push_back(make_string(__s));
-            return make_error(__e);
+            return make_primitive_error(string_heap, error_values,
+                                        "vector-set!: index out of bounds", primitive_error_counter);
         }
         vector_heap[idx][pos] = a[2];
         return make_void();

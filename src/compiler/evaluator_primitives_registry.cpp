@@ -26,9 +26,11 @@ void Evaluator::register_all_primitives() {
     primitives_detail::register_type_and_char_primitives(
         prim_registrar());
 
+    auto* primitive_error_counter = primitive_error_counter_ptr();
+
     primitives_detail::register_pair_and_string_primitives(
         prim_registrar(),
-        pairs_, string_heap_, error_values_);
+        pairs_, string_heap_, error_values_, primitive_error_counter);
 
     primitives_detail::register_json_primitives(
         prim_registrar(),
@@ -40,11 +42,11 @@ void Evaluator::register_all_primitives() {
 
     primitives_detail::register_vector_and_hash_primitives(
         prim_registrar(),
-        pairs_, string_heap_, error_values_, vector_heap_);
+        pairs_, string_heap_, error_values_, vector_heap_, primitive_error_counter);
 
     primitives_detail::register_math_regex_and_arithmetic_primitives(
         prim_registrar(),
-        pairs_, string_heap_, error_values_);
+        pairs_, string_heap_, error_values_, primitive_error_counter);
 
     primitives_detail::register_reflect_and_type_primitives(
         prim_registrar(),

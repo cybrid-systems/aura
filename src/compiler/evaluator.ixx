@@ -472,13 +472,28 @@ export struct Closure {
 // to the same type: `std::expected<types::EvalValue, Diagnostic>`.
 export using EvalResult = aura::diag::Result<types::EvalValue>;
 
-// P2: single forward-decl hub for all primitives_detail::register_* TU entry points.
+// Issue #478: unified primitive error construction for evaluator_primitives_*.
 namespace primitives_detail {
+
+export inline types::EvalValue make_primitive_error(
+    std::pmr::vector<std::string>& string_heap, std::vector<types::EvalValue>& error_values,
+    std::string_view msg, std::atomic<std::uint64_t>* error_counter = nullptr) {
+    auto sidx = string_heap.size();
+    string_heap.emplace_back(msg);
+    auto eidx = error_values.size();
+    error_values.push_back(types::make_string(sidx));
+    if (error_counter)
+        error_counter->fetch_add(1, std::memory_order_relaxed);
+    return types::make_error(eidx);
+}
+
+// P2: single forward-decl hub for all primitives_detail::register_* TU entry points.
 void register_type_and_char_primitives(std::function<void(std::string, PrimFn)> add);
 void register_pair_and_string_primitives(std::function<void(std::string, PrimFn)> add,
                                          std::pmr::vector<Pair>& pairs,
                                          std::pmr::vector<std::string>& string_heap,
-                                         std::vector<EvalValue>& error_values);
+                                         std::vector<EvalValue>& error_values,
+                                         std::atomic<std::uint64_t>* primitive_error_counter);
 void register_json_primitives(std::function<void(std::string, PrimFn)> add,
                               std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap);
 void register_list_primitives(std::function<void(std::string, PrimFn)> add,
@@ -487,10 +502,12 @@ void register_list_primitives(std::function<void(std::string, PrimFn)> add,
 void register_vector_and_hash_primitives(
     std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
     std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
-    std::vector<std::vector<EvalValue>>& vector_heap);
+    std::vector<std::vector<EvalValue>>& vector_heap,
+    std::atomic<std::uint64_t>* primitive_error_counter);
 void register_math_regex_and_arithmetic_primitives(
     std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
-    std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values);
+    std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
+    std::atomic<std::uint64_t>* primitive_error_counter);
 void register_reflect_and_type_primitives(
     std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
     std::pmr::vector<std::string>& string_heap, std::vector<std::string>& keyword_table,
@@ -1979,6 +1996,10 @@ private:
     std::atomic<std::uint64_t> hygiene_violation_count_{0};
     std::atomic<std::uint64_t> macro_introduced_skipped_in_query_{0};
     std::atomic<std::uint64_t> total_query_calls_{0};
+    // Issue #478: primitive-layer error counter. Bumped by
+    // primitives_detail::make_primitive_error when a hotspot
+    // primitive returns an error_values_ entry.
+    std::atomic<std::uint64_t> primitive_error_count_{0};
     // Issue #456: mutation-impact observability. Bumped in
     // exit_mutation_boundary (success path) when the outermost
     // guard flushes. The deltas track: how many nodes were
@@ -2427,6 +2448,19 @@ public:
     }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #478: primitive error observability.
+    [[nodiscard]] std::uint64_t get_primitive_error_count() const noexcept {
+        return primitive_error_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_primitive_error_values_size() const noexcept {
+        return error_values_.size();
+    }
+    void bump_primitive_error_count() noexcept {
+        primitive_error_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::atomic<std::uint64_t>* primitive_error_counter_ptr() noexcept {
+        return &primitive_error_count_;
     }
     [[nodiscard]] const ast::FlatAST* tag_arity_index_workspace() const noexcept {
         return tag_arity_index_workspace_;

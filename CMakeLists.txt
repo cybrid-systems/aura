@@ -3,6 +3,7 @@ set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
     "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
 project(aura LANGUAGES CXX C)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraTest.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/AuraModules.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraIssueBundles.cmake)
 
 
@@ -88,41 +89,7 @@ endif()
 add_executable(aura)
 set_property(TARGET aura PROPERTY CXX_MODULE_STD ON)
 
-target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/mutation.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/macro_expansion.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_soa.ixx  # Issue #254: imported by lowering.ixx
-                            # (LoweringState holds an IRModuleV2 field
-                            # for the SoA dual-emit path). Must be in
-                            # the main aura target so the main
-                            # binary's lowering.ixx import resolves.
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/hardware_backend.ixx
-    src/compiler/arity.ixx
-    src/compiler/sv_ir.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx
-    src/repl/repl.cppm)
+aura_target_cxx_modules(aura WITH_REPL)
 
 target_sources(aura PRIVATE
     src/core/contract_handler.cpp
@@ -179,9 +146,14 @@ set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS 
  
 
 
-# GCC 16 has an ICE in ealias pass at -O2/-O3 on x86_64 for memcpy-heavy TU's
-# (cache_impl.cpp, ast.ixx). see nonnull_arg_p ICE in tree-ssa-structalias.
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16")
+# GCC 16 ICE workaround (Issue #475): ealias pass ICE on memcpy-heavy TUs at
+# -O2/-O3 (tree-ssa-structalias / nonnull_arg_p). Track:
+#   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122051
+# Remove when GCC >= fixed-version builds cleanly without -O0 overrides.
+option(AURA_ENABLE_GCC_ICE_WORKAROUND "Per-file -O0 for cache_impl.cpp + ast.ixx on GCC 16+" ON)
+if(AURA_ENABLE_GCC_ICE_WORKAROUND
+   AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+   AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16")
     set_source_files_properties(src/compiler/cache_impl.cpp PROPERTIES COMPILE_FLAGS "-O0")
     set_source_files_properties(src/core/ast.ixx PROPERTIES COMPILE_FLAGS "-O0")
 endif()
@@ -247,7 +219,6 @@ target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 add_library(aura-reflect STATIC
     src/reflect/cache_reflect.cpp
     src/compiler/ir_reflect_serialize.cpp
-    src/compiler/ir_reflect_serialize.cpp
     src/compiler/observability_json.cpp
 )
 target_include_directories(aura-reflect PUBLIC ${CMAKE_SOURCE_DIR}/src)
@@ -288,39 +259,7 @@ AT(step15_letrec_fact10
 # ── IR tests ─────────────────────────────────────────────────────
 add_executable(test_ir tests/test_ir.cpp)
 set_property(TARGET test_ir PROPERTY CXX_MODULE_STD ON)
-target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/mutation.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/macro_expansion.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_soa.ixx  # Issue #254: imported by lowering.ixx
-                            # (LoweringState holds an IRModuleV2 field
-                            # for the SoA dual-emit path). Needed in
-                            # test_ir too since it compiles lowering.ixx.
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/hardware_backend.ixx
-    src/compiler/arity.ixx
-    src/compiler/sv_ir.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
+aura_target_cxx_modules(test_ir)
 target_sources(test_ir PRIVATE
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
@@ -462,7 +401,6 @@ add_library(aura_test_objects STATIC
     src/core/contract_stub.cpp
     src/core/ast_impl.cpp
     src/core/contract_handler.cpp
-    src/core/contract_stub.cpp
     src/core/mutation_impl.cpp
     src/core/type_impl.cpp
     src/compiler/value_impl.cpp
@@ -501,37 +439,7 @@ set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
 # BMIs across targets yet) — this is the duplicate work Fix #2
 # (sccache) will eliminate. For now, modules in both places are
 # necessary to make aura_test_objects compile.
-target_sources(aura_test_objects PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/reflect/reflect.ixx
-    src/core/arena.ixx src/core/mutation.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/macro_expansion.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/hardware_backend.ixx
-    src/compiler/arity.ixx
-    src/compiler/sv_ir.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/ir_soa.ixx
-    src/compiler/type_concepts.ixx)
+aura_target_cxx_modules(aura_test_objects WITH_REFLECT WITH_TYPE_CONCEPTS)
 set_source_files_properties(src/reflect/reflect.ixx PROPERTIES COMPILE_FLAGS "-freflection")
 target_include_directories(aura_test_objects PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura_test_objects PUBLIC cxx_std_26)
@@ -603,37 +511,7 @@ set_property(TARGET test_gc_evaluator_integration PROPERTY CXX_MODULE_STD ON)
 # (line ~249). The launcher then symlinks the aura_test_objects
 # BMIs into this per-target dir, so the actual compilation
 # succeeds.
-target_sources(test_gc_evaluator_integration PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/reflect/reflect.ixx
-    src/core/arena.ixx src/core/mutation.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/macro_expansion.ixx
-    src/compiler/adt_runtime.ixx
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_soa.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/hardware_backend.ixx
-    src/compiler/arity.ixx
-    src/compiler/sv_ir.ixx
-    src/compiler/constant_folding.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx
-    src/compiler/type_concepts.ixx)
+aura_target_cxx_modules(test_gc_evaluator_integration WITH_REFLECT WITH_TYPE_CONCEPTS)
 set_source_files_properties(src/reflect/reflect.ixx PROPERTIES COMPILE_FLAGS "-freflection")
 target_include_directories(test_gc_evaluator_integration PRIVATE src)
 target_sources(test_gc_evaluator_integration PRIVATE
@@ -1188,6 +1066,8 @@ aura_add_issue_test(test_issue_443)
 aura_issue_test_link_llvm_jit(test_issue_443)
 aura_add_issue_test(test_issue_451)
 aura_issue_test_link_llvm_jit(test_issue_451)
+aura_add_issue_test(test_issue_478)
+aura_issue_test_link_llvm_jit(test_issue_478)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
