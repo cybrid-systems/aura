@@ -792,6 +792,29 @@ void register_mutate_primitives(
             ev.get_stale_ref_warned_count()));
     });
 
+    // Issue #439: (mutate:request-gc-safepoint
+    // [timeout-ms-int]) — request a GC safepoint.
+    // Returns 0 if the safepoint can proceed
+    // immediately (no outermost MutationBoundary
+    // guard is held), or 1 if the request is
+    // deferred (a guard is held; the caller should
+    // yield + retry).
+    //
+    // The optional 1st arg is a timeout (in ms) for
+    // a follow-up wait_for_safepoint call. P0: the
+    // timeout is recorded (bump wait counter + bump
+    // wait_total_ns) but the actual wait is a no-op
+    // (the follow-up wires the real implementation).
+    add("mutate:request-gc-safepoint", [&ev](const auto& a) -> EvalValue {
+        const int result = ev.request_gc_safepoint();
+        if (a.size() >= 1 && is_int(a[0])) {
+            const auto timeout_ms =
+                static_cast<std::uint64_t>(as_int(a[0]));
+            ev.wait_for_safepoint(timeout_ms);
+        }
+        return make_int(static_cast<std::int64_t>(result));
+    });
+
     // (mutate:rebind name new-code-string "summary") — Replace function definition by name
     // Unlike mutate:replace-value, this works by function name (no node ID needed).
     // Parses new code INTO the existing workspace FlatAST, then redirects the old

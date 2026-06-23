@@ -303,6 +303,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             attempts + violations));
     });
 
+    // Issue #439: query:gc-safepoint-stats. Returns
+    // the sum of the 3 GC safepoint + MutationBoundary
+    // coordination observability counters:
+    //   - gc_safepoint_requests_total_  (lifetime # of
+    //     safepoint requests)
+    //   - gc_safepoint_waits_total_  (lifetime # of
+    //     wait completions)
+    //   - gc_safepoint_deferred_total_  (lifetime # of
+    //     deferrals because a fiber held an outermost
+    //     MutationBoundary guard)
+    //
+    // P0: returns an integer = sum of the 3 counters.
+    // Follow-up: returns a 3-tuple
+    // (requests waits deferred) so the AI Agent can
+    // compute deferral_rate and wait_time_avg.
+    add("query:gc-safepoint-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t requests = ev->get_gc_safepoint_requests_total();
+        const std::uint64_t waits = ev->get_gc_safepoint_waits_total();
+        const std::uint64_t deferred = ev->get_gc_safepoint_deferred_total();
+        return make_int(static_cast<std::int64_t>(
+            requests + waits + deferred));
+    });
+
     // Issue #447: query:query-stats. Returns the sum
     // of the 3 tag+arity index counters (hits / misses /
     // rebuilds) as an integer. P0 ships the sum; the

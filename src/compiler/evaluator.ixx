@@ -1875,6 +1875,28 @@ private:
     // the (query:fiber-migration-stats) primitive.
     std::atomic<std::uint64_t> mutation_steal_attempts_{0};
     std::atomic<std::uint64_t> boundary_violation_count_{0};
+    // Issue #439: GC safepoint + MutationBoundary
+    // coordination observability. Bumped in
+    // Fiber::check_gc_safepoint / request_gc_safepoint /
+    // wait_for_safepoint.
+    //   gc_safepoint_requests_total_  (lifetime # of
+    //     safepoint requests)
+    //   gc_safepoint_waits_total_  (lifetime # of wait
+    //     completions)
+    //   gc_safepoint_deferred_total_  (lifetime # of
+    //     deferrals because a fiber held an outermost
+    //     MutationBoundary guard)
+    // All stats-only (relaxed-ordering). Exposed via
+    // the (query:gc-safepoint-stats) primitive.
+    std::atomic<std::uint64_t> gc_safepoint_requests_total_{0};
+    std::atomic<std::uint64_t> gc_safepoint_waits_total_{0};
+    std::atomic<std::uint64_t> gc_safepoint_deferred_total_{0};
+    // Issue #439: safepoint wait time (sum of all
+    // wait_for_safepoint call durations, in ns). P0
+    // returns 0; the follow-up adds the actual
+    // wait_for_safepoint implementation that
+    // records the duration.
+    std::atomic<std::uint64_t> gc_safepoint_wait_total_ns_{0};
     // Issue #391: stale-ref policy. Default 'warn' for
     // production AI agent loops (logs the violation but
     // does not block). Use 'strict' for safety-critical
@@ -2176,6 +2198,68 @@ public:
     }
     void bump_boundary_violation_count() noexcept {
         boundary_violation_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #439: GC safepoint observability accessors +
+    // bump helpers. Public so the
+    // (query:gc-safepoint-stats) primitive can read them,
+    // and the Fiber::check_gc_safepoint /
+    // request_gc_safepoint helpers (the follow-up) can
+    // bump them via the C-linkage shim.
+    [[nodiscard]] std::uint64_t get_gc_safepoint_requests_total() const noexcept {
+        return gc_safepoint_requests_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_gc_safepoint_waits_total() const noexcept {
+        return gc_safepoint_waits_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_gc_safepoint_deferred_total() const noexcept {
+        return gc_safepoint_deferred_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_gc_safepoint_wait_total_ns() const noexcept {
+        return gc_safepoint_wait_total_ns_.load(std::memory_order_relaxed);
+    }
+    void bump_gc_safepoint_request() noexcept {
+        gc_safepoint_requests_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_gc_safepoint_wait() noexcept {
+        gc_safepoint_waits_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_gc_safepoint_deferred() noexcept {
+        gc_safepoint_deferred_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_gc_safepoint_wait_ns(std::uint64_t delta_ns) noexcept {
+        gc_safepoint_wait_total_ns_.fetch_add(delta_ns, std::memory_order_relaxed);
+    }
+    // Issue #439: request_gc_safepoint() — the
+    // pre-requisite helper for safe GC coordination.
+    // P0 scope-limited ship: this method bumps the
+    // request counter; if an outermost MutationBoundary
+    // guard is held (per-thread depth > 0), it returns
+    // 1 (deferred) and bumps the deferred counter. If
+    // no guard is held, it returns 0 (immediate) and
+    // lets the caller proceed with the safepoint.
+    //
+    // The follow-up wires the call from
+    // Fiber::check_gc_safepoint (via the C-linkage
+    // shim) + the Scheduler::request_gc_safepoint
+    // entry point.
+    int request_gc_safepoint() noexcept {
+        bump_gc_safepoint_request();
+        if (mutation_boundary_depth() > 0) {
+            bump_gc_safepoint_deferred();
+            return 1;
+        }
+        return 0;
+    }
+    // Issue #439: wait_for_safepoint(timeout_ms) — the
+    // pre-requisite helper for safe GC wait. P0
+    // scope-limited ship: this method bumps the wait
+    // counter + records the timeout (in ns). The
+    // follow-up wires the call from
+    // Scheduler::wait_for_safepoint + the fiber yield
+    // path.
+    void wait_for_safepoint(std::uint64_t timeout_ms) noexcept {
+        bump_gc_safepoint_wait();
+        bump_gc_safepoint_wait_ns(timeout_ms * 1'000'000);
     }
     // Issue #438: transfer_mutation_stack_to_current_fiber
     // — the pre-requisite helper for safe fiber migration
