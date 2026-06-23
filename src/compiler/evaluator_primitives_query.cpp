@@ -136,6 +136,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             aura_jit_fallback_count_v_read()));
     });
 
+    // Issue #455: query:ir-marker-stats
+    // Returns a 3-tuple (user-instructions, macro-introduced-instructions,
+    // bool-literal-instructions) reflecting the SyntaxMarker distribution
+    // in the current IR cache. The counts are computed on demand from
+    // the active IRModule (if any) — the bridge has no per-instruction
+    // global counter yet (that's a follow-up). For the P0 ship we
+    // return a placeholder that documents the expected shape; the
+    // follow-up wires the real per-instruction walker.
+    add("query:ir-marker-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        // P0 placeholder: real implementation needs a global
+        // IRModule pointer. Returning (0 0 0) lets callers
+        // exercise the primitive path without lying about
+        // real numbers; the follow-up wires the real counts.
+        return make_int(0); // 0 = unpopulated; follow-up returns a list
+    });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);

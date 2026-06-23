@@ -1903,6 +1903,27 @@ private:
     bool try_inline_branch_aware(aura::ir::IRFunction& caller, aura::ir::BasicBlock& block,
                                  std::size_t call_pos, const aura::ir::IRFunction& callee,
                                  const aura::ir::IRInstruction& call_instr) {
+        // Issue #455: per-call-site hygiene check. The existing
+        // `respect_macro_hygiene_` check (in is_inlinable_*) looks
+        // at `callee.marker`. This adds a *cross-marker* guard:
+        // when respect_macro_hygiene_ is on (the default), do
+        // not inline across a macro-introduced boundary in
+        // EITHER direction:
+        //   1. call site is MacroIntroduced, callee is User
+        //      → don't bring user code into macro context
+        //   2. callee is MacroIntroduced, call site is User
+        //      → already covered by callee.marker check
+        //      (defense in depth: also re-check here)
+        // The instruction marker is 0=User, 1=MacroIntroduced.
+        if (respect_macro_hygiene_) {
+            if (call_instr.source_marker == 1 /*MacroIntroduced*/ &&
+                callee.marker != 1) {
+                return false; // case 1 above
+            }
+            if (callee.marker == 1 && call_instr.source_marker != 1) {
+                return false; // case 2 above
+            }
+        }
         // arg_count must match callee.arg_count.
         std::uint32_t arg_count = call_instr.operands[2];
         std::uint32_t arg_base = call_instr.operands[1];

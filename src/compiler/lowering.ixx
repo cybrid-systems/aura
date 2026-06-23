@@ -157,6 +157,15 @@ export struct LoweringState {
             auto tid = current_flat->type_id(current_source_id);
             if (tid != 0)
                 blk.instructions.back().type_id = tid;
+            // Issue #455: propagate the SyntaxMarker from the
+            // source AST node to the IR instruction. The
+            // inliner consults IRInstruction::source_marker at
+            // the call-site level (in addition to the existing
+            // per-function IRFunction::marker check from #246).
+            // 0=User, 1=MacroIntroduced, 2=BoolLiteral.
+            auto mk = current_flat->marker(current_source_id);
+            blk.instructions.back().source_marker =
+                static_cast<std::uint8_t>(mk);
         }
         // Issue #254: dual-emit to SoA (when enabled). Mirrors
         // the AoS push above. The SoA path uses
