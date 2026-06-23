@@ -282,6 +282,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 target_sources(test_ir PRIVATE
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
+    src/core/mutation_impl.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/thread_pool.cpp
@@ -568,6 +569,7 @@ target_sources(test_gc_evaluator_integration PUBLIC FILE_SET CXX_MODULES BASE_DI
 set_source_files_properties(src/reflect/reflect.ixx PROPERTIES COMPILE_FLAGS "-freflection")
 target_include_directories(test_gc_evaluator_integration PRIVATE src)
 target_sources(test_gc_evaluator_integration PRIVATE
+    src/core/mutation_impl.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/thread_pool.cpp
@@ -1058,6 +1060,8 @@ aura_add_issue_test(test_issue_436_phase4)
 aura_issue_test_link_llvm_jit(test_issue_436_phase4)
 aura_add_issue_test(test_issue_436_phase5)
 aura_issue_test_link_llvm_jit(test_issue_436_phase5)
+aura_add_issue_test(test_issue_436_phase6)
+aura_issue_test_link_llvm_jit(test_issue_436_phase6)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

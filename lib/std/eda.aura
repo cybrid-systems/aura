@@ -159,6 +159,60 @@
 (define (eda:always-sensitivity a) (car (cdr (cdr a))))
 (define (eda:always-body a) (car (cdr (cdr (cdr a)))))
 
+; Phase 6 minimal test: just eda:genvar
+(define (make-eda:genvar n i)
+  (list 'eda:genvar n i))
+(define (eda:genvar? x)
+  (and (pair? x) (equal? (car x) 'eda:genvar)))
+(define (eda:genvar-name g) (car (cdr g)))
+(define (eda:genvar-init g) (car (cdr (cdr g))))
+(define (eda:genvar-init-str g)
+  (number->string (eda:genvar-init g)))
+(define (eda:emit-genvar g)
+  (string-append "genvar " (eda:name-str (eda:genvar-name g))
+                 " = " (eda:genvar-init-str g) ";"))
+(define (eda:display-genvar g)
+  (display "genvar ") (display (eda:genvar-name g))
+  (display " = ") (display (eda:genvar-init g)))
+
+; Phase 6 generate-for
+(define (make-eda:generate-for n i m b)
+  (list 'eda:generate-for n i m b))
+(define (eda:generate-for-name g) (car (cdr g)))
+(define (eda:generate-for-init g) (car (cdr (cdr g))))
+(define (eda:generate-for-max g) (car (cdr (cdr (cdr g)))))
+(define (eda:generate-for-body g) (car (cdr (cdr (cdr (cdr g))))))
+
+; Phase 6 generate-if
+(define (make-eda:generate-if c t e)
+  (list 'eda:generate-if c t e))
+(define (eda:generate-if-cond g) (car (cdr g)))
+(define (eda:generate-if-then g) (car (cdr (cdr g))))
+(define (eda:generate-if-else g) (car (cdr (cdr (cdr g)))))
+
+; Phase 6 generate emitters
+(define (eda:join-gen-body-items items) "")
+
+(define (eda:emit-generate-for g)
+  (let ((gn (eda:name-str (eda:generate-for-name g)))
+        (gi (number->string (eda:generate-for-init g)))
+        (gm (number->string (eda:generate-for-max g))))
+    (let ((h1 (string-append "for (genvar " gn " = ")))
+      (let ((h2 (string-append h1 gi)))
+        (let ((h3 (string-append h2 "; ")))
+          (let ((h4 (string-append h3 gn)))
+            (let ((h5 (string-append h4 " < ")))
+              (let ((h6 (string-append h5 gm)))
+                (let ((h7 (string-append h6 "; ")))
+                  (let ((h8 (string-append h7 gn)))
+                    (let ((h9 (string-append h8 " = ")))
+                      (let ((h10 (string-append h9 gn)))
+                        (let ((h11 (string-append h10 " + 1) begin\n")))
+                          (let ((h12 (string-append h11 (eda:join-gen-body-items (eda:generate-for-body g)))))
+                            (string-append h12 "end")))))))))))))))
+
+(define (eda:emit-generate-if g) ""))
+
 ; ── eda:signal ──
 (define (make-eda:signal name width kind)
   (list 'eda:signal name width kind))
@@ -1507,12 +1561,14 @@
   make-eda:assert make-eda:assume make-eda:cover
   make-eda:typedef make-eda:enum make-eda:struct
   make-eda:package make-eda:import
+  make-eda:genvar make-eda:generate-for make-eda:generate-if
   ; IR predicates
   eda:module? eda:port? eda:wire? eda:assign?
   eda:always? eda:signal? eda:expr? eda:sensitivity?
   eda:property? eda:assertion?
   eda:typedef? eda:enum? eda:struct?
   eda:package? eda:import?
+  eda:genvar? eda:generate-for? eda:generate-if?
   ; IR accessors
   eda:module-name eda:module-ports eda:module-body
   eda:port-name eda:port-direction eda:port-width
