@@ -1852,6 +1852,25 @@ private:
     std::atomic<std::uint64_t> panic_checkpoint_transfer_count_{0};
     std::atomic<std::uint64_t> panic_checkpoint_lost_on_steal_{0};
     std::atomic<std::uint64_t> gc_blocked_by_pending_panic_{0};
+    // Issue #391: automatic staleness check observability.
+    //   stale_ref_blocked_count_  (Strict policy blocked
+    //     a mutate because a captured stable-ref was stale)
+    //   stale_ref_warned_count_  (Warn policy observed a
+    //     stale stable-ref but did not block)
+    // Both stats-only (relaxed-ordering). Exposed via
+    // (query:stale-ref-stats) primitive.
+    std::atomic<std::uint64_t> stale_ref_blocked_count_{0};
+    std::atomic<std::uint64_t> stale_ref_warned_count_{0};
+    // Issue #391: stale-ref policy. Default 'warn' for
+    // production AI agent loops (logs the violation but
+    // does not block). Use 'strict' for safety-critical
+    // contexts; 'disabled' for raw-NodeId paths.
+    enum class StaleRefPolicy : std::uint8_t {
+        Disabled = 0,
+        Warn     = 1,
+        Strict   = 2,
+    };
+    StaleRefPolicy stale_ref_policy_ = StaleRefPolicy::Warn;
     // Issue #448: mutation coordination observability. Bumped
     // by the scheduler / fiber hooks when:
     //   - a work-steal attempt is deferred or skipped
@@ -2102,6 +2121,52 @@ public:
     }
     void bump_gc_blocked_by_pending_panic() noexcept {
         gc_blocked_by_pending_panic_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #391: stale-ref policy + observability
+    // accessors + bump helpers. Public so the
+    // (mutate:set-stale-ref-policy) / (query:stale-ref-policy)
+    // / (query:stale-ref-stats) primitives can read+write
+    // them, and the core mutate primitives can check the
+    // policy + bump the counters.
+    [[nodiscard]] StaleRefPolicy get_stale_ref_policy() const noexcept {
+        return stale_ref_policy_;
+    }
+    void set_stale_ref_policy(StaleRefPolicy p) noexcept {
+        stale_ref_policy_ = p;
+    }
+    [[nodiscard]] std::uint64_t get_stale_ref_blocked_count() const noexcept {
+        return stale_ref_blocked_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_stale_ref_warned_count() const noexcept {
+        return stale_ref_warned_count_.load(std::memory_order_relaxed);
+    }
+    void bump_stale_ref_blocked_count() noexcept {
+        stale_ref_blocked_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_stale_ref_warned_count() noexcept {
+        stale_ref_warned_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #391: validate a (id . gen) stable-ref pair
+    // against the current workspace's generation. Returns
+    // true if the ref is still valid (in-range + gen
+    // match), false otherwise. Side-effect: bumps
+    // stale_ref_warned_count_ on invalid (regardless of
+    // policy — observability is unconditional). Returns
+    // (valid, is_stale). is_stale=true means the ref was
+    // captured but the AST has changed since.
+    [[nodiscard]] std::pair<bool, bool>
+    validate_stable_ref(aura::ast::NodeId id, std::uint16_t captured_gen) const noexcept {
+        if (!workspace_flat_) return {false, false};
+        const auto& flat = *workspace_flat_;
+        if (id >= flat.size()) {
+            // Out-of-range → invalid + stale.
+            return {false, true};
+        }
+        if (flat.generation() != captured_gen) {
+            // Gen mismatch → invalid + stale.
+            return {false, true};
+        }
+        return {true, false};
     }
     // Issue #458: query hygiene accessors + bump helpers.
     [[nodiscard]] std::uint64_t get_hygiene_violation_count() const noexcept {
