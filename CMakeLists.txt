@@ -150,6 +150,19 @@ target_sources(aura PRIVATE
     src/compiler/aura_jit_bridge.cpp
     src/compiler/spec_jit_controller.cpp
     src/compiler/messaging_bridge_impl.cpp
+    # Issue #439 / #451: fiber_bridge.cpp provides the
+    # C-linkage shims (aura_evaluator_*,
+    # aura_fiber_static_gc_pause_attributed_to_mutation)
+    # used by Fiber::check_gc_safepoint + the
+    # (query:orchestration-metrics) primitive. The
+    # module-side counterparts live in
+    # evaluator_fiber_mutation.cpp (compiled into
+    # the module's binary); the standalone .cpp
+    # version is needed because the module side
+    # can't be linked from a module TU directly
+    # (the link order prefers the module symbol,
+    # so both binaries get the module version).
+    src/compiler/fiber_bridge.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/thread_pool.cpp
@@ -459,6 +472,10 @@ add_library(aura_test_objects STATIC
     src/serve/worker.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
+    # Issue #439 / #451: C-linkage shims (non-module)
+    # for Fiber::check_gc_safepoint + the
+    # (query:orchestration-metrics) primitive.
+    src/compiler/fiber_bridge.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
@@ -1169,6 +1186,8 @@ aura_add_issue_test(test_issue_439)
 aura_issue_test_link_llvm_jit(test_issue_439)
 aura_add_issue_test(test_issue_443)
 aura_issue_test_link_llvm_jit(test_issue_443)
+aura_add_issue_test(test_issue_451)
+aura_issue_test_link_llvm_jit(test_issue_451)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
