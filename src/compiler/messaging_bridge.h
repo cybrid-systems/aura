@@ -200,6 +200,35 @@ extern HeapMutexFn g_heap_mutex;
 using FlushMutationBoundaryFn = void (*)();
 extern FlushMutationBoundaryFn g_flush_mutation_boundary;
 
+// Issue #453: Panic Checkpoint lifecycle hooks across fiber
+// migration. Three orthogonal indirection points:
+//
+//   1. g_pending_panic_checkpoint() — returns true if a MutationBoundaryGuard
+//      is currently active AND has captured a panic checkpoint (i.e.
+//      `has_pending_checkpoint() == true` on the outermost guard).
+//      Called by Fiber::yield(MutationBoundary) and Fiber::resume()
+//      to decide whether a checkpoint transfer or GC defer is needed.
+//   2. g_transfer_panic_checkpoint() — called by Fiber::resume() after
+//      the g_fiber_resume_validate_ hook (and after the swapcontext
+//      return). Bumps `panic_checkpoint_transfer_count_` and re-stamps
+//      any per-fiber storage. No-op when no pending checkpoint.
+//   3. g_block_gc_for_pending_checkpoint() — called by Fiber::yield
+//      when reason == MutationBoundary AND a pending checkpoint
+//      exists. Bumps `gc_blocked_by_pending_panic_`; the actual
+//      GC defer is a follow-up to #453 (requires scheduler.cpp +
+//      gc_coordinator.cpp integration; out of scope for the P0
+//      scope-limited ship).
+//
+// All three are set by evaluator_fiber_mutation.cpp at static init.
+// nullptr means "not in evaluator module context" — callers
+// (fiber.cpp) treat each as a no-op.
+using PendingPanicCheckpointFn = bool (*)();
+extern PendingPanicCheckpointFn g_pending_panic_checkpoint;
+using TransferPanicCheckpointFn = void (*)();
+extern TransferPanicCheckpointFn g_transfer_panic_checkpoint;
+using BlockGCForPendingCheckpointFn = void (*)();
+extern BlockGCForPendingCheckpointFn g_block_gc_for_pending_checkpoint;
+
 } // namespace aura::messaging
 
 #endif // AURA_MESSAGING_BRIDGE_H

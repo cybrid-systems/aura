@@ -295,4 +295,96 @@ void Evaluator::flush_mutation_boundary() {
     defuse_version_.fetch_add(0, std::memory_order_release);
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// Issue #453: Panic Checkpoint lifecycle hooks across fiber migration.
+//
+// Three bridge trampolines. All three are file-local and use the
+// thread-local `g_yield_hook_evaluator` (set by the outermost
+// active MutationBoundaryGuard via bind_yield_hook_evaluator) to
+// find the active evaluator. When no guard is active, the
+// evaluator is null and each trampoline is a no-op (the bridge
+// hooks are nullable; Fiber::yield/resume treat null as "skip").
+//
+// Why file-local + trampoline: matches the existing pattern from
+// #285 (g_flush_mutation_boundary). The bridge is non-module
+// (messaging_bridge.h is a plain header), so the static-init
+// registrar wires the function pointer at module load.
+namespace {
+
+// (1) g_pending_panic_checkpoint: true if the active outermost
+// guard captured a checkpoint. Reads thread-local evaluator
+// pointer (set by bind_yield_hook_evaluator). Returns false
+// when no guard is active.
+bool pending_panic_checkpoint_trampoline() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    return ev ? ev->pending_panic_checkpoint() : false;
+}
+
+// (2) g_transfer_panic_checkpoint: bumps transfer count and
+// re-stamps any per-fiber storage. Called by Fiber::resume()
+// after the swapcontext return. No-op when no pending checkpoint.
+void transfer_panic_checkpoint_trampoline() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev) return;
+    if (!ev->pending_panic_checkpoint()) return;
+    ev->bump_panic_checkpoint_transfer_count();
+    // The actual "re-stamp" is a follow-up to #453: a full
+    // implementation would walk the per-fiber storage and
+    // bump a generation counter so stale observers can detect
+    // the transfer. For the scope-limited P0 ship, the metric
+    // bump is enough to make the transfer observable.
+}
+
+// (3) g_block_gc_for_pending_checkpoint: bumps the GC-block
+// counter. Called by Fiber::yield(MutationBoundary) when a
+// pending checkpoint exists. The actual GC defer is a
+// follow-up (requires scheduler.cpp + gc_coordinator.cpp
+// integration; out of scope for the P0 ship).
+void block_gc_for_pending_checkpoint_trampoline() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev) return;
+    if (!ev->pending_panic_checkpoint()) return;
+    ev->bump_gc_blocked_by_pending_panic();
+}
+
+struct PanicCheckpointRegistrar {
+    PanicCheckpointRegistrar() {
+        aura::messaging::g_pending_panic_checkpoint =
+            &pending_panic_checkpoint_trampoline;
+        aura::messaging::g_transfer_panic_checkpoint =
+            &transfer_panic_checkpoint_trampoline;
+        aura::messaging::g_block_gc_for_pending_checkpoint =
+            &block_gc_for_pending_checkpoint_trampoline;
+    }
+};
+const PanicCheckpointRegistrar g_panic_checkpoint_registrar{};
+
+} // anonymous namespace
+
+// Evaluator::pending_panic_checkpoint: returns true if the
+// outermost active guard (tracked via thread-local
+// `g_yield_hook_evaluator`) has a captured checkpoint. Returns
+// false when no guard is active.
+bool Evaluator::pending_panic_checkpoint() const noexcept {
+    // The bridge trampoline checks the same path; this is
+    // the in-module entry point used by tests + future
+    // scheduler hooks. The thread-local slot is set by
+    // bind_yield_hook_evaluator (called by the guard ctor)
+    // and cleared by unbind_yield_hook_evaluator (dtor).
+    auto* active = Evaluator::yield_hook_evaluator();
+    if (active != this) return false; // not the active evaluator
+    // Walk the active mutation stack to find the outermost guard
+    // and check its checkpoint state. The stack stores
+    // YieldBoundaryCheckpoint records; the guard's
+    // `had_panic_checkpoint_` is on the RAII object itself,
+    // not on the stack record (the stack records are for
+    // unwind / yield metadata, not guard state). So we
+    // check via the bind hook: when bind_yield_hook_evaluator
+    // was called, a guard is active. The "has checkpoint"
+    // property is then inferred from `panic_safe_source_`
+    // (set by save_panic_checkpoint). When non-empty, the
+    // guard captured a checkpoint.
+    return !panic_safe_source_.empty();
+}
+
 } // namespace aura::compiler

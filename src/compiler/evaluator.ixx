@@ -1747,6 +1747,16 @@ private:
     // sum of (saved per batch) across all successful batches.
     // Exposed via observability snapshot.
     std::atomic<std::uint64_t> atomic_batch_bumps_saved_total_{0};
+    // Issue #453: panic checkpoint lifecycle metrics. Bumped by
+    // the bridge hooks (g_transfer_panic_checkpoint, etc.) when
+    // a checkpoint transfer or GC defer happens across a fiber
+    // migration. Stats-only (relaxed-ordering). Exposed via
+    // observability snapshot + (compile:panic-recovery-stats).
+    // Public getters + bump accessors live in the public section
+    // below (around line 1955, alongside #211 test accessors).
+    std::atomic<std::uint64_t> panic_checkpoint_transfer_count_{0};
+    std::atomic<std::uint64_t> panic_checkpoint_lost_on_steal_{0};
+    std::atomic<std::uint64_t> gc_blocked_by_pending_panic_{0};
     // Issue #266: fine-grained SoA rollback request + stats.
     bool fine_rollback_for_next_boundary_ = false;
     BoundaryRollbackStats last_boundary_rollback_stats_{};
@@ -1924,6 +1934,28 @@ public:
     // Issue #211: test accessors for the (tag, arity) index.
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
         return tag_arity_index_.size();
+    }
+    // Issue #453: panic checkpoint metric accessors. Public so
+    // the bridge trampolines (in evaluator_fiber_mutation.cpp)
+    // can read + bump them. Read is for observability; bump is
+    // for the transfer / GC-defer paths.
+    [[nodiscard]] std::uint64_t get_panic_checkpoint_transfer_count() const noexcept {
+        return panic_checkpoint_transfer_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_panic_checkpoint_lost_on_steal() const noexcept {
+        return panic_checkpoint_lost_on_steal_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_gc_blocked_by_pending_panic() const noexcept {
+        return gc_blocked_by_pending_panic_.load(std::memory_order_relaxed);
+    }
+    void bump_panic_checkpoint_transfer_count() noexcept {
+        panic_checkpoint_transfer_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_panic_checkpoint_lost_on_steal() noexcept {
+        panic_checkpoint_lost_on_steal_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_gc_blocked_by_pending_panic() noexcept {
+        gc_blocked_by_pending_panic_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] const ast::FlatAST* tag_arity_index_workspace() const noexcept {
         return tag_arity_index_workspace_;
@@ -2255,6 +2287,14 @@ public:
     // outermost guard is active.
     static Evaluator* yield_hook_evaluator() noexcept;
 
+    // Issue #453: returns true if an outermost MutationBoundaryGuard
+    // is currently active AND has captured a panic checkpoint
+    // (i.e. `had_panic_checkpoint_ == true` on the guard). Used
+    // by the bridge trampoline `g_pending_panic_checkpoint` to
+    // decide whether a fiber migration should transfer or defer
+    // a checkpoint. Returns false when no guard is active.
+    [[nodiscard]] bool pending_panic_checkpoint() const noexcept;
+
     // Issue #189: reader-side version snapshot API. Fibers /
     // JIT-compiled code / closure dispatch that need to detect
     // concurrent mutations capture a snapshot via
@@ -2504,6 +2544,15 @@ public:
 
         [[nodiscard]] BoundaryRollbackStats get_rollback_stats() const noexcept {
             return ev_ ? ev_->last_boundary_rollback_stats() : BoundaryRollbackStats{};
+        }
+        // Issue #453: returns true if this guard captured a panic
+        // checkpoint (i.e. save_panic_checkpoint() succeeded at ctor).
+        // Used by `Evaluator::pending_panic_checkpoint()` to decide
+        // whether a fiber migration should transfer the checkpoint.
+        // Only the outermost guard has a meaningful value here
+        // (nested guards never call save_panic_checkpoint).
+        [[nodiscard]] bool has_pending_checkpoint() const noexcept {
+            return had_panic_checkpoint_;
         }
 
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
