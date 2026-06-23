@@ -181,6 +181,18 @@ void Fiber::resume() {
     if (g_fiber_resume_validate_)
         g_fiber_resume_validate_();
 
+    // Issue #453: panic checkpoint transfer on fiber migration.
+    // After the resume returns, check whether a pending panic
+    // checkpoint exists on the resumed fiber's evaluator. If so,
+    // call the transfer trampoline (bumps the metric; re-stamps
+    // per-fiber storage as a follow-up). The trampoline is a
+    // no-op when the bridge hook is null.
+    if (aura::messaging::g_pending_panic_checkpoint &&
+        aura::messaging::g_pending_panic_checkpoint() &&
+        aura::messaging::g_transfer_panic_checkpoint) {
+        aura::messaging::g_transfer_panic_checkpoint();
+    }
+
     if (g_fiber_setter_)
         g_fiber_setter_(prev_fiber_void);
     g_current_fiber = prev;
@@ -252,6 +264,20 @@ void Fiber::yield(YieldReason reason) {
     if (reason == YieldReason::MutationBoundary &&
         aura::messaging::g_flush_mutation_boundary) {
         aura::messaging::g_flush_mutation_boundary();
+    }
+
+    // Issue #453: when yielding from a mutation boundary AND a
+    // pending panic checkpoint exists, bump the GC-block counter
+    // (the actual GC defer is a follow-up that requires scheduler
+    // integration). The check is cheap (one bridge call, one
+    // thread-local read) and the bump only happens when both
+    // conditions hold — a normal yield from a non-guard context
+    // is a no-op.
+    if (reason == YieldReason::MutationBoundary &&
+        aura::messaging::g_pending_panic_checkpoint &&
+        aura::messaging::g_pending_panic_checkpoint() &&
+        aura::messaging::g_block_gc_for_pending_checkpoint) {
+        aura::messaging::g_block_gc_for_pending_checkpoint();
     }
 
     if (g_fiber_yield_checkpoint_)

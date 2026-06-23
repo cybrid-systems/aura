@@ -29,6 +29,14 @@ aura::messaging::HeapMutexFn aura::messaging::g_heap_mutex;
 // Issue #285: flush hook implementation.
 aura::messaging::FlushMutationBoundaryFn
     aura::messaging::g_flush_mutation_boundary = nullptr;
+// Issue #453: panic checkpoint lifecycle hooks (defaults to
+// null; wired at static init by evaluator_fiber_mutation.cpp).
+aura::messaging::PendingPanicCheckpointFn
+    aura::messaging::g_pending_panic_checkpoint = nullptr;
+aura::messaging::TransferPanicCheckpointFn
+    aura::messaging::g_transfer_panic_checkpoint = nullptr;
+aura::messaging::BlockGCForPendingCheckpointFn
+    aura::messaging::g_block_gc_for_pending_checkpoint = nullptr;
 aura::messaging::MailboxCountFn aura::messaging::g_mailbox_count = nullptr;
 aura::messaging::SessionIdFn aura::messaging::g_session_id = nullptr;
 aura::messaging::SessionExistsFn aura::messaging::g_session_exists = nullptr;
