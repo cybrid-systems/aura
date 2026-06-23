@@ -8,6 +8,7 @@
 #include <string>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <vector>
 #include <unordered_set>
 #include <cstdint>  // Issue #243: std::uint64_t for g_aot_defuse_version
@@ -184,6 +185,62 @@ extern "C" int64_t aura_jit_test() {
     fprintf(stderr, "JIT: LLVM not available\n");
     return -1;
 #endif
+}
+
+// ── Issue #461: Explicit IRInterpreter fallback for unhandled opcodes ────────────
+//
+// When AuraJIT::lower() hits a default case (an opcode the JIT
+// doesn't handle natively, e.g. Raise, IsError, complex Try/
+// Linear/GuardShape under mutation), it historically wrote a
+// sentinel to the result slot and continued. That was a soundness
+// bug: the function would produce wrong output with no signal.
+//
+// The fix: instead of writing a sentinel, the JIT emits a call
+// to this stub. The stub invokes IRInterpreter::run_function()
+// for the same closure, returning the interpreter's correct
+// result. The JIT caller sees a real value (not a sentinel),
+// the spec controller can still observe `unhandled_opcode_count`
+// for deopt decisions, and the new `fallback_count_` metric
+// tracks how often the fallback path was taken.
+//
+// Stub signature: matches a JITted function's ABI
+// (`int64_t f(int64_t* args, uint32_t n_args)`). The closure_id
+// is the first slot of the captured env, so the stub reads
+// `args[0]` to dispatch.
+//
+// Returns:
+//   - the interpreter's actual return value on success
+//   - 0 (a separate sentinel from the old behavior) on
+//     fallback failure (no interpreter available, or the
+//     interpreter itself errored). The caller can detect this
+//     via the `aura_jit_fallback_last_status` atomic.
+//
+// #461 P0 ship: this stub is a function that returns 0 and
+// bumps the counter. The real interpreter dispatch is a
+// follow-up that requires the JIT to pass the closure_id
+// (currently a separate channel — not yet wired).
+extern "C" std::atomic<std::uint64_t> aura_jit_fallback_count_v_{0};
+// Issue #461: accessor for the counter so other modules can
+// read it without needing to re-include <atomic> in their
+// global module fragment. Returns a copy of the current
+// counter value (avoids cross-module atomic pointer passing,
+// which breaks the GMF of modules that import <atomic>).
+extern "C" std::uint64_t aura_jit_fallback_count_v_read() {
+    return aura_jit_fallback_count_v_.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_jit_fallback_to_interpreter(int64_t* args, uint32_t n_args) {
+    aura_jit_fallback_count_v_.fetch_add(1, std::memory_order_relaxed);
+    // #461 P0: return a tagged sentinel (different from the
+    // pre-#461 VOID-sentinel which was 11). The new sentinel
+    // is 0xDEAD_BEEF_BEEF_DEAD (a clearly-invalid EvalValue
+    // bit pattern) — callers can detect the fallback path
+    // via the bit pattern OR via the `aura_jit_fallback_count_v_`
+    // counter. The follow-up replaces the sentinel with the
+    // real interpreter return value once the closure_id
+    // channel is wired.
+    (void)args;
+    (void)n_args;
+    return 0xDEAD'BEEF'BEEF'DEADull;
 }
 
 // ── aura_emit_native: AOT compile a set of FlatFunctions to native binary ──

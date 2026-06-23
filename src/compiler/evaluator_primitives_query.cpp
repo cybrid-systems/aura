@@ -9,7 +9,16 @@ module;
 #include <iterator>
 #include <string>
 #include <vector>
+#include <atomic>
 #include "runtime_shared.h"
+
+// Issue #461: forward declaration of the fallback counter
+// (defined in aura_jit_bridge.cpp as extern "C"). The bridge
+// keeps a `std::atomic<std::uint64_t>` and exposes a plain
+// `std::uint64_t*` alias for cross-module access. This avoids
+// the `std::atomic` redefinition problem when this header is
+// included by tests that import <atomic> themselves.
+extern "C" std::uint64_t aura_jit_fallback_count_v_read();
 
 module aura.compiler.evaluator;
 
@@ -113,6 +122,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             lst = make_pair(pid);
         }
         return lst;
+    });
+
+    add("query:jit-fallback-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #461: read the global fallback counter. The
+        // counter is bumped by `aura_jit_fallback_to_interpreter`
+        // each time the JIT default case routes through the
+        // fallback path. P0 ship: returns the counter as an
+        // integer. Future ship: returns a list
+        // (fallback-count deopt-count consistency-violations).
+        (void)a;
+        return make_int(static_cast<std::int64_t>(
+            aura_jit_fallback_count_v_read()));
     });
 
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {

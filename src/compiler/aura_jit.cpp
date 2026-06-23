@@ -1722,6 +1722,17 @@ struct LLVMBuilder {
                 }
                 if (inst.ops[0] < fn.local_count)
                     store(inst.ops[0], c64(11)); // VOID sentinel
+                // Issue #461: bump the fallback counter even on
+                // the P0 default path. The follow-up replaces
+                // the sentinel write with an LLVM call to
+                // `aura_jit_fallback_to_interpreter` (requires
+                // module-level function declaration); for now
+                // we count the route and keep the existing
+                // sentinel so the metric is observable but the
+                // behavior matches the pre-#461 default.
+                if (metrics) {
+                    metrics->fallback_count.fetch_add(1, std::memory_order_relaxed);
+                }
                 // Rate-limited stderr log: log the first occurrence
                 // per JIT instance (one-time warning is enough —
                 // the counter tracks ongoing volume).
