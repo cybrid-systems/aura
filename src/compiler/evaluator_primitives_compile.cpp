@@ -706,6 +706,17 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             ev.get_partial_relower_count()));
     });
 
+    // Issue #459: (query:atomic-batch-stats) — return
+    // the current nested-atomic-batch observability counters.
+    // P0 ship: returns the atomic_batch_steal_violation_
+    // count as an int. Follow-up: returns a 2-tuple
+    // (steal-violations gc-bumps-lost).
+    add("query:atomic-batch-stats", [&ev](const auto& a) -> EvalValue {
+        (void)a;
+        return make_int(static_cast<std::int64_t>(
+            ev.get_atomic_batch_steal_violation()));
+    });
+
     // Issue #240: (compile:mark-narrowing-dirty! node-id
     // [set-or-clear]) — Set or clear the per-node
     // kOccurrenceDirty bit in the workspace FlatAST's
