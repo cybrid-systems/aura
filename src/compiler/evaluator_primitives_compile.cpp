@@ -824,6 +824,76 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(ws->verify_dirty(node_id)));
     });
 
+    // Issue #290: helper for the macro_dirty_ primitives.
+    // The macro_dirty_ column lives on the flat where
+    // macro_expand_all / clone_macro_body actually run — that
+    // is the per-eval current flat (current_flat_), NOT the
+    // persistent workspace_flat_. The workspace holds the
+    // pre-expansion source; the eval flat holds the cloned
+    // result. Re-resolve each call so we see the most recent
+    // eval flat (the lambda captures the helper by value, so
+    // the helper itself is fine, but it forwards to live
+    // ev.current_flat() / ev.workspace_flat() at every call).
+    auto pick_macro_flat = [&ev]() {
+        return ev.current_flat() ? ev.current_flat() : ev.workspace_flat();
+    };
+
+    // Issue #290: (compile:macro-dirty? node-id) — query the
+    // macro_dirty_ bitmask for a node. Returns the bitmask
+    // (0 if not set or no bits). #f on bad args.
+    // Bit 0 = kMacroExpansion (cloned by clone_macro_body),
+    // bit 1 = kMacroSelfModify (touched by a self-evolution
+    // step).
+    add("compile:macro-dirty?", [&ev, pick_macro_flat](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto* ws = pick_macro_flat();
+        if (!ws)
+            return make_bool(false);
+        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (node_id >= ws->size())
+            return make_bool(false);
+        return make_int(static_cast<std::int64_t>(ws->macro_dirty(node_id)));
+    });
+
+    // Issue #290: (compile:macro-dirty-count) — number of
+    // nodes with any macro_dirty_ bit set on the eval flat
+    // where macro expansion actually ran. #f on no flat.
+    add("compile:macro-dirty-count", [&ev, pick_macro_flat](const auto&) -> EvalValue {
+        auto* ws = pick_macro_flat();
+        if (!ws)
+            return make_bool(false);
+        return make_int(static_cast<std::int64_t>(ws->macro_dirty_count()));
+    });
+
+    // Issue #290: (compile:clear-macro-dirty!) — clear all
+    // macro_dirty_ bits on the eval flat. Useful after a
+    // self-evolution loop has fully reprocessed the affected
+    // subtrees and wants to start fresh on the next cycle.
+    // Returns #t on success, #f if no flat.
+    add("compile:clear-macro-dirty!", [&ev, pick_macro_flat](const auto&) -> EvalValue {
+        auto* ws = pick_macro_flat();
+        if (!ws)
+            return make_bool(false);
+        ws->clear_macro_dirty_all();
+        return make_bool(true);
+    });
+
+    // Issue #290: (compile:macro-dirty-stats) — return the
+    // running per-reason counters as a single integer (sum
+    // of kMacroExpansion + kMacroSelfModify newly-set
+    // totals). P0 ship mirrors (query:verify-dirty-stats).
+    // Follow-up: return a pair so callers can distinguish
+    // the two reasons without separate primitives.
+    add("compile:macro-dirty-stats", [&ev, pick_macro_flat](const auto&) -> EvalValue {
+        auto* ws = pick_macro_flat();
+        if (!ws)
+            return make_bool(false);
+        auto sum = ws->macro_expansion_dirty_total() +
+                   ws->macro_self_modify_dirty_total();
+        return make_int(static_cast<std::int64_t>(sum));
+    });
+
     // Issue #469: (verify:parse-coverage-feedback text-string)
     // — parse a text blob describing coverage holes from an
     // external SV simulator and mark the affected AST nodes
