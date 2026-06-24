@@ -12,7 +12,6 @@
 using aura::test::g_passed;
 using aura::test::g_failed;
 
-import aura.core.arena;
 import aura.core.ast;
 
 namespace aura_issue_269_detail {
@@ -21,10 +20,8 @@ namespace aura_issue_269_detail {
 bool test_flat_ast_v2_production_roundtrip() {
     PRINTLN("\n--- Test 1: production FlatAST v2 side-data roundtrip ---");
 
-    aura::ast::ASTArena arena;
-    auto alloc = arena.allocator();
-    aura::ast::StringPool pool(alloc);
-    aura::ast::FlatAST flat(alloc);
+    aura::ast::StringPool pool;
+    aura::ast::FlatAST flat;
 
     auto lit = flat.add_literal(42);
     auto var = flat.add_variable(pool.intern("q"));
@@ -192,6 +189,7 @@ bool test_flat_ast_v1_forward_compat() {
     write_col_u32(1); // col
     write_col_u8(0); // marker
     write_col_u8(0); // dirty
+    write_col_u8(0); // verify_dirty (Issue #437; absent in pre-#437 v1 fixtures)
     write_col_u32(0); // type_id
     write_col_u8(0); // error_kind
     write_col_i64(0); // value_cache
