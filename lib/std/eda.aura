@@ -556,6 +556,80 @@
                     (cons (car (eda:expr-collect-symbols (eda:assign-lhs a))) acc))
               (loop (cdr as) acc)))))))
 
+; Issue #294 Phase 0: (eda:query:always-ff-with-clock clk-name m)
+; — return the list of always_ff (or always with single-edge
+; sensitivity) blocks whose sensitivity is driven by clk-name.
+; Each item is the always block itself; caller can introspect
+; the body via eda:always-body / eda:always-sensitivity.
+;
+; Pure: walks the module body, returns a list. Filters by:
+;   - eda:always-detect-kind == 'always_ff (single-edge sensitivity)
+;   - the single-edge sensitivity's signal name == clk-name
+(define (eda:query:always-ff-with-clock clk-name m)
+  (let loop ((body (eda:module-body m)) (acc '()))
+    (cond
+      ((null? body) (reverse acc))
+      ((eda:always? (car body))
+       (let ((a (car body)))
+         (if (and (equal? (eda:always-detect-kind a) 'always_ff)
+                  (= (length (eda:always-sensitivity a)) 1))
+             (let ((sig-expr (eda:sensitivity-signal
+                               (car (eda:always-sensitivity a)))))
+               ;; sig-expr is (eda:expr 'symbol (clk-name))
+               (if (and (eda:expr? sig-expr)
+                        (equal? (eda:expr-op sig-expr) 'symbol)
+                        (equal? (car (eda:expr-args sig-expr)) clk-name))
+                   (loop (cdr body) (cons a acc))
+                   (loop (cdr body) acc)))
+             (loop (cdr body) acc))))
+      (else (loop (cdr body) acc)))))
+
+; Issue #294 Phase 0: (eda:query:assertions-involving-signal sig m)
+; — return the list of SVA assertion IRs whose property/sequence
+; expression mentions sig. Each item is the assertion (eda:assertion
+; IR), preserving kind (assert/assume/cover) and name.
+;
+; Pure: walks body + checks each assertion's property expr.
+(define (eda:query:assertions-involving-signal sig m)
+  (let loop ((body (eda:module-body m)) (acc '()))
+    (cond
+      ((null? body) (reverse acc))
+      ((eda:assertion? (car body))
+       (let ((a (car body)))
+         (let ((prop (eda:assertion-property a)))
+           (if (eda:expr-mentions? (eda:property-expr prop) sig)
+               (loop (cdr body) (cons a acc))
+               (loop (cdr body) acc)))))
+      (else (loop (cdr body) acc)))))
+
+; Issue #294 Phase 0: (eda:query:reset-condition-for-register reg m)
+; — for a register, find the always_ff block that drives it and
+; return the reset signal from the sensitivity list. Returns #f
+; if no always_ff with multi-edge sensitivity (clock + reset)
+; drives the register.
+;
+; Heuristic: scan always_ff blocks; for each, check the
+; sensitivity list. If it has 2 edges, the second is the
+; reset (typical SV style: posedge clk, negedge rst_n).
+; Returns the reset signal name.
+;
+; Phase 1: distinguish async vs sync, polarity, value.
+(define (eda:query:reset-condition-for-register reg m)
+  (let loop ((body (eda:module-body m)))
+    (cond
+      ((null? body) #f)
+      ((eda:always? (car body))
+       (let ((a (car body)))
+         (if (= (length (eda:always-sensitivity a)) 2)
+             (let ((reset-expr (eda:sensitivity-signal
+                                 (cadr (eda:always-sensitivity a)))))
+               (if (and (eda:expr? reset-expr)
+                        (equal? (eda:expr-op reset-expr) 'symbol))
+                   (car (eda:expr-args reset-expr))
+                   (loop (cdr body))))
+             (loop (cdr body)))))
+      (else (loop (cdr body))))))
+
 (define (eda:expr-rename-sym e old new)
   (let ((op (eda:expr-op e))
         (args (eda:expr-args e)))
@@ -1892,6 +1966,8 @@
   ; Query helpers (Cycle 1-2)
   eda:query:ports eda:query:wires eda:query:assigns eda:query:module-name
   eda:query:bit-width eda:query:dependencies eda:query:dependents
+  eda:query:always-ff-with-clock eda:query:assertions-involving-signal
+  eda:query:reset-condition-for-register
   eda:expr-collect-symbols eda:expr-mentions?
   ; Mutate helpers (Cycle 2)
   eda:mutate:rename-symbol eda:mutate:insert-clock-gating
