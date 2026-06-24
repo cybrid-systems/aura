@@ -1,40 +1,48 @@
 // @category: integration
 // @reason: uses CompilerService to verify query:pattern nested-arity / Kleene opt-in
 //
-// test_issue_289.cpp — Issue #289 acceptance tests.
+// test_issue_289.cpp — Issue #289 / #481 acceptance tests.
 //
 // #289 is "query:pattern: nested-arity ellipsis (Kleene-star `...`)
-// with capture variables and provenance markers". Ship 1 (this file)
-// covers only the nested-arity / Kleene keyword + the two pre-existing
-// 27-test-bundle regression sites that flipped under Kleene-default.
+// with capture variables and provenance markers". Ship 1 (`0755c3cd`)
+// added the three features as opt-in. #481 (this file's update) flips
+// the default to Kleene and adds the `:strict-arity` keyword as the
+// discoverable opt-OUT for callers who need the pre-#289 contract.
 //
-// Design (ship-as-is, scope-limited):
-//   - Default `...` in query:pattern is the pre-#289 single-subtree
-//     wildcard. ZERO behavior change for callers that don't pass
-//     the new keyword.
-//   - `:nested-arity #t` opts in to Kleene-star (`...` consumes 0..N
-//     consecutive children). The opt-in keeps the existing
-//     test_issue_140/267/271/272 contract and the existing
-//     query↔mutate consistency story intact (mutate:replace-pattern
-//     still uses the strict matcher, and making it Kleene is a
-//     separate follow-up).
+// Design (post-#481):
+//   - Default `...` in query:pattern is now Kleene-star
+//     (`...` consumes 0..N consecutive children). This is the
+//     more permissive and intuitive semantics.
+//   - `:nested-arity #f` or `:strict-arity #t` opts back into the
+//     pre-#289 strict single-subtree wildcard semantics.
+//     `:strict-arity` is a discoverable alias for `:nested-arity #f`.
 //   - `:with-markers #t` opts in to the provenance-rich result
 //     format — each match is a (NodeId . marker-int) pair instead
-//     of a bare NodeId.
+//     of a bare NodeId. (Unchanged from #289.)
 //   - Capture variable `?x` / `?1` / `?callee` — first occurrence
 //     binds, later occurrences must match the same NodeId. Always
 //     available (no keyword gate). Distinct from `...` (different
 //     first char).
 //
-// ACs (issue body):
-//   AC #1: nested-arity opt-in enables 0..N `...` consumption
-//   AC #2: default (no keyword) preserves pre-#289 behavior
-//   AC #3: `:nested-arity #f` explicitly restores strict
+// NOTE: mutate:replace-pattern still uses its own strict matcher
+// (#482 will share the matcher and align both primitives). Until
+// that lands, the query↔mutate semantics differ in default Kleene
+// mode — pass `:strict-arity #t` to query:pattern if you need to
+// query the same node set mutate:replace-pattern will see.
+//
+// ACs (post-#481):
+//   AC #1: default is now Kleene (`...` consumes 0..N); opt-out via
+//          `:nested-arity #f` or `:strict-arity #t` restores strict
+//   AC #2: `:strict-arity #t` gives the pre-#289 strict contract
+//          (verifies the alias keyword works)
+//   AC #3: `:nested-arity #f` and `:strict-arity #t` are equivalent
 //   AC #4: capture `?x` binds on first occurrence, matches on later
 //   AC #5: `:with-markers #t` adds marker info to each result
-//   AC #6: combined `:nested-arity #t :with-markers #t`
-//   AC #7: existing test_issue_140 / 267 / 271 expectations hold
-//          (the 3 sites the Kleene-default experiment broke)
+//   AC #6: combined `:nested-arity #t :with-markers #t` (default Kleene)
+//   AC #7: pre-#289 test contracts still pass when callers opt into
+//          strict mode via `:strict-arity #t`
+//   AC #8: bare `:nested-arity` (no value) defaults to #t
+//   AC #9: pattern root `...` matches any node
 
 #include <iostream>
 #include <print>
@@ -84,6 +92,14 @@ static bool set_source(aura::compiler::CompilerService& cs, std::string_view src
 }
 
 // count pattern matches via (length (query:pattern ...))
+//
+// `nested = false` (the default for this helper) now opts OUT of
+// the post-#481 Kleene default — i.e. passes `:nested-arity #f`
+// explicitly so the helper returns pre-#289 strict-mode counts.
+// `nested = true` passes `:nested-arity #t` (now equivalent to the
+// default). `with_markers = true` adds the provenance pair wrapper.
+// Use `count_default(cs, pat)` to test the actual current default
+// without any keyword override.
 static int64_t count(aura::compiler::CompilerService& cs, std::string_view pat,
                      bool nested = false, bool with_markers = false) {
     std::string code = "(length (query:pattern \"";
@@ -93,78 +109,119 @@ static int64_t count(aura::compiler::CompilerService& cs, std::string_view pat,
         code += c;
     }
     code += "\"";
-    if (nested)
-        code += " :nested-arity #t";
+    if (!nested)
+        code += " :nested-arity #f";
     if (with_markers)
         code += " :with-markers #t";
     code += "))";
     return run_int(cs, code);
 }
 
-// ── AC #1: nested-arity opt-in enables 0..N `...` consumption ──
+// count_default: count matches using whatever the current primitive
+// default is. Issue #481 flipped the default to Kleene; this helper
+// deliberately omits any `:nested-arity` keyword so the test exercises
+// the default code path.
+static int64_t count_default(aura::compiler::CompilerService& cs,
+                             std::string_view pat) {
+    std::string code = "(length (query:pattern \"";
+    for (char c : pat) {
+        if (c == '\\' || c == '"')
+            code += '\\';
+        code += c;
+    }
+    code += "\"))";
+    return run_int(cs, code);
+}
+
+// ── AC #1: nested-arity is Kleene by default (#481 flip) ──
 bool test_nested_arity_zero_consumption() {
-    std::println("\n--- AC1: nested-arity lets `...` match 0 children ---");
+    std::println("\n--- AC1: default is Kleene (0..N consumption) ---");
     aura::compiler::CompilerService cs;
     if (!set_source(cs, "(begin (+ 1 2) (+ 1) (+ 1 3 4))")) {
         ++g_failed;
         return false;
     }
-    // Default (strict): pattern arity must match ws arity. `(+ ...)`
-    // is a 2-child Call; only `(+ 1)` is a 2-child `+` call here. So 1.
-    int64_t def = count(cs, "(+ ...)");
-    CHECK(def == 1, "default (+ ...) matches 1 (only (+ 1) is 2-child) (got " +
+    // Issue #481: default is now Kleene. `(+ ...)` is a 2-child Call;
+    // `...` consumes 0+ tail. So all three `+` calls (2-, 3-, 4-child)
+    // match. 3 matches.
+    int64_t def = count_default(cs, "(+ ...)");
+    CHECK(def == 3, "default Kleene (+ ...) matches 3 (0+ tail, no arity gate) (got " +
                        std::to_string(def) + ")");
 
-    // Kleene (+ ...) consumes 0+ after the `+`. Kleene lets `...`
-    // consume 0+, so the 3-child (+ 1 2) and 4-child (+ 1 3 4) calls
-    // ALSO match. Net: 3 matches.
+    // Explicit `:nested-arity #t` is the same as default since #481.
     int64_t kle = count(cs, "(+ ...)", /*nested=*/true);
-    CHECK(kle == 3, "Kleene (+ ...) matches 3 (0+ tail, ignores arity gate) (got " +
+    CHECK(kle == 3, "explicit :nested-arity #t also = 3 (got " +
                        std::to_string(kle) + ")");
 
-    // The discriminative case: (+ 1 ...) — pattern is 3-child
-    // Call(+, 1, ...). Default (strict) needs ws to also be 3-child.
-    // So only (+ 1 2) qualifies. 1 match.
-    int64_t def_strict_3 = count(cs, "(+ 1 ...)");
-    CHECK(def_strict_3 == 1, "default (+ 1 ...) matches 1 (only (+ 1 2) is 3-child) (got " +
+    // The discriminative case: (+ 1 ...) — pattern is 3-child Call
+    // root with `...` tail. Default (Kleene) lets `...` consume
+    // 0+, so all three `+` calls match. 3 matches.
+    int64_t def_strict_3 = count_default(cs, "(+ 1 ...)");
+    CHECK(def_strict_3 == 3, "default Kleene (+ 1 ...) matches 3 (0+, 1+, 2+ tail) (got " +
                                   std::to_string(def_strict_3) + ")");
 
-    // Kleene: `...` consumes 0+ after `+ 1`. So (+ 1 2) [1 child],
-    // (+ 1) [0 children], and (+ 1 3 4) [2 children] all match.
-    int64_t kle_3 = count(cs, "(+ 1 ...)", /*nested=*/true);
-    CHECK(kle_3 == 3, "Kleene (+ 1 ...) matches 3 (0+, 1+, 2+ tail) (got " +
-                          std::to_string(kle_3) + ")");
+    // Strict opt-out (` :nested-arity #f `): `...` consumes exactly 1.
+    // Pattern arity must match ws arity. Only `(+ 1 2)` qualifies.
+    int64_t strict_3 = count(cs, "(+ 1 ...)", /*nested=*/false);
+    CHECK(strict_3 == 1, ":nested-arity #f (+ 1 ...) matches 1 (only (+ 1 2) is 3-child) (got " +
+                            std::to_string(strict_3) + ")");
     return true;
 }
 
-// ── AC #2: default (no keyword) preserves pre-#289 behavior ──
+// ── AC #2: :strict-arity #t restores pre-#289 contract ──
 bool test_default_strict_is_pre_289() {
-    std::println("\n--- AC2: default is pre-#289 strict single-subtree wildcard ---");
+    std::println("\n--- AC2: :strict-arity #t restores pre-#289 strict contract ---");
     aura::compiler::CompilerService cs;
     if (!set_source(cs, "(begin (+ 1 2) (+ 1 x) (+ 1))")) {
         ++g_failed;
         return false;
     }
-    // The exact pre-#289 expectation from test_issue_140 test 1.2:
-    //   "(+ 1 ...)" should match 2 (only the 3-child ones).
-    int64_t got = count(cs, "(+ 1 ...)");
-    CHECK(got == 2, "default '(+ 1 ...)' matches 2 (pre-#289 contract, got " +
+    // Issue #481: default is Kleene. To get the pre-#289 strict
+    // semantics, callers pass `:strict-arity #t` (discoverable
+    // alias) or `:nested-arity #f`. The pre-#289 test_issue_140
+    // expectation was: "(+ 1 ...)" matches 2 (only 3-child ones).
+    auto strict_via_alias = cs.eval(
+        "(length (query:pattern \"(+ 1 ...)\" :strict-arity #t))");
+    int64_t got = (strict_via_alias && aura::compiler::types::is_int(*strict_via_alias))
+                      ? aura::compiler::types::as_int(*strict_via_alias)
+                      : -1;
+    CHECK(got == 2, ":strict-arity #t '(+ 1 ...)' matches 2 (pre-#289 contract, got " +
                        std::to_string(got) + ")");
+
+    // Bare `:strict-arity` (no value) defaults to #t (idiomatic Lisp).
+    auto bare_alias = cs.eval(
+        "(length (query:pattern \"(+ 1 ...)\" :strict-arity))");
+    int64_t got_bare = (bare_alias && aura::compiler::types::is_int(*bare_alias))
+                           ? aura::compiler::types::as_int(*bare_alias)
+                           : -1;
+    CHECK(got_bare == 2, "bare :strict-arity keyword = 2 (got " +
+                            std::to_string(got_bare) + ")");
     return true;
 }
 
-// ── AC #3: :nested-arity #f explicitly restores strict ──
+// ── AC #3: :nested-arity #f === :strict-arity #t === pre-#289 strict ──
 bool test_nested_arity_false_is_strict() {
-    std::println("\n--- AC3: :nested-arity #f === default strict ---");
+    std::println("\n--- AC3: :nested-arity #f === :strict-arity #t === pre-#289 strict ---");
     aura::compiler::CompilerService cs;
     if (!set_source(cs, "(begin (+ 1 2) (+ 1 x) (+ 1))")) {
         ++g_failed;
         return false;
     }
-    int64_t default_strict = count(cs, "(+ 1 ...)");
-    int64_t explicit_strict = count(cs, "(+ 1 ...)", /*nested=*/false);
-    CHECK(default_strict == explicit_strict,
-          "default and :nested-arity #f give the same count");
+    // Issue #481: default is Kleene; both `:nested-arity #f` and
+    // `:strict-arity #t` should restore the pre-#289 strict mode,
+    // and they should be equivalent.
+    int64_t explicit_false = count(cs, "(+ 1 ...)", /*nested=*/false);
+    CHECK(explicit_false == 2,
+          ":nested-arity #f '(+ 1 ...)' matches 2 (got " +
+              std::to_string(explicit_false) + ")");
+    auto alias_true = cs.eval(
+        "(length (query:pattern \"(+ 1 ...)\" :strict-arity #t))");
+    int64_t alias_t = (alias_true && aura::compiler::types::is_int(*alias_true))
+                          ? aura::compiler::types::as_int(*alias_true)
+                          : -1;
+    CHECK(alias_t == explicit_false,
+          ":strict-arity #t and :nested-arity #f give same count (both " +
+              std::to_string(explicit_false) + ")");
     return true;
 }
 
@@ -251,10 +308,13 @@ bool test_nested_and_markers_combined() {
         ++g_failed;
         return false;
     }
-    // Default: (+ 1 ...) is strict, matches only 3-child ones → 1.
-    int64_t strict_only = count(cs, "(+ 1 ...)");
-    CHECK(strict_only == 1, "default (+ 1 ...) = 1 (3-child only) (got " +
-                               std::to_string(strict_only) + ")");
+    // Issue #481: default is now Kleene. (+ 1 ...) matches both
+    // calls (2 + 3 children). With markers, each result is a
+    // pair — verify the list has 2 elements AND the first
+    // element is a pair.
+    int64_t kle_default = count_default(cs, "(+ 1 ...)");
+    CHECK(kle_default == 2, "default Kleene (+ 1 ...) = 2 (0+ tail) (got " +
+                               std::to_string(kle_default) + ")");
 
     // Kleene: matches 2 (both). With markers, each result is a
     // pair — verify the list still has 2 elements AND the first
@@ -268,21 +328,32 @@ bool test_nested_and_markers_combined() {
     return true;
 }
 
-// ── AC #7: regression — test_issue_140/267/271 expectations hold ──
+// ── AC #7: regression — pre-#289 tests still pass with `:strict-arity #t` ──
 bool test_regression_140_271_271_contracts() {
-    std::println("\n--- AC7: existing test_issue_140/267/271 expectations hold ---");
-    // test_issue_140 test 1.2 — exact pre-#289 expectation
+    std::println("\n--- AC7: pre-#289 test contracts preserved via `:strict-arity #t` ---");
+    // test_issue_140 test 1.2 — exact pre-#289 expectation. After
+    // #481 the default is Kleene (matches 3), so we pass
+    // `:strict-arity #t` to opt back into pre-#289 strict and
+    // confirm the contract holds for users who want it.
     {
         aura::compiler::CompilerService cs;
         if (!set_source(cs, "(begin (+ 1 2) (+ 1 x) (+ 1))")) {
             ++g_failed;
             return false;
         }
-        int64_t n = count(cs, "(+ 1 ...)");
-        CHECK(n == 2, "140 test 1.2: default (+ 1 ...) = 2 (got " +
+        auto r = cs.eval(
+            "(length (query:pattern \"(+ 1 ...)\" :strict-arity #t))");
+        int64_t n = (r && aura::compiler::types::is_int(*r))
+                        ? aura::compiler::types::as_int(*r)
+                        : -1;
+        CHECK(n == 2, "140 test 1.2: :strict-arity #t '(+ 1 ...)' = 2 (got " +
                          std::to_string(n) + ")");
     }
-    // test_issue_271 AC2 — the mutate/query consistency check
+    // test_issue_271 AC2 — query↔mutate consistency. The pre-#289
+    // test was: before mutate, "(+ ... ...)" matches 3 (3 calls).
+    // With default Kleene the count is still 3 (every `(+ a b)` matches
+    // `(+ ... ...)` in either mode). Without `:strict-arity #t` this
+    // is also 3 in #481's default mode.
     {
         aura::compiler::CompilerService cs;
         if (!set_source(cs, "(begin (+ 1 1) (+ 2 2) (+ 3 3))")) {
@@ -290,11 +361,12 @@ bool test_regression_140_271_271_contracts() {
             return false;
         }
         int64_t before = count(cs, "(+ ... ...)");
-        CHECK(before == 3, "271 AC2: before (+ ... ...) = 3 (got " +
+        CHECK(before == 3, "271 AC2: default (+ ... ...) = 3 (got " +
                               std::to_string(before) + ")");
-        // Don't actually run mutate here — that has its own pre-existing
-        // weirdness that's out of scope for #289. We just verify the
-        // pre-mutate query contract.
+        // Don't actually run mutate here — mutate:replace-pattern
+        // still uses its own strict matcher (#482 will share it),
+        // and has the separate ADD-instead-of-replace bug (#484).
+        // We just verify the pre-mutate query contract.
     }
     // test_issue_267 AC1 — default hygiene still skips macro-introduced
     {

@@ -82,9 +82,14 @@ static std::string run_str(aura::compiler::CompilerService& cs, std::string_view
 }
 
 // Helper: count query:pattern matches in a workspace
+//
+// Issue #481 flipped the default to Kleene, so the pre-#289
+// test contract "(+ 1 ...)" = 2 needs the explicit
+// `:strict-arity #t` keyword to keep validating the strict
+// behavior. All callers in this file now use this helper, so
+// the strict semantics are preserved everywhere.
 static int64_t count_matches(aura::compiler::CompilerService& cs, const std::string& code, const std::string& pattern) {
-    // Use (length (query:pattern "...")) inside the eval
-    return run_int(cs, std::string("(set-code \"") + code + "\") (length (query:pattern \"" + pattern + "\"))");
+    return run_int(cs, std::string("(set-code \"") + code + "\") (length (query:pattern \"" + pattern + "\" :strict-arity #t))");
 }
 
 // ═══════════════════════════════════════════════════════════════
