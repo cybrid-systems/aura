@@ -129,7 +129,8 @@ aura::ast::NodeId clone_macro_body(
                 for (auto pid : nv.params)
                     rename_binding_pre(pid);
             }
-            for (auto c : nv.children)
+            std::vector<aura::ast::NodeId> scan_children(nv.children.begin(), nv.children.end());
+            for (auto c : scan_children)
                 pre_scan(c);
         };
         pre_scan(body_id);
@@ -276,7 +277,8 @@ aura::ast::NodeId clone_macro_body(
                     cur, static_cast<std::uint8_t>(
                              aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
                 auto cv = target.get(cur);
-                for (auto child : cv.children) {
+                std::vector<aura::ast::NodeId> walk_children(cv.children.begin(), cv.children.end());
+                for (auto child : walk_children) {
                     if (child != aura::ast::NULL_NODE)
                         stack.push_back(child);
                 }
@@ -489,7 +491,8 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
         for (NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
             if (v.tag == NodeTag::Call && !v.children.empty()) {
-                auto callee_v = flat.get(v.child(0));
+                std::vector<aura::ast::NodeId> call_args(v.children.begin(), v.children.end());
+                auto callee_v = flat.get(call_args[0]);
                 if (callee_v.tag == NodeTag::Variable) {
                     auto cname = std::string(pool.resolve(callee_v.sym_id));
                     auto it = local_macros.find(cname);
@@ -500,8 +503,6 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                         // it requires FlatAST mutation (allocating a
                         // pair-list) — that's stateful, not pure.
                         auto& md = it->second;
-                        std::vector<aura::ast::NodeId> call_args(v.children.begin(),
-                                                                 v.children.end());
                         auto subst = aura::compiler::pure::compute_macro_subst_pure(
                             md.params, call_args, md.dotted);
                         // Rest param: collect remaining args as a quoted list.
@@ -511,13 +512,13 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                                                         ? md.params.size() - 1
                                                         : md.params.size();
                         if (md.dotted && !md.params.empty() &&
-                            regular_count + 1 < v.children.size()) {
+                            regular_count + 1 < call_args.size()) {
                             auto& rest_name = md.params.back();
                             // Build a data list of the remaining arg nodes as a quote
                             // Create () as the base, then cons each remaining arg
                             std::vector<aura::ast::NodeId> remaining;
-                            for (std::size_t ai = regular_count + 1; ai < v.children.size(); ++ai)
-                                remaining.push_back(v.child(ai));
+                            for (std::size_t ai = regular_count + 1; ai < call_args.size(); ++ai)
+                                remaining.push_back(call_args[ai]);
                             // Create nested quote: (quote (arg1 arg2 ...)) using add_call chains
                             // Actually, clone_macro_body substitutes Variable nodes, so we need
                             // the rest arg as an expression node, not data.
