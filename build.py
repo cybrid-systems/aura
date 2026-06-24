@@ -3,8 +3,8 @@
 Aura — 统一构建/测试入口
 
 Usage:
-  ./build.py build            # CMake 构建
-  ./build.py test [suite]     # 运行测试
+  ./build.py [--sanitizer=asan|ubsan|tsan] build    # CMake 构建 (sanitizer-插桩)
+  ./build.py [--sanitizer=asan|ubsan|tsan] test [suite]  # 运行测试
   ./build.py check            # gate + ci（与 CI 相同）
   ./build.py gate             # docs + lint + fixtures（CI 静态检查）
   ./build.py ci               # build + CI 测试矩阵
@@ -58,6 +58,54 @@ BUILD = ROOT / "build"
 AURA = BUILD / "aura"
 TEST_BIN = BUILD / "test_ir"
 BENCH = ROOT / "tests" / "benchmark.py"
+
+
+# ═══════════════════════════════════════════════════════════════
+# Sanitizer configuration (Issue #299)
+#
+# Pass --sanitizer={asan|ubsan|tsan} to any build.py subcommand
+# to route compilation into build_<san>/ with the right flags.
+# No flag = normal Debug/RelWithDebInfo build, behavior unchanged.
+# ═══════════════════════════════════════════════════════════════
+
+# Each entry: (CFLAGS/CXXFLAGS, LDFLAGS, CMAKE_BUILD_TYPE override or None)
+# -O1 is required for tsan (lower opt levels reduce false positives).
+# frame-pointer is needed for clean stack traces under asan/ubsan.
+SANITIZER_FLAGS = {
+    "asan": (
+        "-fsanitize=address -fno-omit-frame-pointer",
+        "-fsanitize=address",
+        None,  # honor user AURA_BUILD_TYPE
+    ),
+    "ubsan": (
+        "-fsanitize=undefined -fno-omit-frame-pointer",
+        "-fsanitize=undefined",
+        None,
+    ),
+    "tsan": (
+        "-fsanitize=thread -fno-omit-frame-pointer",
+        "-fsanitize=thread",
+        "Debug",  # force -O0; -O2/-O3 explode TSan false positives
+    ),
+}
+
+
+def _apply_sanitizer(name: str) -> None:
+    """Rebind BUILD/AURA/TEST_BIN to a sanitizer-specific build dir.
+
+    Called from main() after parsing --sanitizer=NAME from sys.argv.
+    Idempotent: empty name restores the default build/ tree.
+    """
+    global BUILD, AURA, TEST_BIN
+    if name:
+        if name not in SANITIZER_FLAGS:
+            fail(f"unknown --sanitizer={name!r} (choose from: asan, ubsan, tsan)")
+            sys.exit(2)
+        BUILD = ROOT / f"build_{name}"
+    else:
+        BUILD = ROOT / "build"
+    AURA = BUILD / "aura"
+    TEST_BIN = BUILD / "test_ir"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -154,6 +202,17 @@ def _cmake_configure_args() -> list[str]:
     build_type = os.environ.get("AURA_BUILD_TYPE", "").strip()
     if build_type:
         args.append(f"-DCMAKE_BUILD_TYPE={build_type}")
+    # Sanitizer flag injection (Issue #299). Active when BUILD was rebind
+    # by _apply_sanitizer() to build_<san>/.
+    san_name = BUILD.name.removeprefix("build_") if BUILD.name.startswith("build_") else ""
+    if san_name and san_name in SANITIZER_FLAGS:
+        cxxflags, ldflags, build_type_override = SANITIZER_FLAGS[san_name]
+        if build_type_override and not build_type:
+            args.append(f"-DCMAKE_BUILD_TYPE={build_type_override}")
+        args.append(f"-DCMAKE_C_FLAGS={cxxflags}")
+        args.append(f"-DCMAKE_CXX_FLAGS={cxxflags}")
+        args.append(f"-DCMAKE_EXE_LINKER_FLAGS={ldflags}")
+        args.append(f"-DCMAKE_SHARED_LINKER_FLAGS={ldflags}")
     return args
 
 
@@ -1290,7 +1349,28 @@ def main():
         print(__doc__.strip())
         return 0
 
-    cmd = sys.argv[1]
+    # Sanitizer flag (Issue #299): --sanitizer=NAME or --sanitizer NAME.
+    # Popped before subcommand dispatch so subcommands never see it.
+    san_name = ""
+    new_argv = [sys.argv[0]]
+    i = 1
+    while i < len(sys.argv):
+        a = sys.argv[i]
+        if a.startswith("--sanitizer="):
+            san_name = a.split("=", 1)[1].strip()
+            i += 1
+        elif a == "--sanitizer" and i + 1 < len(sys.argv):
+            san_name = sys.argv[i + 1].strip()
+            i += 2
+        else:
+            new_argv.append(a)
+            i += 1
+    sys.argv = new_argv
+    _apply_sanitizer(san_name)
+    if san_name:
+        print(f"{Y}--sanitizer={san_name} → build dir: {BUILD}{N}")
+
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     args = sys.argv[2:]
 
     commands = {
