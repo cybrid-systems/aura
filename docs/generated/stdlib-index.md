@@ -17,7 +17,7 @@
 | `std/csv` | `csv-parse` `csv->rows` `csv->table` `csv-select` `csv-filter` `csv-header` `column-names` | csv.aura — CSV parsing and generation |
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |
 | `std/datetime` | `;` `Core` `timestamp` `timestamp->year` `timestamp->month` `timestamp->day` `timestamp->hour` `timestamp->minute` … (+17) | datetime.aura — Date and time utilities |
-| `std/eda` | `;` `IR` `constructors` `make-eda:module` `make-eda:port` `make-eda:wire` `make-eda:wire3` `make-eda:logic` … (+256) | — |
+| `std/eda` | `;` `IR` `constructors` `make-eda:module` `make-eda:port` `make-eda:wire` `make-eda:wire3` `make-eda:logic` … (+257) | — |
 | `std/encoding` | `hex-encode` `hex-decode` `base64-encode` `base64-decode` | lib/std/encoding.aura — Encoding utilities |
 | `std/evolve` | `evolve-strategy` | evolve.aura -- Strategy evolution from intend analytics |
 | `std/extract` | `extract-code` `trim-str` `find-in-str` | lib/std/extract.aura — Code extraction from LLM responses |

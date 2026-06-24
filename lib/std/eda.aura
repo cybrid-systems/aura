@@ -630,6 +630,43 @@
              (loop (cdr body)))))
       (else (loop (cdr body))))))
 
+; Issue #295 Phase 0: (eda:query:coverage-holes m)
+; — return the list of signal names in m's ports + wires
+; that are NOT mentioned by any SVA assertion's property
+; expression. This is a "coverage gap" list — signals with
+; no verification.
+;
+; Pure: walks the module body, collects all-signal-names,
+; subtracts assertion-mentioned signal names.
+;
+; Heuristic: "mention" = symbol appears in any property
+; expression of any assertion in the module body. Doesn't
+; account for cross-module references, hierarchy, or
+; cone-of-influence (Phase 1: those).
+(define (eda:query:coverage-holes m)
+  (let* ((all-signals
+           (append
+             (map eda:port-name (eda:query:ports m))
+             (map eda:wire-name (eda:query:wires m))))
+         (asserted-signals
+           ;; Walk body, collect all symbols from every assertion
+           (let loop ((body (eda:module-body m)) (acc '()))
+             (cond
+               ((null? body) acc)
+               ((eda:assertion? (car body))
+                (let ((syms (eda:expr-collect-symbols
+                              (eda:property-expr
+                                (eda:assertion-property (car body))))))
+                  (loop (cdr body) (append syms acc))))
+               (else (loop (cdr body) acc))))))
+    ;; Holes = all-signals minus asserted-signals (preserve all-signals order)
+    (let loop ((remaining all-signals) (acc '()))
+      (cond
+        ((null? remaining) (reverse acc))
+        ((member (car remaining) asserted-signals)
+         (loop (cdr remaining) acc))
+        (else (loop (cdr remaining) (cons (car remaining) acc)))))))
+
 (define (eda:expr-rename-sym e old new)
   (let ((op (eda:expr-op e))
         (args (eda:expr-args e)))
@@ -1968,6 +2005,7 @@
   eda:query:bit-width eda:query:dependencies eda:query:dependents
   eda:query:always-ff-with-clock eda:query:assertions-involving-signal
   eda:query:reset-condition-for-register
+  eda:query:coverage-holes
   eda:expr-collect-symbols eda:expr-mentions?
   ; Mutate helpers (Cycle 2)
   eda:mutate:rename-symbol eda:mutate:insert-clock-gating

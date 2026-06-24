@@ -757,6 +757,51 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         return make_bool(false);
     });
 
-}
+    // Issue #295 Phase 0: (ws:try-mutation expr-string)
+    // — run expr-string in a sandboxed workspace. On success,
+    // returns (result . snapshot-id). On failure (exception
+    // or error-value), the workspace is automatically rolled
+    // back and the primitive returns #f.
+    //
+    // Building block for the Aura-HV self-evolving verification
+    // loop. Agents can propose a mutation, run it via
+    // ws:try-mutation, and either commit (keep the snapshot)
+    // or rollback. See docs/design/hardware/aura_hv.md.
+    add("ws:try-mutation", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_bool(false);
+        // Snapshot the current workspace
+        if (!ev.primitives_.lookup("ast:snapshot"))
+            return make_bool(false);
+        auto snap_id_opt = (*ev.primitives_.lookup("ast:snapshot"))({});
+        if (!is_int(snap_id_opt))
+            return make_bool(false);
+        auto snap_id = as_int(snap_id_opt);
+        auto eval_fn = ev.primitives_.lookup("eval");
+        if (!eval_fn)
+            return make_bool(false);
+        // Run the expression (parse + eval_flat via the eval primitive)
+        EvalValue result = make_void();
+        try {
+            result = (*eval_fn)({make_string(idx)});
+        } catch (...) {
+            result = make_void();
+        }
+        if (types::is_error(result) || types::is_void(result)) {
+            if (auto restore_fn = ev.primitives_.lookup("ast:restore")) {
+                (*restore_fn)({make_int(snap_id)});
+            }
+            return make_bool(false);
+        }
+        // Success: return (result . snap-id)
+        auto pid = ev.pairs_.size();
+        ev.pairs_.push_back({result, snap_id_opt});
+        return make_pair(pid);
+    });
+
+} // register_workspace_primitives
 
 } // namespace aura::compiler::primitives_detail

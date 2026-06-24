@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**463** registrations scanned from `src/**/*.cpp`.
+**464** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -551,3 +551,7 @@ Runtime canonical list: `(api-reference)`.
 - `verify:parse-assert-failure` — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:parse-coverage-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:report-coverage` — `src/compiler/evaluator_primitives_compile.cpp`
+
+## Ws: (1)
+
+- `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
