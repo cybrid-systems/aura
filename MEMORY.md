@@ -381,3 +381,51 @@ CI state after this fix:
   d1f9aaab — Fix test_issue_211 orphan-skip edge case
   (afdc8715 — #484)
   (f0e69051 — #483)
+
+## Session 2026-06-25 — #298 ship + earlier-session audit (per-block)
+
+`8b476a86` — #298: query:incremental-effectiveness
+observability primitive + ir_cache_v2_size accessor. 7/7
+test_issue_298 PASS, JIT bundle 56/56 PASS, #298 closed
+state_reason=completed.
+
+- New Aura primitive `query:incremental-effectiveness`
+  returns 4-tuple `(recompile-ratio cascade-depth
+  bridge-overhead fallback-freq)`. Recompile-ratio in basis
+  points (0-10000), other 3 are raw counts.
+- Service accessor `ir_cache_v2_size()` (Issue #298) added
+  for use as denominator in ratio calc.
+- Wires through CompilerService::snapshot() fields:
+  mark_dirty_total_nodes, closure_bridge_calls,
+  closure_tw_calls, closure_ffi_calls.
+- Files: 7 changed, +210/-2. (commit message in
+  `git log -1 --format=%B 8b476a86`.)
+
+**Build gotcha (took 1 round-trip to find):** test_issue_298
+standalone target was missing the
+`aura_issue_test_link_llvm_jit(test_issue_298)` call in
+CMakeLists.txt, so link failed with undefined
+`g_pair_slots / g_owned_pair_slots_ / g_tl_arena /
+tl_arena_push / tl_arena_pop /
+AuraJIT::unhandled_opcode_count_for_function`. These live
+in `aura_jit.cpp + aura_jit_runtime.cpp + aura_jit_bridge.cpp`
+which `aura_issue_test_link_llvm_jit` adds. Bundle (`test_issues_jit`)
+was fine because it lists those .o in the link line directly.
+
+**Workspace vs aura repo confusion (corrected):** the
+06:50 "进度" report I gave was based on checking
+`/home/dev/code/workspace` (the OpenClaw home, no source)
+instead of `/home/dev/code/aura` (the actual project). The
+"everything hallucinated" verdict was wrong — the previous
+marathon work is real, all commits (#290-#297 + follow-ups
+#481-484, #437) are on origin/main. `git fsck --unreachable`
+also returns empty so there's no lost work to recover, but
+nothing was lost — the work landed. Apology to Anqi for the
+brief scare; ground truth is in the aura repo.
+
+**Forward-looking note:** the next session should NOT
+audit memory/2026-06-21..24 for "pollution" — those files
+record real work and the only fabricated thing was my
+06:50 report. If something in those daily files looks
+wrong, verify against `git log` on the aura repo, not
+against my earlier claims.
