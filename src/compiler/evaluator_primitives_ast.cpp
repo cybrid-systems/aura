@@ -959,6 +959,89 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         ev.string_heap_.push_back(s);
         return types::make_string(sidx);
     });
+
+    // Issue #291: (ast:ref-mutation-id id gen [mutation_id workspace_id])
+    // — extract the mutation_id_at_capture from a serialized
+    // StableNodeRef. Returns the integer; #f if the buffer
+    // doesn't match the #291 magic. The serialized form is the
+    // 4-tuple (id gen mutation_id workspace_id); callers
+    // unpack and pass the mutation_id directly.
+    add("ast:ref-mutation-id", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) ||
+            !is_int(a[2]) || !is_int(a[3]))
+            return make_bool(false);
+        return make_int(as_int(a[2]));
+    });
+
+    // Issue #291: (ast:ref-workspace-id id gen mutation_id workspace_id)
+    // — extract the workspace_id (WorkspaceTree layer index)
+    // from a serialized StableNodeRef. Returns the integer.
+    add("ast:ref-workspace-id", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) ||
+            !is_int(a[2]) || !is_int(a[3]))
+            return make_bool(false);
+        return make_int(as_int(a[3]));
+    });
+
+    // Issue #291: (ast:ref-serialize id gen mutation_id workspace_id)
+    // — pack a StableNodeRef into a 24-byte blob. Returns the
+    // blob as a string (the caller persists it however they
+    // like — base64, file, etc.). Returns #f on bad args.
+    // The blob format is fixed-size (see kStableRefSerializedSize)
+    // and includes a 4-byte magic header so
+    // (ast:ref-deserialize) can reject pre-#291 buffers.
+    add("ast:ref-serialize", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) ||
+            !is_int(a[2]) || !is_int(a[3]))
+            return make_bool(false);
+        if (!ev.workspace_flat_)
+            return make_bool(false);
+        aura::ast::FlatAST::StableNodeRef ref{};
+        ref.id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        ref.gen = static_cast<std::uint16_t>(as_int(a[1]));
+        ref.mutation_id_at_capture = static_cast<std::uint64_t>(as_int(a[2]));
+        ref.workspace_id = static_cast<std::uint32_t>(as_int(a[3]));
+        std::uint8_t buf[aura::ast::FlatAST::kStableRefSerializedSize];
+        auto n = ev.workspace_flat_->serialize_stable_ref(ref, buf);
+        std::string s(reinterpret_cast<const char*>(buf), n);
+        std::size_t sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(s);
+        return types::make_string(sidx);
+    });
+
+    // Issue #291: (ast:ref-deserialize string) — unpack a
+    // 24-byte blob back to a 4-tuple (id gen mutation_id
+    // workspace_id). The tuple is returned as a pair of pairs
+    // ((id . gen) . (mutation_id . workspace_id)) for Aura
+    // pair-list consumption. Returns #f if the magic doesn't
+    // match or the buffer is the wrong size.
+    add("ast:ref-deserialize", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        if (!ev.workspace_flat_)
+            return make_bool(false);
+        auto sidx = as_string_idx(a[0]);
+        if (sidx >= ev.string_heap_.size())
+            return make_bool(false);
+        const std::string& blob = ev.string_heap_[sidx];
+        if (blob.size() < aura::ast::FlatAST::kStableRefSerializedSize)
+            return make_bool(false);
+        aura::ast::FlatAST::StableNodeRef ref{};
+        if (!ev.workspace_flat_->deserialize_stable_ref(
+                reinterpret_cast<const std::uint8_t*>(blob.data()),
+                blob.size(), ref))
+            return make_bool(false);
+        // Return as a nested pair: ((id . gen) . (mut_id . ws_id))
+        auto pair_id_gen = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
+                          make_int(static_cast<std::int64_t>(ref.gen))});
+        auto pair_mut_ws = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.mutation_id_at_capture)),
+                          make_int(static_cast<std::int64_t>(ref.workspace_id))});
+        auto outer = ev.pairs_.size();
+        ev.pairs_.push_back({make_pair(pair_id_gen), make_pair(pair_mut_ws)});
+        return make_pair(outer);
+    });
     // (ast:stable-refs-valid? refs) — Issue #278: bulk validity
     // check for a list of (id . gen) stable-ref pairs. Returns a
     // list of booleans (#t #f #t ...) in the same order as the
