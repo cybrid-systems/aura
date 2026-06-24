@@ -736,6 +736,74 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_pair(outer);
     });
 
+    // Issue #298: (query:incremental-effectiveness) — return a
+    // 4-tuple aggregating compiler-pipeline observability
+    // metrics for self-evolution loops. The 4 elements:
+    //
+    //   1. recompile-ratio: dirty-defines / total-defines (×10000
+    //      for basis-point precision). 0 = no dirty defines, 10000
+    //      = all dirty. Ratio > 5000 indicates a wide
+    //      invalidation; agents should investigate mutation scope.
+    //
+    //   2. cascade-depth: max mark_dirty_upward depth seen in the
+    //      last eval cycle. Deeper cascades indicate mutations that
+    //      ripple through many parents. Used to detect
+    //      unexpectedly wide invalidation chains.
+    //
+    //   3. bridge-overhead: total closure_bridge_calls (sum of
+    //      bridge invocations across all defines). Use this to
+    //      quantify how often the IR ↔ tree-walker fallback path
+    //      is exercised.
+    //
+    //   4. fallback-frequency: count of fallback triggers (sum
+    //      over all reasons: special forms, EDSL primitives,
+    //      macros). 0 = pure IR path. High counts indicate the
+    //      mutation touched a tree-walker-only construct.
+    //
+    // The 4 elements are returned as a flat 4-tuple
+    // (e1 . (e2 . (e3 . e4))) so callers can destructure with
+    // standard Aura car/cdr. All values are int (basis points
+    // for ratio, raw counts for the rest).
+    add("query:incremental-effectiveness", [&ev](const auto& a) -> EvalValue {
+        (void)a;
+        auto* svc_void = ev.compiler_service();
+        if (!svc_void) return make_int(0);
+        auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
+
+        std::int64_t ratio_bp = 0;
+        std::int64_t cascade_depth = 0;
+        std::int64_t bridge_overhead = 0;
+        std::int64_t fallback_freq = 0;
+
+        // Read the latest snapshot. Wrapped in try/catch so a
+        // service-side throw doesn't propagate as an
+        // unhandled error value.
+        try {
+            auto snap = svc->snapshot();
+            auto total_defines = svc->ir_cache_v2_size();
+            auto dirty_funcs = svc->total_dirty_func_count();
+            if (total_defines > 0) {
+                ratio_bp = (dirty_funcs * 10000) / static_cast<std::int64_t>(total_defines);
+            }
+            cascade_depth = static_cast<std::int64_t>(snap.mark_dirty_total_nodes);
+            bridge_overhead = static_cast<std::int64_t>(snap.closure_bridge_calls);
+            fallback_freq = static_cast<std::int64_t>(
+                snap.closure_tw_calls + snap.closure_ffi_calls);
+        } catch (...) {
+            // Service-side failure: zeros are already initialized.
+        }
+
+        // Build 4-tuple as nested pairs (right-associated):
+        // (ratio . (cascade . (bridge . fallback)))
+        auto p1 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(bridge_overhead), make_int(fallback_freq)});
+        auto p2 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(cascade_depth), make_pair(p1)});
+        auto p3 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(ratio_bp), make_pair(p2)});
+        return make_pair(p3);
+    });
+
     // Issue #293: (compile:relower-strategy <function-name>)
     // — returns a symbol describing the optimal re-lower
     // strategy for a cached function:

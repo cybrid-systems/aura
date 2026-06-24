@@ -5569,6 +5569,12 @@ public:
         return n;
     }
 
+    // Issue #298: total number of cached defines (used as
+    // denominator for the recompile-ratio basis-points calc).
+    [[nodiscard]] std::size_t ir_cache_v2_size() const noexcept {
+        return ir_cache_v2_.size();
+    }
+
     // Issue #293: count of functions that are "incremental
     // re-lower" candidates (1..7 dirty blocks per function).
     // Excludes functions with 8+ dirty blocks (full re-lower
