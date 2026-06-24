@@ -187,3 +187,134 @@ comment at https://github.com/cybrid-systems/aura/issues/481#issuecomment-478465
 default (#481) → close. Two PR cycle, ~4 hours of work over
 2026-06-24. The "no PR, push to main, single PR cycle" workflow
 + per-issue follow-up tracking keeps the cadence tight.
+
+## Session 2026-06-24 (continued) — #482 shipped
+
+`d68114be` on `origin/main`. Shared matcher extracted from query_workspace
+into a new `aura.compiler.matcher` module (`query_matcher.ixx/cpp`).
+
+### Key design decision: .ixx module, not .hh header
+
+The matcher uses `aura::ast` types (FlatAST, StringPool, NodeId, SymId,
+NodeTag, NULL_NODE) exported only via `aura.core.ast` module. A plain
+`.hh` cannot `import aura.core.ast` (the import is parsed in the global
+fragment BEFORE the module's symbol table is built, so the types aren't
+visible). Tried three approaches:
+
+1. **`.hh` with forward declarations of aura::ast types** — failed: forward
+   decls conflict with the imported module types ("redeclaring class
+   aura::ast::FlatAST in module aura.compiler.evaluator conflicts with
+   import").
+2. **`.hh` with no aura::ast references (use void* + cast in .cpp)** —
+   failed: the .hh couldn't see the imported types either, so the
+   function signatures in the .hh couldn't reference `NodeId` etc.
+3. **`.ixx` module interface unit with `import aura.core.ast`** — works.
+   The .ixx IS a module, can import other modules, and exports the
+   class to any consumer that does `import aura.compiler.matcher`.
+
+Pattern: when sharing types across multiple .cpp files in this codebase,
+use a **module interface unit** (.ixx), not a plain .hh. See also
+`src/compiler/cache.ixx`, `src/compiler/value.ixx` for the same pattern.
+
+### mutate changes
+- Added `:nested-arity [#t|#f]` keyword parsing to `mutate:replace-pattern`.
+  Pre-#482 the keyword was an unknown-keyword error.
+- Default for mutate stays **strict** (`nested_arity=false`) to preserve
+  pre-#482 atomic-replacement semantics.
+- Replaced local `match_capture` recursive lambda (~50 lines) with
+  `QueryMatcher` + fresh-per-match state reset.
+- Loosened the capture-count-vs-expected check: in strict mode captures
+  must equal `count_wildcards(source)`; in Kleene mode the count varies
+  per match (excess ignored, missing → `...` placeholders in substitution).
+
+### Bonus side effects
+- `test_issue_270` was 8/9 failing standalone pre-#482. Now 9/9 passing
+  standalone AND in bundle. Root cause: old local `match_capture` returned
+  `{true, {ws_id}}` per wildcard (1 capture); new shared matcher's
+  `is_wildcard` path now does the same (1 capture) but consistently
+  across both primitives.
+- Kleene mode in `match_list` now adds 1 capture per consumed child
+  in the recursive call. Enables mutate Kleene mutation semantics.
+
+### Verify
+- test_issue_482 standalone: **13/13 ✅** (6 ACs)
+- test_issues_jit bundle: **45/46 ✅** (1 known fail = test_issue_271 AC2,
+  pre-#482 mutate ADD-instead-of-replace, tracked in #484)
+- p0 regression: **173/173 ✅**
+
+### #482 closed via API
+comment: https://github.com/cybrid-systems/aura/issues/482#issuecomment-4784925741
+state: closed, state_reason: completed
+
+### Session pattern
+- Use Python scripts (urllib) for GitHub API calls — bash heredocs break
+  on backticks in body content. Saved scripts in /tmp/post_482.py.
+- Token at `~/.github-token` works. User is `mutouyuguo`.
+- Test result validation: `ninja -C build <target>` for incremental,
+  `python3 build.py build --target <target>` for full rebuild.
+
+## Session 2026-06-24 (continued) — CI #483 fix
+
+CI segfaulted at `test_issues_jit` member 15 with `rc=-11 SIGSEGV`.
+Reproduced locally with ASAN: heap-use-after-free at `NodeView::child()`
+called from `expand_inner_macros`. The pre-existing **#483** UAF that
+was deferred earlier.
+
+### Root cause
+In `src/compiler/macro_expansion.cpp:397`, the children-iteration loop
+captured `v = flat->get(root)` and iterated `v.children`. The recursive
+call could trigger a macro expansion that calls `flat->set_child(parent_id, ci, cloned)`
+where `parent_id == v`. The `set_child` replaces `v`'s `PersistentChildVector`
+Storage (COW); the OLD Storage is freed when ref count drops to 0.
+But the outer's captured `v.children` `std::span` still pointed to the
+OLD Storage — next iteration's `v.children.size()` read from freed memory.
+
+### Fix
+Re-fetch `v` from `flat->get(root)` at every iteration:
+```cpp
+for (std::uint32_t i = 0; i < flat->get(root).children.size(); ++i) {
+    auto child = flat->get(root).child(i);
+    (void)expand_inner_macros(flat, pool, child, depth + 1, max_depth, macros);
+}
+```
+
+### Bonus fix
+Pre-existing depth-guard bug at the same site: recursive call passed
+`depth` instead of `depth + 1`, so the depth limit didn't apply on the
+"not a macro call, recurse into children" path. Fixed to pass `depth + 1`.
+
+### Verify (release build)
+- test_issues_jit bundle: **45/46 ✅** stable across 3 runs (1 known
+  fail = test_issue_271 AC2 = #484)
+- p0: **173/173 ✅**
+- ASAN: progresses past member 2 → member ~27, then hits a separate
+  pre-existing ASAN-only `new-delete-type-mismatch` in
+  `BasicBlock::~BasicBlock` (`ir.ixx:375`). Release build doesn't
+  crash on this. Documented as separate follow-up.
+
+### Commit + close
+- `f0e69051` on `origin/main`
+- #483 closed: https://github.com/cybrid-systems/aura/issues/483#issuecomment-4785052834
+- state: closed, state_reason: completed
+
+## Session 2026-06-24 wrap — all 5 issues closed
+
+| # | Title | Closed |
+|---|---|---|
+| #289 | query:pattern nested-arity (Kleene) + capture + markers | ✅ (prior session) |
+| #481 | Make `:nested-arity` the default | ✅ (this session) |
+| #482 | Share matcher between query and mutate | ✅ (this session) |
+| #483 | Heap-use-after-free in macro_expansion | ✅ (this session) |
+| #484 | mutate:replace-pattern ADD-instead-of-replace | 🟡 open |
+
+Only #484 remains open. After #482 the shared matcher is in place;
+#484 is the last bug in this chain. test_issue_271 AC2 will turn
+green when #484 lands.
+
+## Operational
+- Python script `/tmp/close_XXX.py` pattern for GitHub API calls
+  (urllib + token from `~/.github-token`). Bash heredocs break on
+  backticks; Python doesn't. Save the script for next time.
+- Save debug scripts in /tmp/ for reuse: `/tmp/close_481.sh`,
+  `/tmp/post_481.sh`, `/tmp/replace_mutate_matcher.py`,
+  `/tmp/close_482.sh`, `/tmp/post_482.py`, `/tmp/close_483.py`.

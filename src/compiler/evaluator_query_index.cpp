@@ -32,6 +32,13 @@ void Evaluator::tag_arity_index_insert_node(const aura::ast::FlatAST& flat,
                                             aura::ast::NodeId id) const {
     if (id >= flat.size())
         return;
+    // Issue #484: skip orphan nodes. After mutate:replace-pattern,
+    // the OLD matched child gets parent_ cleared by set_child —
+    // it's no longer reachable from the workspace root. Such
+    // orphan nodes still exist in the flat (so id < size() is
+    // true) but should not be returned by query:pattern.
+    if (id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE)
+        return;
     const auto node = flat.get(id);
     const auto key = tag_arity_key(node.tag, node.children.size());
     tag_arity_index_[key].push_back(id);
