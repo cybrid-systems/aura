@@ -1186,6 +1186,18 @@ void register_workspace_query_primitives(
                     ev.bump_macro_introduced_skipped_in_query();
                     continue;
                 }
+                // Issue #484: skip orphan nodes (parent_ == NULL
+                // and not the workspace root). After
+                // mutate:replace-pattern, the OLD matched child
+                // has its parent_ cleared by set_child, leaving
+                // it orphaned in the flat. Such orphans should
+                // not be returned by query:pattern — they are
+                // no longer reachable from the workspace tree.
+                // The fast path above also skips them via the
+                // index's insert_node (orphan-skip check); the
+                // slow path must do the same.
+                if (id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE)
+                    continue;
                 matcher.state.captures.clear();
                 matcher.state.depth = 0;
                 if (matcher.match_subtree(id, pr.root)) {

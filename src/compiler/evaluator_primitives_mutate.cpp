@@ -1884,6 +1884,17 @@ void register_mutate_primitives(
         }
         flat.commit_atomic_batch();
 
+        // Issue #484: invalidate the tag_arity_index. The index
+        // walker (in query_workspace) now skips orphans (parent_
+        // == NULL && id != root) so the OLD replaced children
+        // don't pollute query results. The wholesale invalidate
+        // here forces the next query to rebuild from scratch
+        // (the rebuild also skips orphans via insert_node). The
+        // combined fix (slow-path skip + fast-path index insert
+        // skip + mutate-time invalidate) ensures queries after
+        // mutate:replace-pattern return only live nodes.
+        ev.invalidate_tag_arity_index();
+
         flat.add_mutation(0, "replace-pattern", pattern_str, repl_template, summary);
         return make_bool(true);
     });

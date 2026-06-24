@@ -184,12 +184,13 @@ bool test_mutate_nested_arity_keyword() {
           "mutate:replace-pattern with :nested-arity #t returns #t "
           "(keyword accepted, replacement attempted)");
 
-    // Also verify Kleene query still finds the original 3 `(* ...)`
-    // calls — the query side of the shared matcher is unaffected.
+    // Also verify Kleene query no longer finds the original 3
+    // `(* ...)` calls (they're now orphans — #484 fix correctly
+    // excludes orphans from query:pattern results).
     auto kle_count = run_int_value(cs,
         "(length (query:pattern \"(* ...)\" :nested-arity #t))");
-    CHECK(kle_count == 3,
-          "Kleene query '(* ...)' matches 3 (got " +
+    CHECK(kle_count == 0,
+          "Kleene query '(* ...)' finds 0 orphans post-mutate (got " +
               std::to_string(kle_count) + ")");
     return true;
 }
