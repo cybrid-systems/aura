@@ -93,6 +93,17 @@ def filter_bins_for_tier(bins: list[str], tier: str) -> list[str]:
     return [b for b in bins if b in allowed]
 
 
+def _last_bundle_member(stdout: str) -> str | None:
+    import re
+
+    last: str | None = None
+    for line in stdout.splitlines():
+        m = re.search(r"════ Bundle member: (\S+) ════", line)
+        if m:
+            last = m.group(1)
+    return last
+
+
 def parse_pass_fail_count(stdout: str) -> tuple[int, int]:
     """Parse a test binary's stdout for pass/fail counts."""
     import re
@@ -145,7 +156,16 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
         if r.returncode == 0:
             return bin_name, 1, 0, 0, ""
         return bin_name, 0, 1, r.returncode, r.stderr[-500:] if r.stderr else "no output"
-    return bin_name, passed, failed, r.returncode, ""
+    err = ""
+    if r.returncode != 0 and r.returncode not in (0, 1):
+        member = _last_bundle_member(r.stdout)
+        if member:
+            err = f"crashed during bundle member {member}"
+        elif r.stderr:
+            err = r.stderr[-500:]
+        else:
+            err = "no output"
+    return bin_name, passed, failed, r.returncode, err
 
 
 def _print_result(
