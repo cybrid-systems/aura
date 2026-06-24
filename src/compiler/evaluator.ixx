@@ -821,11 +821,28 @@ public:
         return 0;
     }
     void install_bridge_epoch_fn(BridgeEpochFn fn) noexcept { bridge_epoch_fn_ = fn; }
-    // Issue #223: returns true if a closure's captured bridge_epoch
-    // is stale relative to the current epoch. bridge_epoch == 0
-    // means "legacy / not tracked" and is treated as trustworthy
-    // (the closure pre-dates the tracking; caller manages its own
-    // lifetime). Non-zero values are validated strictly.
+    // Issue #223 / #296: returns true if a closure's captured
+    // bridge_epoch is stale relative to the current epoch.
+    //
+    // INVARIANT (Bridge Lifetime Contract):
+    //   1. bridge_epoch == 0 means "legacy / not tracked" and
+    //      is treated as trustworthy (the closure pre-dates
+    //      the tracking; caller manages its own lifetime).
+    //   2. Non-zero values are validated strictly: any
+    //      mismatch is treated as stale and triggers the
+    //      body_source re-parse fallback (or invalidation).
+    //   3. Callers must NOT pass current_epoch == 0 when the
+    //      bridge has been bumped — this would falsely
+    //      validate stale closures.
+    //   4. The bridge_epoch counter is bumped atomically via
+    //      bump_bridge_epoch() on every structural mutation
+    //      that may invalidate captured flat*/pool* pointers.
+    //
+    // State machine:
+    //   fresh closure ─captures─> bridge_epoch = current
+    //   bump_bridge_epoch() ─bumps─> current
+    //   is_bridge_stale(captured, current) ─checks─> bool
+    //   stale closure ─falls back─> body_source re-parse
     static bool is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t current_epoch) noexcept {
         if (bridge_epoch == 0)
             return false; // legacy / unset: trust the closure
