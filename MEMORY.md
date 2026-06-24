@@ -429,3 +429,55 @@ record real work and the only fabricated thing was my
 06:50 report. If something in those daily files looks
 wrong, verify against `git log` on the aura repo, not
 against my earlier claims.
+
+## Session 2026-06-25 — #299 sanitizer build foundation (Phase 1/4)
+
+`664520dd` — 4 files, +178/-18. Foundation only; Phase 2-4
+tracked as separate issues.
+
+- `build.py --sanitizer={asan|ubsan|tsan}` flag (parsed
+  in main(), rebinds BUILD/AURA/TEST_BIN to build_<san>/,
+  injects -fsanitize + -fno-omit-frame-pointer in
+  _cmake_configure_args).
+- TSan forces CMAKE_BUILD_TYPE=Debug automatically (-O2/-O3
+  produces TSan false positives).
+- CMakePresets.json: 3 new configurePresets + buildPresets
+  (asan/ubsan/tsan) that match build.py behavior.
+- CI: asan-build job now `python3 build.py --sanitizer=asan
+  build` instead of hand-rolled cmake. asan-verify's test_ir
+  step now `python3 build.py --sanitizer=asan test unit`.
+  Multi-session leak test still uses ./build_asan/aura
+  directly (needs the ASAN_OPTIONS env vars).
+- docs/contributing.md: ## Sanitizers section with usage
+  + 5 documented limitations (TSan/ASan incompatibility,
+  LLVM false positives, perf cost, etc.).
+
+**Verified locally:**
+- `build.py --sanitizer=asan build` → 2m04s, 168 targets OK
+- `build.py --sanitizer=asan test unit` → 80.1s, 0 errors
+  under `detect_leaks=0:abort_on_error=1:print_stacktrace=1`
+- `multi_session_leak_test.aura` under
+  `detect_leaks=1:abort_on_error=0:exitcode=42` → exit 0,
+  0 direct leaks (matches CI asan-verify expectation).
+
+**Build gotcha (solved inline):** original CI asan-build
+only built `aura + test_ir`; the new `build.py
+--sanitizer=asan build` builds the full 168-target set
+because cmd_build() always does the issue-test tier. This
+is a net win on 14-core runners (2m04s vs 8-10m on 2-core
+GHA runners) — on 2-core GHA, it might push asan-build
+past timeout. Will watch next CI run; if needed, gate
+issue-test build on `_san_active()`.
+
+**Build decision (no --llvm by default):** --sanitizer=asan
+does NOT pass -DAURA_HAVE_LLVM=1 by default. Matches
+existing CI asan-build behavior. Full ASAN+JIT coverage
+needs manual `cmake -DAURA_HAVE_LLVM=1 -B build_asan`
+plus known false-positive workarounds. Documented as
+limitation #4 in contributing.md.
+
+**4 follow-ups tracked** (separate issues):
+1. Expand ASAN matrix to test_issue_* + fuzz_*.py
+2. TSAN CI job (fiber + MutationBoundaryGuard + concurrent)
+3. UBSAN CI job (overflow + shift + type confusion)
+4. libFuzzer / AFL harness for arena + mutate/rollback
