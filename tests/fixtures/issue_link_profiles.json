@@ -92,7 +92,8 @@
     "test_issue_291",
     "test_issue_292",
     "test_issue_293",
-    "test_issue_296"
+    "test_issue_296",
+    "test_issue_294"
   ],
   "jit_minimal": [
     "test_issue_146",
