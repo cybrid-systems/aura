@@ -391,11 +391,17 @@ expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura:
         }
     }
     // Not a macro call — recurse into children
-    for (std::uint32_t i = 0; i < v.children.size(); ++i) {
-        auto child = v.child(i);
+    // Issue #483: re-fetch `v` every iteration. The recursive
+    // call may invoke set_child on the parent (this function's
+    // `root`), which replaces the parent's PersistentChildVector
+    // Storage. After replacement, the captured `v.children` span
+    // points to freed memory — a heap-use-after-free. Re-fetching
+    // each iteration re-reads the live Storage pointer.
+    for (std::uint32_t i = 0; i < flat->get(root).children.size(); ++i) {
+        auto child = flat->get(root).child(i);
         // We can't modify children in place easily; rebuild
         // the current node's children via the recursive call.
-        (void)expand_inner_macros(flat, pool, child, depth, max_depth, macros);
+        (void)expand_inner_macros(flat, pool, child, depth + 1, max_depth, macros);
     }
     return root;
 }
