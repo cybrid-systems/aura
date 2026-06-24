@@ -37,7 +37,12 @@ void Evaluator::tag_arity_index_insert_node(const aura::ast::FlatAST& flat,
     // it's no longer reachable from the workspace root. Such
     // orphan nodes still exist in the flat (so id < size() is
     // true) but should not be returned by query:pattern.
-    if (id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE)
+    // Issue #484 follow-up: see slow-path counterpart in
+    // evaluator_primitives_query_workspace.cpp. Skip orphans
+    // except those with MacroIntroduced marker (macro-expanded
+    // bodies that macro_expand_all forgot to splice in).
+    if (id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE &&
+        flat.marker(id) != aura::ast::SyntaxMarker::MacroIntroduced)
         return;
     const auto node = flat.get(id);
     const auto key = tag_arity_key(node.tag, node.children.size());

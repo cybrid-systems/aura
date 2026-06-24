@@ -1193,10 +1193,21 @@ void register_workspace_query_primitives(
                 // it orphaned in the flat. Such orphans should
                 // not be returned by query:pattern — they are
                 // no longer reachable from the workspace tree.
-                // The fast path above also skips them via the
-                // index's insert_node (orphan-skip check); the
-                // slow path must do the same.
-                if (id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE)
+                //
+                // Issue #484 follow-up: marker-based
+                // disambiguation. MacroIntroduced-marker
+                // orphans are macro-expanded bodies cloned by
+                // clone_macro_body whose cloned top got
+                // MacroIntroduced marker but whose
+                // macro_expand_all call failed to splice them
+                // into the workspace (a separate bug — see
+                // #484 follow-up). Allowing them through keeps
+                // these bodies queryable. User-marker orphans
+                // are typically mutate-replaced children (the
+                // genuine lost-from-tree case) and should be
+                // excluded.
+                if (id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE &&
+                    flat.marker(id) != aura::ast::SyntaxMarker::MacroIntroduced)
                     continue;
                 matcher.state.captures.clear();
                 matcher.state.depth = 0;
