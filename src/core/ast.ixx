@@ -546,6 +546,13 @@ private:
         // (verify:parse-assert-failure)).
         if (id < verification_dirty_.size())
             verification_dirty_[id] = 0;
+        // Issue #290: reset macro_dirty_ alongside the other
+        // dirty columns. Populated by apply_macro_dirty_bits
+        // (called from clone_macro_body for newly expanded
+        // subtrees and from self-evolution loops that touch
+        // macro-introduced nodes).
+        if (id < macro_dirty_.size())
+            macro_dirty_[id] = 0;
         error_kind_[id] = 0;
         if (id < value_cache_.size())
             value_cache_[id] = kNotCached;
@@ -612,6 +619,13 @@ private:
         // verify:parse-coverage-feedback /
         // verify:parse-assert-failure primitives).
         verification_dirty_.push_back(0);
+        // Issue #290: macro_dirty_ column. Mirrors
+        // verification_dirty_'s pattern; populated by
+        // apply_macro_dirty_bits (called from clone_macro_body
+        // and self-evolution loops). 2 bits defined:
+        //   kMacroExpansion = 0x01
+        //   kMacroSelfModify = 0x02
+        macro_dirty_.push_back(0);
         // Issue #79: per-node error kind (0 = no error, non-zero = ErrorKind).
         // Populated by the type-checker and runtime evaluator; queryable via
         // the AuraQuery `(has-error? N)` clause.
@@ -710,6 +724,17 @@ private:
     //   kCoverageFeedbackDirty = 0x01
     //   kAssertFailureDirty = 0x02
     std::pmr::vector<std::uint8_t> verification_dirty_;
+    // Issue #290: macro_dirty_ column. Mirrors
+    // verification_dirty_'s pattern; populated by
+    // apply_macro_dirty_bits (called from clone_macro_body
+    // after a hygienic macro expansion, and from
+    // self-evolution loops that touch macro-introduced
+    // nodes). 2 bits defined:
+    //   kMacroExpansion = 0x01 (a freshly cloned macro body)
+    //   kMacroSelfModify = 0x02 (a self-evolution step
+    //                            mutated a macro-introduced
+    //                            node)
+    std::pmr::vector<std::uint8_t> macro_dirty_;
     std::pmr::vector<std::uint32_t> type_id_;
     // Issue #79: per-node error kind, 0 = no error, non-zero = ErrorKind
     // enum value. Populated by the type-checker and runtime evaluator;
@@ -842,6 +867,11 @@ private:
     mutable std::atomic<std::uint64_t> sv_mutate_attempts_total_{0};
     mutable std::atomic<std::uint64_t> sv_mutate_success_total_{0};
     mutable std::atomic<std::uint64_t> verify_loop_cycles_total_{0};
+    // Issue #290: macro_dirty_ observability counters. Bumped
+    // by apply_macro_dirty_bits. Stats-only (relaxed-ordering).
+    // Exposed via the (compile:macro-dirty-stats) primitive.
+    mutable std::atomic<std::uint64_t> macro_expansion_dirty_total_{0};
+    mutable std::atomic<std::uint64_t> macro_self_modify_dirty_total_{0};
 
 public:
     // Issue #437: per-reason verify-dirty stat accessors.
@@ -869,6 +899,13 @@ public:
     // Issue #469: structured-mutate stat accessors.
     [[nodiscard]] std::uint64_t sv_mutate_attempts_total() const noexcept {
         return sv_mutate_attempts_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #290: macro_dirty_ stat accessors.
+    [[nodiscard]] std::uint64_t macro_expansion_dirty_total() const noexcept {
+        return macro_expansion_dirty_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t macro_self_modify_dirty_total() const noexcept {
+        return macro_self_modify_dirty_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t sv_mutate_success_total() const noexcept {
         return sv_mutate_success_total_.load(std::memory_order_relaxed);
@@ -1018,6 +1055,57 @@ public:
         mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
     }
 
+    // Issue #290: macro_dirty_ bit definitions. OR'd into the
+    // macro_dirty_ column when clone_macro_body or a
+    // self-evolution step touches a node. Setting any macro bit
+    // also ORs kGeneralDirty on dirty_ for backward-compat with
+    // legacy is_dirty() callers (type checker, lowering).
+    enum MacroDirtyReason : std::uint8_t {
+        kMacroExpansion = 0x01,  // clone_macro_body produced this subtree
+        kMacroSelfModify = 0x02, // self-evolution step touched a macro-introduced node
+    };
+    // Issue #290: macro_dirty_ accessor (public, used by the
+    // (compile:macro-dirty?) primitive).
+    [[nodiscard]] std::uint8_t macro_dirty(NodeId id) const noexcept {
+        if (id >= macro_dirty_.size()) return 0;
+        return macro_dirty_[id];
+    }
+    // Issue #290: apply macro-dirty bits to a node. Called from
+    // clone_macro_body after a hygienic macro expansion
+    // (kMacroExpansion) and from self-evolution loops that touch
+    // macro-introduced nodes (kMacroSelfModify). Mirrors the
+    // verification-column pattern (#469) but lives in its own
+    // column to avoid collision with the VerifyDirtyReason bits
+    // (4 bits used).
+    void apply_macro_dirty_bits(NodeId id, std::uint8_t reasons) {
+        if (reasons == 0)
+            return;
+        if (id >= macro_dirty_.size())
+            macro_dirty_.resize(id + 1, 0);
+        const auto newly_set = reasons & ~macro_dirty_[id];
+        macro_dirty_[id] |= reasons;
+        if (newly_set & kMacroExpansion)
+            macro_expansion_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+        if (newly_set & kMacroSelfModify)
+            macro_self_modify_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+        mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
+    }
+    // Issue #290: bulk-clear all macro_dirty_ bits across the
+    // flat. Called from the (compile:clear-macro-dirty!) primitive
+    // and from full-reset paths. Walks every live node.
+    void clear_macro_dirty_all() noexcept {
+        for (auto& b : macro_dirty_)
+            b = 0;
+    }
+    // Issue #290: count nodes with any macro_dirty_ bit set.
+    // Used by the (compile:macro-dirty-count) primitive.
+    [[nodiscard]] std::size_t macro_dirty_count() const noexcept {
+        std::size_t n = 0;
+        for (auto b : macro_dirty_)
+            if (b != 0) ++n;
+        return n;
+    }
+
 public:
     // Low-level raw node creation (for advanced mutation).
     // Creates a minimal node with the given tag and default fields.
@@ -1090,6 +1178,8 @@ public:
         , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
         , sv_mutate_success_total_(other.sv_mutate_success_total_.load())
         , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
+        , macro_expansion_dirty_total_(other.macro_expansion_dirty_total_.load())
+        , macro_self_modify_dirty_total_(other.macro_self_modify_dirty_total_.load())
         , match_info_(std::move(other.match_info_))
         , region_by_sym_(std::move(other.region_by_sym_))
         , region_by_lambda_id_(std::move(other.region_by_lambda_id_))
@@ -1129,6 +1219,8 @@ public:
             sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
             sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
             verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
+            macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
+            macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
             generation_wrap_count_.store(other.generation_wrap_count_.load());
             node_gen_stale_access_count_.store(other.node_gen_stale_access_count_.load());
             children_call_count_.store(other.children_call_count_.load());
@@ -1193,6 +1285,8 @@ public:
         , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
         , sv_mutate_success_total_(other.sv_mutate_success_total_.load())
         , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
+        , macro_expansion_dirty_total_(other.macro_expansion_dirty_total_.load())
+        , macro_self_modify_dirty_total_(other.macro_self_modify_dirty_total_.load())
         , match_info_(other.match_info_)
         , region_by_sym_(other.region_by_sym_)
         , region_by_lambda_id_(other.region_by_lambda_id_)
@@ -1232,6 +1326,8 @@ public:
             sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
             sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
             verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
+            macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
+            macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
             children_call_count_.store(other.children_call_count_.load());
             parent_of_call_count_.store(other.parent_of_call_count_.load());
             mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
@@ -2105,6 +2201,8 @@ public:
         std::pmr::vector<std::uint8_t> new_verify_dirty(alloc);
         // Issue #469: COW scratch for verification_dirty_
         std::pmr::vector<std::uint8_t> new_verification_dirty(alloc);
+        // Issue #290: COW scratch for macro_dirty_
+        std::pmr::vector<std::uint8_t> new_macro_dirty(alloc);
         std::pmr::vector<std::uint32_t> new_type_id(alloc);
         std::pmr::vector<std::uint8_t> new_error_kind(alloc);
         std::pmr::vector<std::uint32_t> new_node_first_mutation(alloc);
@@ -2167,6 +2265,11 @@ public:
                 new_verification_dirty.push_back(verification_dirty_[id]);
             else
                 new_verification_dirty.push_back(0);
+            // Issue #290: COW the macro_dirty_ bitmask.
+            if (id < macro_dirty_.size())
+                new_macro_dirty.push_back(macro_dirty_[id]);
+            else
+                new_macro_dirty.push_back(0);
             new_type_id.push_back(type_id_[id]);
             new_error_kind.push_back(error_kind_[id]);
             new_node_first_mutation.push_back(node_first_mutation_[id]);
@@ -2195,6 +2298,8 @@ public:
         verify_dirty_ = std::move(new_verify_dirty);
         // Issue #469: COW the verification_dirty_ column
         verification_dirty_ = std::move(new_verification_dirty);
+        // Issue #290: COW the macro_dirty_ column
+        macro_dirty_ = std::move(new_macro_dirty);
         type_id_ = std::move(new_type_id);
         error_kind_ = std::move(new_error_kind);
         node_first_mutation_ = std::move(new_node_first_mutation);
@@ -2290,6 +2395,11 @@ public:
         // (verify:parse-coverage-feedback) /
         // (verify:parse-assert-failure)).
         verification_dirty_.clear();
+        // Issue #290: clear macro_dirty_ alongside the other
+        // dirty columns. Populated by
+        // apply_macro_dirty_bits (from clone_macro_body and
+        // self-evolution).
+        macro_dirty_.clear();
         // Issue #447: clear the tag+arity index on full
         // reset. The next query:pattern call will rebuild
         // it lazily.
@@ -2564,6 +2674,11 @@ public:
                    reinterpret_cast<const char*>(&root) + 4);
         // Issue #277: optional v2 extension — PPA dirty column.
         write_column(ppa_dirty_);
+        // Issue #290: optional v2 extension — macro_dirty_
+        // column. Appended after ppa_dirty_ so older readers
+        // (which stop at the EOF after ppa_dirty_) skip it
+        // gracefully (read_column checks size).
+        write_column(macro_dirty_);
     }
 
     // Static (no instance needed). Returns a freshly-constructed
@@ -2684,6 +2799,13 @@ public:
             // Issue #277: backward-compatible optional PPA dirty column.
             if (pos + 4 <= buf.size()) {
                 read_column(ast.ppa_dirty_);
+            }
+            // Issue #290: backward-compatible optional
+            // macro_dirty_ column. Appended after ppa_dirty_;
+            // older serialized blobs (pre-#290) stop here, so
+            // the guard `pos + 4 <= buf.size()` is sufficient.
+            if (pos + 4 <= buf.size()) {
+                read_column(ast.macro_dirty_);
             }
         }
         return ast;

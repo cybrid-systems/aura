@@ -246,6 +246,34 @@ aura::ast::NodeId clone_macro_body(
         // wrapper node.
         target.set_marker(new_id, cloned_marker);
         target.set_loc(new_id, v.line, v.col);
+        // Issue #290: also OR kMacroExpansion into the
+        // macro_dirty_ bitmask on every node in the cloned
+        // subtree (root + descendants). Single hook point for
+        // ALL clone_macro_body callers (eval_flat top-level,
+        // expand_inner_macros for nested, evaluator_eval_flat
+        // closure materialization). We condition on
+        // cloned_marker == MacroIntroduced so the
+        // closure-materialization call site (which passes
+        // User) doesn't accidentally trip the dirty bit.
+        // Iterative walk via std::vector stack — no
+        // recursion, safe for pathological depth.
+        if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
+            std::vector<aura::ast::NodeId> stack;
+            stack.push_back(new_id);
+            while (!stack.empty()) {
+                auto cur = stack.back();
+                stack.pop_back();
+                if (cur == aura::ast::NULL_NODE) continue;
+                target.apply_macro_dirty_bits(
+                    cur, static_cast<std::uint8_t>(
+                             aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+                auto cv = target.get(cur);
+                for (auto child : cv.children) {
+                    if (child != aura::ast::NULL_NODE)
+                        stack.push_back(child);
+                }
+            }
+        }
     }
     return new_id;
 }
