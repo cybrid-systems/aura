@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**35** `export module` declarations in `src/**/*.ixx`.
+**36** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -24,6 +24,7 @@
 | `aura.compiler.lowering` | `src/compiler/lowering.ixx` |
 | `aura.compiler.lowering_linear_types` | `src/compiler/lowering_linear_types.ixx` |
 | `aura.compiler.macro_expansion` | `src/compiler/macro_expansion.ixx` |
+| `aura.compiler.matcher` | `src/compiler/query_matcher.ixx` |
 | `aura.compiler.pass_manager` | `src/compiler/pass_manager.ixx` |
 | `aura.compiler.query` | `src/compiler/query.ixx` |
 | `aura.compiler.service` | `src/compiler/service.ixx` |
