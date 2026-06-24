@@ -219,3 +219,38 @@ if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 3. **改不变式** → 更新本文 §1–§4 或 [architecture.md](architecture.md)。
 
 历史设计：`git tag docs-archive-pre-2026-06`。
+## Sanitizers（Issue #299）
+
+`build.py` 支持 AddressSanitizer / UndefinedBehaviorSanitizer / ThreadSanitizer 三种插桩构建。三者路由到不同 build 目录，互不污染普通 `build/`。
+
+```bash
+# 本地 ASAN — 内存安全（UAF、double-free、OOB、leaks）
+./build.py --sanitizer=asan build
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1 \
+  ./build_asan/aura < tests/multi_session_leak_test.aura
+./build.py --sanitizer=asan test unit     # test_ir 在 ASAN 下跑
+
+# 本地 UBSAN — UB 检测（有符号溢出、shift OOB、null deref、type confusion）
+./build.py --sanitizer=ubsan build
+./build.py --sanitizer=ubsan test unit
+
+# 本地 TSAN — 数据竞争（fiber + 并发 mutate/query）
+./build.py --sanitizer=tsan build
+./build.py --sanitizer=tsan test concurrent
+```
+
+或者直接走 CMakePresets（与 build.py --sanitizer 行为完全一致）：
+
+```bash
+cmake --preset asan   && cmake --build --preset asan
+cmake --preset ubsan  && cmake --build --preset ubsan
+cmake --preset tsan   && cmake --build --preset tsan
+```
+
+### 限制
+
+- **TSan 与 ASan 不兼容**。同时需要两者得跑两次（先 asan 后 tsan），不能合并。
+- **TSan 强制 `CMAKE_BUILD_TYPE=Debug`**。`-O2/-O3` 下 TSan 大量误报，由 build.py 自动覆盖。
+- **ASan 内存增长 ~2x、速度 ~2x slow**。CI 上默认只跑 `asan-build` + `asan-verify` 两个 job，PR 不跑。
+- **ASan 与 LLVM JIT** 一起开可能 false positive 报告 `use-after-scope` 在 ORC 内部分配器。`--sanitizer=asan` 默认不启用 `AURA_HAVE_LLVM=1`，需要完整覆盖时手动 `cmake -DAURA_HAVE_LLVM=1 -B build_asan`。
+- 跑 TSan 必须设置 `TSAN_OPTIONS=halt_on_error=1`，否则报错只 warn 不退出。
