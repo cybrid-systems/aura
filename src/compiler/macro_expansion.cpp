@@ -151,10 +151,18 @@ aura::ast::NodeId clone_macro_body(
         return target_pool.intern(fresh);
     };
 
-    // Clone children recursively (pass cloned_marker through)
+    // Clone children recursively (pass cloned_marker through).
+    // Issue #483: snapshot child NodeIds before recursion — recursive
+    // clone / set_child on either flat can replace a parent's
+    // PersistentChildVector and invalidate v.children spans.
     std::vector<aura::ast::NodeId> child_ids;
-    for (std::uint32_t i = 0; i < v.children.size(); ++i)
-        child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, v.child(i),
+    std::vector<aura::ast::NodeId> source_children;
+    {
+        auto fresh = source.get(body_id);
+        source_children.assign(fresh.children.begin(), fresh.children.end());
+    }
+    for (auto cid : source_children)
+        child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, cid,
                                              subst, name_map, cloned_marker));
 
     // Clone params (for Lambda nodes) — with hygienic renaming
@@ -356,8 +364,10 @@ expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura:
         auto parent_id = flat->parent_of(root);
         if (parent_id != NULL_NODE) {
             auto parent_v = flat->get(parent_id);
-            for (std::uint32_t ci = 0; ci < parent_v.children.size(); ++ci) {
-                if (parent_v.child(ci) == root) {
+            std::vector<aura::ast::NodeId> parent_children(parent_v.children.begin(),
+                                                           parent_v.children.end());
+            for (std::uint32_t ci = 0; ci < parent_children.size(); ++ci) {
+                if (parent_children[ci] == root) {
                     flat->set_child(parent_id, ci, unwrapped);
                     flat->restamp_all_node_generations();
                     break;
@@ -368,9 +378,11 @@ expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura:
         // macro call site).
         return expand_inner_macros(flat, pool, unwrapped, depth, max_depth, macros);
     }
-    auto v = flat->get(root);
-    if (v.tag == NodeTag::Call && !v.children.empty()) {
-        auto callee_v = flat->get(v.child(0));
+    {
+        auto v = flat->get(root);
+        if (v.tag == NodeTag::Call && !v.children.empty()) {
+        std::vector<aura::ast::NodeId> call_args(v.children.begin(), v.children.end());
+        auto callee_v = flat->get(call_args[0]);
         if (callee_v.tag == NodeTag::Variable) {
             auto cname = std::string(pool->resolve(callee_v.sym_id));
             auto it = macros.find(cname);
@@ -379,11 +391,9 @@ expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura:
                 // Issue #146 follow-up: route through the pure helper
                 // so the substitution logic lives in evaluator_pure.ixx
                 // (single source of truth) and the legacy inline loop
-                // goes away. v.children is materialized into a vector
-                // (one alloc per macro call) for the pure helper's
-                // vector-typed call_args parameter.
+                // goes away. call_args is snapshotted above (Issue #483)
+                // so set_child during clone/expand cannot UAF v.children.
                 const auto& md = it->second;
-                std::vector<aura::ast::NodeId> call_args(v.children.begin(), v.children.end());
                 auto subst =
                     aura::compiler::pure::compute_macro_subst_pure(md.params, call_args, md.dotted);
                 if (md.dotted) {
@@ -406,8 +416,10 @@ expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura:
                 auto parent_id = flat->parent_of(root);
                 if (parent_id != NULL_NODE) {
                     auto parent_v = flat->get(parent_id);
-                    for (std::uint32_t ci = 0; ci < parent_v.children.size(); ++ci) {
-                        if (parent_v.child(ci) == root) {
+                    std::vector<aura::ast::NodeId> parent_children(
+                        parent_v.children.begin(), parent_v.children.end());
+                    for (std::uint32_t ci = 0; ci < parent_children.size(); ++ci) {
+                        if (parent_children[ci] == root) {
                             flat->set_child(parent_id, ci, cloned);
                             flat->restamp_all_node_generations();
                             break;
@@ -417,20 +429,18 @@ expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura:
                 return cloned;
             }
         }
+        }
     }
-    // Not a macro call — recurse into children
-    // Issue #483: re-fetch `v` every iteration. The recursive
-    // call may invoke set_child on the parent (this function's
-    // `root`), which replaces the parent's PersistentChildVector
-    // Storage. After replacement, the captured `v.children` span
-    // points to freed memory — a heap-use-after-free. Re-fetching
-    // each iteration re-reads the live Storage pointer.
-    for (std::uint32_t i = 0; i < flat->get(root).children.size(); ++i) {
-        auto child = flat->get(root).child(i);
-        // We can't modify children in place easily; rebuild
-        // the current node's children via the recursive call.
+    // Not a macro call — recurse into children.
+    // Issue #483: snapshot child ids; recursive set_child on this
+    // node (or descendants) replaces PersistentChildVector storage.
+    std::vector<aura::ast::NodeId> child_ids;
+    {
+        auto rv = flat->get(root);
+        child_ids.assign(rv.children.begin(), rv.children.end());
+    }
+    for (auto child : child_ids)
         (void)expand_inner_macros(flat, pool, child, depth + 1, max_depth, macros);
-    }
     return root;
 }
 aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
