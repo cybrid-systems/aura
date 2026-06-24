@@ -1567,6 +1567,13 @@ public:
         int_val_[id] = (preserved ? 4 : 0) | (hygienic ? 2 : 0) | (dotted ? 1 : 0);
         children_[id] =
             PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return body; });
+        // Issue #484 follow-up: link_children so the body's parent_
+        // points to this MacroDef. Without this, the macro body
+        // is an orphan (parent_ = NULL), which causes query:pattern
+        // to exclude it (orphan-skip after #484). The test
+        // test_issue_140 AC2.3 and AC4.2 depend on the macro body
+        // being queryable as User-marker code.
+        link_children(id);
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), params.begin(), params.end());
         param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
