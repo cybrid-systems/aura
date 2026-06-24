@@ -24,6 +24,7 @@ import aura.core.type;
 import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
+import aura.compiler.matcher;
 import aura.parser.parser;
 import aura.diag;
 import aura.compiler.hardware_backend;
@@ -1598,8 +1599,46 @@ void register_mutate_primitives(
 
         auto pattern_str = ev.string_heap_[pattern_idx];
         std::string repl_template = ev.string_heap_[repl_idx];
-        std::string summary = (a.size() > 2 && is_string(a[2])) ? ev.string_heap_[as_string_idx(a[2])]
-                                                                : "replace-pattern";
+        // Issue #482: optional `:nested-arity [#t|#f]` keyword +
+        // summary string. Scan from a[2] to a.back(), collecting
+        // keywords; the LAST string arg becomes the summary. Default
+        // :nested-arity is #f (strict) to preserve pre-#482 mutation
+        // semantics — mutation as a primitive is fundamentally an
+        // atomic replacement, and Kleene mutation semantics
+        // (expanding `...` to multiple captures) are not yet defined.
+        bool nested_arity = false;
+        std::string summary = "replace-pattern";
+        for (std::size_t ai = 2; ai < a.size(); ++ai) {
+            if (is_keyword(a[ai])) {
+                auto kidx = as_keyword_idx(a[ai]);
+                if (kidx >= ev.keyword_table_.size()) {
+                    ok = false;
+                    return mev("bad-arg", "unknown keyword");
+                }
+                auto kw = ev.keyword_table_[kidx];
+                if (kw == ":nested-arity") {
+                    nested_arity = true;
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            nested_arity = as_bool(a[ai + 1]);
+                        else
+                            nested_arity = (as_int(a[ai + 1]) != 0);
+                        ++ai;
+                    }
+                } else {
+                    ok = false;
+                    return mev("bad-arg",
+                               std::string("unknown mutate:replace-pattern keyword: ") + kw);
+                }
+            } else if (is_string(a[ai])) {
+                summary = ev.string_heap_[as_string_idx(a[ai])];
+            } else {
+                ok = false;
+                return mev("bad-arg",
+                           "usage: (mutate:replace-pattern pattern replacement"
+                           " [:nested-arity [#t]] [summary-string])");
+            }
+        }
 
         // Phase 2.5.0: pat_pool stays separate from canonical_pool.
         // Same rationale as the query:pattern site above — pattern AST
@@ -1717,10 +1756,12 @@ void register_mutate_primitives(
         };
 
         // ── Match + capture ────────────────────────────────────
-        struct MatchResult {
-            bool matched = false;
-            std::vector<NodeId> captures;
-        };
+        // so the two primitives agree on which nodes match a pattern
+        // regardless of :nested-arity mode. mutate:replace-pattern
+        // defaults to strict (nested_arity = false) for pre-#482
+        // semantics; pass :nested-arity #t to opt into Kleene
+        // matching (the replacement template still expects 1 capture
+        // per `...` for now).
         // Issue #270: query captures StableNodeRef; apply validates
         // each ref before set_child inside an atomic batch.
         struct PatternMatch {
@@ -1728,48 +1769,9 @@ void register_mutate_primitives(
             std::vector<StableNodeRef> capture_refs;
         };
 
-        std::function<MatchResult(NodeId, NodeId)> match_capture;
-        match_capture = [&](NodeId ws_id, NodeId pat_id) -> MatchResult {
-            if (pat_id >= pat_flat->size() || pat_id == NULL_NODE)
-                return {ws_id == NULL_NODE, {}};
-            if (ws_id >= flat.size() || ws_id == NULL_NODE)
-                return {false, {}};
-
-            auto ws_node = flat.get(ws_id);
-            auto pat_node = pat_flat->get(pat_id);
-
-            if (pat_node.tag == NodeTag::Variable && pat_node.sym_id == wildcard_sym)
-                return {true, {ws_id}};
-
-            if (ws_node.tag != pat_node.tag)
-                return {false, {}};
-
-            switch (pat_node.tag) {
-                case NodeTag::LiteralInt:
-                    return {ws_node.int_value == pat_node.int_value, {}};
-                case NodeTag::LiteralFloat:
-                    return {ws_node.float_value == pat_node.float_value, {}};
-                case NodeTag::Variable:
-                case NodeTag::LiteralString:
-                    return {ev.workspace_pool_->resolve(ws_node.sym_id) ==
-                                pat_pool->resolve(pat_node.sym_id),
-                            {}};
-                case NodeTag::MacroDef:
-                    return {true, {}};
-                default:
-                    if (ws_node.children.size() != pat_node.children.size())
-                        return {false, {}};
-                    std::vector<NodeId> all_captures;
-                    for (std::size_t ci = 0; ci < ws_node.children.size(); ++ci) {
-                        auto child_result = match_capture(ws_node.child(ci), pat_node.child(ci));
-                        if (!child_result.matched)
-                            return {false, {}};
-                        all_captures.insert(all_captures.end(), child_result.captures.begin(),
-                                            child_result.captures.end());
-                    }
-                    return {true, std::move(all_captures)};
-            }
-        };
+        aura::compiler::QueryMatcher matcher(
+            &flat, ev.workspace_pool_, pat_flat, pat_pool,
+            wildcard_sym, nested_arity);
 
         // Find all matching nodes in workspace. Snapshot end_id (#111)
         // and capture StableNodeRef per match (#270).
@@ -1777,19 +1779,22 @@ void register_mutate_primitives(
         std::vector<PatternMatch> matches;
         matches.reserve(end_id);
         for (NodeId id = 0; id < end_id; ++id) {
-            auto mr = match_capture(id, pat_pr.root);
-            if (!mr.matched)
+            // Issue #482: fresh per-match state, same as query site.
+            matcher.state.captures.clear();
+            matcher.state.depth = 0;
+            if (!matcher.match_subtree(id, pat_pr.root))
                 continue;
             PatternMatch pm;
             pm.match_ref = flat.make_ref(id);
-            pm.capture_refs.reserve(mr.captures.size());
-            for (auto cap_id : mr.captures)
-                pm.capture_refs.push_back(flat.make_ref(cap_id));
+            pm.capture_refs.reserve(matcher.state.captures.size());
+            for (auto& kv : matcher.state.captures)
+                pm.capture_refs.push_back(flat.make_ref(kv.second));
             matches.push_back(std::move(pm));
         }
 
         if (matches.empty())
             return mev("not-found", "pattern did not match any node in the AST");
+
 
         // Count wildcards in pattern
         std::function<int(NodeId)> count_wildcards;
@@ -1812,7 +1817,15 @@ void register_mutate_primitives(
         for (auto& match : matches) {
             if (!stable_match_still_attached(flat, match.match_ref))
                 continue;
-            if (static_cast<int>(match.capture_refs.size()) != expected_captures)
+            // Issue #482: in strict mode, capture count must equal
+            // the number of `...` wildcards in the source pattern
+            // (each consumes exactly 1 child). In Kleene mode the
+            // count varies per match (the wildcard consumes 1+
+            // children), so we don't enforce strict equality —
+            // excess captures are ignored, missing captures leave
+            // `...` placeholders in the substitution.
+            if (!nested_arity &&
+                static_cast<int>(match.capture_refs.size()) != expected_captures)
                 continue;
             bool captures_ok = true;
             for (auto& cap_ref : match.capture_refs) {
