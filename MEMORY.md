@@ -350,3 +350,34 @@ green when #484 lands.
 All consistency story done: query and mutate now agree on which
 nodes match a pattern, AND mutate correctly removes the matched
 nodes (no orphan pollution).
+
+## Session 2026-06-24 (continued) — CI gate fix
+
+After closing #484 and the 3 pre-existing fails, the CI `gate`
+job (`python3 build.py gate`) failed because docs were stale —
+#482 added a new module `aura.compiler.matcher` (35→36 modules)
+but the gen didn't auto-run. Committed as `8af8b1b7`.
+
+Then `build.py ci` failed at `test_issues_jit_minimal` due to
+test_issue_211 AC2: builds a bare FlatAST (Variable + LiteralInt)
+without setting flat.root, then `force_build_tag_arity_index`
+expects size ≥ 1. With post-#484 orphan-skip, both nodes were
+excluded (parent_ == NULL && id != root check passed but my code
+didn't account for `root == NULL` case).
+
+Fix in `d1f9aaab`: skip the orphan-skip check when
+`flat.root == NULL_NODE`. Both the slow path
+(`evaluator_primitives_query_workspace.cpp`) and the index insert
+(`evaluator_query_index.cpp`) updated.
+
+CI state after this fix:
+  gate:   ✅ all green (docs, lint, fixtures)
+  build.py ci: ✅ 21 suites, 2264 passed, 0 failed
+  p0: ✅ 173/173
+
+5 commits this session on origin/main:
+  67a48489 — Fix 3 pre-existing macro-intro query fails
+  8af8b1b7 — Regen docs: +1 module
+  d1f9aaab — Fix test_issue_211 orphan-skip edge case
+  (afdc8715 — #484)
+  (f0e69051 — #483)
