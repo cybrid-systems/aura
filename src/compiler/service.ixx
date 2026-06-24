@@ -5686,18 +5686,26 @@ public:
     //                        treat as stale (re-compile)
     std::atomic<std::uint64_t> mutation_epoch_{0};
 
-    // Issue #223: bridge_epoch() returns the current epoch for
-    // ClosureBridgeData lifetime tracking. The bridge callback
-    // (IRExecutor::MakeClosure) and apply_closure compare the
-    // bridge's captured epoch against this; a mismatch means
-    // the bridge's flat*/pool* are stale (arena was reset or
-    // a major mutation happened). The bridge falls back to
-    // re-parse from body_source or invalidates the closure.
+    // Issue #223 / #296: bridge_epoch() returns the current
+    // epoch for ClosureBridgeData lifetime tracking. The bridge
+    // callback (IRExecutor::MakeClosure) and apply_closure
+    // compare the bridge's captured epoch against this; a
+    // mismatch means the bridge's flat*/pool* are stale (arena
+    // was reset or a major mutation happened). The bridge
+    // falls back to re-parse from body_source or invalidates
+    // the closure.
     //
     // For Cycle 1 we reuse mutation_epoch_ — both are bumped
     // together on reset() and on structural mutations, so a
     // single counter suffices. Cycle 2 may split if bridge
     // and cache invalidation need different policies.
+    //
+    // INVARIANT (Epoch Invariant): Every closure created
+    // through the bridge must capture the current epoch
+    // at construction time (via bridge_epoch()). Every
+    // subsequent apply_closure call must check staleness
+    // via Evaluator::is_bridge_stale(). A bypass of either
+    // invariant is a contract violation.
     [[nodiscard]] std::uint64_t bridge_epoch() const noexcept {
         return mutation_epoch_.load(std::memory_order_relaxed);
     }
@@ -5705,6 +5713,13 @@ public:
     // the bridge_epoch_ field on existing ClosureBridgeData should
     // be considered stale (e.g. major mutation that doesn't reset
     // the arena). For Cycle 1 we just forward to mutation_epoch_.
+    //
+    // INVARIANT: bump_bridge_epoch() and any cache invalidation
+    // must happen as a paired operation — bumping the epoch
+    // without invalidating the cache leaves stale entries
+    // visible. The current implementation reuses
+    // mutation_epoch_ which is bumped together with cache
+    // invalidation in mark_define_dirty / mark_all_defines_dirty.
     void bump_bridge_epoch() noexcept { mutation_epoch_.fetch_add(1, std::memory_order_relaxed); }
 
     // Issue #225 cycle 3: invalidate the bridge data for a
