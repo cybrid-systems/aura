@@ -2758,22 +2758,10 @@ public:
         read_column(ast.col_);
         read_column(ast.marker_);
         read_column(ast.dirty_);
-        // Issue #437: read verify_dirty_ alongside dirty_. Blobs
-        // produced by serialize_soa (v2 header) always include this
-        // column. Legacy hand-built v1 fixtures may omit it and jump
-        // straight to type_id_; detect that case by payload width.
-        if (version >= 2) {
-            read_column(ast.verify_dirty_);
-        } else if (pos + 4 <= buf.size()) {
-            std::uint32_t col_count = 0;
-            std::memcpy(&col_count, &buf[pos], 4);
-            const std::size_t u8_payload = col_count;
-            const std::size_t u32_payload = static_cast<std::size_t>(col_count) * 4;
-            if (col_count == num_nodes && pos + 4 + u8_payload <= buf.size() &&
-                pos + 4 + u32_payload > buf.size()) {
-                read_column(ast.verify_dirty_);
-            }
-        }
+        // Issue #437: verify_dirty_ column (u8 per node), written by
+        // serialize_soa since #437. Hand-built v1 fixtures must
+        // include it between dirty_ and type_id_.
+        read_column(ast.verify_dirty_);
         read_column(ast.type_id_);
         read_column(ast.error_kind_);
         read_column(ast.value_cache_);
