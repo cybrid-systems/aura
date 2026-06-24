@@ -3324,16 +3324,121 @@ public:
     struct StableNodeRef {
         NodeId id = NULL_NODE;
         std::uint16_t gen = 0;
+        // Issue #291: provenance + workspace awareness. These
+        // default to 0 / NULL_NODE which matches pre-#291
+        // behavior — refs created via make_ref() will populate
+        // them from the current FlatAST state. The on-disk
+        // format is a packed binary blob (see
+        // serialize_stable_ref / deserialize_stable_ref
+        // below) so existing in-memory callers see no change.
+        //   - mutation_id_at_capture: next_mutation_id_ at the
+        //     time the ref was captured. Lets us answer "which
+        //     mutations happened after this ref was taken" by
+        //     scanning mutation_log_ for entries with id >
+        //     mutation_id_at_capture. Full history lookup is a
+        //     follow-up; this field exists so the
+        //     serialization format is forward-compatible.
+        //   - workspace_id: layer index in the WorkspaceTree
+        //     (0 = root). Default 0 keeps single-workspace
+        //     callers unchanged. Cross-workspace ref
+        //     resolution via WorkspaceTree::resolve_stable_ref
+        //     uses this field to know which layer to resolve
+        //     against.
+        std::uint64_t mutation_id_at_capture = 0;
+        std::uint32_t workspace_id = 0;
 
         // Default-constructed refs are always invalid (id=NULL).
         bool is_valid_in(const FlatAST& ast) const noexcept { return ast.is_valid(*this); }
     };
 
+    // Issue #291: serialize a StableNodeRef to a compact
+    // 16-byte binary blob. Format (little-endian):
+    //   [u32 magic=0x2901A17A][u32 id][u16 gen][u16 pad][u64 mutation_id][u32 workspace_id][u32 reserved]
+    //   = 4+4+2+2+8+4+4 = 24 bytes
+    // The packed form is designed to be:
+    //   - trivially memcpy-able (no host-endian conversion needed
+    //     for use within one process; cross-endian callers
+    //     should use the Aura helper (ast:ref-serialize) which
+    //     returns a string in canonical order)
+    //   - forward-compatible: new fields can be appended without
+    //     breaking existing readers (just bump the version byte
+    //     and ignore unknown trailing data)
+    //   - distinguishable from old (id, gen)-only refs: the new
+    //     format starts with a 4-byte magic number
+    //     (0x2901A17A) so readers can tell a #291+ serialized
+    //     blob from a raw (id, gen) binary.
+    static constexpr std::size_t kStableRefSerializedSize = 24;
+    static constexpr std::uint32_t kStableRefMagic = 0x2901A17A;  // #291 + AURA tag
+
+    // Issue #291: pack a StableNodeRef into a 20-byte buffer.
+    // Returns the number of bytes written (= kStableRefSerializedSize).
+    [[nodiscard]] std::size_t serialize_stable_ref(const StableNodeRef& ref,
+                                                  std::uint8_t* out) const noexcept {
+        // First 4 bytes: magic (high 16 bits = 0x2901, low 16
+        // bits = 0xA17A). Reader checks this to distinguish
+        // #291+ serialized refs from raw (id, gen) binary.
+        out[0] = static_cast<std::uint8_t>(kStableRefMagic & 0xFF);
+        out[1] = static_cast<std::uint8_t>((kStableRefMagic >> 8) & 0xFF);
+        out[2] = static_cast<std::uint8_t>((kStableRefMagic >> 16) & 0xFF);
+        out[3] = static_cast<std::uint8_t>((kStableRefMagic >> 24) & 0xFF);
+        // Next 4 bytes: id (NodeId)
+        std::memcpy(out + 4, &ref.id, sizeof(ref.id));
+        // Next 2 bytes: gen
+        std::memcpy(out + 8, &ref.gen, sizeof(ref.gen));
+        // 2 bytes padding
+        out[10] = 0;
+        out[11] = 0;
+        // 8 bytes: mutation_id_at_capture
+        std::memcpy(out + 12, &ref.mutation_id_at_capture, sizeof(ref.mutation_id_at_capture));
+        // 4 bytes: workspace_id
+        std::memcpy(out + 20, &ref.workspace_id, sizeof(ref.workspace_id));
+        // Final 4 bytes: reserved for future fields
+        out[16] = 0; out[17] = 0; out[18] = 0; out[19] = 0;
+        return kStableRefSerializedSize;
+    }
+
+    // Issue #291: deserialize a 20-byte buffer back to a
+    // StableNodeRef. Returns false if the magic doesn't match
+    // or buffer is too small. The caller is responsible for
+    // checking is_valid() AFTER deserializing to confirm the
+    // ref still points to a live node in the current flat.
+    [[nodiscard]] bool deserialize_stable_ref(const std::uint8_t* buf,
+                                             std::size_t buf_size,
+                                             StableNodeRef& out) const noexcept {
+        if (buf_size < kStableRefSerializedSize) return false;
+        std::uint32_t magic = 0;
+        std::memcpy(&magic, buf, 4);
+        if (magic != kStableRefMagic) return false;
+        StableNodeRef r{};
+        std::memcpy(&r.id, buf + 4, sizeof(r.id));
+        std::memcpy(&r.gen, buf + 8, sizeof(r.gen));
+        std::memcpy(&r.mutation_id_at_capture, buf + 12, sizeof(r.mutation_id_at_capture));
+        std::memcpy(&r.workspace_id, buf + 20, sizeof(r.workspace_id));
+        out = r;
+        return true;
+    }
+
     // Issue #191: make a StableNodeRef capturing the current
     // generation. Use this in EDSL / query / mutate primitives
     // to safely hold a reference to a node across calls.
     [[nodiscard]] StableNodeRef make_ref(NodeId id) const noexcept {
-        return StableNodeRef{id, generation_};
+        // Issue #291: also capture mutation_id_at_capture so
+        // downstream callers can answer "which mutations
+        // affected this node since capture" (full lookup is a
+        // follow-up; the field is captured now to make the
+        // serialization format forward-compatible). workspace_id
+        // defaults to 0 (root); callers working across
+        // WorkspaceTree layers can set it explicitly via
+        // make_ref_in_layer(id, workspace_id).
+        return StableNodeRef{id, generation_, next_mutation_id_, 0};
+    }
+
+    // Issue #291: make_ref variant that also tags the ref
+    // with a specific WorkspaceTree layer index. Used by
+    // query/mutate primitives that operate on a child
+    // workspace.
+    [[nodiscard]] StableNodeRef make_ref_in_layer(NodeId id, std::uint32_t workspace_id) const noexcept {
+        return StableNodeRef{id, generation_, next_mutation_id_, workspace_id};
     }
 
     // Issue #191: validation + safe get that take a StableNodeRef.

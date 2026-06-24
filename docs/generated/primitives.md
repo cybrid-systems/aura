@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**458** registrations scanned from `src/**/*.cpp`.
+**462** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -94,7 +94,7 @@ Runtime canonical list: `(api-reference)`.
 - `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `mutate:wrap` — `src/compiler/evaluator_primitives_mutate.cpp`
 
-## Ast: (20)
+## Ast: (24)
 
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:defs` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -105,8 +105,12 @@ Runtime canonical list: `(api-reference)`.
 - `ast:nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:post-restore-stats` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:recycle-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-deserialize` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-get` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-mutation-id` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-serialize` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:ref-valid?` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-workspace-id` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:restore` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:snapshot` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:stable-ref` — `src/compiler/evaluator_primitives_ast.cpp`
