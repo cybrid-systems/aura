@@ -8,6 +8,7 @@
 
 module;
 
+#include <cstdio>
 #include <span>
 #include <utility>
 #include <vector>
@@ -29,6 +30,27 @@ QueryMatcher::QueryMatcher(FlatAST* ws_flat,
       pat_flat_(pat_flat), pat_pool_(pat_pool),
       wildcard_sym_(wildcard_sym) {
     state.nested_arity = nested_arity;
+    // Issue #292: intern ":guard" so the matcher can detect
+    // (:guard <sub-pat> "expr") forms in the pattern.
+    if (pat_pool_) {
+        guard_sym_ = pat_pool_->intern(":guard");
+    }
+}
+
+void QueryMatcher::setup_guard_detection() {
+    // No-op for now; reserved for future guard variants.
+}
+
+bool QueryMatcher::is_guard_root(NodeId pat_id) const {
+    if (pat_id == NULL_NODE || pat_id >= pat_flat_->size())
+        return false;
+    auto pn = pat_flat_->get(pat_id);
+    if (pn.tag != NodeTag::Call || pn.children.size() < 3)
+        return false;
+    if (pn.children[0] == NULL_NODE || pn.children[0] >= pat_flat_->size())
+        return false;
+    auto head = pat_flat_->get(pn.children[0]);
+    return head.tag == NodeTag::Variable && head.sym_id == guard_sym_;
 }
 
 bool QueryMatcher::is_wildcard(NodeId pid) const {
@@ -102,7 +124,56 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
         return true;
     }
 
-    // (3) Same tag required
+    // (3) Issue #292: detect (:guard <sub-pat> "guard-expr")
+    // form. This check runs BEFORE the tag comparison because
+    // a (:guard ?x "expr") pattern wraps a sub-pattern that
+    // may have a different tag than the wrapper Call itself.
+    // The matcher extracts the sub-pattern, recurses on it,
+    // and stashes (captures, guard-expr) for the caller to
+    // evaluate. The guard sym is interned in the constructor.
+    if (pat_node.tag == NodeTag::Call &&
+        pat_node.children.size() >= 2 &&
+        pat_node.children[0] != NULL_NODE &&
+        pat_node.children[0] < pat_flat_->size()) {
+        auto head_node = pat_flat_->get(pat_node.children[0]);
+        if (head_node.tag == NodeTag::Variable &&
+            head_node.sym_id == guard_sym_) {
+            // Form: (:guard <sub-pat> "guard-expr")
+            // children[1] is the sub-pattern root
+            // children[2] (if LiteralString) is the guard expression
+            std::string guard_expr;
+            NodeId sub_pat = NULL_NODE;
+            if (pat_node.children.size() >= 3 &&
+                pat_node.children[1] != NULL_NODE &&
+                pat_node.children[1] < pat_flat_->size()) {
+                auto expr_node = pat_flat_->get(pat_node.children[1]);
+                if (expr_node.tag == NodeTag::LiteralString) {
+                    guard_expr = pat_pool_->resolve(expr_node.sym_id);
+                }
+            }
+            if (pat_node.children.size() >= 3 &&
+                pat_node.children[2] != NULL_NODE) {
+                sub_pat = pat_node.children[2];
+            }
+            // Recurse on sub-pattern.
+            if (sub_pat != NULL_NODE) {
+                auto save = state.captures.size();
+                if (!match_subtree(ws_id, sub_pat)) {
+                    state.captures.resize(save);
+                    return false;
+                }
+            }
+            // Stash (current_captures, guard_expr). The caller
+            // checks pending_guards_ and evaluates the guard.
+            PendingGuard pg;
+            pg.captures = state.captures;
+            pg.guard_expr = guard_expr;
+            pending_guards_.push_back(std::move(pg));
+            return true;
+        }
+    }
+
+    // (4) Same tag required
     if (ws_node.tag != pat_node.tag)
         return false;
 

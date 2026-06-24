@@ -1074,6 +1074,67 @@ void register_workspace_query_primitives(
         auto& flat = *ws.workspace_flat;
         EvalValue result = make_void();
 
+        // Issue #292: guard predicate support. After
+        // match_subtree returns true, check pending_guards_ on
+        // the matcher. If a guard is pending, build a let
+        // expression that binds each ?capture to its captured
+        // NodeId (as int), eval the guard string, and accept
+        // the match only if the guard returns truthy. The
+        // captures used here are pat-side sym_ids (e.g. "?x")
+        // which the matcher recorded during match_subtree;
+        // we resolve them via pat_pool to get the binding
+        // name.
+        auto check_guard = [&]() -> bool {
+            if (!matcher.has_pending_guard()) return true;
+            const auto& pg = matcher.take_pending_guard();
+            // Build let source. Each capture: (name value).
+            // The captured value is the workspace node's value
+            // (LiteralInt int_value) if applicable, else the
+            // NodeId. This makes the guard expression natural
+            // to write — the user does (> ?x 0) not (> <node-id> 0).
+            std::string let_src = "(let (";
+            for (const auto& kv : pg.captures) {
+                // Skip sentinel sym_id 0 (wildcard captures).
+                if (kv.first == 0) continue;
+                auto name = pat_pool->resolve(kv.first);
+                if (name.empty() || name[0] != '?') continue;
+                int64_t bind_value = static_cast<int64_t>(kv.second);
+                if (kv.second < ws.workspace_flat->size()) {
+                    auto wsn = ws.workspace_flat->get(kv.second);
+                    if (wsn.tag == aura::ast::NodeTag::LiteralInt) {
+                        bind_value = wsn.int_value;
+                    }
+                }
+                let_src += "(" + std::string(name) + " " +
+                           std::to_string(bind_value) + ")";
+            }
+            let_src += ") " + pg.guard_expr + ")";
+            // Parse the let source into a temp flat and eval
+            // it in top_env. This is the same parse_to_flat +
+            // eval_flat pipeline used elsewhere in this file
+            // (see pattern parse above); we use ws.temp_arena
+            // so (gc-temp) reclaims it per call.
+            auto alloc = ws.temp_arena->allocator();
+            auto* guard_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
+            auto* guard_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
+            auto pr = aura::parser::parse_to_flat(let_src, *guard_flat, *guard_pool);
+            bool ok = false;
+            if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                auto gr = ev.eval_flat(*guard_flat, *guard_pool, pr.root, ev.top_env());
+                if (gr) {
+                    auto& gv = *gr;
+        
+                    // Truthy = non-zero int, non-#f, non-void.
+                    if (types::is_int(gv)) ok = (types::as_int(gv) != 0);
+                    else if (types::is_bool(gv)) ok = types::as_bool(gv);
+                    else if (types::is_pair(gv)) ok = true;
+                }
+            }
+
+            matcher.clear_pending_guard();
+            return ok;
+        };
+
         // Issue #186 Phase 1: pre-compute the pattern's children
         // count once. The outer loop can then skip nodes whose
         // children count doesn't match the pattern's children
@@ -1094,8 +1155,14 @@ void register_workspace_query_primitives(
         // arity is still fixed (single-subtree wildcard), so the
         // index helps regardless of ellipsis presence.
         const bool pat_has_ellipsis = matcher.pat_has_ellipsis_rec(pr.root);
+        // Issue #292: (:guard <sub-pat> "expr") wrappers have
+        // tag=Call, arity=2-3 — the index fast path would skip
+        // positions whose (tag, arity) doesn't match. Force
+        // slow path for guard wrappers.
+        const bool pat_is_guard = matcher.is_guard_root(pr.root);
         const bool use_index_fast_path =
-            !pat_root_is_wildcard && (!nested_arity || !pat_has_ellipsis);
+            !pat_root_is_wildcard && !pat_is_guard &&
+            (!nested_arity || !pat_has_ellipsis);
 
 
         // Walk every node in workspace and try matching at each position.
@@ -1155,6 +1222,8 @@ void register_workspace_query_primitives(
                 matcher.state.captures.clear();
                 matcher.state.depth = 0;
                 if (matcher.match_subtree(id, pr.root)) {
+                    // Issue #292: guard predicate check.
+                    if (!check_guard()) continue;
                     // Issue #289: result format. With
                     // :with-markers #t, store a (NodeId . marker-int)
                     // pair per match so agents can see which
@@ -1221,6 +1290,8 @@ void register_workspace_query_primitives(
                 matcher.state.captures.clear();
                 matcher.state.depth = 0;
                 if (matcher.match_subtree(id, pr.root)) {
+                    // Issue #292: guard predicate check.
+                    if (!check_guard()) continue;
                     EvalValue item;
                     if (with_markers) {
                         auto nid_int = make_int(static_cast<std::int64_t>(id));

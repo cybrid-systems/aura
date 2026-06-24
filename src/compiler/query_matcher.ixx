@@ -67,6 +67,42 @@ public:
                     std::span<const NodeId> pat_ch);
     bool pat_has_ellipsis_rec(NodeId pid);
 
+    // ─── Issue #292: guard predicate support ────────────────
+    // If a pattern is wrapped in `(:guard <sub-pat> "guard-expr")`,
+    // the matcher detects the keyword-head Call, matches the
+    // sub-pattern, and on success stashes a (capture_set,
+    // guard_expr_string) pair into pending_guards_. The caller
+    // (query:pattern) checks pending_guards_ after each match and
+    // evaluates the guard via the Aura evaluator with captures
+    // bound as locals. If the guard returns false, the match is
+    // rejected.
+    struct PendingGuard {
+        std::vector<std::pair<SymId, NodeId>> captures;
+        std::string guard_expr;
+    };
+    std::vector<PendingGuard> pending_guards_;
+    SymId guard_sym_ = 0;  // interned ":guard" symbol in pat_pool
+
+    // Setup: intern the ":guard" keyword symbol. Call from the
+    // pattern-parsing site (e.g. query:pattern) before matching.
+    void setup_guard_detection();
+
+    // Returns true if the given pat_id is a (:guard <sub-pat> "expr")
+    // wrapper Call node. Callers (e.g. query:pattern) can use this
+    // to bypass the (tag, arity) index fast path — the wrapper's
+    // tag is Call (not the sub-pattern's tag), so the index would
+    // skip all matching positions. Slow path does a full walk.
+    [[nodiscard]] bool is_guard_root(NodeId pat_id) const;
+
+    // After match_subtree returns true, check pending_guards_.
+    // Returns true if no guard or guard is satisfied; false if
+    // guard failed (caller should reject the match).
+    [[nodiscard]] bool has_pending_guard() const { return !pending_guards_.empty(); }
+    [[nodiscard]] const PendingGuard& take_pending_guard() {
+        return pending_guards_.back();
+    }
+    void clear_pending_guard() { pending_guards_.pop_back(); }
+
     // ─── Public state ─────────────────────────────────────────
     QueryMatchState state;
 
