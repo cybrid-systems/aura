@@ -34,6 +34,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_query_workspace.cpp
     src/compiler/evaluator_primitives_query_defuse.cpp
     src/compiler/evaluator_primitives_mutate.cpp
+    src/compiler/query_matcher.cpp
     src/compiler/evaluator_primitives_workspace.cpp
     src/compiler/evaluator_primitives_ast.cpp
     src/compiler/evaluator_primitives_compile.cpp
@@ -979,6 +980,8 @@ aura_add_issue_test(test_issue_272)
 aura_issue_test_link_llvm_jit(test_issue_272)
 aura_add_issue_test(test_issue_289)
 aura_issue_test_link_llvm_jit(test_issue_289)
+aura_add_issue_test(test_issue_482)
+aura_issue_test_link_llvm_jit(test_issue_482)
 aura_add_issue_test_standalone(test_issue_273)
 aura_add_issue_test_standalone(test_issue_274)
 aura_add_issue_test_standalone(test_issue_275)

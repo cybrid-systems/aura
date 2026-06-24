@@ -20,6 +20,7 @@ import aura.core.ast;
 import aura.core.type;
 import aura.core.mutation;
 import aura.compiler.value;
+import aura.compiler.matcher;
 import aura.parser.parser;
 
 namespace aura::compiler::primitives_detail {
@@ -1051,201 +1052,24 @@ void register_workspace_query_primitives(
         // orthogonal — "?x" is a capture, "..." is the legacy
         // single-subtree / new Kleene-star wildcard, never both.)
         auto wildcard_sym = pat_pool->intern("...");
-        auto is_wildcard = [&](aura::ast::NodeId pid) {
-            if (pid == aura::ast::NULL_NODE || pid >= pat_flat->size())
-                return false;
-            auto pn = pat_flat->get(pid);
-            return pn.tag == aura::ast::NodeTag::Variable &&
-                   pn.sym_id == wildcard_sym;
-        };
-        // Issue #289: capture variable detection. A pattern
-        // Variable whose sym name starts with '?' is a logical
-        // variable (?x, ?1, ?callee). First occurrence binds the
-        // matched workspace NodeId; later occurrences must match
-        // the same NodeId. The "?" prefix never collides with
-        // the "..." wildcard (different first char).
-        auto is_capture = [&](aura::ast::NodeId pid) -> bool {
-            if (pid == aura::ast::NULL_NODE || pid >= pat_flat->size())
-                return false;
-            auto pn = pat_flat->get(pid);
-            if (pn.tag != aura::ast::NodeTag::Variable)
-                return false;
-            auto name = pat_pool->resolve(pn.sym_id);
-            return name.size() >= 2 && name[0] == '?';
-        };
 
-        // Issue #289: per-match state. Captures are stored as an
-        // insertion-ordered vector (linear scan lookup is fine —
-        // typical patterns have < 10 captures; the alternative
-        // unordered_map adds complexity for save/restore during
-        // backtracking). Backtracking uses a savepoint pattern:
-        // snapshot the current size, restore by truncating the
-        // vector.
-        struct QueryMatchState {
-            std::vector<std::pair<aura::ast::SymId, aura::ast::NodeId>> captures;
-            bool nested_arity;
-            int depth = 0;
-        };
-        QueryMatchState state;
-        state.nested_arity = nested_arity;
+        // Issue #482: use the shared QueryMatcher from query_matcher.hh.
+        // Same matcher used by mutate:replace-pattern, so the two
+        // primitives agree on which nodes match a pattern regardless
+        // of :nested-arity mode.
+        aura::compiler::QueryMatcher matcher(
+            ws.workspace_flat, ws.workspace_pool,
+            pat_flat, pat_pool,
+            wildcard_sym, nested_arity);
 
-        // match_list: list-vs-list matcher. New in #289 — the
-        // pre-#289 design matched children position-by-position
-        // (fixed arity). The new design supports Kleene-star
-        // `...` that consumes 0..N consecutive children, gated
-        // by `nested_arity` (default is Kleene since #481;
-        // pre-#289 strict mode available via :strict-arity #t
-        // or :nested-arity #f).
-        std::function<bool(std::span<const aura::ast::NodeId>,
-                           std::span<const aura::ast::NodeId>)>
-            match_list;
-        std::function<bool(aura::ast::NodeId, aura::ast::NodeId)> match_subtree;
+        // ─── Per-match state (Issue #289, refactored in #482) ───────
+        // Captures are stored as an insertion-ordered vector (linear
+        // scan lookup is fine — typical patterns have < 10 captures;
+        // the alternative unordered_map adds complexity for
+        // save/restore during backtracking). Backtracking uses a
+        // savepoint pattern: snapshot the current size, restore by
+        // truncating the vector.
 
-        match_subtree = [&](aura::ast::NodeId ws_id,
-                            aura::ast::NodeId pat_id) -> bool {
-            if (++state.depth > 64)
-                return false;
-            if (pat_id >= pat_flat->size())
-                return ws_id >= ws.workspace_flat->size();
-            if (ws_id >= ws.workspace_flat->size() || pat_id == aura::ast::NULL_NODE)
-                return (pat_id == aura::ast::NULL_NODE) ? (ws_id == aura::ast::NULL_NODE) : false;
-
-            auto ws_node = ws.workspace_flat->get(ws_id);
-            auto pat_node = pat_flat->get(pat_id);
-
-            // (1) Wildcard "..." — normally handled by match_list,
-            //     but match_subtree may be called on a wildcard
-            //     node directly (e.g. when the pattern root is
-            //     just "..."). Match any subtree.
-            if (is_wildcard(pat_id))
-                return true;
-
-            // (2) Capture variable "?x" — first occurrence binds
-            //     the ws node; later occurrences must match
-            //     structurally. For leaf nodes (literals, vars)
-            //     we compare tag + value (so `(+ a a)` matches
-            //     `(+ ?x ?x)`); for composite nodes we fall back
-            //     to identity (NodeId equality). This is the
-            //     common-sense "logical variable" semantics —
-            //     matches Common Lisp's `?x` in defmacro patterns
-            //     and miniKanren-style relational binding.
-            if (is_capture(pat_id)) {
-                auto key = pat_node.sym_id;
-                for (auto& kv : state.captures) {
-                    if (kv.first == key) {
-                        if (kv.second >= ws.workspace_flat->size())
-                            return false;
-                        auto bound = ws.workspace_flat->get(kv.second);
-                        if (bound.tag != ws_node.tag)
-                            return false;
-                        switch (bound.tag) {
-                            case aura::ast::NodeTag::LiteralInt:
-                                return bound.int_value == ws_node.int_value;
-                            case aura::ast::NodeTag::LiteralFloat:
-                                return bound.float_value == ws_node.float_value;
-                            case aura::ast::NodeTag::Variable:
-                            case aura::ast::NodeTag::LiteralString:
-                                return ws.workspace_pool->resolve(bound.sym_id) ==
-                                       ws.workspace_pool->resolve(ws_node.sym_id);
-                            default:
-                                // Composite node: fall back to identity
-                                return kv.second == ws_id;
-                        }
-                    }
-                }
-                state.captures.emplace_back(key, ws_id);
-                return true;
-            }
-
-            // (3) Same tag required
-            if (ws_node.tag != pat_node.tag)
-                return false;
-
-            switch (pat_node.tag) {
-                case aura::ast::NodeTag::LiteralInt:
-                    return ws_node.int_value == pat_node.int_value;
-                case aura::ast::NodeTag::LiteralFloat:
-                    return ws_node.float_value == pat_node.float_value;
-                case aura::ast::NodeTag::Variable:
-                case aura::ast::NodeTag::LiteralString:
-                    return ws.workspace_pool->resolve(ws_node.sym_id) ==
-                           pat_pool->resolve(pat_node.sym_id);
-                case aura::ast::NodeTag::MacroDef:
-                    return true;
-                default: {
-                    // Composite node: recurse via match_list for
-                    // children. Use a savepoint so that if the
-                    // children match fails partway, any captures
-                    // bound during it are rolled back.
-                    size_t save = state.captures.size();
-                    bool ok = match_list(ws_node.children, pat_node.children);
-                    if (!ok)
-                        state.captures.resize(save);
-                    return ok;
-                }
-            }
-        };
-
-        match_list = [&](std::span<const aura::ast::NodeId> ws_ch,
-                         std::span<const aura::ast::NodeId> pat_ch) -> bool {
-            if (++state.depth > 64)
-                return false;
-            if (pat_ch.empty() && ws_ch.empty())
-                return true;
-            if (pat_ch.empty())
-                return false;
-            if (ws_ch.empty()) {
-                // Workspace exhausted, pattern still has elements.
-                // All remaining pattern must be wildcards (each
-                // can consume 0) for this to be a match.
-                for (auto p : pat_ch)
-                    if (!is_wildcard(p))
-                        return false;
-                return true;
-            }
-
-            auto pc = pat_ch[0];
-            if (is_wildcard(pc)) {
-                if (!state.nested_arity) {
-                    // Default (pre-#289): "..." consumes exactly 1.
-                    if (!match_subtree(ws_ch[0], pc))
-                        return false;
-                    return match_list(ws_ch.subspan(1), pat_ch.subspan(1));
-                }
-                // Issue #289 Kleene mode: try consuming 0 first
-                // (most permissive), then 1+ via the recursive
-                // call. Savepoint ensures that any captures bound
-                // in path A are rolled back before trying path B.
-                size_t save = state.captures.size();
-                if (match_list(ws_ch, pat_ch.subspan(1)))
-                    return true;
-                state.captures.resize(save);
-                return match_list(ws_ch.subspan(1), pat_ch);
-            }
-            // Fixed position: 1 ws child consumed, 1 pat element
-            // consumed. match_subtree handles its own savepoint.
-            if (!match_subtree(ws_ch[0], pc))
-                return false;
-            return match_list(ws_ch.subspan(1), pat_ch.subspan(1));
-        };
-
-        // Issue #289: detect "any `...` anywhere in the pattern".
-        // When the pattern has an ellipsis AND we're in Kleene
-        // mode (the default), the workspace arity is not fixed,
-        // so the (tag, arity) index fast path can't prune by
-        // arity — we must do a full walk.
-        std::function<bool(aura::ast::NodeId)> pat_has_ellipsis_rec;
-        pat_has_ellipsis_rec = [&](aura::ast::NodeId pid) -> bool {
-            if (pid == aura::ast::NULL_NODE || pid >= pat_flat->size())
-                return false;
-            if (is_wildcard(pid))
-                return true;
-            auto pn = pat_flat->get(pid);
-            for (auto c : pn.children)
-                if (pat_has_ellipsis_rec(c))
-                    return true;
-            return false;
-        };
 
         auto& flat = *ws.workspace_flat;
         EvalValue result = make_void();
@@ -1269,7 +1093,7 @@ void register_workspace_query_primitives(
         // must do a full walk. In the default strict mode the
         // arity is still fixed (single-subtree wildcard), so the
         // index helps regardless of ellipsis presence.
-        const bool pat_has_ellipsis = pat_has_ellipsis_rec(pr.root);
+        const bool pat_has_ellipsis = matcher.pat_has_ellipsis_rec(pr.root);
         const bool use_index_fast_path =
             !pat_root_is_wildcard && (!nested_arity || !pat_has_ellipsis);
 
@@ -1328,9 +1152,9 @@ void register_workspace_query_primitives(
                 // Issue #289: fresh per-match state. Captures
                 // and depth are reset so a failed match doesn't
                 // pollute the next position's attempt.
-                state.captures.clear();
-                state.depth = 0;
-                if (match_subtree(id, pr.root)) {
+                matcher.state.captures.clear();
+                matcher.state.depth = 0;
+                if (matcher.match_subtree(id, pr.root)) {
                     // Issue #289: result format. With
                     // :with-markers #t, store a (NodeId . marker-int)
                     // pair per match so agents can see which
@@ -1362,9 +1186,9 @@ void register_workspace_query_primitives(
                     ev.bump_macro_introduced_skipped_in_query();
                     continue;
                 }
-                state.captures.clear();
-                state.depth = 0;
-                if (match_subtree(id, pr.root)) {
+                matcher.state.captures.clear();
+                matcher.state.depth = 0;
+                if (matcher.match_subtree(id, pr.root)) {
                     EvalValue item;
                     if (with_markers) {
                         auto nid_int = make_int(static_cast<std::int64_t>(id));

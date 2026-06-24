@@ -38,6 +38,7 @@ set(AURA_CXX_MODULE_COMPILER
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx
+    src/compiler/query_matcher.ixx
 )
 
 # Wire the common CXX module FILE_SET onto TARGET.
