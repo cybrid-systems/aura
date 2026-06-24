@@ -318,3 +318,35 @@ green when #484 lands.
 - Save debug scripts in /tmp/ for reuse: `/tmp/close_481.sh`,
   `/tmp/post_481.sh`, `/tmp/replace_mutate_matcher.py`,
   `/tmp/close_482.sh`, `/tmp/post_482.py`, `/tmp/close_483.py`.
+
+## Session 2026-06-24 (continued) — #484 shipped
+
+`afdc8715` on `origin/main`. The orphan-skip fix:
+- **Bug**: `mutate:replace-pattern` leaves orphan nodes in the
+  flat (parent_=NULL) and `query:pattern` was returning them as
+  live matches.
+- **3-layer fix**: defense in depth in `tag_arity_index_insert_node`
+  (skip orphans), in `query_workspace.cpp` slow path (skip orphans),
+  and `ev.invalidate_tag_arity_index()` after mutate.
+- **Tests**: test_issue_271: 14/14 ✅ (was 13/14 — AC2 now passes),
+  test_issue_482: 13/13 ✅, test_issue_484_minimal NEW 2/2 ✅.
+- Bundle: 45/47. The 2 remaining fails (test_issue_140 + test_issue_267)
+  are pre-existing macro-introduced-query edge cases, NOT caused
+  by this PR (confirmed by comparing baseline vs post-#484 FAIL lines).
+- p0: 173/173 ✅
+- #484 closed: https://github.com/cybrid-systems/aura/issues/484#issuecomment-4785737697
+  state: closed, state_reason: completed
+
+## All 5 #289-series issues closed ✅
+
+| # | Title | Closed |
+|---|---|---|
+| #289 | query:pattern nested-arity (Kleene) + capture + markers | ✅ prior session |
+| #481 | Make `:nested-arity` the default | ✅ this session |
+| #482 | Share matcher between query and mutate | ✅ this session |
+| #483 | Heap-use-after-free in macro_expansion | ✅ this session |
+| #484 | query:pattern skips orphan nodes from mutate | ✅ this session |
+
+All consistency story done: query and mutate now agree on which
+nodes match a pattern, AND mutate correctly removes the matched
+nodes (no orphan pollution).

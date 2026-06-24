@@ -1206,7 +1206,16 @@ void register_workspace_query_primitives(
                 // are typically mutate-replaced children (the
                 // genuine lost-from-tree case) and should be
                 // excluded.
-                if (id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE &&
+                //
+                // Edge case: if the flat has no root set (root
+                // == NULL_NODE, e.g. test fixture that builds a
+                // bare flat without a workspace root), every
+                // node is by definition orphan. Don't skip any
+                // — the caller (test fixture) is intentionally
+                // exercising index operations on orphan-like
+                // nodes.
+                if (flat.root != aura::ast::NULL_NODE &&
+                    id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE &&
                     flat.marker(id) != aura::ast::SyntaxMarker::MacroIntroduced)
                     continue;
                 matcher.state.captures.clear();

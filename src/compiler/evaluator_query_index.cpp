@@ -40,8 +40,11 @@ void Evaluator::tag_arity_index_insert_node(const aura::ast::FlatAST& flat,
     // Issue #484 follow-up: see slow-path counterpart in
     // evaluator_primitives_query_workspace.cpp. Skip orphans
     // except those with MacroIntroduced marker (macro-expanded
-    // bodies that macro_expand_all forgot to splice in).
-    if (id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE &&
+    // bodies that macro_expand_all forgot to splice in). Also
+    // skip the check entirely when the flat has no root set
+    // (test fixture scenario).
+    if (flat.root != aura::ast::NULL_NODE &&
+        id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE &&
         flat.marker(id) != aura::ast::SyntaxMarker::MacroIntroduced)
         return;
     const auto node = flat.get(id);
