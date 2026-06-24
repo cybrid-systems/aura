@@ -944,22 +944,27 @@ void register_workspace_query_primitives(
         if (a.empty())
             return mev("bad-arg",
                        "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                       " [:nested-arity [#t]] [:with-markers [#t]])");
+                       " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
         if (!ws.workspace_flat || !ws.workspace_pool)
             return mev("no-workspace", "no workspace AST loaded");
 
         bool have_pattern = false;
         std::size_t pattern_string_idx = 0;
         bool include_macro_introduced = false;
-        // Issue #289: nested-arity / Kleene-star ellipsis. Default
-        // (#f) preserves pre-#289 strict single-subtree wildcard
-        // behavior (`...` consumes exactly 1 child). Set
-        // :nested-arity #t to enable Kleene (`...` consumes 0..N
-        // children). Opt-in keeps all existing tests stable and
-        // defers the query↔mutate consistency question (mutate:
-        // replace-pattern still uses strict matcher) to a follow-up
-        // issue.
-        bool nested_arity = false;
+        // Issue #289 / #481: nested-arity / Kleene-star ellipsis.
+        // Default (#t) is Kleene (`...` consumes 0..N consecutive
+        // children). Set `:nested-arity #f` or `:strict-arity #t` to
+        // opt back into the pre-#289 strict single-subtree wildcard
+        // behavior (`...` consumes exactly 1 child). The :strict-arity
+        // keyword is a discoverable alias for :nested-arity #f —
+        // both flip the matcher to position-by-position matching.
+        // NOTE: mutate:replace-pattern still uses its own strict
+        // matcher (#482 will share the matcher and align the two
+        // primitives). Until that lands, the query↔mutate semantics
+        // differ in the default Kleene mode — pass :strict-arity #t
+        // to query:pattern if you need to query the same node set
+        // mutate:replace-pattern will see.
+        bool nested_arity = true;
         // Issue #289: result format. Default (false) preserves the
         // pre-#289 result shape — a flat list of NodeIds. When
         // #t, each result item is a (NodeId . marker-int) pair so
@@ -996,6 +1001,19 @@ void register_workspace_query_primitives(
                     consume_bool(include_macro_introduced);
                 } else if (kw == ":nested-arity") {
                     consume_bool(nested_arity);
+                } else if (kw == ":strict-arity") {
+                    // Issue #481: discoverable alias for the strict
+                    // single-subtree wildcard mode (pre-#289 default).
+                    // Equivalent to `:nested-arity #f`.
+                    bool v = true;
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            v = as_bool(a[ai + 1]);
+                        else
+                            v = (as_int(a[ai + 1]) != 0);
+                        ++ai;
+                    }
+                    nested_arity = !v;
                 } else if (kw == ":with-markers") {
                     consume_bool(with_markers);
                 } else {
@@ -1004,7 +1022,7 @@ void register_workspace_query_primitives(
             } else {
                 return mev("bad-arg",
                            "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                           " [:nested-arity [#t]] [:with-markers [#t]])");
+                           " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
             }
         }
         if (!have_pattern)
@@ -1075,8 +1093,9 @@ void register_workspace_query_primitives(
         // pre-#289 design matched children position-by-position
         // (fixed arity). The new design supports Kleene-star
         // `...` that consumes 0..N consecutive children, gated
-        // by `nested_arity` (opt-in, default is strict for
-        // backward compatibility).
+        // by `nested_arity` (default is Kleene since #481;
+        // pre-#289 strict mode available via :strict-arity #t
+        // or :nested-arity #f).
         std::function<bool(std::span<const aura::ast::NodeId>,
                            std::span<const aura::ast::NodeId>)>
             match_list;
