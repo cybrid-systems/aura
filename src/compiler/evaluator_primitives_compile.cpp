@@ -706,40 +706,78 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             ev.get_partial_relower_count()));
     });
 
-    // Issue #426: (query:compiler-cache-stats) — return
-    // the current per-block dirty counts across the
-    // compiler cache. P0 ship: returns the total dirty
-    // block count (sum over all functions) as an int.
-    // Follow-up: returns a 3-tuple
-    // (dirty-blocks dirty-functions incremental-candidates)
-    // so the AI Agent can decide whether the next
-    // (compile:relower) should be a full re-lower or
-    // an incremental one.
+    // Issue #426 / #293: (query:compiler-cache-stats) —
+    // return the current per-block dirty summary across the
+    // compiler cache as a 3-tuple
+    // (total-dirty-blocks total-dirty-functions
+    //  incremental-candidates). The "incremental
+    // candidates" count is the number of functions whose
+    // dirty block count falls in [1..7] (per
+    // estimate_relower_blocks); 8+ dirty blocks is
+    // "full re-lower" territory and 0 is "clean".
+    //
+    // AI Agents can use the 3-tuple to decide whether the
+    // next (compile:relower) should be incremental
+    // (incremental-candidates > 0) or full (otherwise).
     add("query:compiler-cache-stats", [&ev](const auto& a) -> EvalValue {
         (void)a;
-        // The per-function block_dirty_ bitmask is held
-        // by CompilerService; we don't have direct access
-        // from the query primitive context. P0 returns 0
-        // when the CompilerService doesn't expose it; the
-        // follow-up exposes a public accessor + wires the
-        // real count.
-        // P0 contract: the primitive is wired and returns
-        // an integer (= the total dirty block count from
-        // CompilerService::dirty_block_count, when the
-        // service is reachable via ev.compiler_service_).
         auto* svc_void = ev.compiler_service();
         if (!svc_void) return make_int(0);
-        // Cast back to CompilerService*. Pattern is
-        // identical to the (compile:linear-elide-count)
-        // primitive above (static_cast<StructType*>
-        // from a void*).
         auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
-        // P0: return the count from the service's
-        // total_dirty_block_count() helper. The full
-        // summary (with incremental-candidates count)
-        // is a follow-up.
-        return make_int(static_cast<std::int64_t>(
-            svc->total_dirty_block_count()));
+        // Build 3-tuple as nested pair-of-pairs:
+        // ((dirty-blocks . dirty-functions) . incremental-candidates)
+        std::int64_t dirty_blocks = static_cast<std::int64_t>(svc->total_dirty_block_count());
+        std::int64_t dirty_funcs  = static_cast<std::int64_t>(svc->total_dirty_func_count());
+        std::int64_t incr_cands   = static_cast<std::int64_t>(svc->total_incremental_candidates());
+        auto p1 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(dirty_blocks), make_int(dirty_funcs)});
+        auto outer = ev.pairs_.size();
+        ev.pairs_.push_back({make_pair(p1), make_int(incr_cands)});
+        return make_pair(outer);
+    });
+
+    // Issue #293: (compile:relower-strategy <function-name>)
+    // — returns a symbol describing the optimal re-lower
+    // strategy for a cached function:
+    //   'none — function is clean (0 dirty blocks)
+    //   'incremental — 1..7 dirty blocks (per
+    //     estimate_relower_blocks), targeted re-lower is
+    //     cheaper than full
+    //   'full — 8+ dirty blocks, full re-lower is on par
+    //     with incremental (no point doing fine-grained work)
+    //   'unknown — function not in the cache
+    //
+    // The 'full' threshold is conservative (8+ blocks is
+    // half of the typical function size); agents that need
+    // a different threshold can use the
+    // query:compiler-cache-stats 3-tuple and decide
+    // themselves. This primitive is the convenient default.
+    add("compile:relower-strategy", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_bool(false);
+        auto* svc_void = ev.compiler_service();
+        if (!svc_void) return make_bool(false);
+        auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
+        const std::string& fname = ev.string_heap_[idx];
+        // Look up the entry in ir_cache_v2_
+        auto it = svc->ir_cache_v2_find(fname);
+        if (!it) {
+            // Function not in cache — return 'unknown symbol
+            auto sym_idx = ev.keyword_table_.size();
+            ev.keyword_table_.push_back("unknown");
+            return make_keyword(sym_idx);
+        }
+        std::size_t dirty = it->dirty_block_count();
+        const char* tag = nullptr;
+        if (dirty == 0) tag = "none";
+        else if (dirty < 8) tag = "incremental";
+        else tag = "full";
+        auto sym_idx = ev.keyword_table_.size();
+        ev.keyword_table_.push_back(tag);
+        return make_keyword(sym_idx);
     });
 
     // Issue #459: (query:atomic-batch-stats) — return

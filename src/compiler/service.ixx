@@ -2760,6 +2760,38 @@ public:
             return n;
         }
 
+        // Issue #293: count of functions that have at least
+        // one dirty block. Used by the (query:compiler-cache-
+        // stats) 3-tuple primitive.
+        std::size_t dirty_func_count() const {
+            std::size_t n = 0;
+            for (const auto& fb : block_dirty_per_func_) {
+                for (auto b : fb) {
+                    if (b) { ++n; break; }
+                }
+            }
+            return n;
+        }
+
+        // Issue #293: count of functions whose dirty block
+        // count falls in the "incremental re-lower" range
+        // (1..7 dirty blocks, per estimate_relower_blocks).
+        // Functions with 8+ dirty blocks are considered
+        // "full re-lower" candidates and excluded from this
+        // count.
+        std::size_t incremental_candidates_count() const {
+            std::size_t n = 0;
+            for (const auto& fb : block_dirty_per_func_) {
+                std::size_t dirty = 0;
+                for (auto b : fb)
+                    if (b) ++dirty;
+                // estimate_relower_blocks(dirty): 0 if 0 dirty,
+                // (-1) if >= 8, else dirty (1..7).
+                if (dirty > 0 && dirty < 8) ++n;
+            }
+            return n;
+        }
+
         // Initialize the per-func bitmask to match the
         // current irs[] layout. All blocks start dirty
         // (the entry needs re-lower before use). Called
@@ -5525,6 +5557,39 @@ public:
             n += entry.dirty_block_count();
         }
         return n;
+    }
+
+    // Issue #293: count of functions (across all ir_cache_v2_
+    // entries) that have at least one dirty block.
+    [[nodiscard]] std::size_t total_dirty_func_count() const noexcept {
+        std::size_t n = 0;
+        for (const auto& [name, entry] : ir_cache_v2_) {
+            n += entry.dirty_func_count();
+        }
+        return n;
+    }
+
+    // Issue #293: count of functions that are "incremental
+    // re-lower" candidates (1..7 dirty blocks per function).
+    // Excludes functions with 8+ dirty blocks (full re-lower
+    // territory) and 0 dirty blocks (already clean).
+    [[nodiscard]] std::size_t total_incremental_candidates() const noexcept {
+        std::size_t n = 0;
+        for (const auto& [name, entry] : ir_cache_v2_) {
+            n += entry.incremental_candidates_count();
+        }
+        return n;
+    }
+
+    // Issue #293: read-only view of an ir_cache_v2_ entry.
+    // Returns nullptr if the function is not in the cache.
+    // Used by (compile:relower-strategy) to look up
+    // dirty_block_count for a specific function.
+    [[nodiscard]] const IRCacheEntry* ir_cache_v2_find(
+        const std::string& name) const noexcept {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end()) return nullptr;
+        return &it->second;
     }
     void public_invalidate_bridges_for(const std::string& name) { invalidate_bridge_for(name); }
 
