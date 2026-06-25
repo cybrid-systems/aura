@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**465** registrations scanned from `src/**/*.cpp`.
+**469** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -464,11 +464,15 @@ Runtime canonical list: `(api-reference)`.
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `_agent:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Arena: (6)
+## Arena: (10)
 
 - `arena:compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-all` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag-requested?` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:estimate` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:request-defrag` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:shrink-to-fit` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:stats-json` — `src/compiler/evaluator_primitives_memory.cpp`
