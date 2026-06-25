@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <format>
 #include <memory>
@@ -175,6 +176,33 @@ public:
         , buffer_(initial_size)
         , resource_(buffer_.data(), buffer_.size(), std::pmr::new_delete_resource()) {}
 
+    // Issue #300 (P1) Phase 3: defrag request flag. Set by
+    // (arena:request-defrag) primitive to signal that a defrag is
+    // desired. The main thread or a fiber coordinator can then
+    // decide when to actually run the defrag. Reset by the
+    // primitive that observes it (or by defrag() itself when it
+    // runs the requested work). Foundation for the full
+    // stop-the-world coordination that the pool-backed defrag
+    // path will require.
+    //
+    // The flag is read by the safepoint check on every allocation
+    // (when the fiber subsystem has registered a safepoint check
+    // function). See gc_hooks.h for the safepoint protocol.
+    //
+    // Thread-safe: std::atomic<bool> with relaxed ordering for the
+    // request / clear, acquire-release for the read in the
+    // safepoint check (so the fiber sees the most recent flag
+    // state across threads).
+    void request_defrag() noexcept {
+        defrag_requested_.store(true, std::memory_order_release);
+    }
+    [[nodiscard]] bool defrag_requested() const noexcept {
+        return defrag_requested_.load(std::memory_order_acquire);
+    }
+    void clear_defrag_request() noexcept {
+        defrag_requested_.store(false, std::memory_order_release);
+    }
+
     ~ASTArena() {
         // Call all registered destructors in reverse construction
         // order so each T's owned resources (pmr vector fallback
@@ -342,6 +370,11 @@ public:
     //
     // Returns the number of bytes reclaimed (same as compact()).
     [[nodiscard]] std::size_t defrag() noexcept {
+        // Issue #300 Phase 3: clear the request flag at the start
+        // of the defrag. A subsequent request can set it again if
+        // needed. The clear happens before the buffer mutation so
+        // the fiber safepoint sees the clear as soon as possible.
+        defrag_requested_.store(false, std::memory_order_release);
         std::size_t before = buffer_.size();
         std::size_t u = stats_.used;
         if (u == 0) {
@@ -462,6 +495,9 @@ private:
     SmallObjectPool small_pool_;
     ArenaStats stats_;
     std::vector<DtorEntry> dtors_;
+    // Issue #300 Phase 3: see request_defrag() / defrag_requested()
+    // / clear_defrag_request() for semantics.
+    std::atomic<bool> defrag_requested_{false};
 };
 
 // ── ArenaGroup — multi-arena manager ─────────────────────────────
