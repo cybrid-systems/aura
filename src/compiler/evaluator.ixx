@@ -2557,9 +2557,7 @@ public:
         // (e.g. closures that captured children[id] pre-mutation)
         // stay valid because the checkpoint holds a shared_ptr to
         // each pre-mutation PCV.
-        // std::pmr::vector matches the allocator of FlatAST::children_
-        // (so the vector copy doesn't require allocator conversion).
-        std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
+        std::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
         // Issue #266: optional column snapshots for bulk sym/param
         // mutations (mutate:rename-symbol). Captured only when
         // fine_rollback is enabled on the boundary.
@@ -2656,9 +2654,7 @@ public:
         // PCV's COW semantics make this a cheap copy (each PCV
         // is a shared_ptr to immutable storage; the snapshot
         // holds shared_ptrs that keep the pre-mutation PCs alive).
-        // std::pmr::vector matches the allocator of FlatAST::children_
-        // (so the vector copy doesn't require allocator conversion).
-        std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
+        std::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
         bool fine_rollback = fine_rollback_for_next_boundary_;
         fine_rollback_for_next_boundary_ = false;
         std::pmr::vector<aura::ast::SymId> sym_id_snapshot;
@@ -2834,6 +2830,13 @@ public:
     // Static version of active_mutation_stack() for observability
     // accessors that don't have an Evaluator instance handy.
     static std::vector<MutationCheckpoint>& active_mutation_stack_static();
+    // Issue #300 follow-up #1: clear the main-thread fallback
+    // mutation stack at CompilerService teardown so PCV snapshots
+    // do not outlive workspace_flat_ destruction.
+    static void clear_main_thread_mutation_stack() noexcept {
+        g_main_thread_stack.clear();
+        g_main_thread_yield_checkpoints.clear();
+    }
 
     // Issue #236 follow-up: per-fiber (thread_local) depth
     // counter for MutationBoundaryGuard nesting. The

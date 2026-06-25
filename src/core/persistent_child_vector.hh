@@ -180,6 +180,16 @@ public:
     // old storage with refcount > 1).
     long use_count() const noexcept { return data_.use_count(); }
 
+    // Issue #300 follow-up #1: identity of the shared storage
+    // block (for teardown dedup when aliased PCVs exist).
+    const void* storage_identity() const noexcept { return data_.get(); }
+    // Drop the shared_ptr without running its destructor
+    // (used when another PCV slot still owns the refcount).
+    void abandon_storage() noexcept {
+        data_ = nullptr;
+        size_ = 0;
+    }
+
     // ── Element access (const) ───────────────────────────────
     const_reference operator[](size_type i) const noexcept pre(i < size_) {
         contract_assert(data_ != nullptr);

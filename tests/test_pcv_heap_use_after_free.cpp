@@ -8,12 +8,10 @@
 //   2. (arena:defrag)
 //   3. (arena:defrag-stats)
 //
-// Root cause (suspected): a PersistentChildVector<Storage> shared_ptr
-// control block is freed during ~workspace_flat_~children_ while
-// the per-fiber mutation_stack_ still holds a shared_ptr to the same
-// block (via the children_snapshot captured by the mutation boundary).
-// The destruction order between the fiber's mutation_stack_ and the
-// CompilerService's workspace_flat_ is the bug.
+// Root cause (fixed in #300 follow-up #1): pmr::vector<PersistentChildVector>
+// realloc during parse left aliased PCV slots sharing one heap control
+// block with a corrupted use_count; ~FlatAST then double-freed the block.
+// Fix: children_ is std::vector + release_children_for_teardown() dedupe.
 //
 // Run under ASan:
 //   cd build_asan && cmake --build . --target test_pcv_heap_use_after_free
