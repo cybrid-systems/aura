@@ -15,13 +15,15 @@
 // Empty workspace: all metrics are 0; fragmentation-bp == 0 (no
 // capacity → empty ratio is defined as 0, not NaN/UB).
 //
-// Note: AC #4 (defrag-attempted is 0 after (arena:compact)) is
-// disabled in this commit. It triggers a pre-existing double-free
-// in ~FlatAST() when (arena:compact) is called on a fresh CS that
-// has just been through set-code. Root cause is in arena.ixx's
-// rebuild_resource_() / monotonic_buffer_resource lifetime
-// handling — NOT in this issue. Tracked as a separate follow-up
-// in MEMORY.md.
+// Note: AC #4 (defrag-attempted is 0 after (arena:compact)) now
+// passes. The pre-existing double-free in ~FlatAST() when
+// (arena:compact) is called on a fresh CS after set-code was fixed
+// in this same commit by adding 7 missing members to the FlatAST
+// ctor initializer list (marker_ / dirty_ / ppa_dirty_ / verify_dirty_
+// / verification_dirty_ / macro_dirty_ / narrowing_log_). Those
+// columns were default-constructing with new_delete_resource, which
+// produced a confused "double-free" ASAN report under compact that
+// the sanitizer could not localize.
 #include <iostream>
 #include <string>
 #include "test_harness.hpp"
@@ -126,25 +128,27 @@ bool test_5tuple_shape_via_aura() {
 }
 
 bool test_5tuple_stable_across_calls() {
-    // AC #4 substitute: does NOT call (arena:compact) to avoid the
-    // pre-existing dtor bug. Verifies that repeated calls to
-    // (arena:defrag-stats) return a stable 5-tuple with int cars.
-    std::cout << "\n--- AC #4 (substitute): 5-tuple stable across calls (no compact) ---\n";
+    // Sanity: repeated calls to (arena:defrag-stats) return a stable
+    // 5-tuple with int cars. AC #4 (after compact) tests the same
+    // shape after the pre-existing dtor fix in ast.ixx.
+    std::cout << "\n--- AC #4: defrag-attempted stays 0 after (arena:compact) ---\n";
     aura::compiler::CompilerService cs;
-    for (int i = 0; i < 3; ++i) {
-        auto r = cs.eval("(arena:defrag-stats)");
-        if (!r) { ++g_failed; return false; }
-        int64_t e1, e2, e3, e4, e5;
-        if (!extract_5tuple(cs, *r, e1, e2, e3, e4, e5)) {
-            ++g_failed; std::cerr << "call " << i << ": not a 5-tuple\n"; return false;
-        }
-        if (e1 != 0 || e2 != 0 || e4 != 0) {
-            ++g_failed; std::cerr << "call " << i << ": non-zero count (e1="
-                                   << e1 << " e2=" << e2 << " e4=" << e4 << ")\n";
-            return false;
-        }
+    cs.eval("(set-code \"(define a 1) (define b 2)\")");
+    cs.eval("(arena:compact)");
+    auto r = cs.eval("(arena:defrag-stats)");
+    if (!r) { ++g_failed; return false; }
+    int64_t e1, e2, e3, e4, e5;
+    if (!extract_5tuple(cs, *r, e1, e2, e3, e4, e5)) {
+        ++g_failed; return false;
     }
-    CHECK(true, "5-tuple stable across 3 calls (counts stay 0 in foundation)");
+    // e2 is defrag-attempted-count: 0 in foundation, hook for B/C
+    // e3 is fragmentation-bp: in [0, 10000]
+    // e1 (compaction) and e4 (wasted) should also stay 0 in foundation
+    CHECK(e2 == 0, "defrag-attempted-count == 0 after compact");
+    CHECK(e3 >= 0 && e3 <= 10000,
+          "fragmentation-bp in [0, 10000] (got " + std::to_string(e3) + ")");
+    CHECK(e1 == 0, "compaction-count == 0 (got " + std::to_string(e1) + ")");
+    CHECK(e4 == 0, "wasted-bytes == 0 (got " + std::to_string(e4) + ")");
     return true;
 }
 
@@ -156,8 +160,8 @@ int run_tests() {
     std::cout.flush();
     test_5tuple_shape_via_aura();
     std::cout.flush();
-    std::cout << "\n--- AC #4: defrag-attempted is 0 (foundation only) [DISABLED — pre-existing arena:compact dtor bug] ---\n";
     test_5tuple_stable_across_calls();
+    std::cout.flush();
     std::cout.flush();
     std::cout << "\n═══ Results: " << g_passed << "/" << g_passed + g_failed
               << " passed, " << g_failed << "/" << g_passed + g_failed

@@ -1350,6 +1350,22 @@ public:
         , float_val_(alloc)
         , sym_id_(alloc)
         , children_(alloc)
+        // Issue #300 follow-up: these 7 pmr::vector members were
+        // missing from the initializer list and got default-constructed
+        // with the default polymorphic_allocator (new_delete_resource).
+        // That mismatch caused double-frees when (arena:compact) ran on
+        // a fresh CompilerService that had just been through set-code
+        // — the macro_dirty_ column (and 6 others) had its 2-byte
+        // initial buffer freed via new_delete::operator delete while
+        // the FlatAST's other 19 columns were freed via the arena's
+        // monotonic_buffer_resource (no-op), producing a confused
+        // "double-free" report that the sanitizer could not localize.
+        , marker_(alloc)
+        , dirty_(alloc)
+        , ppa_dirty_(alloc)
+        , verify_dirty_(alloc)
+        , verification_dirty_(alloc)
+        , macro_dirty_(alloc)
 
         , parent_(alloc)
         , param_begin_(alloc)
@@ -1361,6 +1377,7 @@ public:
         , col_(alloc)
         , type_id_(alloc)
         , error_kind_(alloc)
+        , narrowing_log_(alloc)
         , value_cache_(alloc)
         , mutation_log_(alloc)
         , node_first_mutation_(alloc)

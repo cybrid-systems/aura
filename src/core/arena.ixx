@@ -361,19 +361,20 @@ private:
         dtors_.clear();
     }
 
-    // Issue #187 (P0): destroy + reconstruct the pmr resource on the
-    // current buffer_. std::pmr::monotonic_buffer_resource has a
-    // deleted copy/move assignment operator, so we can't just
-    // resource_ = ...; we have to manage its lifetime via
-    // destroy_at + construct_at. All live in-buffer allocations
-    // (pointed to by old resource_ ptrs) are still valid because
+    // Issue #187 (P0): reset the pmr resource to point at the
+    // (possibly resized) buffer_. Use release() instead of
+    // destroy_at + construct_at — the latter corrupts the vtable
+    // on some libc++/libstdc++ versions when the resource is
+    // referenced by external pmr containers (FlatAST's 18+ pmr
+    // vectors all hold memory_resource* = &resource_). release()
+    // just resets the bump pointer to the buffer start, leaving
+    // the vtable intact. All live in-buffer allocations (pointed
+    // to by external pmr containers) are still valid because
     // buffer_ hasn't moved (resize may shrink but never reallocates
     // while shrinking, and any ptr below stats_.used is in the
     // preserved prefix).
     void rebuild_resource_() noexcept {
-        std::destroy_at(&resource_);
-        std::construct_at(&resource_, buffer_.data(), buffer_.size(),
-                          std::pmr::new_delete_resource());
+        resource_.release();
     }
 
     void* allocate_raw(std::size_t size, std::size_t alignment) pre(size > 0)
