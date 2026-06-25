@@ -99,6 +99,16 @@ struct CompilerSnapshot {
     std::uint64_t ir_instructions_total = 0;
     std::uint64_t ir_instructions_with_type_total = 0;
     std::uint64_t type_propagation_coverage_bp = 0;
+    // Issue #410: per-symbol dirty observability. Mirrors
+    // CompilerMetrics::{per_symbol_dirty_lookups_total,
+    // per_symbol_dirty_uses_total}. The derived
+    // per_symbol_dirty_reduction_bp is computed at snapshot
+    // read time: uses_total * 10000 / (avg ancestor
+    // propagation depth * lookups_total). Higher = bigger
+    // savings from per-symbol vs ancestor-only.
+    std::uint64_t per_symbol_dirty_lookups_total = 0;
+    std::uint64_t per_symbol_dirty_uses_total = 0;
+    std::uint64_t per_symbol_dirty_reduction_bp = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).

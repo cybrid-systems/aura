@@ -860,6 +860,36 @@ export std::vector<aura::ast::NodeId>
 affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
                                const aura::ast::MutationRecord& rec);
 
+// Issue #410: per-symbol affected subtree. The companion to
+// affected_subtree_from_mutation above. Instead of walking
+// the target_node's parent chain (ancestor-only), this walks
+// every node in the flat looking for Variable nodes whose
+// sym_id matches the input — that's the true "set of nodes
+// affected by a change to symbol sym_id".
+//
+// Why this matters: today TypeChecker::affected_subtree_from_mutation
+// returns descendants + dirty-upward ancestors. For a single
+// `mutate:rebind` on `(define x 1)` inside a 50-binding body,
+// the ancestor chain marks the whole body dirty (and infers
+// every binding's type from scratch). With per-symbol
+// granularity, only the ~3-5 nodes that USE `x` are in the
+// affected set — the other 45 bindings keep their cached
+// types.
+//
+// The set returned is exactly the nodes that re-infer_flat_partial
+// would visit if #410 Phase 2/2 wires this into
+// infer_flat_partial. The Phase 1/2 close ships this as a
+// standalone helper so the observability primitive can
+// measure the savings.
+//
+// Returns empty vector if sym_id is INVALID_SYM or the flat
+// has no Variable nodes referencing it. O(n) walk — the
+// production path (when DefUseIndex is built) can use
+// DefUseIndex::query_def_use(sym).uses instead, which is O(uses).
+export std::vector<aura::ast::NodeId>
+affected_subtree_for_symbol(const aura::ast::FlatAST& flat,
+                            aura::ast::SymId sym_id);
+
 // Issue #274: post-mutation invariant visitor for run_mutation_pipeline.
 // Skips records already checked; accumulates notes and worst status.
 // apply_status_updates() writes invariant_status back to the log
