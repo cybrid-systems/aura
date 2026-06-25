@@ -335,6 +335,21 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return make_int(static_cast<std::int64_t>(ev.arena_->compact()));
     });
+    // (arena:defrag) — Issue #300 (P1): sliding-reclaim the
+    // unused tail of the arena's buffer. Same underlying
+    // mechanism as compact() (no live-object move), but counted
+    // as a defrag attempt via stats_.defrag_attempted_count /
+    // last_defrag_saved. See ASTArena::defrag() comment for the
+    // pool-backed follow-up scope.
+    add("arena:defrag", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+        if (!ev.arena_)
+            return make_int(0);
+        if (ev.any_active_mutation_boundary()) {
+            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
+            return make_int(0);
+        }
+        return make_int(static_cast<std::int64_t>(ev.arena_->defrag()));
+    });
     add("arena:compact-all", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_group_)
             return make_int(0);
@@ -384,6 +399,20 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         std::size_t cap = 0;
         std::size_t used = 0;
         std::size_t compact_est = 0;
+        // Sum across the main arena (ev.arena_) AND any per-module
+        // arenas (ev.arena_group_). Issue #300 foundation: the
+        // (arena:defrag) primitive operates on ev.arena_, so we
+        // must include its stats in the read path for the
+        // defrag_attempted_count to reflect the increment.
+        if (ev.arena_) {
+            auto s = ev.arena_->stats();
+            compact_count += s.compaction_count;
+            defrag_count += s.defrag_attempted_count;
+            wasted += s.wasted;
+            cap += s.capacity;
+            used += s.used;
+            compact_est += ev.arena_->compact_estimate();
+        }
         if (ev.arena_group_) {
             auto per_module = ev.arena_group_->module_stats();
             for (auto& [name, s] : per_module) {
@@ -398,23 +427,18 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 (void)s;
                 compact_est += ev.arena_group_->module_arena(name).compact_estimate();
             }
-        } else if (ev.arena_) {
-            auto s = ev.arena_->stats();
-            compact_count = s.compaction_count;
-            defrag_count = s.defrag_attempted_count;
-            wasted = s.wasted;
-            cap = s.capacity;
-            used = s.used;
-            compact_est = ev.arena_->compact_estimate();
-        } else {
-            compact_count = defrag_count = wasted = cap = used = compact_est = 0;
         }
         std::int64_t frag_bp = (cap > 0)
             ? static_cast<std::int64_t>(((cap - used) * 10000) / cap)
             : 0;
+        // Build 5-tuple via (e1 . (e2 . (e3 . (e4 . e5)))) pattern,
+        // matching the issue body contract. Cell order:
+        //   e1=compaction-count, e2=defrag-attempted-count,
+        //   e3=fragmentation-bp, e4=wasted-bytes,
+        //   e5=compact-estimate-bytes (terminal int).
         auto p4 = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(compact_est)),
-                             make_int(static_cast<std::int64_t>(wasted))});
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(wasted)),
+                             make_int(static_cast<std::int64_t>(compact_est))});
         auto p3 = ev.pairs_.size();
         ev.pairs_.push_back({make_int(frag_bp), make_pair(p4)});
         auto p2 = ev.pairs_.size();

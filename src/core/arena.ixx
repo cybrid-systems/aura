@@ -322,6 +322,52 @@ public:
         return saved;
     }
 
+    // Issue #300 (P1): defrag() — sliding-reclaim the unused tail
+    // of the arena's buffer without moving live objects. The same
+    // underlying mechanism as compact() (trim buffer_ to
+    // stats_.used + 25% headroom), but counted separately as a
+    // "defrag attempt" rather than a compaction. This is the
+    // foundation for the full live-object-moving defrag path
+    // (which would require either pool-backed resource with free()
+    // or stop-the-world mark + GC integration — both tracked as
+    // separate follow-ups).
+    //
+    // Why a separate counter: in production, (arena:compact) is
+    // called periodically as part of normal maintenance, while
+    // (arena:defrag) is a heavier operation that the Aura-HV
+    // self-evolution loop triggers when fragmentation ratio
+    // exceeds a threshold. Tracking them separately lets
+    // dashboards / auto-tuners see how often each is exercised
+    // and how much each saves.
+    //
+    // Returns the number of bytes reclaimed (same as compact()).
+    [[nodiscard]] std::size_t defrag() noexcept {
+        std::size_t before = buffer_.size();
+        std::size_t u = stats_.used;
+        if (u == 0) {
+            buffer_.resize(1024);
+            rebuild_resource_();
+        } else if (u < before) {
+            std::size_t target = 1024;
+            while (target < u + u / 4)
+                target *= 2;
+            if (target < before) {
+                buffer_.resize(target);
+                rebuild_resource_();
+            }
+        }
+        std::size_t after = buffer_.size();
+        std::size_t saved = (before > after) ? (before - after) : 0;
+        if (saved > 0) {
+            stats_.defrag_attempted_count++;
+            stats_.last_defrag_saved = saved;
+        }
+        // Note: NOT touching stats_.compaction_count /
+        // last_compaction_saved. This is intentionally a separate
+        // counter from compact().
+        return saved;
+    }
+
     // Issue #187 (P0): shrink_to_fit() — convenience wrapper that
     // returns the buffer to its initial allocation size. Useful
     // after a long batch of mutations to reclaim any growth from
