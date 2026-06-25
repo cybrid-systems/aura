@@ -200,6 +200,36 @@ struct CompilerMetrics {
     // most lowering sites don't call emit_with_type today).
     std::atomic<std::uint64_t> ir_instructions_total{0};
     std::atomic<std::uint64_t> ir_instructions_with_type_total{0};
+    // Issue #410: per-symbol dirty observability. The current
+    // TypeChecker path uses ancestor-only dirty propagation
+    // (mark_dirty_upward walks the parent_ chain — see
+    // ast.ixx:3110). For a single-symbol mutation, this is
+    // wasteful: only the Variable nodes that USE the changed
+    // symbol need to be re-inferred, not all ancestors. The
+    // per-symbol affected set is a subset of the ancestor
+    // affected set. The two counters below measure how often
+    // the per-symbol path is exercised (lookups_total) and
+    // how many Variable nodes it returns (uses_total) — the
+    // ratio of uses_total / ancestor-affected-nodes is the
+    // "per-symbol reduction" that follow-up wiring (Issue
+    // #410 Phase 2/2) will translate into faster
+    // incremental_infer calls.
+    //
+    // - per_symbol_dirty_lookups_total: calls to
+    //   affected_subtree_for_symbol (per call)
+    // - per_symbol_dirty_uses_total: cumulative size of all
+    //   per-symbol affected sets returned
+    //
+    // The derived metric per_symbol_dirty_reduction_bp is
+    // computed at snapshot read time. It compares the
+    // per-symbol uses_total against an estimate of the
+    // ancestor-affected total (mark_dirty_total_nodes /
+    // mark_dirty_upward_call_count = avg depth, multiplied
+    // by lookups_total gives the avg ancestor-affected per
+    // mutation; we report uses_total / that * 10000 as the
+    // reduction basis points — higher = more savings).
+    std::atomic<std::uint64_t> per_symbol_dirty_lookups_total{0};
+    std::atomic<std::uint64_t> per_symbol_dirty_uses_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

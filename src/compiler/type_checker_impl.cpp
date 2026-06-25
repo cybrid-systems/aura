@@ -4161,4 +4161,46 @@ affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
     return affected;
 }
 
+// Issue #410: per-symbol affected subtree (foundation only —
+// this is the observability helper, not the fast path yet).
+// Walks the entire flat looking for Variable nodes whose
+// sym_id matches the input. The result is the set of nodes
+// that re-infer_flat_partial would visit if we wired this
+// into infer_flat_partial (Phase 2/2).
+//
+// Performance: O(n) over all nodes. For very large ASTs this
+// is wasteful; the production path should use
+// DefUseIndex::query_def_use(sym).uses instead. The Aura
+// primitive exposes this baseline + the per-sym walk side
+// by side so users can see how often the DefUseIndex path
+// would have saved work. For a body with N bindings and a
+// mutate on sym S with K uses, the per-sym path returns K
+// vs ancestor-only's ~N*K (all parent chain nodes per use).
+//
+// Returns empty vector if sym_id is INVALID_SYM. The def
+// node itself (a Define/Let binding S) is NOT included —
+// Variable nodes are use-sites only; the def re-checks itself
+// via its own cached type lookup in synthesize_flat.
+std::vector<aura::ast::NodeId>
+affected_subtree_for_symbol(const aura::ast::FlatAST& flat,
+                            aura::ast::SymId sym_id) {
+    using namespace aura::ast;
+    std::vector<NodeId> affected;
+    if (sym_id == INVALID_SYM)
+        return affected;
+    // Walk the flat once. Variable nodes carry their sym_id
+    // in the sym_id_ column (aura::ast::FlatAST::sym_id).
+    // The walk is a simple linear scan; for large workspaces
+    // a future commit can route through DefUseIndex which is
+    // O(uses) instead of O(n).
+    const std::size_t n = flat.size();
+    affected.reserve(n / 8); // rough heuristic: typical body has ~12% Variable density
+    for (std::size_t i = 0; i < n; ++i) {
+        auto v = flat.get(static_cast<NodeId>(i));
+        if (v.tag == NodeTag::Variable && v.sym_id == sym_id)
+            affected.push_back(static_cast<NodeId>(i));
+    }
+    return affected;
+}
+
 } // namespace aura::compiler

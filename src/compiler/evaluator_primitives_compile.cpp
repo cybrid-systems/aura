@@ -19,6 +19,7 @@ import std;
 import aura.core.ast;
 import aura.compiler.value;
 import aura.compiler.service;
+import aura.compiler.type_checker;
 
 namespace aura::compiler::primitives_detail {
 
@@ -1406,6 +1407,160 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
-}
+    // (compile:per-symbol-dirty-stats sym) — Issue #410: per-symbol
+    // dirty observability. Returns a hash with 4 fields:
+    //   - per-symbol-affected-count: number of Variable nodes in
+    //     the flat whose sym_id matches `sym` (the per-symbol
+    //     affected set)
+    //   - ancestor-affected-count: number of nodes in the
+    //     ancestor chain of the def node (the legacy
+    //     mark_dirty_upward set; -1 if the def node is not
+    //     found in the flat — conservative unknown)
+    //   - reduction-ratio-bp: per-symbol / ancestor * 10000 in
+    //     basis points. Higher = bigger savings if #410 Phase 2
+    //     wires affected_subtree_for_symbol into infer_flat_partial.
+    //     10000 = per-symbol set is the same size as ancestor set
+    //     (no savings). 0 = per-symbol set is empty (no uses).
+    //   - lookup-count: cumulative per-symbol-dirty lookups
+    //     (lifetime total from metrics_).
+    //
+    // ACs:
+    //   AC1: counter starts at 0
+    //   AC2: primitive returns hash with 4 keys
+    //   AC3: per-symbol < ancestor-affected on a body with 5+ bindings
+    //   AC4: counter increments after a primitive call
+    //   AC5: unbound sym returns sensible (0,0,0,0) values
+    //   AC6: reduction-ratio-bp matches manual calculation
+    add("compile:per-symbol-dirty-stats", [&ev](const auto& a) -> EvalValue {
+        // build_hash inlined (same FNV-1a fingerprint + linear
+        // probing pattern as the other compile:* primitives in
+        // this file; Issue #258 HASH_EMPTY collision avoided).
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE; // avoid HASH_EMPTY collision
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        // Resolve sym name → SymId. Use the workspace pool +
+        // string heap (same pattern as query:def-use).
+        if (a.empty() || !is_string(a[0]))
+            return ev.make_merr("bad-arg", "usage: (compile:per-symbol-dirty-stats sym-name)");
+        auto sym_idx = as_string_idx(a[0]);
+        std::string sym_name;
+        if (sym_idx < ev.string_heap_.size()) {
+            sym_name = ev.string_heap_[sym_idx];
+        } else {
+            return ev.make_merr("bad-arg", "symbol name string index out of range");
+        }
+        aura::ast::SymId target_sym = aura::ast::INVALID_SYM;
+        if (ev.workspace_flat_ && ev.workspace_pool_) {
+            target_sym = ev.workspace_pool_->intern(sym_name);
+        }
+        // Compute per-symbol affected set (O(n) walk).
+        std::vector<aura::ast::NodeId> per_symbol_affected;
+        if (ev.workspace_flat_ && target_sym != aura::ast::INVALID_SYM) {
+            per_symbol_affected =
+                affected_subtree_for_symbol(*ev.workspace_flat_, target_sym);
+        }
+        // Compute ancestor-affected count: walk the parent_ chain
+        // from the def node (the Define/Let/LetRec that binds
+        // `target_sym`). If no def node is found, report -1 (unknown).
+        std::int64_t ancestor_affected = -1;
+        if (ev.workspace_flat_ && target_sym != aura::ast::INVALID_SYM) {
+            aura::ast::NodeId def_node = aura::ast::NULL_NODE;
+            const std::size_t n = ev.workspace_flat_->size();
+            for (std::size_t i = 0; i < n; ++i) {
+                auto v = ev.workspace_flat_->get(static_cast<aura::ast::NodeId>(i));
+                if ((v.tag == aura::ast::NodeTag::Define ||
+                     v.tag == aura::ast::NodeTag::Let ||
+                     v.tag == aura::ast::NodeTag::LetRec) &&
+                    v.sym_id == target_sym) {
+                    def_node = static_cast<aura::ast::NodeId>(i);
+                    break;
+                }
+            }
+            if (def_node != aura::ast::NULL_NODE) {
+                // Walk up the parent chain. mark_dirty_upward would
+                // also include descendants of each ancestor; we
+                // report the chain length only (the conservative
+                // ancestor-only count, which is what the per-symbol
+                // set needs to beat to justify the new path).
+                std::int64_t chain_len = 0;
+                auto cur = def_node;
+                std::size_t safety = 0;
+                while (cur != aura::ast::NULL_NODE &&
+                       cur < ev.workspace_flat_->size() &&
+                       safety++ < ev.workspace_flat_->size()) {
+                    ++chain_len;
+                    cur = ev.workspace_flat_->parent_of(cur);
+                }
+                ancestor_affected = chain_len;
+            }
+        }
+        // Bump metrics_.
+        std::uint64_t lookup_count = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            m->per_symbol_dirty_lookups_total.fetch_add(1, std::memory_order_relaxed);
+            m->per_symbol_dirty_uses_total.fetch_add(
+                static_cast<std::uint64_t>(per_symbol_affected.size()),
+                std::memory_order_relaxed);
+            lookup_count =
+                m->per_symbol_dirty_lookups_total.load(std::memory_order_relaxed);
+        }
+        // reduction-ratio-bp = per_symbol / ancestor * 10000.
+        // Cap at 10000 (per_symbol can't exceed ancestor in
+        // practice, but defensive). Use 0 when ancestor is 0/-
+        std::int64_t ratio_bp = 0;
+        if (ancestor_affected > 0 && !per_symbol_affected.empty()) {
+            const auto num = static_cast<std::int64_t>(per_symbol_affected.size());
+            ratio_bp = (num * 10000) / ancestor_affected;
+            if (ratio_bp > 10000)
+                ratio_bp = 10000;
+        }
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"per-symbol-affected-count",
+             make_int(static_cast<std::int64_t>(per_symbol_affected.size()))},
+            {"ancestor-affected-count", make_int(ancestor_affected)},
+            {"reduction-ratio-bp", make_int(ratio_bp)},
+            {"lookup-count", make_int(static_cast<std::int64_t>(lookup_count))},
+        };
+        return build_hash(kv);
+    });
+
+} // register_compile_primitives
 
 } // namespace aura::compiler::primitives_detail

@@ -4334,6 +4334,28 @@ public:
         } else {
             s.type_propagation_coverage_bp = 0;
         }
+        // Issue #410: per-symbol dirty observability. Mirror
+        // the 2 lifetime counters and compute the derived
+        // reduction ratio (basis points). The ancestor-avg is
+        // computed from the mark_dirty_total_nodes /
+        // mark_dirty_upward_call_count ratio that the
+        // observable already exposes (Issue #256). When that
+        // avg is 0 (no calls yet) the derived ratio stays 0.
+        s.per_symbol_dirty_lookups_total =
+            metrics_.per_symbol_dirty_lookups_total.load(std::memory_order_relaxed);
+        s.per_symbol_dirty_uses_total =
+            metrics_.per_symbol_dirty_uses_total.load(std::memory_order_relaxed);
+        if (s.per_symbol_dirty_lookups_total > 0 && s.mark_dirty_upward_call_count > 0) {
+            const std::uint64_t avg_ancestor_depth =
+                s.mark_dirty_total_nodes / s.mark_dirty_upward_call_count;
+            const std::uint64_t est_ancestor_uses =
+                avg_ancestor_depth * s.per_symbol_dirty_lookups_total;
+            s.per_symbol_dirty_reduction_bp =
+                (s.per_symbol_dirty_uses_total * 10000u) /
+                (est_ancestor_uses > 0 ? est_ancestor_uses : 1);
+        } else {
+            s.per_symbol_dirty_reduction_bp = 0;
+        }
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
         // shared_lock on workspace_mtx_ to keep the flat
