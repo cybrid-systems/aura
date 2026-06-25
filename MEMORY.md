@@ -544,3 +544,64 @@ stable across 3 calls, no compact).
 3. **C: ArenaDefragRequest safepoint scaffold** —
    1 commit, high risk, needs its own fiber/scheduler
    review first.
+
+## Session 2026-06-25 — Pre-existing (arena:compact) double-free fix + AC #4 re-enable
+
+`5d97fb40` — 3 files, +56/-34. Pre-existing bug fixed.
+
+**Root cause (finally located):** 7 pmr::vector members of FlatAST
+were missing from the ctor initializer list:
+- `marker_` (line 705)
+- `dirty_` (line 706)
+- `ppa_dirty_` (line 709)
+- `verify_dirty_` (line 718)
+- `verification_dirty_` (line 726)
+- `macro_dirty_` (line 737)
+- `narrowing_log_` (line 789)
+
+They default-constructed with the default polymorphic_allocator
+(new_delete_resource), while the other 19 members got the caller's
+arena allocator. Under (arena:compact), the per-column buffers were
+then freed via mixed allocators — producing a 'double-free' ASAN
+report that the sanitizer could not localize to a single allocator
+path.
+
+**Fix:** add the 7 members to the init list, all using the caller's
+alloc. Single allocator for the entire FlatAST. Also switched
+`rebuild_resource_()` from `destroy_at + construct_at` to
+`release()` (the destroy/construct combo can corrupt vtable on some
+libc++/libstdc++ versions when external pmr containers hold
+`memory_resource* = &resource_`; release() just resets the bump
+pointer, leaving vtable intact).
+
+**Verified:**
+- `test_issue_300` standalone: 11/11 PASS (was 9/9 with AC #4
+  disabled; now AC #4 enabled and the original
+  "defrag-attempted stays 0 after (arena:compact)" AC)
+- `test_issues_jit` bundle: 57/57 PASS (no regression)
+
+**Diagnostic technique that worked:**
+- Add `(void*)this, (void*)alloc.resource()` print to ctor and dtor
+- The ctor print shows all 3 sample pmr vector alloc.resources
+- If `tag_` and `int_val_` show alloc = ARENA_RESOURCE but
+  `macro_dirty_` shows alloc = new_delete_resource, the init
+  list is missing `macro_dirty_` (or the missing one).
+
+**Lesson (for next session):**
+When a class has many pmr::vector members added over time, ALWAYS
+check that the ctor initializer list is in sync with the member
+declaration. Use a tool / regex to diff them. The previous
+"special members" fix (commit 36be201, `root` field) followed the
+same pattern — incremental field additions skipping init lists.
+A linter or `static_assert` for "all pmr::vector members
+initialized with `alloc`" would catch this at compile time.
+
+**Follow-ups (2 separate issues):**
+1. `PersistentChildVector` heap-use-after-free in
+   `add_call` / `~PersistentChildVector` (line 78 of
+   persistent_child_vector.hh) — UNCOVERED by this fix, was
+   previously hidden by the double-free masking the trace. Pre-
+   existing PCV shared_ptr lifetime issue. Not #300 scope.
+2. Original #300 B (sliding_compact with pool-backed resource)
+   + C (safepoint scaffold) — separate issues with their own
+   scoping pass.
