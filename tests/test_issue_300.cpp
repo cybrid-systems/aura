@@ -163,6 +163,60 @@ bool test_5tuple_stable_across_calls() {
     return true;
 }
 
+bool test_5tuple_request_defrag_safepoint() {
+    // AC #5: (arena:request-defrag) sets a flag that
+    // (arena:defrag-requested?) can read back, and (arena:defrag)
+    // can clear it. The flag is the foundation for fiber-coordinated
+    // defrag (the safepoint check in gc_hooks.h can read this).
+    std::cout << "\n--- AC #5: defrag request flag (safepoint scaffold) ---\n";
+    aura::compiler::CompilerService cs;
+    // 1. Fresh: not requested
+    auto r0 = cs.eval("(arena:defrag-requested?)");
+    if (!r0) { ++g_failed; return false; }
+    auto& v0 = *r0;
+    if (!(aura::compiler::types::is_bool(v0) && !aura::compiler::types::as_bool(v0))) {
+        ++g_failed; std::cerr << "fresh should report #f\n"; return false;
+    }
+    // 2. Request defrag
+    auto r1 = cs.eval("(arena:request-defrag)");
+    if (!r1) { ++g_failed; return false; }
+    auto& v1 = *r1;
+    if (!(aura::compiler::types::is_bool(v1) && aura::compiler::types::as_bool(v1))) {
+        ++g_failed; std::cerr << "first request should report #t (newly set)\n";
+        return false;
+    }
+    // 3. Now flagged
+    auto r2 = cs.eval("(arena:defrag-requested?)");
+    if (!r2) { ++g_failed; return false; }
+    auto& v2 = *r2;
+    if (!(aura::compiler::types::is_bool(v2) && aura::compiler::types::as_bool(v2))) {
+        ++g_failed; std::cerr << "after request should report #t\n";
+        return false;
+    }
+    // 4. Re-request: should return #f (already set, no new request)
+    auto r3 = cs.eval("(arena:request-defrag)");
+    if (!r3) { ++g_failed; return false; }
+    auto& v3 = *r3;
+    if (!(aura::compiler::types::is_bool(v3) && !aura::compiler::types::as_bool(v3))) {
+        ++g_failed; std::cerr << "duplicate request should return #f\n";
+        return false;
+    }
+    // 5. (arena:defrag) runs and clears the request as a side-effect
+    // (foundation B is incremental — runs synchronously today).
+    cs.eval("(set-code \"(define x 1)\")");
+    cs.eval("(arena:defrag)");
+    auto r4 = cs.eval("(arena:defrag-requested?)");
+    if (!r4) { ++g_failed; return false; }
+    auto& v4 = *r4;
+    if (!(aura::compiler::types::is_bool(v4) && !aura::compiler::types::as_bool(v4))) {
+        ++g_failed; std::cerr << "after defrag should clear the flag\n";
+        return false;
+    }
+    CHECK(true, "defrag request flag: fresh=#f, request=#t, set=#t, "
+                "duplicate=#f, after-defrag=#f");
+    return true;
+}
+
 int run_tests() {
     std::cout << "═══ Issue #300 ═══\n";
     test_returns_5tuple();
@@ -172,6 +226,8 @@ int run_tests() {
     test_5tuple_shape_via_aura();
     std::cout.flush();
     test_5tuple_stable_across_calls();
+    std::cout.flush();
+    test_5tuple_request_defrag_safepoint();
     std::cout.flush();
     std::cout.flush();
     std::cout << "\n═══ Results: " << g_passed << "/" << g_passed + g_failed

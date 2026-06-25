@@ -350,6 +350,28 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return make_int(static_cast<std::int64_t>(ev.arena_->defrag()));
     });
+    // (arena:request-defrag) — Issue #300 Phase 3: set the
+    // defrag_requested flag on the main arena. The actual defrag
+    // runs when something observes the flag and decides to act
+    // (typically the main thread or a fiber coordinator at the
+    // next safe opportunity). Returns 1 if the flag was newly
+    // set, 0 if it was already set.
+    add("arena:request-defrag", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+        if (!ev.arena_)
+            return make_int(0);
+        bool was_set = ev.arena_->defrag_requested();
+        ev.arena_->request_defrag();
+        return make_bool(!was_set); // true = newly set, false = already set
+    });
+    // (arena:defrag-requested?) — query the defrag request flag.
+    // Returns #t if a defrag was requested and not yet acted on,
+    // #f otherwise. Foundation for fiber-coordinated defrag —
+    // the fiber safepoint can read this and yield if set.
+    add("arena:defrag-requested?", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+        if (!ev.arena_)
+            return make_bool(false);
+        return make_bool(ev.arena_->defrag_requested());
+    });
     add("arena:compact-all", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_group_)
             return make_int(0);
