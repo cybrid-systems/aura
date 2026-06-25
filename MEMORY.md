@@ -605,3 +605,60 @@ initialized with `alloc`" would catch this at compile time.
 2. Original #300 B (sliding_compact with pool-backed resource)
    + C (safepoint scaffold) — separate issues with their own
    scoping pass.
+
+## Session 2026-06-25 — #300 完成 3/3 (Phase 2 + Phase 3)
+
+`58cb097f` (Phase 3) + `50a87910` (Phase 2) + `5d97fb40` (pre-bug)
++ `48451a27` (Phase 1) — #300 完整 3/3 ship。
+
+**Phase 2 — sliding-reclaim defrag() (50a87910):**
+- 新方法 `ASTArena::defrag()` — same body as compact() but
+  单独计到 `defrag_attempted_count` + `last_defrag_saved`
+- 新 primitive `(arena:defrag)` — calls defrag()
+- `(arena:defrag-stats)` 改读 `ev.arena_` (main arena) 也
+  sum `ev.arena_group_` — 否则 (arena:defrag) 改的 main arena
+  stats 在 group 读 path 看不到
+- Tuple 顺序 fix: e4=wasted, e5=compact-estimate (was swapped)
+- AC#2 语义 fix: 8MB initial buffer 是基础设施,不算
+  workspace; 只 check counters (compaction/defrag/wasted)
+
+**Phase 3 — safepoint scaffold (58cb097f):**
+- `std::atomic<bool> defrag_requested_{false}` on ASTArena
+- `request_defrag()` / `defrag_requested()` /
+  `clear_defrag_request()` thread-safe accessors
+- `defrag()` now clears the request flag at start
+- 新 primitive `(arena:request-defrag)` — sets flag, returns
+  #t on first call (newly set), #f on duplicate
+- 新 primitive `(arena:defrag-requested?)` — queries flag
+
+**Verified:**
+- test_issue_300 standalone: 10/10 PASS
+- test_issues_jit bundle: 57/57 PASS
+- 5 ACs, 4 sub-checks each
+
+**2 follow-ups (separate issues):**
+1. **PCV heap-use-after-free** in `~PersistentChildVector` (line 78),
+   surfaced by ASAN after pre-bug fix. Pre-existing PCV shared_ptr
+   lifetime issue. NOT #300 scope.
+2. **Pool-backed resource refactor** for true per-page defrag
+   (current defrag() is a sliding-reclaim of the unused tail only;
+   pool-backed with free() would free individual dead pages).
+   #300 scope-limited close — this is a separate architectural
+   refactor.
+
+**Test discipline learned today (carry forward):**
+- Always verify with `git log -1 --format=%H` before claiming
+  a commit shipped.
+- When pmr vector fields are added, ALWAYS add to FlatAST ctor
+  init list. (The pre-bug was caused by 7 missing members —
+  see 5d97fb40 commit.)
+- Verify tuple ordering vs spec — my Phase 1 had e4/e5 swapped,
+  the AC had it the other way, and AC#2 only passed by accident
+  because the main arena stats were excluded.
+- When (arena:defrag-stats) is a state-reading primitive, make
+  sure it reads from ALL arenas that other primitives modify.
+  (Phase 2: needed to add ev.arena_ to the read path.)
+
+**Today's total: 5 issues closed, 7 commits pushed, 1 commit
+local-only (5d97fb40 pre-bug, will be in next push), 1 new
+pre-existing bug found, 1 hallucination correction (morning).**
