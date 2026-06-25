@@ -28,13 +28,24 @@ export struct ArenaStats {
     std::size_t compaction_count = 0;       // number of compact() calls
     std::size_t last_compaction_saved = 0;  // bytes reclaimed by last compact
     std::size_t total_compaction_saved = 0; // lifetime bytes reclaimed
+    // Issue #300 (P1): live-object defragmentation observability.
+    // Hooks for the full live-object-moving defrag path (separate
+    // follow-up commits B/C):
+    //   - defrag_attempted_count: # of defrag() passes attempted
+    //   - last_defrag_saved:      bytes reclaimed by last defrag
+    // Foundation-only: both stay 0 until the defrag path is
+    // implemented in #300 follow-up commits. The (arena:defrag-stats)
+    // primitive returns 0 for the defrag slot until then.
+    std::size_t defrag_attempted_count = 0;
+    std::size_t last_defrag_saved = 0;
 
     std::string format() const {
         return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
-                           "{} compactions (last saved {}B, total {}B)",
+                           "{} compactions (last saved {}B, total {}B) | "
+                           "{} defrags (last saved {}B)",
                            used / 1048576.0, capacity / 1048576.0, peak_used / 1048576.0,
                            allocation_count, wasted, compaction_count, last_compaction_saved,
-                           total_compaction_saved);
+                           total_compaction_saved, defrag_attempted_count, last_defrag_saved);
     }
 
     // Fragmentation ratio: (capacity - used) / capacity.
@@ -56,6 +67,10 @@ export struct ArenaStats {
         // last_compaction_saved: take the more recent (larger count)
         if (other.compaction_count > 0)
             last_compaction_saved = other.last_compaction_saved;
+        // Issue #300: defrag counters. Same merge discipline as compact.
+        defrag_attempted_count += other.defrag_attempted_count;
+        if (other.defrag_attempted_count > 0)
+            last_defrag_saved = other.last_defrag_saved;
     }
 };
 
@@ -502,10 +517,12 @@ public:
             out += std::format("{{\"name\":\"{}\",\"used\":{},\"capacity\":{},"
                                "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
                                "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
-                               "\"fragmentation_ratio\":{:.3f}}}",
+                               "\"fragmentation_ratio\":{:.3f},"
+                               "\"defrag_attempted_count\":{},\"last_defrag_saved\":{}}}",
                                esc_name, s.used, s.capacity, s.peak_used, s.allocation_count,
                                s.compaction_count, s.last_compaction_saved,
-                               s.total_compaction_saved, s.fragmentation_ratio());
+                               s.total_compaction_saved, s.fragmentation_ratio(),
+                               s.defrag_attempted_count, s.last_defrag_saved);
         }
         out += "],\"compact_threshold\":" + std::to_string(compact_threshold_) + "}";
         return out;

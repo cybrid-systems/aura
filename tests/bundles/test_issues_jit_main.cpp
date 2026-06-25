@@ -61,6 +61,7 @@ extern int aura_issue_294_run();
 extern int aura_issue_295_run();
 extern int aura_issue_297_run();
 extern int aura_issue_298_run();
+extern int aura_issue_300_run();
 
 int main() {
     struct Member {
@@ -124,6 +125,7 @@ int main() {
         {"test_issue_295", aura_issue_295_run},
         {"test_issue_297", aura_issue_297_run},
         {"test_issue_298", aura_issue_298_run},
+        {"test_issue_300", aura_issue_300_run},
     };
 
     int passed = 0;

@@ -366,6 +366,64 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.arena_->compact_estimate()));
     });
+    // (arena:defrag-stats) — Issue #300 (P1): live-object
+    // defragmentation observability. Returns a 5-tuple:
+    //   (compaction-count
+    //    defrag-attempted-count      ; # of defrag() calls (0 in foundation)
+    //    fragmentation-bp           ; (cap-used)/cap in basis points 0-10000
+    //    wasted-bytes               ; alignment padding total
+    //    compact-estimate-bytes)    ; upper bound on what compact() can save
+    // All ints. Sum across arena_group_ if available, else main arena.
+    // Issue #300 foundation: defrag-attempted-count is always 0; the
+    // field exists so follow-up commits (B/C) can increment without
+    // changing the primitive's contract.
+    add("arena:defrag-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+        std::size_t compact_count = 0;
+        std::size_t defrag_count = 0;
+        std::size_t wasted = 0;
+        std::size_t cap = 0;
+        std::size_t used = 0;
+        std::size_t compact_est = 0;
+        if (ev.arena_group_) {
+            auto per_module = ev.arena_group_->module_stats();
+            for (auto& [name, s] : per_module) {
+                (void)name;
+                compact_count += s.compaction_count;
+                defrag_count += s.defrag_attempted_count;
+                wasted += s.wasted;
+                cap += s.capacity;
+                used += s.used;
+            }
+            for (auto& [name, s] : per_module) {
+                (void)s;
+                compact_est += ev.arena_group_->module_arena(name).compact_estimate();
+            }
+        } else if (ev.arena_) {
+            auto s = ev.arena_->stats();
+            compact_count = s.compaction_count;
+            defrag_count = s.defrag_attempted_count;
+            wasted = s.wasted;
+            cap = s.capacity;
+            used = s.used;
+            compact_est = ev.arena_->compact_estimate();
+        } else {
+            compact_count = defrag_count = wasted = cap = used = compact_est = 0;
+        }
+        std::int64_t frag_bp = (cap > 0)
+            ? static_cast<std::int64_t>(((cap - used) * 10000) / cap)
+            : 0;
+        auto p4 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(compact_est)),
+                             make_int(static_cast<std::int64_t>(wasted))});
+        auto p3 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(frag_bp), make_pair(p4)});
+        auto p2 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(defrag_count), make_pair(p3)});
+        auto p1 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(compact_count)),
+                             make_pair(p2)});
+        return make_pair(p1);
+    });
     // (arena:stats-json) — Issue #187: JSON snapshot of all managed
     // arenas (capacity, used, fragmentation, compaction count). For
     // dashboards and auto-tuners. Returns the JSON as a string.
@@ -379,10 +437,13 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             out = std::format("{{\"arenas\":[{{\"name\":\"main\",\"used\":{},\"capacity\":{},"
                               "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
                               "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
-                              "\"fragmentation_ratio\":{:.3f}}}],\"compact_threshold\":0.5}}",
+                              "\"fragmentation_ratio\":{:.3f},"
+                              "\"defrag_attempted_count\":{},\"last_defrag_saved\":{}}}],"
+                              "\"compact_threshold\":0.5}}",
                               s.used, s.capacity, s.peak_used, s.allocation_count,
                               s.compaction_count, s.last_compaction_saved, s.total_compaction_saved,
-                              s.fragmentation_ratio());
+                              s.fragmentation_ratio(),
+                              s.defrag_attempted_count, s.last_defrag_saved);
         } else {
             out = "{\"arenas\":[]}";
         }
