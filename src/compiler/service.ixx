@@ -5538,8 +5538,18 @@ private:
     // preserve the invariant; access via set/get above.
     IncrementalStrictness incremental_strictness_ = IncrementalStrictness::Balanced;
 
-
 public:
+    // Issue #300 follow-up #1: drop per-fiber / main-thread
+    // mutation checkpoints before arena teardown so PCV
+    // children_snapshot copies do not race ~workspace_flat_.
+    ~CompilerService() {
+        Evaluator::clear_main_thread_mutation_stack();
+        if (auto* wf = evaluator_.workspace_flat())
+            wf->release_children_for_teardown();
+        if (current_ast_ && current_ast_ != evaluator_.workspace_flat())
+            current_ast_->release_children_for_teardown();
+    }
+
     // Issue #225 cycle 3: public test hook for the bridge
     // invalidation helper. Production code triggers this
     // through mark_define_dirty / invalidate_function /

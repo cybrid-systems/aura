@@ -21,6 +21,7 @@ module;
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include "core/persistent_child_vector.hh"
@@ -455,43 +456,64 @@ export struct MatchClauseInfo {
 //
 // std::shared_mutex is neither copyable nor movable, so a class
 // containing it directly has its implicit copy/move ctors
-// deleted. This wrapper exposes a shared_mutex by pointer and
-// defines the copy/move semantics we want for FlatAST:
+// deleted. This wrapper stores the mutex inline and defines the
+// copy/move semantics we want for FlatAST:
 //
-//   - Copy ctor: allocates a FRESH shared_mutex. Each copy
+//   - Copy ctor: placement-new a FRESH shared_mutex. Each copy
 //     gets its own mutex (independent mutation isolation).
 //   - Copy assign: no-op (the destination keeps its own mutex;
 //     only the data members are overwritten).
-//   - Move ctor / move assign: default (the unique_ptr is moved,
-//     transferring ownership of the mutex).
+//   - Move ctor / move assign: destination gets a fresh mutex;
+//     the source keeps its own until destroyed (lock state is
+//     not transferred — same discipline as the old unique_ptr
+//     move, which left the moved-from FlatAST with nullptr).
+//
+// Issue #300 follow-up #1: the previous unique_ptr<std::shared_mutex>
+// allocated the mutex on the heap. ~FlatAST ran ~OwnedSharedMutex
+// (freeing that heap block) before ~children_, and ASAN caught a
+// PCV shared_ptr control block UAF — the freed mutex block was
+// reused with a corrupted use_count. Inline storage removes the
+// extra heap free entirely.
 //
 // Used as the type of `FlatAST::structural_mtx_`.
 class OwnedSharedMutex {
 public:
-    OwnedSharedMutex()
-        : ptr_(std::make_unique<std::shared_mutex>()) {}
-    // Copy: allocate a fresh mutex.
-    OwnedSharedMutex(const OwnedSharedMutex&) noexcept
-        : ptr_(std::make_unique<std::shared_mutex>()) {}
-    // Move: transfer ownership.
-    OwnedSharedMutex(OwnedSharedMutex&&) noexcept = default;
+    OwnedSharedMutex() noexcept { construct(); }
+    ~OwnedSharedMutex() { destroy(); }
+
+    // Copy: fresh mutex (independent isolation).
+    OwnedSharedMutex(const OwnedSharedMutex&) noexcept { construct(); }
+    // Move: fresh mutex in the destination; source keeps its own.
+    OwnedSharedMutex(OwnedSharedMutex&&) noexcept { construct(); }
     // Copy-assign: keep our own mutex (the data being copied
     // doesn't include the mutex state).
     OwnedSharedMutex& operator=(const OwnedSharedMutex&) noexcept { return *this; }
-    // Move-assign: transfer ownership.
-    OwnedSharedMutex& operator=(OwnedSharedMutex&&) noexcept = default;
-    std::shared_mutex& get() noexcept { return *ptr_; }
-    const std::shared_mutex& get() const noexcept { return *ptr_; }
+    // Move-assign: keep our own mutex.
+    OwnedSharedMutex& operator=(OwnedSharedMutex&&) noexcept { return *this; }
+
+    std::shared_mutex& get() noexcept { return *mutex_ptr(); }
+    const std::shared_mutex& get() const noexcept { return *mutex_ptr(); }
     // Like get() but returns a non-const reference even through
     // a const OwnedSharedMutex. Needed because shared_lock /
     // unique_lock require a non-const mutex reference to acquire
     // (the lock state is part of the mutex). The const_cast is
     // safe here because acquiring a lock is a "logical const"
     // operation: it doesn't modify the protected data.
-    std::shared_mutex& mutable_get() const noexcept { return *ptr_; }
+    std::shared_mutex& mutable_get() const noexcept {
+        return *const_cast<std::shared_mutex*>(mutex_ptr());
+    }
 
 private:
-    std::unique_ptr<std::shared_mutex> ptr_;
+    alignas(std::shared_mutex) std::byte storage_[sizeof(std::shared_mutex)];
+
+    std::shared_mutex* mutex_ptr() noexcept {
+        return std::launder(reinterpret_cast<std::shared_mutex*>(storage_));
+    }
+    const std::shared_mutex* mutex_ptr() const noexcept {
+        return std::launder(reinterpret_cast<const std::shared_mutex*>(storage_));
+    }
+    void construct() { std::construct_at(mutex_ptr()); }
+    void destroy() { std::destroy_at(mutex_ptr()); }
 };
 
 // Issue #261: observability POD for NodeId lifecycle / fragmentation.
@@ -659,13 +681,9 @@ private:
     // std::shared_ptr, so back-references (e.g. a closure that
     // captured the pre-mutation children list) stay valid. This
     // is the foundation for #221 slice 3/5 (#177 rollback).
-    //
-    // The children_ field uses the DEFAULT polymorphic_allocator
-    // (i.e. the global memory resource). Arena propagation to
-    // nested pmr vectors is brittle in C++26; a future commit
-    // can wire a custom allocator wrapper if arena-backed
-    // per-node lists are needed.
-    std::pmr::vector<PersistentChildVector<NodeId>> children_;
+    // Heap std::vector (not pmr/arena): pmr::vector realloc was
+    // leaving aliased PCV slots sharing one control block (#300).
+    std::vector<PersistentChildVector<NodeId>> children_;
     // Issue #222: shared_mutex that guards structural mutations
     // (set_child / insert_child / remove_child). Acquired
     // exclusively via begin_structural_mutation() (the public
@@ -1349,7 +1367,7 @@ public:
         , int_val_(alloc)
         , float_val_(alloc)
         , sym_id_(alloc)
-        , children_(alloc)
+        , children_()
         // Issue #300 follow-up: these 7 pmr::vector members were
         // missing from the initializer list and got default-constructed
         // with the default polymorphic_allocator (new_delete_resource).
@@ -1383,6 +1401,26 @@ public:
         , node_first_mutation_(alloc)
         , node_gen_(alloc)
         , free_list_(alloc) {}
+
+    // Issue #300 follow-up #1: release the children_ column before
+    // the rest of ~FlatAST runs. Aliased PCV slots can share one
+    // heap control block with a corrupted use_count (ASAN UAF after
+    // arena:defrag). Swap the column out first so the member dtor is
+    // a no-op, then dedupe-abandon aliases on the detached vector.
+    void release_children_for_teardown() {
+        std::vector<PersistentChildVector<NodeId>> doomed;
+        doomed.swap(children_);
+        std::unordered_set<const void*> seen;
+        for (auto& pcv : doomed) {
+            const void* id = pcv.storage_identity();
+            if (id == nullptr)
+                continue;
+            if (!seen.insert(id).second)
+                pcv.abandon_storage();
+        }
+    }
+
+    ~FlatAST() { release_children_for_teardown(); }
 
     // ── Builders ───────────────────────────────────────────────
 
@@ -2102,7 +2140,7 @@ public:
     // contains PCV copies that share the underlying storage with
     // children_ (PCV COW); the snapshot is O(1) per node.
     // Returns std::pmr::vector to match children_'s allocator.
-    std::pmr::vector<PersistentChildVector<NodeId>> snapshot_children() const {
+    std::vector<PersistentChildVector<NodeId>> snapshot_children() const {
         return children_; // vector copy ctor; each PCV is shared_ptr copy
     }
 
@@ -2110,7 +2148,7 @@ public:
     // The passed-in vector is moved (its shared_ptrs are now bound
     // to children_; back-references to the old PCVs in the
     // snapshot are released as the snapshot goes out of scope).
-    void restore_children(std::pmr::vector<PersistentChildVector<NodeId>>&& snapshot) {
+    void restore_children(std::vector<PersistentChildVector<NodeId>>&& snapshot) {
         children_ = std::move(snapshot);
         bump_generation();
     }
@@ -2204,7 +2242,7 @@ public:
         std::pmr::vector<std::int64_t> new_int_val(alloc);
         std::pmr::vector<double> new_float_val(alloc);
         std::pmr::vector<SymId> new_sym_id(alloc);
-        std::pmr::vector<PersistentChildVector<NodeId>> new_children(alloc);
+        std::vector<PersistentChildVector<NodeId>> new_children;
         std::pmr::vector<NodeId> new_parent(alloc);
         std::pmr::vector<std::uint32_t> new_param_begin(alloc);
         std::pmr::vector<std::uint32_t> new_param_count(alloc);
