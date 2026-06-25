@@ -68,6 +68,8 @@
 #include <initializer_list>
 #include <iterator>
 #include <memory>
+#include <atomic>
+#include <cstdio>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -91,6 +93,12 @@ public:
     using const_iterator = const T*;
 
     constexpr PersistentChildVector() noexcept = default;
+    ~PersistentChildVector() {
+        fprintf(stderr, "DBG_PCV dtor at %p count=%lld data_use=%ld data=%p\n",
+                (void*)this, (long long)_dbg_count.load(), (long)data_.use_count(), (void*)data_.get());
+        _dbg_count.fetch_sub(1);
+    }
+    static inline std::atomic<long long> _dbg_count{0};
 
     PersistentChildVector(std::initializer_list<T> init) {
         if (init.size() == 0) return;
@@ -140,9 +148,12 @@ public:
     //       });
     template <typename FillFn>
     PersistentChildVector(size_type n, FillFn fill) {
+        _dbg_count.fetch_add(1);
         if (n == 0) return;
         size_ = n;
         data_ = make_storage(n);
+        fprintf(stderr, "DBG_PCV ctor FillFn n=%zu at %p data=%p count=%lld\n",
+                n, (void*)this, (void*)data_.get(), (long long)_dbg_count.load());
         for (size_type i = 0; i < n; ++i) {
             data_->data[i] = fill(i);
         }
