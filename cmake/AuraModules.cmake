@@ -6,6 +6,7 @@ set(AURA_CXX_MODULE_CORE
     src/core/concepts.ixx
     src/core/error.ixx
     src/core/mutation.ixx
+    src/core/mutators.ixx
     src/core/ast.ixx
     src/core/core.ixx
     src/core/type_arena.ixx
