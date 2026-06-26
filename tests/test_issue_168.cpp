@@ -101,14 +101,14 @@ bool test_let_poly_mutation() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #168 — incremental type cache safety (Phase 1) ═══\n");
+    std::println("═══ Issue #168 — incremental type cache safety (Phase 1) ═══");
 
     test_set_cache_epoch();
     test_epoch_gate_infer_flat();
     test_let_poly_mutation();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_168_detail

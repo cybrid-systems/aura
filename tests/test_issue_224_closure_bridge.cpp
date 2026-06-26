@@ -20,10 +20,15 @@
 //      ClosureBridgeData and IRClosure (consistency)
 
 
+#include <cstdint>
+#include <iostream>
+#include <memory>
+#include <print>
+#include <string>
+
 // Unified test harness (Issue #226).
 #include "test_harness.hpp"
 
-import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

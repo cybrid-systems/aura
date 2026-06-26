@@ -13,7 +13,7 @@ using aura::test::g_failed;
 import aura.core.ast;
 
 namespace aura_issue_269_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 bool test_flat_ast_v2_production_roundtrip() {
     PRINTLN("\n--- Test 1: production FlatAST v2 side-data roundtrip ---");
@@ -215,11 +215,10 @@ bool test_flat_ast_v1_forward_compat() {
 }
 
 int run_tests() {
-    std::fprintf(stdout,
-                 "═══ Issue #269 — FlatAST wire format v2 (production) ═══\n");
+    std::println("═══ Issue #269 — FlatAST wire format v2 (production) ═══");
     test_flat_ast_v2_production_roundtrip();
     test_flat_ast_v1_forward_compat();
-    std::fprintf(stdout, "\nTotal: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\nTotal: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 

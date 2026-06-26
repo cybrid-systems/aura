@@ -6,7 +6,10 @@
 #include "../src/compiler/shape.h"
 #include "../src/compiler/shape_profiler.h"
 
-import std;
+#include <cstdio>
+#include <iostream>
+#include <print>
+#include <string>
 using namespace aura::compiler::shape;
 
 static int tests_run = 0;
@@ -25,10 +28,10 @@ const char* test_name_cstr(const T& name) {
     const char* _test_name_cstr = test_name_cstr(_test_name_tmp); \
     tests_run++; \
     if (!(expr)) { \
-        std::fprintf(stderr, "FAIL: %s (%s)\n", _test_name_cstr, #expr); \
+        std::println(std::cerr, "FAIL: %s ({})", _test_name_cstr, #expr); \
     } else { \
         tests_passed++; \
-        std::fprintf(stdout, "PASS: %s\n", _test_name_cstr); \
+        std::println("PASS: {}", _test_name_cstr); \
     } \
 } while(0)
 
@@ -772,7 +775,6 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     // Summary
     // ═══════════════════════════════════════════════════════════
-    std::fprintf(stdout, "\n=== Results: %d/%d passed ===\n",
-                 tests_passed, tests_run);
+    std::println("\n=== Results: %d/{} passed ===", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
 }

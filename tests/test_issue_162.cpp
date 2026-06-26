@@ -265,9 +265,9 @@ bool test_rule_dispatch() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #162 — Phases 1+2: Type Concepts ═══\n");
+    std::println("═══ Issue #162 — Phases 1+2: Type Concepts ═══");
 
-    std::fprintf(stdout, "\n--- Phase 1: TypeConstraint + 2 concrete constraints ---\n");
+    std::println("\n--- Phase 1: TypeConstraint + 2 concrete constraints ---");
     test_concept_satisfaction();
     test_solve_equal();
     test_solve_consistent();
@@ -275,14 +275,14 @@ int run_tests() {
     test_concept_rejection();
     test_backward_compat();
 
-    std::fprintf(stdout, "\n--- Phase 2: InferenceRule + 3 concrete rules ---\n");
+    std::println("\n--- Phase 2: InferenceRule + 3 concrete rules ---");
     test_inference_rule_satisfaction();
     test_literal_rule();
     test_var_rule();
     test_rule_dispatch();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_162_detail

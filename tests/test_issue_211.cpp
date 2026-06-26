@@ -49,7 +49,7 @@ import aura.compiler.value;
 
 
 namespace aura_issue_211_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 // ── Test 1: index is empty before any build ──
 // The index is lazy-built. Without a workspace, no
@@ -184,9 +184,9 @@ bool test_rebuild_after_invalidate_uses_current_workspace() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #211 — (tag, arity) index for query:pattern ═══\n");
-    std::fprintf(stdout, "  Verifies the index is built, cached, and invalidated.\n");
-    std::fprintf(stdout, "  Variadic ..., predicates, and memoization are follow-ups.\n\n");
+    std::println("═══ Issue #211 — (tag, arity) index for query:pattern ═══");
+    std::println("  Verifies the index is built, cached, and invalidated.");
+    std::println("  Variadic ..., predicates, and memoization are follow-ups.\n");
 
     test_index_empty_without_workspace();
     test_index_populated_after_build();
@@ -194,8 +194,8 @@ int run_tests() {
     test_invalidate_clears_index();
     test_rebuild_after_invalidate_uses_current_workspace();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_211_detail

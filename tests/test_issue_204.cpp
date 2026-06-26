@@ -36,7 +36,7 @@ using aura::test::g_failed;
 
 
 namespace aura_issue_204_detail {
-#define PRINTLN(msg) do { std::fprintf(stdout, "%s\n", (msg)); } while(0)
+#define PRINTLN(msg) do { std::print( "%s\n", (msg)); } while(0)
 
 // ── Test 1: mark_env_frame_roots sets the bits ──
 bool test_env_frame_roots_marks_bits() {
@@ -151,8 +151,8 @@ bool test_env_walk_before_root_set() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #172 (Phase 4) / #204 — GC env_frames_ walk ═══\n");
-    std::fprintf(stdout, "  Verifies GCCollector::mark_env_frame_roots().\n\n");
+    std::println("═══ Issue #172 (Phase 4) / #204 — GC env_frames_ walk ═══");
+    std::println("  Verifies GCCollector::mark_env_frame_roots().\n");
 
     test_env_frame_roots_marks_bits();
     test_env_frame_roots_empty();
@@ -160,8 +160,8 @@ int run_tests() {
     test_env_walk_additive_to_roots();
     test_env_walk_before_root_set();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_204_detail

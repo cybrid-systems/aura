@@ -25,6 +25,17 @@
 //   6. kOpcodeInfo[6] ("add") roundtrips correctly (with
 //      operand_count=3, has_result_slot=true)
 
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+#include <array>
+#include <string_view>
+#include <cstdint>
+#include <iostream>
+#include <print>
+#include <variant>
+#include <unordered_map>
 
 #include "reflect/reflect.hh"
 
@@ -33,14 +44,12 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-
-import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 
 
 
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::println("{}", (msg))
 
 // ── Local copies of IR types (Issue #217 Cycle 1 pilot) ──────
 //

@@ -46,7 +46,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 
 
 
-#define PRINTLN(msg) do { std::fprintf(stdout, "%s\n", (msg)); } while(0)
+#define PRINTLN(msg) do { std::print( "%s\n", (msg)); } while(0)
 
 // ── Test 1: type aliases are correct sizes ──
 bool test_type_aliases() {
@@ -88,17 +88,17 @@ bool test_types_distinct() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #173 — stable-id type aliases ═══\n");
-    std::fprintf(stdout, "  Verifies PairId/CellId/StringId + NULL_X_ID sentinels.\n");
-    std::fprintf(stdout, "  Full migration (remap table, resolve_X, GC sweep compact)\n");
-    std::fprintf(stdout, "  is the follow-up.\n\n");
+    std::println("═══ Issue #173 — stable-id type aliases ═══");
+    std::println("  Verifies PairId/CellId/StringId + NULL_X_ID sentinels.");
+    std::println("  Full migration (remap table, resolve_X, GC sweep compact)");
+    std::println("  is the follow-up.\n");
 
     test_type_aliases();
     test_null_sentinels();
     test_types_distinct();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_173_detail

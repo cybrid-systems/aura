@@ -86,11 +86,17 @@ static bool run_case(const TestCase& tc, int idx) {
     auto r2 = cs.eval_ir(tc.src);
     if (!r1 && !r2) return true;  // both failed (e.g. parse error on both)
     if (!r1 || !r2) {
-        std::println(std::cerr, "  DIVERGENCE [{}] \"{}\": only one path returned a value (eval={}, eval_ir={})\n", idx, tc.desc, (r1 ? "ok" : "null"), (r2 ? "ok" : "null"));
+        std::println(std::cerr,
+                      "  DIVERGENCE [{}] \"{}\": only one path returned a value (eval={}, eval_ir={})",
+                      idx, tc.desc, (r1 ? "ok" : "null"), (r2 ? "ok" : "null"));
         return false;
     }
     if (!values_equal(*r1, *r2)) {
-        std::println(std::cerr, "  DIVERGENCE [{}] \"{}\": src=\"{}\" eval.val=0x{}{} eval_ir.val=0x{}{}\n", idx, tc.desc, tc.src, std::hex, r1->val, r2->val, std::dec);
+        std::println(std::cerr,
+                      "  DIVERGENCE [{}] \"{}\": src=\"{}\" eval.val=0x{:x} eval_ir.val=0x{:x}",
+                      idx, tc.desc, tc.src,
+                      static_cast<unsigned long long>(r1->val),
+                      static_cast<unsigned long long>(r2->val));
         return false;
     }
     return true;

@@ -120,8 +120,6 @@ bool test_default_skips_macro_introduced() {
     auto caller = make_caller_with_call(callee_fid);
     module.add_function(std::move(caller));
 
-import std;
-
     aura::compiler::InlinePass pass;
     pass.run(module);
 

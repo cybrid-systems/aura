@@ -46,7 +46,7 @@ import aura.diag;
 
 
 namespace aura_issue_212_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 // ── Helper: build a ConstI64 instruction ──
 //
@@ -680,9 +680,9 @@ bool test_arithmetic_div_pure() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #212 Cycle 1 — pure-function extraction of constant_folding ═══\n");
-    std::fprintf(stdout, "  Verifies the new aura.compiler.constant_folding module.\n");
-    std::fprintf(stdout, "  Wrap is a thin wrapper; pure functions are the canonical API.\n\n");
+    std::println("═══ Issue #212 Cycle 1 — pure-function extraction of constant_folding ═══");
+    std::println("  Verifies the new aura.compiler.constant_folding module.");
+    std::println("  Wrap is a thin wrapper; pure functions are the canonical API.\n");
 
     test_pure_function_folds_simple_add();
     test_wrap_thin_wrapper_parity();
@@ -706,8 +706,8 @@ int run_tests() {
     test_arithmetic_mul_pure();
     test_arithmetic_div_pure();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_212_detail

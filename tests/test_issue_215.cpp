@@ -14,6 +14,16 @@
 //   7. variant<int, string> with string value
 //   8. variant<int, string> with another int value
 
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+#include <array>
+#include <optional>
+#include <variant>
+#include <cassert>
+#include <iostream>
+#include <print>
 
 #include "reflect/reflect.hh"
 
@@ -22,14 +32,12 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-
-import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 
 
 
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::println("{}", (msg))
 
 // ── Test 1: vector<int> roundtrip ──────────────────────────
 bool test_vector_int() {

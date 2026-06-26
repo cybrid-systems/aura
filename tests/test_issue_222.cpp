@@ -36,6 +36,20 @@
 // pattern (per-node PCV) and the structural_mtx_ / guard API
 // from the production code.
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <print>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <random>
+#include <shared_mutex>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include "../src/core/persistent_child_vector.hh"
 
@@ -44,8 +58,6 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-
-import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 
@@ -55,7 +67,7 @@ static constexpr NodeId NULL_NODE = ~0u;
 
 
 
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::println("{}", (msg))
 
 // Minimal reproduction of FlatAST's structural_mtx_ +
 // bump_generation + mark_dirty API for testing purposes.

@@ -131,15 +131,15 @@ bool test_rapid_mutations() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #166 — multi-layer cache invalidation (Phase 1) ═══\n");
+    std::println("═══ Issue #166 — multi-layer cache invalidation (Phase 1) ═══");
 
     test_eval_mutate_eval();
     test_epoch_increments_on_mutation();
     test_epoch_handles_function_body_mutation();
     test_rapid_mutations();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_166_detail

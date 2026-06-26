@@ -52,7 +52,7 @@ import aura.compiler.value;
 
 
 namespace aura_issue_208_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 // ── Test 1: bindings_legacy_uses metric on integration path ──
 // Populate an env via Aura code, then iterate via the
@@ -211,10 +211,10 @@ bool test_inspect_env_uses_bindings_with_names() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #208 Cycle 2 — Env::bindings_ migration ═══\n");
-    std::fprintf(stdout, "  Verifies the bindings_legacy_uses metric and the\n");
-    std::fprintf(stdout, "  bindings_symid_iter / bindings_with_names accessors.\n");
-    std::fprintf(stdout, "  Full 25-site migration is Cycle 2.5+ (multi-day work).\n\n");
+    std::println("═══ Issue #208 Cycle 2 — Env::bindings_ migration ═══");
+    std::println("  Verifies the bindings_legacy_uses metric and the");
+    std::println("  bindings_symid_iter / bindings_with_names accessors.");
+    std::println("  Full 25-site migration is Cycle 2.5+ (multi-day work).\n");
 
     test_metric_bumps_on_legacy_access();
     test_metric_unchanged_on_new_access();
@@ -223,8 +223,8 @@ int run_tests() {
     test_bindings_with_names_resolves();
     test_inspect_env_uses_bindings_with_names();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_208_detail

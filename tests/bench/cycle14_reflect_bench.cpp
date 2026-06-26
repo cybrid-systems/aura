@@ -55,14 +55,27 @@
 // format is the same as the production v2 (see
 // src/core/ast.ixx + tests/test_issue_217.cpp).
 
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <iomanip>
+#include <print>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <span>
+#include <cstdint>
+#include <unordered_map>
 
 #include "reflect/reflect.hh"
 
 // ═══════════════════════════════════════════════════════════════
 // Hand-written structs mirroring the production layout
 // ═══════════════════════════════════════════════════════════════
-
-import std;
 struct BenchNodeView {
     std::uint32_t id = 0;
     std::uint32_t tag = 0;

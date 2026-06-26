@@ -42,7 +42,7 @@ import aura.compiler.service;
 
 
 namespace aura_issue_206_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 // Helper: allocate N pairs into the evaluator's pairs_ arena.
 // We use the CompilerService.eval interface (the Aura-level
@@ -226,8 +226,8 @@ bool test_compact_pairs_all_dead() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #206 — GC sweep compact + remap + resolve_X ═══\n");
-    std::fprintf(stdout, "  Verifies the compact_pairs() / resolve_pair() API.\n\n");
+    std::println("═══ Issue #206 — GC sweep compact + remap + resolve_X ═══");
+    std::println("  Verifies the compact_pairs() / resolve_pair() API.\n");
 
     test_resolve_pair_identity_before_compact();
     test_compact_pairs_empty_mask_all_live();
@@ -237,8 +237,8 @@ int run_tests() {
     test_resolve_pair_out_of_range();
     test_compact_pairs_all_dead();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_206_detail

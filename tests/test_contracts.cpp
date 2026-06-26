@@ -18,13 +18,16 @@
 // Custom violation handler — at global scope, exact name + signature so the
 // compiler runtime finds it via symbol lookup.
 
-import std;
+#include <cstdio>
+#include <iostream>
+#include <print>
+#include <string>
 static int violation_count = 0;
 static void handle_contract_violation(const std::contracts::contract_violation& v) {
     violation_count++;
-    std::fprintf(stderr,
-                 "test_handler: contract violation (count=%d kind=%d semantic=%d)\n",
-                 violation_count, (int)v.kind(), (int)v.semantic());
+    std::println(std::cerr,
+                  "test_handler: contract violation (count={} kind={} semantic={})",
+                  violation_count, (int)v.kind(), (int)v.semantic());
     _Exit(42);
 }
 
@@ -56,13 +59,13 @@ static int run_holds() {
     int r1 = positive_only(5);
     std::printf("holds: positive_only(5)=%d\n", r1);
     if (r1 != 10) {
-        std::fprintf(stderr, "FAIL: expected 10\n");
+        std::println(std::cerr, "FAIL: expected 10");
         return 1;
     }
     int r2 = divide_ok(10, 2);
     std::printf("holds: divide_ok(10,2)=%d\n", r2);
     if (r2 != 5) {
-        std::fprintf(stderr, "FAIL: expected 5\n");
+        std::println(std::cerr, "FAIL: expected 5");
         return 1;
     }
     std::printf("PASS: pre + post held, no violations\n");
@@ -79,12 +82,12 @@ static int run_fires() {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: test_contracts {holds|fires}\n");
+        std::println(std::cerr, "usage: test_contracts {{holds|fires}}");
         return 2;
     }
     std::string mode = argv[1];
     if (mode == "holds") return run_holds();
     if (mode == "fires") return run_fires();
-    std::fprintf(stderr, "unknown mode: %s\n", argv[1]);
+    std::println(std::cerr, "unknown mode: {}", argv[1]);
     return 2;
 }

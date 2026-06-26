@@ -95,7 +95,7 @@ BenchResult run_bench_for_n(aura::compiler::CompilerService& cs, std::size_t n) 
     // Fresh set-code, fresh eval. No prior cache.
     auto set_r = cs.eval("(set-code \"" + src + "\")");
     if (!set_r) {
-        std::println(stderr, "  [n={}] set-code failed", n);
+        std::println(std::cerr, "  [n={}] set-code failed", n);
         return r;
     }
     r.scenario_a_us = bench_eval_current(cs, 5);
@@ -110,7 +110,7 @@ BenchResult run_bench_for_n(aura::compiler::CompilerService& cs, std::size_t n) 
     // eval-current reuses the cached result.
     auto mut_r = cs.eval(R"((mutate:rebind "d_0" "999" "bump"))");
     if (!mut_r) {
-        std::println(stderr, "  [n={}] mutate:rebind failed", n);
+        std::println(std::cerr, "  [n={}] mutate:rebind failed", n);
         return r;
     }
     r.scenario_c_us = bench_eval_current(cs, 5);
@@ -130,7 +130,7 @@ BenchResult run_bench_for_n(aura::compiler::CompilerService& cs, std::size_t n) 
     }
     auto set2_r = cs.eval("(set-code \"" + new_src + "\")");
     if (!set2_r) {
-        std::println(stderr, "  [n={}] set-code 2 failed", n);
+        std::println(std::cerr, "  [n={}] set-code 2 failed", n);
         return r;
     }
     r.scenario_d_us = bench_eval_current(cs, 5);
@@ -211,7 +211,7 @@ int main() {
         f << json.str();
         std::println("Wrote JSON to: {}", out_file.string());
     } else {
-        std::println(stderr, "Failed to write JSON to: {}", out_file.string());
+        std::println(std::cerr, "Failed to write JSON to: {}", out_file.string());
     }
 
     auto t_end = clock::now();

@@ -52,7 +52,7 @@ import aura.compiler.ir;
 
 
 namespace aura_issue_213_panic_fiber_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 // ── Test 5: Concurrent fibers don't see each other's checkpoints ───
 //
@@ -302,18 +302,18 @@ bool test_stress_1000_iterations() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #213 — follow-up cycle (panic + fiber tests) ═══\n");
-    std::fprintf(stdout, "  Verifies the 3 'Test scenarios' from the issue body:\n");
-    std::fprintf(stdout, "    5. Concurrent fiber isolation\n");
-    std::fprintf(stdout, "    6. Panic + abort mid-mutation rollback\n");
-    std::fprintf(stdout, "    7. 1000-iteration stress test\n\n");
+    std::println("═══ Issue #213 — follow-up cycle (panic + fiber tests) ═══");
+    std::println("  Verifies the 3 'Test scenarios' from the issue body:");
+    std::println("    5. Concurrent fiber isolation");
+    std::println("    6. Panic + abort mid-mutation rollback");
+    std::println("    7. 1000-iteration stress test\n");
 
     test_concurrent_fiber_isolation();
     test_panic_abort_mid_mutation();
     test_stress_1000_iterations();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_213_panic_fiber_detail

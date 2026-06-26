@@ -9,20 +9,25 @@
 //   3. mutate:rebind with a schema-violating value is rejected
 //   4. mutate:rebind with a schema-conformant value succeeds
 
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+#include <string_view>
+#include <print>
+#include <cstdlib>
 
 #include "reflect/reflect_schema.hh"
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
 #include "test_harness.hpp"
-
-import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 
 
 
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::println("{}", (msg))
 
 // ── Test fixture: a C++ type with known fields ────────────
 struct MyType {
@@ -79,6 +84,8 @@ bool test_schema_primitive() {
 }
 
 // ── Test 3: query:schema Aura primitive (shell-out) ───────
+#include <cstdio>
+#include <filesystem>
 #include <unistd.h>
 
 namespace fs = std::filesystem;

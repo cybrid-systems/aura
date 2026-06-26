@@ -559,7 +559,10 @@ add_test(NAME gc_evaluator_integration COMMAND ./test_gc_evaluator_integration)
 
 # Link JIT for test_gc_evaluator_integration when LLVM is available
 if(LLVM_FOUND)
-    target_sources(test_gc_evaluator_integration PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)
+    target_sources(test_gc_evaluator_integration PRIVATE
+        src/compiler/aura_jit.cpp
+        src/compiler/aura_jit_runtime.cpp
+        src/compiler/aura_jit_bridge.cpp)
     # Issue #278 follow-up: aura_jit_prim_dispatch lives in
     # service.ixx (which IS in our FILE_SET above) — no stub
     # needed, unlike test_concurrent / test_spec_jit which don't
@@ -1039,6 +1042,7 @@ aura_add_issue_test(test_per_defuse_index)
 aura_add_issue_test(test_pcv_heap_use_after_free)
 aura_issue_test_link_llvm_jit(test_pcv_heap_use_after_free)
 aura_issue_test_link_llvm_jit(test_issue_296)
+aura_issue_test_link_llvm_jit(test_issue_297)
 aura_issue_test_link_llvm_jit(test_issue_293)
 aura_issue_test_link_llvm_jit(test_issue_292)
 aura_issue_test_link_llvm_jit(test_issue_291)

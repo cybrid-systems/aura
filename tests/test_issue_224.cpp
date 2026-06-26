@@ -42,7 +42,14 @@
 //        (relower_skipped_entirely_count increments)
 
 
-import std;
+#include <atomic>
+#include <cstdint>
+#include <iostream>
+#include <memory>
+#include <print>
+#include <string>
+#include <vector>
+
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

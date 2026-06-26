@@ -237,14 +237,14 @@ bool test_snapshot_rollback_preserves_macro() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #165 — macro re-expansion + SyntaxMarker after mutation ═══\n");
+    std::println("═══ Issue #165 — macro re-expansion + SyntaxMarker after mutation ═══");
 
     test_hygienic_macro_survives_mutation();
     test_macro_introduced_marker_preserved();
     test_snapshot_rollback_preserves_macro();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_165_detail

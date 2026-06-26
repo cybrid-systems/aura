@@ -41,7 +41,7 @@ import aura.compiler.value;
 
 
 namespace aura_issue_210_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 // ── Test 1: env populated via bind_symid has bindings_legacy_uses == 0 ──
 // The new path (bind_symid, no legacy access) leaves the
@@ -158,18 +158,18 @@ bool test_env_without_pool_uses_fallback() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #210 Cycle 4 — Env::bindings_ cleanup ═══\n");
-    std::fprintf(stdout, "  Verifies the cleanup-readiness invariants.\n");
-    std::fprintf(stdout, "  The full drop of bindings_ is deferred to\n");
-    std::fprintf(stdout, "  after the Cycle 2.5+ migration completes.\n\n");
+    std::println("═══ Issue #210 Cycle 4 — Env::bindings_ cleanup ═══");
+    std::println("  Verifies the cleanup-readiness invariants.");
+    std::println("  The full drop of bindings_ is deferred to");
+    std::println("  after the Cycle 2.5+ migration completes.\n");
 
     test_bind_symid_path_keeps_metric_zero();
     test_legacy_bindings_accessor_still_works();
     test_data_parity_with_pool();
     test_env_without_pool_uses_fallback();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_210_detail

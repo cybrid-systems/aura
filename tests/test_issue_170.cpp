@@ -409,8 +409,8 @@ bool test_issue_170_phase1_item2_enum_values() {
 }
 
 int main() {
-    std::fprintf(stdout, "═══ Issue #170 — JIT backend completion ═══\n");
-    std::fprintf(stdout, "  (Phase 1: AOT entry points + Phase 1 / item #1: core lowering)\n\n");
+    std::println("═══ Issue #170 — JIT backend completion ═══");
+    std::println("  (Phase 1: AOT entry points + Phase 1 / item #1: core lowering)\n");
 
     test_aot_empty_state();
     test_aot_no_crash();
@@ -428,7 +428,7 @@ int main() {
     test_format_includes_intrinsics();
     test_per_function_unhandled_count();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }

@@ -50,7 +50,11 @@
 #ifndef AURA_TEST_HARNESS_HPP
 #define AURA_TEST_HARNESS_HPP
 
-import std;
+#include <iostream>
+#include <print>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace aura::test {
 
@@ -96,12 +100,11 @@ inline int register_test(const char* name, TestFn fn) {
 // already use it don't need to change.
 #define CHECK(cond, msg) do { \
     const auto& _check_msg = (msg); \
-    const char* _check_msg_cstr = std::string_view(_check_msg).data(); \
     if (!(cond)) { \
-        std::fprintf(stderr, "  FAIL: %s (line %d)\n", _check_msg_cstr, __LINE__); \
+        std::println(std::cerr, "  FAIL: {} (line {})", _check_msg, __LINE__); \
         ++::aura::test::g_failed; \
     } else { \
-        std::fprintf(stdout, "  PASS: %s\n", _check_msg_cstr); \
+        std::println("  PASS: {}", _check_msg); \
         ++::aura::test::g_passed; \
     } \
 } while (0)
@@ -150,8 +153,8 @@ inline int RUN_ALL_TESTS() {
     if (reg.empty()) {
         // No registered tests. The file used legacy
         // CHECK() macros directly. Report the counters.
-        std::fprintf(stdout, "──────────────────────────────────────\n");
-        std::fprintf(stdout, "Total: %d passed, %d failed\n",
+        std::println("──────────────────────────────────────");
+        std::println("Total: {} passed, {} failed",
                      ::aura::test::g_passed, ::aura::test::g_failed);
         return ::aura::test::g_failed == 0 ? 0 : 1;
     }
@@ -164,16 +167,15 @@ inline int RUN_ALL_TESTS() {
         tc.fn();
         int new_fails = ::aura::test::g_failed - failed_before;
         if (new_fails == 0) {
-            std::fprintf(stdout, "  PASS: %s\n", tc.name);
+            std::println("  PASS: {}", tc.name);
             ++passed;
         } else {
-            std::fprintf(stdout, "  FAIL: %s (%d check(s) failed)\n",
-                         tc.name, new_fails);
+            std::println("  FAIL: {} ({} check(s) failed)", tc.name, new_fails);
             ++failed;
         }
     }
-    std::fprintf(stdout, "════════════════════════════════════════\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed (across %zu test cases)\n",
+    std::println("════════════════════════════════════════");
+    std::println("Total: {} passed, {} failed (across {} test cases)",
                  passed, failed, reg.size());
     return failed == 0 ? 0 : 1;
 }

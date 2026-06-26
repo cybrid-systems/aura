@@ -226,7 +226,7 @@ bool test_coercion_marker_struct() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #163 — Expand Pass concept usage ═══\n");
+    std::println("═══ Issue #163 — Expand Pass concept usage ═══");
 
     test_analysis_pass_concept();
     test_analysis_pass_subset_of_pass();
@@ -237,8 +237,8 @@ int run_tests() {
     test_no_stateful_class();
     test_coercion_marker_struct();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_163_detail

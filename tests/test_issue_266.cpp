@@ -16,7 +16,7 @@ import aura.diag;
 import aura.compiler.value;
 
 namespace aura_issue_266_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 bool test_sym_id_field_rollback() {
     PRINTLN("\n--- Test 1: sym_id_ per-record rollback ---");
@@ -193,15 +193,15 @@ bool test_happy_path_keeps_mutation() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #266 — fine-grained SoA rollback ═══\n");
+    std::println("═══ Issue #266 — fine-grained SoA rollback ═══");
     test_sym_id_field_rollback();
     test_insert_child_children_rollback();
     test_rename_symbol_column_rollback();
     test_guard_enable_fine_rollback_late();
     test_structural_record_rollback_count();
     test_happy_path_keeps_mutation();
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_266_detail

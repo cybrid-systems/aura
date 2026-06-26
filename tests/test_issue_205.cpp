@@ -37,7 +37,7 @@ using aura::test::g_failed;
 
 
 namespace aura_issue_205_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 // ── Test 1: register_env_walk_fn accepts a callback ──
 // The registration method exists and stores the callback
@@ -174,8 +174,8 @@ bool test_env_walk_empty_no_op() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #205 — caller-side env_frames_ walk ═══\n");
-    std::fprintf(stdout, "  Wires evaluator env walk to GC mark_env_frame_roots.\n\n");
+    std::println("═══ Issue #205 — caller-side env_frames_ walk ═══");
+    std::println("  Wires evaluator env walk to GC mark_env_frame_roots.\n");
 
     test_env_walk_register();
     test_env_walk_invoked_during_collect();
@@ -184,8 +184,8 @@ int run_tests() {
     test_env_walk_additive_with_explicit_roots();
     test_env_walk_empty_no_op();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_205_detail

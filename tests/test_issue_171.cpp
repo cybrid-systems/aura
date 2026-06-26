@@ -34,7 +34,7 @@ import aura.compiler.pass_manager;
 
 
 namespace aura_issue_171_detail {
-#define PRINTLN(msg) do { std::fprintf(stdout, "%s\n", (msg)); } while(0)
+#define PRINTLN(msg) do { std::print( "%s\n", (msg)); } while(0)
 
 // Helper: build a trivial callee that returns a constant I64
 static aura::ir::IRFunction make_const_i64_callee(const std::string& name,
@@ -1187,8 +1187,8 @@ bool test_inline_three_way_mutual_recursion() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #171 — Function Inliner (Priority 2) ═══\n");
-    std::fprintf(stdout, "  Verifies the inliner ACTUALLY inlines, not just counts.\n\n");
+    std::println("═══ Issue #171 — Function Inliner (Priority 2) ═══");
+    std::println("  Verifies the inliner ACTUALLY inlines, not just counts.\n");
 
     test_inline_trivial_callee();
     test_skip_non_trivial();
@@ -1216,8 +1216,8 @@ int run_tests() {
     test_inline_mixed_recursive_and_non_recursive();
     test_inline_three_way_mutual_recursion();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_171_detail

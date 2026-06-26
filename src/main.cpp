@@ -2336,7 +2336,7 @@ int main(int argc, char* argv[]) {
             // Case A: real AOT failure with functions to AOT-compile.
             // Bail out loudly with the LLVM/bridge stderr above.
             if (!flat_fn_array.empty()) {
-                std::println(stderr,
+                std::println(std::cerr,
                              "AOT: failed to emit native binary for {} function(s). "
                              "See AOT: errors above. Common causes: x86_64 PIE/PIC "
                              "mismatch, missing lib/runtime.c, LLVM internal error. "
@@ -2354,20 +2354,20 @@ int main(int argc, char* argv[]) {
             // previous version silently fell through to rc=1 when the
             // LLVM AOT + C-fallback both failed; this verbose trace
             // makes the failure mode visible.
-            std::println(stderr, "[#237] AOT failed; entering shell wrapper fallback");
-            std::println(stderr, "[#237]   out_path={}", out_path);
-            std::println(stderr, "[#237]   self_path={}", self_path);
+            std::println(std::cerr, "[#237] AOT failed; entering shell wrapper fallback");
+            std::println(std::cerr, "[#237]   out_path={}", out_path);
+            std::println(std::cerr, "[#237]   self_path={}", self_path);
             {
                 std::ofstream sf(out_path);
                 if (!sf) {
-                    std::println(stderr, "[#237] ERROR: cannot open {} for write (rc=1)", out_path);
+                    std::println(std::cerr, "[#237] ERROR: cannot open {} for write (rc=1)", out_path);
                     return 1;
                 }
                 sf << "#!/bin/bash\n";
                 sf << "# Aura compiled binary (shell wrapper fallback)\n";
                 sf << "exec " << self_path << " --load " << out_path << ".tmp.aura \"$@\"\n";
                 if (!sf) {
-                    std::println(stderr, "[#237] ERROR: write to {} failed (rc=1)", out_path);
+                    std::println(std::cerr, "[#237] ERROR: write to {} failed (rc=1)", out_path);
                     return 1;
                 }
             }
@@ -2380,7 +2380,7 @@ int main(int argc, char* argv[]) {
             {
                 std::ofstream sf(out_path + ".tmp.aura");
                 if (!sf) {
-                    std::println(stderr, "[#237] ERROR: cannot open {}.tmp.aura for write (rc=1)",
+                    std::println(std::cerr, "[#237] ERROR: cannot open {}.tmp.aura for write (rc=1)",
                                  out_path);
                     return 1;
                 }
@@ -2390,7 +2390,7 @@ int main(int argc, char* argv[]) {
                 std::println("emitted binary: {} (shell wrapper)", out_path);
                 return 0;
             }
-            std::println(stderr, "[#237] ERROR: out_path {} does not exist after write (rc=1)",
+            std::println(std::cerr, "[#237] ERROR: out_path {} does not exist after write (rc=1)",
                          out_path);
             std::println(std::cerr, "error: cannot create binary");
             return 1;
@@ -2548,7 +2548,7 @@ int main(int argc, char* argv[]) {
             return e && (e[0] == '1' || e[0] == 't' || e[0] == 'T');
         }();
         if (!enabled) {
-            std::println(stderr, "evo-explain: disabled (set AURA_OBS=1 to enable)");
+            std::println(std::cerr, "evo-explain: disabled (set AURA_OBS=1 to enable)");
             return 0;
         }
         aura::compiler::CompilerService cs;

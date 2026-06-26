@@ -170,7 +170,7 @@ bool test_qq_nested_inner_macro() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #158 — qq + inner macro verification ═══\n");
+    std::println("═══ Issue #158 — qq + inner macro verification ═══");
 
     test_qq_legacy_inner_macro();
     test_qq_hygienic_inner_macro();
@@ -179,8 +179,8 @@ int run_tests() {
     test_qq_special_form_still_works();
     test_qq_nested_inner_macro();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_158_detail
