@@ -16,6 +16,7 @@ import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.compiler.matcher;
 import aura.parser.parser;
+import aura.core.mutators;  // Phase 4 follow-up #3: migrate mutate:* primitives to strategy dispatch
 import aura.diag;
 import aura.compiler.hardware_backend;
 
@@ -1421,10 +1422,15 @@ void register_mutate_primitives(
     // Insert a child node into a parent's children list at the given position.
     // Position 0 = first child, child_count = append at end.
     // Parses code-string INTO workspace, preserving all existing nodes/IDs.
-    // Issue #213 Cycle 2: migrate mutate:insert-child to
-    // use the MutationBoundaryGuard (RAII). Same pattern as
-    // mutate:remove-node: bool ok flag, guard takes &ok,
-    // all error-return paths set ok = false.
+    //
+    // Phase 4 follow-up #3a: the structural mutation is now
+    // routed through aura::ast::mutators::InsertChildMutator.
+    // The wrapper keeps the Aura-specific boilerplate (mutation
+    // boundary guard, fiber yield, arg parsing, code-string
+    // parsing, mutation-log entry) and delegates the actual
+    // insert_child + mark_dirty_upward to the strategy. Error
+    // propagation flows through AuraResult<NodeId> for uniform
+    // handling.
     add("mutate:insert-child", [&ev, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
@@ -1449,11 +1455,6 @@ void register_mutate_primitives(
             return mev("bad-arg", "code string index out of range");
         }
         auto& flat = *ev.workspace_flat_;
-        if (parent >= flat.size()) {
-            ok = false;
-            return mev("out-of-range", "parent node ID " + std::to_string(parent) +
-                                           " >= flat size " + std::to_string(flat.size()));
-        }
 
         // Parse child code INTO workspace (append mode — all IDs stay valid)
         auto pr = aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat, *ev.workspace_pool_);
@@ -1474,14 +1475,31 @@ void register_mutate_primitives(
             return mev("parse-error", parse_err);
         }
 
-        // Insert the parsed node at position pos in parent's children
-        flat.insert_child(parent, pos, pr.root);
+        // Phase 4: route the structural mutation through the
+        // InsertChildMutator strategy. The strategy validates the
+        // target id (gen-aware), calls flat.insert_child, and
+        // marks dirty upward. AuraResult carries errors uniformly.
+        auto result = aura::ast::mutators::apply_mutation(
+            flat, parent,
+            aura::ast::mutators::InsertChildMutator{pos, pr.root});
+        if (!result) {
+            ok = false;
+            // Map AuraErrorKind -> Aura error tag for backward compat.
+            std::string tag = "mutation-error";
+            if (result.error().kind == aura::core::AuraErrorKind::MutationInvalidTarget) {
+                tag = "out-of-range";
+            } else if (result.error().kind == aura::core::AuraErrorKind::MutationInvalidParent) {
+                tag = "out-of-range";
+            }
+            return mev(tag, std::string(result.error().message));
+        }
 
+        // Log to workspace mutation log (Aura-specific, stays in wrapper).
         std::string summary = (a.size() > 3 && is_string(a[3]))
                                   ? ev.string_heap_[as_string_idx(a[3])]
                                   : "insert child at " + std::to_string(pos);
         flat.add_mutation(parent, "insert-child", std::to_string(pos), summary, summary);
-        ev.workspace_flat_->mark_dirty_upward(parent);
+
         return make_int(static_cast<std::int64_t>(pr.root));
     });
 
