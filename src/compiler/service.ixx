@@ -3041,8 +3041,16 @@ public:
         // fields as values (no this->) so the same logic can be
         // unit-tested in isolation.
         if (should_relower(source_hash, it->second.source_hash, it->second.dirty,
-                           it->second.mutation_count, it->second.mutation_count))
+                           it->second.mutation_count, it->second.mutation_count)) {
+            // Issue #487: bump the should_relower counter
+            // for observability (the re-lower path fired
+            // on dirty). The ratio should_relower /
+            // affected_subtree measures the dirty-
+            // trigger rate.
+            metrics_.should_relower_total.fetch_add(
+                1, std::memory_order_relaxed);
             return 1;
+        }
         return 0; // hit
     }
 
@@ -4483,6 +4491,24 @@ public:
         // DeadCoercionEliminationPass).
         s.dead_coercion_eliminated_total =
             metrics_.dead_coercion_eliminated_total.load(std::memory_order_relaxed);
+        // Issue #487: dirty propagation + IR re-lower
+        // observability. Mirror the 2 lifetime
+        // counters and compute the derived trigger
+        // rate (basis points: should_relower /
+        // affected_subtree * 10000).
+        s.should_relower_total =
+            metrics_.should_relower_total.load(
+                std::memory_order_relaxed);
+        s.affected_subtree_total =
+            metrics_.affected_subtree_total.load(
+                std::memory_order_relaxed);
+        if (s.affected_subtree_total > 0) {
+            s.dirty_trigger_rate_bp =
+                (s.should_relower_total * 10000u) /
+                s.affected_subtree_total;
+        } else {
+            s.dirty_trigger_rate_bp = 0;
+        }
         // Issue #254: IR SoA dual-emit counters (lifetime total).
         s.ir_soa_instructions_emitted =
             metrics_.ir_soa_instructions_emitted.load(std::memory_order_relaxed);

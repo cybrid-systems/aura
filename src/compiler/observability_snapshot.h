@@ -70,7 +70,18 @@ struct CompilerSnapshot {
     // yet (would require scanning the IR post-pass
     // to count remaining CastOps); the follow-up
     // will add it.
-    std::uint64_t dead_coercion_eliminated_total = 0;
+std::uint64_t dead_coercion_eliminated_total = 0;
+    // Issue #487: dirty propagation + IR re-lower
+    // observability. Mirrors the 2 lifetime
+    // counters in CompilerMetrics. The derived
+    // dirty_trigger_rate_bp is should_relower /
+    // affected_subtree * 10000 — measures how
+    // often the dirty path actually triggers a
+    // re-lower (vs. just enumerating affected
+    // nodes).
+    std::uint64_t should_relower_total = 0;
+    std::uint64_t affected_subtree_total = 0;
+    std::uint64_t dirty_trigger_rate_bp = 0;
     // Issue #254: IR SoA dual-emit counters (lifetime total).
     // Mirrors CompilerMetrics::ir_soa_instructions_emitted +
     // CompilerMetrics::ir_soa_functions_emitted.

@@ -122,6 +122,21 @@ struct CompilerMetrics {
     // — the metric lived only on the per-call pass
     // instance.
     std::atomic<std::uint64_t> dead_coercion_eliminated_total{0};
+    // Issue #487: dirty propagation + IR re-lower
+    // observability. 2 lifetime counters:
+    //   - should_relower_total: count of times
+    //     should_relower() returned true (re-lower
+    //     triggered on dirty). Pre-#487 the
+    //     should_relower decision was in
+    //     lookup_define_v2 but not surfaced.
+    //   - affected_subtree_total: count of times
+    //     affected_subtree_from_mutation was
+    //     called (the entry point for the dirty
+    //     propagation path). The ratio
+    //     should_relower / affected_subtree measures
+    //     the dirty-trigger rate.
+    std::atomic<std::uint64_t> should_relower_total{0};
+    std::atomic<std::uint64_t> affected_subtree_total{0};
     // Issue #254: IR SoA dual-emit counters (lifetime total).
     // Bumped by service.ixx after each lower_to_ir call when
     // dual-emit is enabled. The underlying counters live on
