@@ -1561,6 +1561,84 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (compile:incremental-typecheck-stats) — Issue #411: post-
+    // mutation auto-incremental typecheck observability. Returns
+    // a hash with 3 fields:
+    //   - auto-invocations-total: lifetime total number of
+    //     typed_mutate success paths that triggered an automatic
+    //     infer_flat_partial call. 0 in Lazy/Disabled modes.
+    //   - re-inferred-total: cumulative count of nodes re-
+    //     inferred across all auto-invocations.
+    //   - avg-re-inferred-bp: derived average (re_inferred *
+    //     10000 / max(auto_invocations, 1)) in basis points.
+    //     Higher = more nodes re-inferred per mutation on
+    //     average. The follow-up per-symbol wiring (Issue #410
+    //     Phase 2/2) will reduce this metric.
+    //
+    // Mirrors the 2 lifetime counters on CompilerMetrics plus
+    // the derived metric on CompilerSnapshot. Same FNV-1a
+    // build_hash pattern as the surrounding compile:*
+    // primitives (Issue #258 HASH_EMPTY collision avoided).
+    add("compile:incremental-typecheck-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE; // avoid HASH_EMPTY collision
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t auto_invocations = 0;
+        std::uint64_t re_inferred = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            auto_invocations = m->incremental_typecheck_auto_invocations_total.load(
+                std::memory_order_relaxed);
+            re_inferred = m->incremental_typecheck_re_inferred_total.load(
+                std::memory_order_relaxed);
+        }
+        const std::uint64_t avg_bp = (auto_invocations > 0)
+                                         ? (re_inferred * 10000u) / auto_invocations
+                                         : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"auto-invocations-total", make_int(static_cast<std::int64_t>(auto_invocations))},
+            {"re-inferred-total", make_int(static_cast<std::int64_t>(re_inferred))},
+            {"avg-re-inferred-bp", make_int(static_cast<std::int64_t>(avg_bp))},
+        };
+        return build_hash(kv);
+    });
+
 } // register_compile_primitives
 
 } // namespace aura::compiler::primitives_detail

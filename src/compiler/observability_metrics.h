@@ -230,6 +230,32 @@ struct CompilerMetrics {
     // reduction basis points — higher = more savings).
     std::atomic<std::uint64_t> per_symbol_dirty_lookups_total{0};
     std::atomic<std::uint64_t> per_symbol_dirty_uses_total{0};
+    // Issue #411: post-mutation auto-incremental typecheck
+    // observability. The full #411 scope is making
+    // infer_flat_partial the primary post-mutation path so
+    // that (query:type <name>) returns up-to-date results
+    // immediately after any (mutate:*) call. This
+    // scope-limited close ships the wiring foundation:
+    //   - incremental_typecheck_auto_invocations_total:
+    //     number of typed_mutate success paths that triggered
+    //     an automatic infer_flat_partial call. 0 when the
+    //     mode is set to Lazy or Disabled. Equals the number
+    //     of successful mutations in Eager mode (the default).
+    //   - incremental_typecheck_re_inferred_total: cumulative
+    //     count of nodes re-inferred across all auto-
+    //     invocations. Pairs with the lifetime total on
+    //     typecheck_cache_misses_total (which is a strict
+    //     superset — cache_misses counts every dirty node
+    //     re-inferred across the full typecheck pass too).
+    //
+    // The derived metric
+    // incremental_typecheck_avg_re_inferred_bp (snapshot)
+    // is re_inferred * 10000 / max(auto_invocations, 1) —
+    // the average number of nodes re-inferred per auto-
+    // invocation, in basis points. Higher = more work per
+    // mutation (signal for the per-symbol follow-up).
+    std::atomic<std::uint64_t> incremental_typecheck_auto_invocations_total{0};
+    std::atomic<std::uint64_t> incremental_typecheck_re_inferred_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

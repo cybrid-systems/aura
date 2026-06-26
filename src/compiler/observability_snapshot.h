@@ -109,6 +109,19 @@ struct CompilerSnapshot {
     std::uint64_t per_symbol_dirty_lookups_total = 0;
     std::uint64_t per_symbol_dirty_uses_total = 0;
     std::uint64_t per_symbol_dirty_reduction_bp = 0;
+    // Issue #411: post-mutation auto-incremental typecheck
+    // observability. Mirrors
+    // CompilerMetrics::{incremental_typecheck_auto_invocations_total,
+    // incremental_typecheck_re_inferred_total}. The derived
+    // incremental_typecheck_avg_re_inferred_bp is computed
+    // at snapshot read time as
+    // re_inferred * 10000 / max(auto_invocations, 1) —
+    // average re-inferred nodes per auto-invocation, in
+    // basis points. The follow-up per-symbol wiring (Issue
+    // #410 Phase 2/2) will reduce this metric.
+    std::uint64_t incremental_typecheck_auto_invocations_total = 0;
+    std::uint64_t incremental_typecheck_re_inferred_total = 0;
+    std::uint64_t incremental_typecheck_avg_re_inferred_bp = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).

@@ -317,6 +317,42 @@ export enum class IncrementalStrictness : std::uint8_t {
     Aggressive = 2,
 };
 
+// Issue #411: post-mutation auto-incremental typecheck
+// mode. Three modes control whether typed_mutate auto-
+// invokes TypeChecker::infer_flat_partial on the most
+// recent MutationRecord after a successful mutation:
+//
+//   - Eager     (default) — auto-invoke on every successful
+//                            typed_mutate. (query:type <name>)
+//                            and (get-inferred-type <node-id>)
+//                            return up-to-date types
+//                            immediately, with no manual
+//                            (typecheck-incremental) call.
+//                            Adds ~O(dirty-subtree) work to
+//                            every mutation.
+//   - Lazy                 — do not auto-invoke. Callers
+//                            must explicitly call
+//                            (typecheck-incremental) after
+//                            a batch of mutations. Useful
+//                            for batch-mutation pipelines
+//                            where many mutations happen
+//                            before a type query.
+//   - Disabled             — never invoke infer_flat_partial
+//                            from the typed_mutate path.
+//                            Equivalent to the pre-#411
+//                            behavior. The (typecheck-current)
+//                            full pass still works.
+//
+// All three modes preserve the existing (typecheck-current)
+// and (typecheck-incremental) primitive paths; the mode
+// only affects the auto-invocation that happens at the
+// end of a successful typed_mutate.
+export enum class IncrementalTypecheckMode : std::uint8_t {
+    Eager = 0,
+    Lazy = 1,
+    Disabled = 2,
+};
+
 export class CompilerService {
 public:
     CompilerService()
@@ -1000,6 +1036,33 @@ public:
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
+        // Issue #411: snapshot the workspace mutation_log_ size at
+        // entry so the post-eval auto-incremental typecheck can
+        // detect whether this eval produced a new mutation
+        // (mutate:* primitive) and run infer_flat_partial on the
+        // most recent record. The check is "size grew" — when it
+        // didn't, the eval was a pure read (define / typecheck /
+        // query) and we skip the auto-invoke.
+        cs_eval_mutation_log_size_at_entry_ = 0;
+        if (auto* ws = evaluator_.workspace_flat())
+            cs_eval_mutation_log_size_at_entry_ = ws->all_mutations().size();
+
+        // Fix #165/#166 tests: workspace-aware eval shortcut. When a
+        // entry so the post-eval auto-incremental typecheck can
+        // detect whether this eval produced a new mutation
+        // (mutate:* primitive) and run infer_flat_partial on the
+        // most recent record. The check is "size grew" — when it
+        // didn't, the eval was a pure read (define / typecheck /
+        // query) and we skip the auto-invoke.
+        cs_eval_mutation_log_size_at_entry_ = 0;
+        if (auto* ws = evaluator_.workspace_flat())
+            cs_eval_mutation_log_size_at_entry_ = ws->all_mutations().size();
+
+        // Issue #411: RAII guard. Fires the auto-incremental
+        // typecheck on every return path (tree-walker fallback,
+        // early returns from the IR pipeline, the final return).
+        PostEvalAutoInvokeGuard post_eval_guard(this, cs_eval_mutation_log_size_at_entry_);
+
         // Fix #165/#166 tests: workspace-aware eval shortcut. When a
         // workspace is set (via (set-code ...)), short-circuit bare
         // identifiers and top-level function calls so they find their
@@ -1562,6 +1625,16 @@ public:
     // ---- IR pipeline ------------------------------------------------
 
     [[nodiscard]] EvalResult eval_ir(std::string_view input) {
+        // Issue #411: snapshot mutation_log_ size at entry so the
+        // post-eval auto-incremental typecheck can detect new
+        // mutations. See eval() above for the full pattern.
+        cs_eval_mutation_log_size_at_entry_ = 0;
+        if (auto* ws = evaluator_.workspace_flat())
+            cs_eval_mutation_log_size_at_entry_ = ws->all_mutations().size();
+
+        // Issue #411: RAII guard. See eval() above.
+        PostEvalAutoInvokeGuard post_eval_guard(this, cs_eval_mutation_log_size_at_entry_);
+
         // Phase 4: parse directly into FlatAST (bypasses Expr* entirely)
         // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
@@ -1762,12 +1835,25 @@ public:
             record_eval_result_shape(session_id_, last_ir_mod_, &ir_interp, *result);
         }
 
+        // Issue #411: post-eval auto-incremental typecheck.
+        // The guard (constructed in eval_ir) fires the auto-
+        // invoke on scope exit, covering ALL return paths.
+        // See PostEvalAutoInvokeGuard for the full pattern.
         return result;
     }
 
     // ── --jit: compile via LLVM ORC JIT and execute ──────────────
     // --jit: compile via LLVM ORC JIT and execute
     [[nodiscard]] EvalResult exec_jit(std::string_view input) {
+        // Issue #411: snapshot mutation_log_ size at entry. See
+        // eval() above for the full pattern.
+        cs_eval_mutation_log_size_at_entry_ = 0;
+        if (auto* ws = evaluator_.workspace_flat())
+            cs_eval_mutation_log_size_at_entry_ = ws->all_mutations().size();
+
+        // Issue #411: RAII guard. See eval() above.
+        PostEvalAutoInvokeGuard post_eval_guard(this, cs_eval_mutation_log_size_at_entry_);
+
 #ifdef AURA_HAVE_LLVM
         // Issue #59 Iter 3: shared-lock the Mutation Lock for the
         // duration of the JIT compile path. Compiles can run
@@ -2242,6 +2328,10 @@ public:
         }
         // Record JIT result shape for profiling (triggers hot-recompilation)
         record_eval_result_shape(session_id_, last_ir_mod_, nullptr, ev_result);
+        // Issue #411: post-eval auto-incremental typecheck.
+        // The guard (constructed in exec_jit) fires the auto-
+        // invoke on scope exit, covering ALL return paths.
+        // See PostEvalAutoInvokeGuard for the full pattern.
         return EvalResult(ev_result);
 #else
         (void)input;
@@ -4356,6 +4446,24 @@ public:
         } else {
             s.per_symbol_dirty_reduction_bp = 0;
         }
+        // Issue #411: post-mutation auto-incremental typecheck
+        // observability. Mirror the 2 lifetime counters and
+        // compute the derived average (basis points:
+        // re_inferred * 10000 / max(auto_invocations, 1)).
+        // The average is 0 when no auto-invocations have
+        // happened yet (i.e. before any typed_mutate or when
+        // the mode is set to Lazy/Disabled).
+        s.incremental_typecheck_auto_invocations_total =
+            metrics_.incremental_typecheck_auto_invocations_total.load(std::memory_order_relaxed);
+        s.incremental_typecheck_re_inferred_total =
+            metrics_.incremental_typecheck_re_inferred_total.load(std::memory_order_relaxed);
+        if (s.incremental_typecheck_auto_invocations_total > 0) {
+            s.incremental_typecheck_avg_re_inferred_bp =
+                (s.incremental_typecheck_re_inferred_total * 10000u) /
+                s.incremental_typecheck_auto_invocations_total;
+        } else {
+            s.incremental_typecheck_avg_re_inferred_bp = 0;
+        }
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
         // shared_lock on workspace_mtx_ to keep the flat
@@ -4542,6 +4650,121 @@ public:
     //   MutationResult::error.
     void set_invariant_check_mode(InvariantCheckMode m) { invariant_check_mode_ = m; }
     InvariantCheckMode invariant_check_mode() const { return invariant_check_mode_; }
+
+    // Issue #411: post-mutation auto-incremental typecheck mode.
+    // See the IncrementalTypecheckMode enum above for the three
+    // modes and their semantics. Default Eager; switch to Lazy or
+    // Disabled in batch-mutation pipelines to defer the
+    // typecheck cost. The mode is read at the end of a successful
+    // typed_mutate (after tx.commit, after the post-mutation
+    // invariant check, after the macro re-expand) and routes
+    // through TypeChecker::infer_flat_partial on the workspace
+    // flat (post-COW) — the same path that the manual
+    // (typecheck-incremental) Aura primitive uses.
+    void set_incremental_typecheck_mode(IncrementalTypecheckMode m) {
+        incremental_typecheck_mode_ = m;
+    }
+    IncrementalTypecheckMode incremental_typecheck_mode() const {
+        return incremental_typecheck_mode_;
+    }
+
+    // Issue #411: auto-invoke helper. Runs
+    // TypeChecker::infer_flat_partial on the supplied flat +
+    // pool for the given mutation record, accumulates
+    // per-call engine stats into CompilerMetrics, and bumps
+    // the lifetime-total auto-invocation counters. Called
+    // from both the typed_mutate C++ method (post-tx.commit
+    // path) and the cs.eval method (post-eval path, when the
+    // mutation log grew during the eval). The `source` tag
+    // is for the debug log message only.
+    //
+    // Returns the number of nodes re-inferred. The caller can
+    // ignore the return value; the metrics are what matter.
+    std::size_t auto_invoke_incremental_typecheck_for(
+        aura::ast::FlatAST& flat,
+        aura::ast::StringPool& pool,
+        const aura::ast::MutationRecord& rec,
+        std::uint64_t mutation_id_for_log,
+        const char* source) {
+        if (incremental_typecheck_mode_ != IncrementalTypecheckMode::Eager)
+            return 0;
+        aura::compiler::TypeChecker tc(type_registry_);
+        aura::diag::DiagnosticCollector diag;
+        tc.set_strict(strict_mode_);
+        // Match the existing incremental_infer epoch gate
+        // (Issue #168): use the current mutation epoch so
+        // cache entries captured under a prior epoch are
+        // correctly rejected as stale.
+        tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
+        // Plumb the shared metrics so the per-call engine
+        // stats (cache_hits / cache_misses / stale_cache)
+        // accumulate into the lifetime totals (Issue #258 /
+        // #411 wiring).
+        tc.set_metrics(&metrics_);
+        auto n = tc.infer_flat_partial(flat, pool, rec, diag);
+        metrics_.typecheck_cache_hits_total.fetch_add(
+            tc.stats().cache_hits, std::memory_order_relaxed);
+        metrics_.typecheck_cache_misses_total.fetch_add(
+            tc.stats().cache_misses, std::memory_order_relaxed);
+        metrics_.typecheck_stale_cache_total.fetch_add(
+            tc.stats().stale_cache, std::memory_order_relaxed);
+        metrics_.incremental_typecheck_auto_invocations_total.fetch_add(
+            1, std::memory_order_relaxed);
+        metrics_.incremental_typecheck_re_inferred_total.fetch_add(
+            n, std::memory_order_relaxed);
+        if (n > 0) {
+            std::println(std::cerr,
+                         "IncrementalTypecheck: {} mutation {} re-inferred {} node(s)",
+                         source, mutation_id_for_log, n);
+        }
+        return n;
+    }
+
+    // Issue #411: RAII guard that fires the post-eval auto-
+    // incremental typecheck on scope exit. Constructed at the
+    // entry of each public eval method (eval / eval_ir / exec_jit
+    // / typed_mutate) and captures the workspace mutation_log_
+    // size at construction time. On destruction, if the log grew
+    // during the eval (i.e. the user called a mutate:* primitive)
+    // and the mode is Eager, the guard runs infer_flat_partial
+    // on the most recent MutationRecord via
+    // auto_invoke_incremental_typecheck_for(). The guard is a
+    // no-op when the mode is Lazy / Disabled or when the log
+    // didn't grow.
+    //
+    // The guard-based design (vs explicit calls at every return
+    // point) covers the early returns from cs.eval (the
+    // tree-walker fallback, the IR pipeline's pre_const_eval
+    // path, etc.) without invasive edits to every return
+    // statement. Same pattern as MutationBoundaryGuard in
+    // evaluator.ixx. The guard is a private nested class (not
+    // exported) because it's only used by CompilerService's
+    // own methods.
+    struct PostEvalAutoInvokeGuard {
+        CompilerService* service;
+        std::size_t entry_size;
+        bool fired = false;
+        PostEvalAutoInvokeGuard(CompilerService* s, std::size_t e)
+            : service(s), entry_size(e) {}
+        ~PostEvalAutoInvokeGuard() {
+            if (fired || service == nullptr) return;
+            if (auto* ws_flat = service->evaluator_.workspace_flat()) {
+                if (auto* ws_pool = service->evaluator_.workspace_pool()) {
+                    const auto& log = ws_flat->all_mutations();
+                    if (!log.empty() && entry_size < log.size()) {
+                        const auto& rec = log.back();
+                        if (rec.target_node != aura::ast::NULL_NODE ||
+                            rec.parent_id != aura::ast::NULL_NODE) {
+                            service->auto_invoke_incremental_typecheck_for(
+                                *ws_flat, *ws_pool, rec, rec.mutation_id, "PostEvalGuard");
+                        }
+                    }
+                }
+            }
+        }
+        PostEvalAutoInvokeGuard(const PostEvalAutoInvokeGuard&) = delete;
+        PostEvalAutoInvokeGuard& operator=(const PostEvalAutoInvokeGuard&) = delete;
+    };
 
     // Issue #169: incremental-strictness setter/getter.
     // See the IncrementalStrictness enum above for semantics.
@@ -4837,6 +5060,63 @@ public:
                     }
                     break; // one record per typed_mutate
                 }
+            }
+
+            // Issue #411: post-mutation auto-incremental typecheck.
+            // After a successful mutation, automatically invoke
+            // TypeChecker::infer_flat_partial on the affected
+            // subtree (the same path the manual
+            // (typecheck-incremental) Aura primitive uses). The
+            // result populates flat.type_id_ for the affected
+            // nodes, so the next (query:type <name>) /
+            // (get-inferred-type <node-id>) returns up-to-date
+            // results with no manual (typecheck-incremental) call.
+            //
+            // Mode handling:
+            //   Eager     (default) — invoke on every successful
+            //                          typed_mutate. Bumps
+            //                          auto_invocations_total +
+            //                          re_inferred_total.
+            //   Lazy                 — skip the auto-invoke. The
+            //                          caller can call
+            //                          (typecheck-incremental)
+            //                          later in the batch.
+            //   Disabled             — skip entirely. Equivalent
+            //                          to pre-#411 behavior. The
+            //                          full (typecheck-current)
+            //                          primitive still works.
+            //
+            // We use *ws_flat / *ws_pool (not *current_ast_ /
+            // *current_pool_) because lazy COW may have replaced
+            // the workspace flat during the mutation eval — the
+            // mutation record's target_node is in the workspace's
+            // NodeId space, not the typed_mutate AST's. The
+            // (typecheck-incremental) primitive already follows
+            // this same pattern (see evaluator_primitives_eval.cpp
+            // ~L916).
+            if (incremental_typecheck_mode_ == IncrementalTypecheckMode::Eager && mid > 0) {
+                // Find the most recent record for this mutation
+                // (mirrors the MacroReexpand pattern above). If
+                // the workspace has no records (e.g. mid > 0
+                // was set but no log entry was appended — a
+                // degenerate case where the mutation returned a
+                // non-zero success code without touching the
+                // log), skip the auto-invoke (no rec to re-
+                // infer against).
+                bool invoked = false;
+                for (auto& rec : log) {
+                    if (rec.mutation_id != mid)
+                        continue;
+                    auto_invoke_incremental_typecheck_for(
+                        *ws_flat, *current_pool_, rec, mid, "typed_mutate");
+                    invoked = true;
+                    break; // one record per typed_mutate
+                }
+                (void)invoked; // invoked is informational; no
+                               // failure path needed when the
+                               // log is empty (the macro re-
+                               // expand above would have caught
+                               // the same condition).
             }
 
             if (invariant_check_mode_ == InvariantCheckMode::Strict &&
@@ -5559,6 +5839,27 @@ private:
     // precise minimal invalidation. The field is private to
     // preserve the invariant; access via set/get above.
     IncrementalStrictness incremental_strictness_ = IncrementalStrictness::Balanced;
+
+    // Issue #411: post-mutation auto-incremental typecheck mode.
+    // Default Eager so that (query:type <name>) returns up-to-date
+    // results immediately after any (mutate:*) call. Set to Lazy
+    // (manual (typecheck-incremental) needed) or Disabled (full
+    // pre-#411 behavior) via set_incremental_typecheck_mode().
+    IncrementalTypecheckMode incremental_typecheck_mode_ =
+        IncrementalTypecheckMode::Eager;
+
+    // Issue #411: per-eval mutation_log_ size snapshot. Set at
+    // the entry of every public eval method (eval / eval_ir /
+    // exec_jit), read at the end to detect whether the eval
+    // produced a new mutation record. When the size grew, the
+    // post-eval auto-invoke runs infer_flat_partial on the most
+    // recent record. When the size stayed the same, the eval
+    // was a pure read and we skip the auto-invoke. A member
+    // field (not a local) because the eval pipeline has
+    // multiple return points and the early returns also need
+    // the auto-invoke check (the mutate:* primitives can be
+    // triggered from the workspace-aware eval shortcut paths).
+    std::size_t cs_eval_mutation_log_size_at_entry_ = 0;
 
 public:
     // Issue #300 follow-up #1: drop per-fiber / main-thread
