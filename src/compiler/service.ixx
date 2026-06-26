@@ -4488,6 +4488,19 @@ public:
             s.is_valid_check_count = ws_flat->is_valid_check_count();
             s.stable_ref_invalidations = ws_flat->stable_ref_invalidations();
             s.atomic_batch_commits = ws_flat->atomic_batch_commits_v();
+            // Issue #343: long-term stability observability.
+            // current_generation is the live value of
+            // FlatAST::generation_ (uint16_t, 1..65535);
+            // generation_wrap_count is the lifetime total
+            // of wrap-arounds; node_gen_stale_access_count
+            // is the lifetime total of stale NodeId
+            // accesses. These are all read from the
+            // workspace FlatAST (they live there, not on
+            // CompilerMetrics).
+            s.current_generation = ws_flat->current_generation();
+            s.generation_wrap_count = ws_flat->generation_wrap_count();
+            s.node_gen_stale_access_count =
+                ws_flat->node_gen_stale_access_count();
             // Issue #256: AST operation observability counters
             // (children/parent_of/mark_dirty_upward call counts
             // + total nodes marked dirty).
