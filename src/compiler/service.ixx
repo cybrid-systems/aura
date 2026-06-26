@@ -4500,6 +4500,21 @@ public:
         } else {
             s.per_binding_gen_hit_ratio_bp = 0;
         }
+        // Issue #413: invalidation trace records count.
+        // Read from the workspace FlatAST (the trace
+        // vector is per-FlatAST, lifetime = FlatAST
+        // lifetime). Accumulate via the same pattern as
+        // per_binding_gen_bumps_total.
+        std::uint64_t trace_records_from_flat = 0;
+        if (auto* ws = evaluator_.workspace_flat()) {
+            trace_records_from_flat = ws->invalidation_trace_records_total();
+        }
+        if (trace_records_from_flat > last_invalidation_trace_records_) {
+            invalidation_trace_records_acc_ +=
+                trace_records_from_flat - last_invalidation_trace_records_;
+            last_invalidation_trace_records_ = trace_records_from_flat;
+        }
+        s.invalidation_trace_records_total = invalidation_trace_records_acc_;
         // Issue #259: type metadata propagation observability.
         // Read lifetime totals from CompilerMetrics, compute
         // the derived coverage (basis points: 0-10000).
@@ -6069,6 +6084,14 @@ public:
     // persistent lifetime total across workspace swaps.
     mutable std::uint64_t per_binding_gen_bumps_acc_ = 0;
     mutable std::uint64_t last_per_binding_gen_bumps_ = 0;
+    // Issue #413: invalidation trace records
+    // accumulator. Same pattern as
+    // per_binding_gen_bumps_acc_: read the FlatAST's
+    // per-snapshot counter, accumulate the delta into
+    // this lifetime total. snapshot() is const so we
+    // can't fetch_add on a CompilerMetrics atomic.
+    mutable std::uint64_t invalidation_trace_records_acc_ = 0;
+    mutable std::uint64_t last_invalidation_trace_records_ = 0;
 
     // Issue #225 cycle 3: public test hook for the bridge
     // invalidation helper. Production code triggers this

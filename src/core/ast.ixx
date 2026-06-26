@@ -939,6 +939,24 @@ private:
     // Lifetime total; plumbed to CompilerMetrics via the
     // snapshot for observability.
     mutable std::atomic<std::uint64_t> binding_gen_bumps_total_{0};
+    // Issue #413: mutation_log-integrated invalidation.
+    // Records the (mutation_id, SymId) pair when
+    // mark_dirty_upward bumps the per-binding gen. Lets
+    // users trace "which mutation invalidated this
+    // binding's cache entry" via
+    // (compile:mutation-log-invalidation-trace
+    // mutation-id).
+    //
+    // Non-pmr / non-atomic — same constraint as
+    // binding_gens_ (std::pmr + atomic + tuple don't
+    // compose). Mutation access is serialized via the
+    // mutation lock.
+    struct InvalidationRecord {
+        aura::ast::SymId sym;
+        std::uint64_t mutation_id = 0;
+        std::uint32_t binding_gen_at_bump = 0;
+    };
+    std::pmr::vector<InvalidationRecord> invalidation_trace_;
     // Issue #261: NodeId lifecycle observability counters.
     mutable std::atomic<std::uint64_t> node_recycle_total_{0};
     mutable std::atomic<std::uint64_t> node_slot_reuse_count_{0};
@@ -3278,6 +3296,23 @@ public:
                  tgv.tag == NodeTag::LetRec) &&
                 tgv.sym_id != INVALID_SYM) {
                 bump_binding_gen(tgv.sym_id);
+                // Issue #413: record the (mutation_id,
+                // SymId) pair so users can trace
+                // invalidation back to the mutation.
+                // The most recent mutation_id is
+                // next_mutation_id_ - 1 (the counter
+                // was bumped in add_mutation / add_subtree
+                // before mark_dirty_upward was called).
+                if (next_mutation_id_ > 1) {
+                    const std::uint64_t mid = next_mutation_id_ - 1;
+                    invalidation_trace_.push_back({
+                        .sym = tgv.sym_id,
+                        .mutation_id = mid,
+                        .binding_gen_at_bump = binding_gen(tgv.sym_id),
+                    });
+                    invalidation_trace_records_total_.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
             }
         }
     }
@@ -4108,6 +4143,38 @@ public:
     // the snapshot for observability.
     std::uint64_t binding_gen_bumps_total() const {
         return binding_gen_bumps_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #413: invalidation trace accessors. The
+    // invalidation_trace_ vector grows by one entry per
+    // per-binding gen bump (one per mark_dirty_upward on
+    // a binding node with valid sym_id). Cleared on full
+    // FlatAST reset, same lifecycle as mutation_log_.
+    // size_invalidations() returns the lifetime total.
+    // last_invalidation_for(mutation_id) returns the
+    // most recent InvalidationRecord for that mutation
+    // (a single mutation may invalidate multiple bindings
+    // — the trace keeps all of them).
+    std::size_t invalidation_trace_size() const {
+        return invalidation_trace_.size();
+    }
+    std::optional<InvalidationRecord>
+    last_invalidation_for(std::uint64_t mutation_id) const {
+        for (auto it = invalidation_trace_.rbegin();
+             it != invalidation_trace_.rend(); ++it) {
+            if (it->mutation_id == mutation_id)
+                return *it;
+        }
+        return std::nullopt;
+    }
+    // Plumbed to CompilerMetrics via the snapshot for
+    // observability. Counter incremented on every
+    // per-binding gen bump that gets traced.
+    mutable std::atomic<std::uint64_t>
+        invalidation_trace_records_total_{0};
+    // Counter accessor.
+    std::uint64_t invalidation_trace_records_total() const {
+        return invalidation_trace_records_total_.load(
+            std::memory_order_relaxed);
     }
     // Per-node cache gen accessor for the BINDING the
     // cache entry is for. 0 = no binding context.
