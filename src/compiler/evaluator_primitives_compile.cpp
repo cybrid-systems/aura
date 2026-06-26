@@ -48,6 +48,23 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(cnt));
     });
 
+    // (compile:dead-coercion-stats) — Issue #433: dead
+    // coercion elimination observability. Returns
+    // the lifetime total of CastOps eliminated by
+    // the DeadCoercionEliminationPass. The pass
+    // exists in pass_manager.ixx and was already
+    // wired into the pipeline (service.ixx:1442);
+    // #433 ships the observability so users can
+    // measure zero-overhead gradual typing.
+    add("compile:dead-coercion-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t cnt = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            cnt = m->dead_coercion_eliminated_total.load(std::memory_order_relaxed);
+        }
+        return make_int(static_cast<std::int64_t>(cnt));
+    });
+
     // (compile:ir-soa-stats) — Issue #254: observability for
     // the IR SoA dual-emit path. Hash with the 2 counters
     // (instructions-emitted, functions-emitted). Returns a
