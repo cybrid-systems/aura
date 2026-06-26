@@ -1071,3 +1071,70 @@ the `Caller` struct's `location: string` with a
 `Caller { node_id: NodeId }` and have the per-DefUseIndex
 path iterate the use-sites directly without the O(n)
 walk.
+
+## Session 2026-06-26 — #411 fu1 follow-up #4: O(uses) wall-clock (the actual win)
+
+Commit `f8993145` pushed to origin/main. 10 files, +431/-93.
+
+This is the final piece of the #411 follow-up chain: the
+actual O(uses) **wall-clock** win. Pre-fu4, the per-
+DefUseIndex path bumped the metric correctly but still
+paid the O(n) `affected_subtree_for_symbol` walk cost for
+the NodeId set. Post-fu4, the path iterates the tracker's
+stored NodeIds directly — true O(K) where K is the number
+of use-sites for that binding.
+
+**What shipped:**
+- `per_defuse_index.h`: `Caller { string location }` →
+  `Caller { NodeId node_id }`. Tracker stores NodeIds
+  directly. Added local `NodeId` type alias (no extra
+  module import).
+- `TypeChecker::infer_flat_partial` 5-arg overload:
+  per-DefUseIndex path iterates `tracker.get_callers()`
+  directly. Bumps `per_defuse_index_visited_total` with
+  the actual O(uses) count. Falls back to O(n) walk +
+  bumps `walk_fallback_total` if sym not in tracker.
+- Aura primitive `(compile:per-defuse-index-add <idx>
+  <NodeId-int>)`: second arg is now NodeId int.
+- Aura primitive `(compile:per-defuse-index-callers
+  <idx>)`: returns hash with stringified NodeId keys +
+  NodeId int values.
+- `IncrementalStats` + `service.ixx` plumb the new
+  `per_defuse_index_visited_total` field.
+- `InnerStats` / `IncrementalStats` (per-call engine
+  + compiler) gain the field.
+
+**Test API migration (3 test files):**
+- `test_per_defuse_index.cpp`: 6 test functions updated
+  to use `Caller{int}` (was `Caller{string}`).
+- `test_issue_411_followup_2.cpp`: AC2/3/4/5 updated.
+  Critical fix: `hash-ref` primitive does type-strict
+  comparison, so `hash-ref h 101` (int) doesn't match
+  `hash-ref h "101"` (string) — must use string keys
+  even when values are ints.
+- `test_issue_411_followup_3.cpp`: AC4 updated.
+
+**Tests:** test_issue_411_followup_4, 12/12 pass (7 ACs).
+AC5 verifies the O(uses) signal — `per_defuse_index_visited`
+goes 0→1 after a populated-tracker mutate (was always 0
+pre-fu4, even though `per_defuse_index_used` correctly fired).
+
+**No regressions:** test_issue_410/411/412,
+test_issue_411_followup_1/2/3, test_per_defuse_index —
+all still green.
+
+**Today's totals (so far, 2026-06-26, ~7 hours):**
+- 13 commits to origin/main (1 MEMORY.md pending)
+- 4 issues closed (all scope-limited)
+- 7 new infrastructure ship: CI fix, RAII guard, gen
+  counter, tiered re-inference, per-DefUseIndex data,
+  per-DefUseIndex wiring, per-DefUseIndex O(uses)
+  wall-clock
+- 2 bug fix (hash cap + hash-ref void semantics)
+- ~35.4K tests, 0 failures across 8 test binaries
+
+**Remaining follow-ups (priority order):**
+1. **#412 follow-up #1** — per-binding generation
+2. **#501b** — pre-commit gate hook
+3. 跑 `python3 build.py full-test` 验证今天 ship 的 7+ commit
+4. 收工
