@@ -179,6 +179,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> typecheck_cache_hits_total{0};
     std::atomic<std::uint64_t> typecheck_cache_misses_total{0};
     std::atomic<std::uint64_t> typecheck_stale_cache_total{0};
+    // Issue #412: cache hits rescued by the generation
+    // counter check (post-#412 only). Pre-#412 these were
+    // counted as stale_cache. The derived
+    // gen_saved_ratio_bp = gen_saved / (stale_cache +
+    // gen_saved) * 10000 in basis points measures the
+    // improvement (higher = more false-positive stale
+    // rejections eliminated). gen_saved_total is a
+    // lifetime counter; the snapshot mirrors it.
+    std::atomic<std::uint64_t> typecheck_gen_saved_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)

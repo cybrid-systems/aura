@@ -89,6 +89,12 @@ struct CompilerSnapshot {
     std::uint64_t typecheck_cache_hits_total = 0;
     std::uint64_t typecheck_cache_misses_total = 0;
     std::uint64_t typecheck_stale_cache_total = 0;
+    // Issue #412: mirror of typecheck_gen_saved_total +
+    // derived gen_saved_ratio_bp (basis points: gen_saved /
+    // (stale_cache + gen_saved) * 10000). 0 when neither
+    // counter has been bumped.
+    std::uint64_t typecheck_gen_saved_total = 0;
+    std::uint64_t typecheck_gen_saved_ratio_bp = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.

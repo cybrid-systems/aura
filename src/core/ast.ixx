@@ -630,6 +630,9 @@ private:
         col_.push_back(0);
         marker_.push_back(m);
         type_id_.push_back(0);
+        // Issue #412: parallel type_cache_gen_ column. 0 = no
+        // cache entry yet (matches type_id_ == 0 semantics).
+        type_cache_gen_.push_back(0);
         dirty_.push_back(0);
         ppa_dirty_.push_back(0);
         // Issue #437: verify_dirty_ column. Mirrors ppa_dirty_'s
@@ -754,6 +757,19 @@ private:
     //                            node)
     std::pmr::vector<std::uint8_t> macro_dirty_;
     std::pmr::vector<std::uint32_t> type_id_;
+    // Issue #412: per-node type cache generation. Parallel to
+    // type_id_; stores the type_cache_generation_ at the time
+    // the cache entry was populated. On cache hit, the
+    // type-checker compares this against the current
+    // type_cache_generation_ — if they differ, the entry was
+    // cached before a structural mutation that may have
+    // invalidated the type, so we re-infer. This augments the
+    // existing reg_.free_vars(tid).empty() check by catching
+    // cases where the free_vars check is too permissive (e.g.,
+    // a polymorphic type that still has TYPE_VAR children but
+    // the binding structure didn't change). 0 = no cache
+    // entry yet (matches type_id_ == 0 semantics).
+    std::pmr::vector<std::uint32_t> type_cache_gen_;
     // Issue #79: per-node error kind, 0 = no error, non-zero = ErrorKind
     // enum value. Populated by the type-checker and runtime evaluator;
     // queryable via the AuraQuery `(has-error? N)` clause.
@@ -861,6 +877,15 @@ private:
     mutable std::atomic<std::uint64_t> parent_of_call_count_{0};
     mutable std::atomic<std::uint64_t> mark_dirty_upward_call_count_{0};
     mutable std::atomic<std::uint64_t> mark_dirty_total_nodes_{0};
+    // Issue #412: per-FlatAST type cache generation counter.
+    // Bumped by mark_dirty_upward() and by the explicit
+    // bump_type_cache_generation() accessor. The
+    // type-checker stores the current gen in
+    // type_cache_gen_[id] when populating type_id_[id], and
+    // compares on cache hit. 32-bit is enough for the
+    // theoretical max (~4B dirty events per FlatAST lifetime
+    // is far beyond any realistic mutation count).
+    mutable std::atomic<std::uint32_t> type_cache_generation_{0};
     // Issue #261: NodeId lifecycle observability counters.
     mutable std::atomic<std::uint64_t> node_recycle_total_{0};
     mutable std::atomic<std::uint64_t> node_slot_reuse_count_{0};
@@ -1170,6 +1195,7 @@ public:
         , line_(std::move(other.line_))
         , col_(std::move(other.col_))
         , type_id_(std::move(other.type_id_))
+        , type_cache_gen_(std::move(other.type_cache_gen_))
         , error_kind_(std::move(other.error_kind_))
         , value_cache_(std::move(other.value_cache_))
         , mutation_log_(std::move(other.mutation_log_))
@@ -1220,6 +1246,7 @@ public:
             line_ = std::move(other.line_);
             col_ = std::move(other.col_);
             type_id_ = std::move(other.type_id_);
+            type_cache_gen_ = std::move(other.type_cache_gen_);
             error_kind_ = std::move(other.error_kind_);
             node_gen_ = std::move(other.node_gen_);
             free_list_ = std::move(other.free_list_);
@@ -1327,6 +1354,7 @@ public:
             line_ = other.line_;
             col_ = other.col_;
             type_id_ = other.type_id_;
+            type_cache_gen_ = other.type_cache_gen_;
             error_kind_ = other.error_kind_;
             node_gen_ = other.node_gen_;
             free_list_ = other.free_list_;
@@ -2259,6 +2287,8 @@ public:
         // Issue #290: COW scratch for macro_dirty_
         std::pmr::vector<std::uint8_t> new_macro_dirty(alloc);
         std::pmr::vector<std::uint32_t> new_type_id(alloc);
+        // Issue #412: COW scratch for type_cache_gen_.
+        std::pmr::vector<std::uint32_t> new_type_cache_gen(alloc);
         std::pmr::vector<std::uint8_t> new_error_kind(alloc);
         std::pmr::vector<std::uint32_t> new_node_first_mutation(alloc);
         std::pmr::vector<std::uint16_t> new_node_gen(alloc);
@@ -2279,6 +2309,7 @@ public:
         new_dirty.reserve(live_count);
         new_ppa_dirty.reserve(live_count);
         new_type_id.reserve(live_count);
+        new_type_cache_gen.reserve(live_count);
         new_error_kind.reserve(live_count);
         new_node_first_mutation.reserve(live_count);
         new_node_gen.reserve(live_count);
@@ -2326,6 +2357,11 @@ public:
             else
                 new_macro_dirty.push_back(0);
             new_type_id.push_back(type_id_[id]);
+            // Issue #412: parallel cache gen. After COW we
+            // reset to 0 so the next type-checker pass will
+            // re-populate both fields via
+            // set_type_with_gen().
+            new_type_cache_gen.push_back(0);
             new_error_kind.push_back(error_kind_[id]);
             new_node_first_mutation.push_back(node_first_mutation_[id]);
             new_node_gen.push_back(generation_);
@@ -2356,6 +2392,7 @@ public:
         // Issue #290: COW the macro_dirty_ column
         macro_dirty_ = std::move(new_macro_dirty);
         type_id_ = std::move(new_type_id);
+        type_cache_gen_ = std::move(new_type_cache_gen);
         error_kind_ = std::move(new_error_kind);
         node_first_mutation_ = std::move(new_node_first_mutation);
         node_gen_ = std::move(new_node_gen);
@@ -3131,6 +3168,15 @@ public:
                 queue.push_back(p);
         }
         mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+        // Issue #412: bump the type cache generation. Every
+        // mark_dirty_upward() call invalidates ALL cached
+        // type_id_ entries (they were computed against an
+        // older binding/predicate context). Cache entries
+        // captured at the current gen will be re-checked
+        // on the next hit and recomputed if the gen
+        // diverges. See set_type_with_gen() and
+        // synthesize_flat()'s cache hit path.
+        type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Issue #262: propagate dirty upward but stop at `stop_at` (exclusive).
@@ -3148,6 +3194,14 @@ public:
             cur = parent_[cur];
         }
         mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+        // Issue #412: see mark_dirty_upward() for the rationale.
+        // Bump the type cache generation here too — the
+        // until-stop variant is used by structural mutations
+        // that want to invalidate the cache for a subtree
+        // but preserve ancestor caches (e.g., re-typing a
+        // single function body without re-typing its
+        // callers). Same gen bump as the unbounded variant.
+        type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Issue #262: mark def-use entry nodes and propagate the combined
@@ -3868,6 +3922,42 @@ public:
     void set_type(NodeId id, std::uint32_t tid) {
         if (id < type_id_.size())
             type_id_[id] = tid;
+        // Issue #412: stamp the cache entry with the current
+        // generation. The cache hit path compares this against
+        // type_cache_generation() — if they match, the entry
+        // is still valid (no structural mutation has
+        // invalidated it since it was populated). Without this
+        // stamp, the gen check would reject every entry (gen
+        // would always be 0 in the cache vs. non-zero current).
+        if (id < type_cache_gen_.size())
+            type_cache_gen_[id] = type_cache_generation_.load(std::memory_order_relaxed);
+    }
+
+    // Issue #412: type cache generation accessors. The gen
+    // is bumped on every mark_dirty_upward() call (and via
+    // the explicit bump_type_cache_generation() accessor for
+    // structural changes that don't go through the dirty
+    // path, e.g., a new define in a re-eval). Cache hit
+    // path reads type_cache_generation() and compares
+    // against the per-node value stored at cache time.
+    std::uint32_t type_cache_generation() const {
+        return type_cache_generation_.load(std::memory_order_relaxed);
+    }
+    void bump_type_cache_generation() {
+        type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Per-node cache gen accessor (read / write). Mirrors
+    // type_id() / set_type(). set_type_with_gen() is the
+    // canonical call site for the type-checker — it stores
+    // both the type and the current gen atomically.
+    std::uint32_t type_cache_gen(NodeId id) const {
+        return id < type_cache_gen_.size() ? type_cache_gen_[id] : 0;
+    }
+    void set_type_with_gen(NodeId id, std::uint32_t tid, std::uint32_t gen) {
+        if (id >= type_id_.size() || id >= type_cache_gen_.size())
+            return;
+        type_id_[id] = tid;
+        type_cache_gen_[id] = gen;
     }
 
     // ── Error kind access (Issue #79) ────────────────────────

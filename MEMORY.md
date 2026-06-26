@@ -662,3 +662,61 @@ initialized with `alloc`" would catch this at compile time.
 **Today's total: 5 issues closed, 7 commits pushed, 1 commit
 local-only (5d97fb40 pre-bug, will be in next push), 1 new
 pre-existing bug found, 1 hallucination correction (morning).**
+
+## Session 2026-06-26 — CI fix + #410/#411 scope-limited close
+
+**CI fix (e91e54b1):** #410 commit (c9b800be) added
+`compile:per-symbol-dirty-stats` primitive but forgot to
+regen `docs/generated/primitives.md`. CI gate
+(`python3 build.py gate` = docs + lint + fixtures) caught
+the stale doc on the first step. build-test skipped due
+to `needs: [gate]`. Fix: regen docs. Lesson: **any change
+that adds an Aura primitive must regen `primitives.md`
+before commit** (auto-mechanizable as a pre-commit hook).
+
+**#410 closed (e91e54b1):** scope-limited per-symbol dirty
+observability foundation. 5 follow-ups tracked (per-symbol
+re-lower wiring, smarter dep_graph cascade, etc.).
+
+**#411 closed (043f6d82):** post-mutation auto-incremental
+typecheck wiring + observability. 7 files, +741/-2.
+
+- `CompilerService::IncrementalTypecheckMode` enum
+  (Eager / Lazy / Disabled; default Eager).
+- `PostEvalAutoInvokeGuard` (private nested RAII struct) —
+  captures `workspace_flat_->all_mutations().size()` at
+  eval entry, runs `infer_flat_partial` on the most recent
+  record on scope exit if the log grew AND mode == Eager.
+  Same pattern as `MutationBoundaryGuard` in evaluator.ixx.
+  Covers ALL return paths (tree-walker fallback at cs.eval
+  line ~1339, the IR pipeline's pre_const_eval path, the
+  final return) without invasive edits to every `return`
+  statement.
+- `auto_invoke_incremental_typecheck_for(flat, pool, rec,
+  mid, source)` private helper — runs infer_flat_partial +
+  accumulates per-call engine stats + bumps lifetime
+  counters. No-op when mode != Eager or log didn't grow.
+- typed_mutate (C++) + cs.eval / eval_ir / exec_jit
+  (RAII) all wire in the auto-invoke.
+- 2 lifetime-total metrics: auto_invocations_total,
+  re_inferred_total. Snapshot derives avg_re_inferred_bp
+  (basis points).
+- (compile:incremental-typecheck-stats) Aura primitive
+  returns hash with 3 fields.
+- 20/20 test_issue_411 pass. Full gate green.
+
+**5 follow-ups tracked** for #411:
+1. Per-symbol re-inference wiring (route through
+   DefUseIndex::query_def_use, reduce avg_re_inferred_bp)
+2. Wire typed_mutate directly to per-symbol path
+3. Multi-mutation batching (single infer_flat_partial for
+   N-mutation begin)
+4. query-type-of epoch-based staleness check (return
+   "needs recheck" for stale types)
+5. Quantitative benchmark in tests/bench/
+
+**Pre-commit gate hook idea** (mentioned in e91e54b1
+message): could add `.git/hooks/pre-commit` that runs
+`python3 build.py gate` and aborts on failure. Or just
+add the checklist to `AGENTS.md`. Defer to a separate
+#501b / follow-up — not blocking.

@@ -1640,10 +1640,40 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             // vars in polymorphic contexts, and those vars are
             // stale (the union-find has been cleared). free_vars()
             // returning empty means the type is fully resolved.
-            if (reg_.free_vars(tid).empty()) {
+            //
+            // Issue #412: augment the free_vars check with a
+            // generation-counter check. The cache stores the
+            // type_cache_generation_ at the time of caching;
+            // compare against the current gen. If the gen has
+            // advanced (a mark_dirty_upward happened since this
+            // entry was populated), the entry is stale even if
+            // the free_vars check passes (which it currently
+            // does for the polymorphic case). If the gen
+            // matches AND free_vars is non-empty, the entry
+            // was a polymorphic type that was valid when
+            // cached; the gen check rescues it from the
+            // over-aggressive free_vars rejection — bumped as
+            // stats_.gen_saved (vs. stats_.stale_cache).
+            const auto cur_gen = flat.type_cache_generation();
+            const auto cached_gen = flat.type_cache_gen(id);
+            const bool gen_matches = (cur_gen == cached_gen);
+            const bool free_vars_empty = reg_.free_vars(tid).empty();
+            if (gen_matches && free_vars_empty) {
                 ++stats_.cache_hits;
                 return tid;
             }
+            if (gen_matches && !free_vars_empty) {
+                // Gen is unchanged, so the unresolved TYPE_VARs
+                // are still valid for this query (no
+                // structural mutation invalidated them). Count
+                // as a cache hit rescued by the gen check —
+                // pre-#412 this would have been a stale_cache.
+                ++stats_.gen_saved;
+                ++stats_.cache_hits;
+                return tid;
+            }
+            // Gen mismatched (or free_vars non-empty without
+            // gen match) — treat as stale, recompute.
             ++stats_.stale_cache;
         }
         ++stats_.cache_misses;
@@ -3428,6 +3458,7 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     stats_.cache_hits += r.cache_hits;
     stats_.cache_misses += r.cache_misses;
     stats_.stale_cache += r.stale_cache;
+    stats_.gen_saved += r.gen_saved;
     last_coercions_ = std::move(r.coercions);
     return r.inferred_type;
 }
@@ -3468,6 +3499,10 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
     result.cache_hits = es.cache_hits;
     result.cache_misses = es.cache_misses;
     result.stale_cache = es.stale_cache;
+    // Issue #412: plumb the gen_saved counter to the result
+    // so the caller (TypeChecker::infer_flat) can accumulate
+    // it into the lifetime total.
+    result.gen_saved = es.gen_saved;
     // Issue #116: capture the engine's deferred coercions so
     // the caller can apply them after type checking returns.
     // The engine is short-lived (per call) so we move-out here
@@ -3548,6 +3583,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     stats_.cache_hits += es.cache_hits;
     stats_.cache_misses += es.cache_misses;
     stats_.stale_cache += es.stale_cache;
+    stats_.gen_saved += es.gen_saved;
 
     return re_inferred;
 }
