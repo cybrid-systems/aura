@@ -52,6 +52,11 @@ export enum class BlameParty : std::uint8_t {
     Annotation, // 类型标注 — 标注与推断冲突
     Implicit,   // 隐式边界 — 无标注的默认边界
     System,     // 基元/系统类型错误
+    Narrowing,  // Occurrence Typing narrowing —
+                // 谓词对变量的类型细化，后
+                // 续诊断中可附加 narrowing
+                // 来源（predicate name + 源
+                // cond NodeId）。Issue #342。
 };
 
 export struct BlameInfo {
@@ -185,6 +190,16 @@ export struct Diagnostic {
                     break;
                 case BlameParty::System:
                     party_str = "system";
+                    break;
+                case BlameParty::Narrowing:
+                    // Issue #342: narrowing blame. The
+                    // annotation_src carries the
+                    // predicate name (e.g. "number?")
+                    // and the source cond NodeId
+                    // (encoded as a string). The
+                    // formatter appends both to the
+                    // diagnostic output.
+                    party_str = "narrowing";
                     break;
             }
             out += std::format("\n  blamed: {} ({})", party_str, blame->phase);

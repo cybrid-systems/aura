@@ -926,6 +926,77 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (compile:narrowing-blame-stats)
+    //   — Issue #342: narrowing blame/provenance
+    //   observability. Returns a hash with 1 field:
+    //   provenance-total (lifetime total of
+    //   OccurrenceInfoFlat records that have
+    //   predicate_name + source_cond_id populated).
+    //   Pre-#342 this was always 0 (the fields
+    //   didn't exist). Post-#342 every
+    //   analyze_predicate_flat that returns a
+    //   populated OccurrenceInfoFlat bumps this
+    //   counter.
+    add("compile:narrowing-blame-stats",
+        [&ev](const auto&) -> EvalValue {
+        auto build_hash =
+            [&](std::span<const std::pair<std::string, EvalValue>> kv)
+            -> EvalValue {
+            auto cap = std::max<std::size_t>(8, kv.size() * 2);
+            std::size_t hcap = 8;
+            while (hcap < cap) hcap *= 2;
+            auto* ht = FlatHashTable::create(hcap);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) *
+                        0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
+                          0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        if (!ev.compiler_service_)
+            return make_int(0);
+        auto* svc = static_cast<class CompilerService*>(
+            ev.compiler_service_);
+        auto snap = svc->snapshot();
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"provenance-total",
+             make_int(static_cast<std::int64_t>(
+                 snap.narrowing_provenance_total))},
+        };
+        return build_hash(kv);
+    });
+
     // (compile:status)
     //   → ((:key value) ...)  association list
     //   Returns incremental compilation status:

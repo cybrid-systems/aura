@@ -321,6 +321,18 @@ struct CompilerMetrics {
     //     feeds into match exhaustiveness.
     std::atomic<std::uint64_t> match_subject_narrowed_total{0};
     std::atomic<std::uint64_t> match_subject_total{0};
+    // Issue #342: narrowing blame/provenance
+    // observability. 1 lifetime counter: how many
+    // OccurrenceInfoFlat records have been
+    // populated with provenance (predicate_name +
+    // source_cond_id). Pre-#342 this was 0 (the
+    // provenance fields didn't exist). Post-#342
+    // every analyze_predicate_flat that returns a
+    // populated OccurrenceInfoFlat bumps this
+    // counter. The ratio vs. total
+    // narrowing_applied_total is a measure of how
+    // complete the provenance is.
+    std::atomic<std::uint64_t> narrowing_provenance_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)

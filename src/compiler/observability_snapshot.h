@@ -175,6 +175,13 @@ struct CompilerSnapshot {
     std::uint64_t match_subject_narrowed_total = 0;
     std::uint64_t match_subject_total = 0;
     std::uint64_t match_narrowed_ratio_bp = 0;
+    // Issue #342: narrowing blame/provenance
+    // observability. Mirrors the lifetime counter
+    // in CompilerMetrics. The provenance fields
+    // (predicate_name + source_cond_id) are
+    // populated by analyze_predicate_flat
+    // post-#342.
+    std::uint64_t narrowing_provenance_total = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.
