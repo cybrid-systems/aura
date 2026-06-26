@@ -1623,3 +1623,35 @@ narrowing_applied_total == 1 on a fresh expression).
   #412, #411 fu1 (4 fu), #412 fu1, #413, #386, #338,
   #433, #434, #390, #409, #341, **#342**
 - 17+ test binaries, 186+ tests, 0 failures
+
+## Session 2026-06-26 — Issue #343: StableNodeRef long-term stability (scope-limited)
+
+Commit `98af83ea` pushed to origin/main. 4 files, +290/-2.
+
+Wires the `(ast:generation-stats)` Aura primitive +
+3 new snapshot fields for long-term stability
+observability. Pre-#343, the 3 lifetime stable-ref
+counters were only accessible via
+`(query:stable-ref-stats)` which returns the SUM.
+Post-#343, the new primitive exposes each category
+individually so the AI Agent can react to each
+independently.
+
+**Wiring:**
+- 3 new snapshot fields:
+  `current_generation` / `generation_wrap_count` /
+  `node_gen_stale_access_count`.
+- New Aura primitive `(ast:generation-stats)`
+  5-key hash.
+
+**Tests:** test_issue_343, 15/15 (5 ACs). AC4
+verifies `bump_generation_count = 1`,
+`current_generation = 2` after a single
+`mutate:rebind`.
+
+**Today's totals (so far, 2026-06-26, ~11.75 hours):**
+- 37 commits to origin/main
+- **14 issues closed** (all scope-limited): #410,
+  #411, #412, #411 fu1 (4 fu), #412 fu1, #413, #386,
+  #338, #433, #434, #390, #409, #341, #342, **#343**
+- 18+ test binaries, 201+ tests, 0 failures
