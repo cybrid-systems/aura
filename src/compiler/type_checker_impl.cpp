@@ -2678,6 +2678,19 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             // indicates the memo is dropping too
             // eagerly.
             ++stats_.narrowing_reanalyzed;
+            // Issue #434: per-node occurrence dirty
+            // recovery. Bumped when the If node is
+            // dirty (post-mutation re-inference) AND
+            // the predicate memo missed. This is the
+            // narrower signal — it measures only the
+            // recoveries that came from a dirty If
+            // (i.e. the post-mutation path triggered
+            // the re-analysis). Pre-#434 this was
+            // indistinguishable from the broader
+            // narrowing_reanalyzed counter.
+            if (if_id < flat.size() && flat.is_dirty(if_id)) {
+                ++stats_.narrowing_dirty_recovery;
+            }
             bool m2, j2;
             occ = analyze_predicate_flat(flat, pool, cond_id, reg_, m2, j2);
             stats_.and_or_meet_uses += m2 ? 1 : 0;
@@ -3576,6 +3589,8 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     // Issue #338: aggregate and/or precision.
     stats_.and_or_meet_uses += r.and_or_meet_uses;
     stats_.and_or_join_uses += r.and_or_join_uses;
+    // Issue #434: aggregate dirty recovery.
+    stats_.narrowing_dirty_recovery += r.narrowing_dirty_recovery;
     last_coercions_ = std::move(r.coercions);
     return r.inferred_type;
 }
@@ -3641,6 +3656,8 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
     // Issue #338: and/or precision.
     result.and_or_meet_uses = es.and_or_meet_uses;
     result.and_or_join_uses = es.and_or_join_uses;
+    // Issue #434: dirty recovery.
+    result.narrowing_dirty_recovery = es.narrowing_dirty_recovery;
     return result;
 }
 
@@ -3917,6 +3934,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // Issue #338: aggregate and/or precision.
     stats_.and_or_meet_uses += es.and_or_meet_uses;
     stats_.and_or_join_uses += es.and_or_join_uses;
+    // Issue #434: aggregate dirty recovery.
+    stats_.narrowing_dirty_recovery += es.narrowing_dirty_recovery;
     // Issue #411 follow-up #1: per_symbol / ancestor path
     // tracking already bumped on this infer_flat_partial
     // call (at the top of the function). The per-call

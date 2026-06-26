@@ -266,6 +266,19 @@ struct CompilerMetrics {
     // default path.
     std::atomic<std::uint64_t> and_or_meet_uses_total{0};
     std::atomic<std::uint64_t> and_or_join_uses_total{0};
+    // Issue #434: per-node occurrence dirty
+    // recovery (lifetime total). Bumped when the
+    // engine re-analyzes a narrowing because the
+    // If node was dirty (post-mutation re-infer
+    // triggered re-analysis). Distinct from
+    // narrowing_reanalyzed_total (the broader
+    // predicate memo miss counter) and
+    // invalidation_trace_records_total (#413).
+    // The ratio of dirty_recovery /
+    // narrowing_reanalyzed measures how much of
+    // the re-analysis work is post-mutation
+    // (vs. first-time / epoch-advance).
+    std::atomic<std::uint64_t> narrowing_dirty_recovery_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)

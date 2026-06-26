@@ -144,6 +144,11 @@ struct CompilerSnapshot {
     // precision-improved paths).
     std::uint64_t and_or_meet_uses_total = 0;
     std::uint64_t and_or_join_uses_total = 0;
+    // Issue #434: per-node occurrence dirty
+    // recovery (lifetime total). Mirrors the
+    // narrowing_dirty_recovery_total counter in
+    // CompilerMetrics.
+    std::uint64_t narrowing_dirty_recovery_total = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.
