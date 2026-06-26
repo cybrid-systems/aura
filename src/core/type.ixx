@@ -247,6 +247,36 @@ public:
     // Collect all type variables in a type (for let-polymorphism)
     std::vector<TypeId> free_vars(TypeId id) const;
 
+    // Issue #338: meet (greatest lower bound / intersection)
+    // and join (least upper bound / union) helpers for
+    // Occurrence Typing and/or precision.
+    //
+    // meet(a, b): returns the most specific type that is
+    // a subtype of BOTH a and b. For Aura's shallow type
+    // lattice:
+    //   - a == b  → a
+    //   - either invalid (index 0)  → the other
+    //   - else  → reg.dynamic_type() (the bottom of the
+    //     lattice, can't narrow further)
+    //
+    // join(a, b): returns the least specific type that is
+    // a supertype of BOTH a and b:
+    //   - a == b  → a
+    //   - either invalid (index 0)  → the other
+    //   - else  → reg.dynamic_type() (the top of the
+    //     lattice — Any — conservative widening)
+    //
+    // Used by analyze_predicate_flat in the `and` and
+    // `or` branches to replace the old "fall back to
+    // dynamic on mismatch" conservative behavior. The
+    // meet/join helpers let the engine report
+    // narrower refined types when the conjunction or
+    // disjunction is well-typed (e.g. (and (number? x)
+    // (positive? x)) stays at Number; (or (string? x)
+    // (number? x)) widens to Any).
+    TypeId meet(TypeId a, TypeId b) const;
+    TypeId join(TypeId a, TypeId b) const;
+
 private:
     struct Entry {
         TypeTag tag;

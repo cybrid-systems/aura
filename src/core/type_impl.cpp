@@ -788,6 +788,35 @@ TypeId TypeRegistry::substitute(TypeId ty, const std::unordered_map<std::uint32_
     }
 }
 
+TypeId TypeRegistry::meet(TypeId a, TypeId b) const {
+    // Issue #338: meet (greatest lower bound) for
+    // Occurrence Typing and/or precision. Returns
+    // the most specific type that is a subtype of
+    // both a and b.
+    if (!a.valid() || a.index == 0) return b;
+    if (!b.valid() || b.index == 0) return a;
+    if (a == b) return a;
+    // Tag mismatch: fall back to dynamic (the
+    // bottom of Aura's shallow type lattice —
+    // there are no real intersection types in the
+    // registry today, so we can't narrow further).
+    return dynamic_type();
+}
+
+TypeId TypeRegistry::join(TypeId a, TypeId b) const {
+    // Issue #338: join (least upper bound) for
+    // Occurrence Typing and/or precision. Returns
+    // the least specific type that is a supertype
+    // of both a and b.
+    if (!a.valid() || a.index == 0) return b;
+    if (!b.valid() || b.index == 0) return a;
+    if (a == b) return a;
+    // Tag mismatch: fall back to dynamic (the
+    // top of Aura's shallow type lattice —
+    // Any — conservative widening).
+    return dynamic_type();
+}
+
 std::vector<TypeId> TypeRegistry::free_vars(TypeId id) const {
     std::vector<TypeId> result;
     if (!id.valid() || id.index >= entries_.size())

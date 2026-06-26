@@ -1309,7 +1309,10 @@ static std::optional<std::uint32_t> compute_narrowing_evidence(
 
 static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& flat,
                                                                 const StringPool& pool,
-                                                                NodeId cond_id, TypeRegistry& reg) {
+                                                                NodeId cond_id, TypeRegistry& reg,
+                                                                bool& meet_used, bool& join_used) {
+    meet_used = false;
+    join_used = false;
     auto cond = flat.get(cond_id);
     if (cond.tag != NodeTag::Call || cond.children.empty())
         return std::nullopt;
@@ -1321,7 +1324,9 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
     if (fn.tag == NodeTag::Variable) {
         auto fn_name = pool.resolve(fn.sym_id);
         if (fn_name == "not" && cond.children.size() >= 2) {
-            auto inner = analyze_predicate_flat(flat, pool, cond.child(1), reg);
+            bool m1, j1;
+            auto inner = analyze_predicate_flat(flat, pool, cond.child(1), reg, m1, j1);
+            if (inner) { meet_used |= m1; join_used |= j1; }
             if (inner) {
                 inner->is_negation = !inner->is_negation;
                 return inner;
@@ -1341,7 +1346,9 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
             // intersected via the conservative LUB rules.
             std::uint32_t combined_evidence = 0;
             for (std::size_t i = 1; i < cond.children.size(); i++) {
-                auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg);
+                bool mi, ji;
+                auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg, mi, ji);
+                meet_used |= mi; join_used |= ji;
                 if (auto bit = compute_narrowing_evidence(flat, pool, cond.child(i), reg))
                     combined_evidence |= *bit;
                 if (inner) {
@@ -1350,10 +1357,31 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                     } else if (inner->var_name == result->var_name) {
                         // Same variable: in the then-branch of (and p1 p2),
                         // the variable satisfies BOTH predicates, so use
-                        // the intersection.  If both refine to the same type,
-                        // keep it; otherwise conservatively fall back to Any.
-                        if (result->refined_type != inner->refined_type)
-                            result->refined_type = reg.dynamic_type();
+                        // the intersection. Issue #338: use the new
+                        // TypeRegistry::meet helper for the
+                        // intersection. Pre-#338 the engine fell
+                        // back to dynamic_type() on any mismatch
+                        // (overly conservative). Post-#338 the
+                        // meet helper returns the most specific
+                        // common subtype — which is just `a` if
+                        // both refine to the same type, or
+                        // dynamic_type() if the types differ
+                        // (Aura has no real intersection types
+                        // yet). The structural behavior is
+                        // identical for the common case, but
+                        // the meet helper is the right
+                        // extension point when real
+                        // intersection types land.
+                        result->refined_type =
+                            reg.meet(result->refined_type,
+                                     inner->refined_type);
+                        // Issue #338: the meet helper was
+                        // called. The bump happens at the
+                        // call site in synthesize_flat_if
+                        // (analyze_predicate_flat is a
+                        // static free function, no
+                        // access to InferenceEngine::stats_).
+                        meet_used = true;
                     }
                 }
             }
@@ -1390,7 +1418,9 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
             // (#279) — only the bitmask changes here.
             std::uint32_t combined_evidence = 0;
             for (std::size_t i = 1; i < cond.children.size(); i++) {
-                auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg);
+                bool mi, ji;
+                auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg, mi, ji);
+                meet_used |= mi; join_used |= ji;
                 if (!inner) continue;
                 // Compute the predicate name's bitmask and OR it in.
                 // The call to narrowing_bit_for walks the predicate
@@ -1404,15 +1434,18 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                 if (!result) {
                     result = inner;
                 } else if (result->var_name == inner->var_name) {
-                    if (result->refined_type != inner->refined_type) {
-                        // Multiple disambiguated branches for the same
-                        // variable: fall back to Any in the then-branch
-                        // (the *else*-branch of the surrounding `if` keeps
-                        // the pre-disjunction type because the disjunct
-                        // being false doesn't change the variable's type).
-                        result->refined_type = reg.dynamic_type();
-                    }
-                    // else: both branches narrow to the same type — keep it.
+                    // Issue #338: use the join helper to
+                    // widen (was gated on != before; the
+                    // helper is idempotent on equal
+                    // types, so unconditional is
+                    // safe and consistent with the
+                    // meet path in the and branch).
+                    result->refined_type =
+                        reg.join(result->refined_type,
+                                 inner->refined_type);
+                    // The join helper was called. Bump
+                    // happens at the call site.
+                    join_used = true;
                 } else {
                     // Different variables on each branch — can't combine.
                     // Conservative: drop both, return std::nullopt.
@@ -2645,7 +2678,10 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             // indicates the memo is dropping too
             // eagerly.
             ++stats_.narrowing_reanalyzed;
-            occ = analyze_predicate_flat(flat, pool, cond_id, reg_);
+            bool m2, j2;
+            occ = analyze_predicate_flat(flat, pool, cond_id, reg_, m2, j2);
+            stats_.and_or_meet_uses += m2 ? 1 : 0;
+            stats_.and_or_join_uses += j2 ? 1 : 0;
             predicate_memo_[cond_id] = PredicateMemoEntry{
                 cond_id, cache_epoch_, occ};
             // Issue #281 follow-up #5: bound the memo. When
@@ -3157,7 +3193,10 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
                 check_flat(flat, pool, v.child(2), expected);
         } else {
-        auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_);
+        bool m2, j2;
+            auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_, m2, j2);
+            stats_.and_or_meet_uses += m2 ? 1 : 0;
+            stats_.and_or_join_uses += j2 ? 1 : 0;
         if (occ && !occ->is_negation) {
             // Then-branch: variable has refined type
             env_.push_scope();
@@ -3534,6 +3573,9 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     stats_.narrowing_applied += r.narrowing_applied;
     stats_.narrowing_skipped += r.narrowing_skipped;
     stats_.narrowing_reanalyzed += r.narrowing_reanalyzed;
+    // Issue #338: aggregate and/or precision.
+    stats_.and_or_meet_uses += r.and_or_meet_uses;
+    stats_.and_or_join_uses += r.and_or_join_uses;
     last_coercions_ = std::move(r.coercions);
     return r.inferred_type;
 }
@@ -3596,6 +3638,9 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
     result.narrowing_applied = es.narrowing_applied;
     result.narrowing_skipped = es.narrowing_skipped;
     result.narrowing_reanalyzed = es.narrowing_reanalyzed;
+    // Issue #338: and/or precision.
+    result.and_or_meet_uses = es.and_or_meet_uses;
+    result.and_or_join_uses = es.and_or_join_uses;
     return result;
 }
 
@@ -3869,6 +3914,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     stats_.narrowing_applied += es.narrowing_applied;
     stats_.narrowing_skipped += es.narrowing_skipped;
     stats_.narrowing_reanalyzed += es.narrowing_reanalyzed;
+    // Issue #338: aggregate and/or precision.
+    stats_.and_or_meet_uses += es.and_or_meet_uses;
+    stats_.and_or_join_uses += es.and_or_join_uses;
     // Issue #411 follow-up #1: per_symbol / ancestor path
     // tracking already bumped on this infer_flat_partial
     // call (at the top of the function). The per-call
@@ -4290,7 +4338,13 @@ namespace {
             // Analyze the predicate to confirm it actually carries
             // narrowing. (Skip if not an if-context with a narrowing
             // predicate — avoids emitting spurious notes.)
-            auto occ = analyze_predicate_flat(flat, pool, cond_id, reg);
+            bool m3, j3;
+        auto occ = analyze_predicate_flat(flat, pool, cond_id, reg, m3, j3);
+        // Issue #338: meet/join counters aren't
+        // bumped here — this is a static function
+        // outside the InferenceEngine. The counters
+        // are bumped at the call sites in
+        // synthesize_flat_if / check_flat_if.
             if (!occ)
                 continue;
             if (!has_occ_bit && !has_general_only)

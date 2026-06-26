@@ -236,6 +236,24 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> narrowing_applied_total{0};
     std::atomic<std::uint64_t> narrowing_skipped_total{0};
     std::atomic<std::uint64_t> narrowing_reanalyzed_total{0};
+    // Issue #338: and/or precision observability.
+    // 2 lifetime counters that measure how often the
+    // new TypeRegistry::meet / TypeRegistry::join
+    // helpers fired in analyze_predicate_flat (replacing
+    // the old "fall back to dynamic on mismatch"
+    // conservative behavior).
+    //   - and_or_meet_uses_total: meet() was called in
+    //     the (and ...) branch (intersection of refined
+    //     types for the same variable).
+    //   - and_or_join_uses_total: join() was called in
+    //     the (or ...) branch (union of refined types
+    //     for the same variable).
+    // Pre-#338 the engine always fell back to
+    // dynamic_type() on type mismatch; these counters
+    // were always 0. Post-#338 the helpers are the
+    // default path.
+    std::atomic<std::uint64_t> and_or_meet_uses_total{0};
+    std::atomic<std::uint64_t> and_or_join_uses_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)

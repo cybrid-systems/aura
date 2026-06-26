@@ -481,6 +481,12 @@ public:
         std::uint64_t narrowing_applied = 0;
         std::uint64_t narrowing_skipped = 0;
         std::uint64_t narrowing_reanalyzed = 0;
+        // Issue #338: and/or precision observability.
+        // Bumped when TypeRegistry::meet / join
+        // fires in the (and ...) / (or ...) branch
+        // of analyze_predicate_flat.
+        std::uint64_t and_or_meet_uses = 0;
+        std::uint64_t and_or_join_uses = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. per_symbol_used_total counts how
         // many mutations took the per-symbol path; the
@@ -709,6 +715,10 @@ export struct TypeCheckResult {
     std::uint64_t narrowing_applied = 0;
     std::uint64_t narrowing_skipped = 0;
     std::uint64_t narrowing_reanalyzed = 0;
+    // Issue #338: per-call and/or precision.
+    // See InnerStats for the full rationale.
+    std::uint64_t and_or_meet_uses = 0;
+    std::uint64_t and_or_join_uses = 0;
 };
 
 // Pure: type-check a FlatAST subtree and return the inferred
@@ -785,6 +795,10 @@ export struct TypeChecker {
         std::uint64_t narrowing_applied = 0;
         std::uint64_t narrowing_skipped = 0;
         std::uint64_t narrowing_reanalyzed = 0;
+        // Issue #338: aggregated and/or precision.
+        // See InnerStats for the full rationale.
+        std::uint64_t and_or_meet_uses = 0;
+        std::uint64_t and_or_join_uses = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. See InnerStats for the full
         // field-by-field rationale.
