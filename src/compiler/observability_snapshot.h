@@ -207,6 +207,17 @@ struct CompilerSnapshot {
     std::uint64_t consistent_unify_total = 0;
     std::uint64_t consistent_subtype_total = 0;
     std::uint64_t worklist_restart_total = 0;
+    // Issue #385: mutation-aware Let-Poly caching
+    // observability. Mirrors the 3 lifetime
+    // counters in CompilerMetrics. The derived
+    // poly_dedup_ratio_bp is dedup_hits /
+    // register * 10000 — measures cache
+    // effectiveness. 0 when no register calls
+    // have happened.
+    std::uint64_t poly_register_total = 0;
+    std::uint64_t poly_dedup_hits_total = 0;
+    std::uint64_t poly_instantiate_total = 0;
+    std::uint64_t poly_dedup_ratio_bp = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.

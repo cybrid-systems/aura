@@ -2413,6 +2413,17 @@ public:
         // Issue #258: plumb metrics so solve_delta timing
         // accumulates into CompilerMetrics::delta_solve_time_us.
         tc.set_metrics(&metrics_);
+        // Issue #385: plumb poly metrics so register_forall
+        // + instantiate_forall accumulate into
+        // CompilerMetrics::poly_*_total. The setter
+        // takes 3 atomic addresses (register +
+        // dedup_hits + instantiate) — avoids the
+        // cross-module dependency on the full
+        // CompilerMetrics struct.
+        type_registry_.set_poly_metrics(
+            &metrics_.poly_register_total,
+            &metrics_.poly_dedup_hits_total,
+            &metrics_.poly_instantiate_total);
 
         auto result = tc.infer_flat(flat, pool, pr.root, diag);
 
@@ -4679,6 +4690,26 @@ public:
         s.worklist_restart_total =
             metrics_.worklist_restart_total.load(
                 std::memory_order_relaxed);
+        // Issue #385: Let-Poly caching observability.
+        // Mirror the 3 lifetime counters and compute
+        // the derived dedup ratio (basis points:
+        // dedup_hits / register * 10000).
+        s.poly_register_total =
+            metrics_.poly_register_total.load(
+                std::memory_order_relaxed);
+        s.poly_dedup_hits_total =
+            metrics_.poly_dedup_hits_total.load(
+                std::memory_order_relaxed);
+        s.poly_instantiate_total =
+            metrics_.poly_instantiate_total.load(
+                std::memory_order_relaxed);
+        if (s.poly_register_total > 0) {
+            s.poly_dedup_ratio_bp =
+                (s.poly_dedup_hits_total * 10000u) /
+                s.poly_register_total;
+        } else {
+            s.poly_dedup_ratio_bp = 0;
+        }
         const std::uint64_t narrow_total =
             s.narrowing_applied_total + s.narrowing_skipped_total;
         if (narrow_total > 0) {
