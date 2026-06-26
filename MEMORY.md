@@ -1486,3 +1486,39 @@ the typecheck path plumbs the counter end-to-end
 1. **#501b** — pre-commit gate hook
 2. 跑 `python3 build.py full-test`
 3. 收工
+
+## Session 2026-06-26 — Issue #390: Per-node schema cache (scope-limited)
+
+Commit `fad5132d` pushed to origin/main. 10 files, +491/-2.
+
+Wires the per-node `schema_cache_` column on FlatAST
+and plumbs it through clone_macro_body, the type
+checker's synthesize_flat cache hit path, and 3
+observability counters (lookups / hits / hit-rate-bp).
+The full #390 scope is 5 deliverables. This
+scope-limited slice ships (1), (2), (4), and
+observability. (3) and (5) are deferred.
+
+**Wiring:**
+- `FlatAST::schema_cache_` (pmr vector<uint32_t>,
+  parallel to type_id_).
+- `clone_macro_body` auto-populate path (sub #1).
+- `synthesize_flat` cache hit consults schema_cache
+  before gen check (sub #2).
+- Copy ctor + assignment propagate new column.
+- `schema_cache(id)` / `set_schema_cache(id, tid)`
+  public accessors.
+
+**Observability:**
+- 2 lifetime counters + 1 derived ratio.
+- New Aura primitive `(compile:schema-cache-stats)`.
+
+**Tests:** test_issue_390, 15/15 (7 ACs). AC5 is the
+key signal — direct accessor round-trip works
+(set + readback confirms the column is writeable +
+readable at the FlatAST level).
+
+**Today's totals (so far, 2026-06-26, ~10 hours):**
+- 29 commits to origin/main
+- **10 issues closed** (all scope-limited)
+- **15+ test binaries, 159+ tests, 0 failures**
