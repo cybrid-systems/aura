@@ -1398,24 +1398,46 @@ void register_mutate_primitives(
                                            std::to_string(flat.size()));
         }
 
-        // Find parent and remove target from its children
+        // Phase 4 follow-up #3b: the wrapper still does the
+        // parent-walk (this primitive takes a target id, not
+        // a parent+index, so it doesn't map cleanly to a single
+        // RemoveChildMutator call). Once the parent + child index
+        // are found, the actual remove_child + mark_dirty_upward
+        // delegates to the strategy. Error propagation flows
+        // through AuraResult<NodeId>.
+        bool removed = false;
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
             if (v.children.empty())
                 continue;
             const auto& children = flat.children(id);
             for (std::size_t ci = 0; ci < children.size(); ++ci) {
-                if (children[ci] == target) {
-                    flat.set_child(id, static_cast<std::uint32_t>(ci), aura::ast::NULL_NODE);
-                    flat.add_mutation(id, "remove-node", std::to_string(target), "",
-                                      "remove node " + std::to_string(target));
-                    ev.workspace_flat_->mark_dirty_upward(id);
-                    return make_bool(true);
+                if (children[ci] != target)
+                    continue;
+                // Found target at parent=id, child index=ci.
+                // Route the structural mutation through RemoveChildMutator.
+                auto result = aura::ast::mutators::apply_mutation(
+                    flat, id,
+                    aura::ast::mutators::RemoveChildMutator{
+                        static_cast<std::uint32_t>(ci)});
+                if (!result) {
+                    ok = false;
+                    return mev("mutation-error", std::string(result.error().message));
                 }
+                flat.add_mutation(id, "remove-node",
+                                  std::to_string(target), "",
+                                  "remove node " + std::to_string(target));
+                removed = true;
+                break;
             }
+            if (removed) break;
         }
-        ok = false;
-        return mev("not-found", "node " + std::to_string(target) + " has no parent in the AST");
+        if (!removed) {
+            ok = false;
+            return mev("not-found",
+                       "node " + std::to_string(target) + " has no parent in the AST");
+        }
+        return make_bool(true);
     });
 
     // (mutate:insert-child parent-id position code-string "summary")
