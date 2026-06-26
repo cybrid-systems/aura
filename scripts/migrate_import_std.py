@@ -11,25 +11,107 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # Standard library headers covered by `import std;` (C++26).
 STD_HEADERS = {
-    "algorithm", "any", "array", "atomic", "barrier", "bit", "bitset",
-    "charconv", "chrono", "codecvt", "compare", "complex", "concepts",
-    "condition_variable", "coroutine", "deque", "exception", "execution",
-    "expected", "filesystem", "format", "forward_list", "fstream",
-    "functional", "future", "generator", "initializer_list", "iomanip",
-    "ios", "iosfwd", "iostream", "istream", "iterator", "latch",
-    "limits", "list", "locale", "map", "mdspan", "memory", "memory_resource",
-    "mutex", "new", "numbers", "numeric", "optional", "ostream", "print",
-    "queue", "random", "ranges", "ratio", "regex", "scoped_allocator",
-    "semaphore", "set", "shared_mutex", "source_location", "span",
-    "sstream", "stack", "stdexcept", "stop_token", "streambuf", "string",
-    "string_view", "syncstream", "system_error", "thread", "tuple",
-    "type_traits", "typeindex", "typeinfo", "unordered_map", "unordered_set",
-    "utility", "valarray", "variant", "vector", "version",
+    "algorithm",
+    "any",
+    "array",
+    "atomic",
+    "barrier",
+    "bit",
+    "bitset",
+    "charconv",
+    "chrono",
+    "codecvt",
+    "compare",
+    "complex",
+    "concepts",
+    "condition_variable",
+    "coroutine",
+    "deque",
+    "exception",
+    "execution",
+    "expected",
+    "filesystem",
+    "format",
+    "forward_list",
+    "fstream",
+    "functional",
+    "future",
+    "generator",
+    "initializer_list",
+    "iomanip",
+    "ios",
+    "iosfwd",
+    "iostream",
+    "istream",
+    "iterator",
+    "latch",
+    "limits",
+    "list",
+    "locale",
+    "map",
+    "mdspan",
+    "memory",
+    "memory_resource",
+    "mutex",
+    "new",
+    "numbers",
+    "numeric",
+    "optional",
+    "ostream",
+    "print",
+    "queue",
+    "random",
+    "ranges",
+    "ratio",
+    "regex",
+    "scoped_allocator",
+    "semaphore",
+    "set",
+    "shared_mutex",
+    "source_location",
+    "span",
+    "sstream",
+    "stack",
+    "stdexcept",
+    "stop_token",
+    "streambuf",
+    "string",
+    "string_view",
+    "syncstream",
+    "system_error",
+    "thread",
+    "tuple",
+    "type_traits",
+    "typeindex",
+    "typeinfo",
+    "unordered_map",
+    "unordered_set",
+    "utility",
+    "valarray",
+    "variant",
+    "vector",
+    "version",
     # C compatibility headers also exported by std module
-    "cassert", "cctype", "cerrno", "cfenv", "cfloat", "cinttypes",
-    "climits", "clocale", "cmath", "csetjmp", "csignal", "cstdarg",
-    "cstddef", "cstdint", "cstdio", "cstdlib", "cstring", "ctime",
-    "cwchar", "cwctype",
+    "cassert",
+    "cctype",
+    "cerrno",
+    "cfenv",
+    "cfloat",
+    "cinttypes",
+    "climits",
+    "clocale",
+    "cmath",
+    "csetjmp",
+    "csignal",
+    "cstdarg",
+    "cstddef",
+    "cstdint",
+    "cstdio",
+    "cstdlib",
+    "cstring",
+    "ctime",
+    "cwchar",
+    "cwctype",
 }
 
 SKIP_PATH_PARTS = {
@@ -52,12 +134,8 @@ MODULE_RE = re.compile(r"^(export\s+)?module\b")
 IMPORT_STD_RE = re.compile(r"^import\s+std\s*;")
 
 # std::cout << "text\n"  or  std::cout << expr << "more\n"
-COUT_SIMPLE_RE = re.compile(
-    r"std::cout\s*<<\s*\"((?:[^\"\\]|\\.)*)\"(?:\s*<<\s*std::endl)?\s*;"
-)
-COUT_FLUSH_RE = re.compile(
-    r"std::cout\s*<<\s*((?:\"(?:[^\"\\]|\\.)*\"|[^;]+?))\s*;\s*std::cout\.flush\(\)\s*;"
-)
+COUT_SIMPLE_RE = re.compile(r"std::cout\s*<<\s*\"((?:[^\"\\]|\\.)*)\"(?:\s*<<\s*std::endl)?\s*;")
+COUT_FLUSH_RE = re.compile(r"std::cout\s*<<\s*((?:\"(?:[^\"\\]|\\.)*\"|[^;]+?))\s*;\s*std::cout\.flush\(\)\s*;")
 CERR_STREAM_RE = re.compile(
     r"std::cerr\s*<<\s*(.+?)\s*<<\s*std::endl\s*;",
     re.DOTALL,
@@ -145,13 +223,11 @@ def replace_cout(lines: list[str]) -> list[str]:
                 else:
                     ln = COUT_FLUSH_RE.sub(f'std::print("{inner}"); std::cout.flush();', ln)
             else:
-                ln = COUT_FLUSH_RE.sub(
-                    f"std::print({{}}); std::cout.flush();".replace("{}", expr), ln
-                )
+                ln = COUT_FLUSH_RE.sub("std::print({}); std::cout.flush();".replace("{}", expr), ln)
         # simple string literal
         ln = COUT_SIMPLE_RE.sub(
             lambda m: (
-                f'std::println("{m.group(1).replace(chr(92)+"n", chr(10)).rstrip(chr(10))}");'
+                f'std::println("{m.group(1).replace(chr(92) + "n", chr(10)).rstrip(chr(10))}");'
                 if m.group(1).endswith("\\n")
                 else f'std::print("{m.group(1)}");'
             ),
@@ -164,7 +240,7 @@ def replace_cout(lines: list[str]) -> list[str]:
             # split chained << for simple cases
             parts = [p.strip() for p in re.split(r"\s*<<\s*", expr)]
             if len(parts) == 1:
-                ln = CERR_STREAM_RE.sub("std::println(std::cerr, {});".format(parts[0]), ln)
+                ln = CERR_STREAM_RE.sub(f"std::println(std::cerr, {parts[0]});", ln)
             else:
                 # build format string heuristically
                 fmt_parts = []
@@ -184,11 +260,9 @@ def replace_cout(lines: list[str]) -> list[str]:
                     suffix = ");"
                     call = "std::print(std::cerr, "
                 if args:
-                    ln = CERR_STREAM_RE.sub(
-                        f"{call}\"{fmt}\", {', '.join(args)}{suffix}", ln
-                    )
+                    ln = CERR_STREAM_RE.sub(f'{call}"{fmt}", {", ".join(args)}{suffix}', ln)
                 else:
-                    ln = CERR_STREAM_RE.sub(f"std::println(std::cerr, \"{fmt}\");", ln)
+                    ln = CERR_STREAM_RE.sub(f'std::println(std::cerr, "{fmt}");', ln)
         result.append(ln)
     return result
 
@@ -216,9 +290,7 @@ def process_file(path: Path, *, add_import: bool = True) -> bool:
             lines = [ln + "\n" for ln in cleaned]
 
     text = "".join(lines)
-    new_text = "\n".join(replace_cout(text.splitlines())) + (
-        "\n" if original.endswith("\n") else ""
-    )
+    new_text = "\n".join(replace_cout(text.splitlines())) + ("\n" if original.endswith("\n") else "")
     if new_text != original:
         changed = True
 
