@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**37** `export module` declarations in `src/**/*.ixx`.
+**38** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -35,6 +35,7 @@
 | `aura.core` | `src/core/core.ixx` |
 | `aura.core.arena` | `src/core/arena.ixx` |
 | `aura.core.ast` | `src/core/ast.ixx` |
+| `aura.core.concepts` | `src/core/concepts.ixx` |
 | `aura.core.error` | `src/core/error.ixx` |
 | `aura.core.mutation` | `src/core/mutation.ixx` |
 | `aura.core.type` | `src/core/type.ixx` |

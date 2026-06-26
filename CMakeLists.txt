@@ -1040,6 +1040,13 @@ aura_issue_test_link_llvm_jit(test_issue_387)
 # AuraError + AuraResult + monadic ops + mutation
 # conversion helpers.
 aura_add_issue_test(test_issue_474)
+# Issue #501: Aura core Concepts foundation.
+# Pure compile-time test (no runtime work needed — all
+# assertions are static_assert). Verifies the 5 concepts
+# (NodeHandle, ASTContainer, Mutator, ArenaAllocator,
+# Queryable) satisfy for real types and reject
+# non-matching types.
+aura_add_issue_test(test_issue_501)
 # Issue #411 fu1 follow-up #1: per-DefUseIndex caller tracking.
 # Pure-header test (no LLVM/JIT needed) — registers without
 # aura_issue_test_link_llvm_jit.
