@@ -178,14 +178,15 @@ bool test_always_ff_mismatch() {
 }
 
 int run_tests() {
-    std::cout <<("═══ Issue #294 ═══");
+    std::cout << "═══ Issue #294 ═══\n";
     test_always_ff_with_clock();
     test_assertions_involving();
     test_reset_condition();
     test_reset_no_match();
     test_always_ff_mismatch();
-    std::cout <<("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::cout << "\n═══ Results: " << g_passed << '/' << (g_passed + g_failed)
+              << " passed, " << g_failed << '/' << (g_passed + g_failed)
+              << " failed ═══\n";
     return g_failed > 0 ? 1 : 0;
 }
 

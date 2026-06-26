@@ -1047,6 +1047,85 @@ private:
 
     // Issue #116: see last_coercions() / take_coercions() above.
     CoercionMap last_coercions_;
+
+    // Issue #387: Type Dependency Graph — maps TypeId → list of
+    // NodeIds that reference that type. Built incrementally as
+    // set_type_with_gen() stamps types onto AST nodes during
+    // inference. The full scope (#387 AC) is "single-node
+    // mutation triggers O(affected) re-inference instead of broad
+    // re-check" — the actual re-inference wiring is a follow-up;
+    // this scope-limited close ships the data structure +
+    // observability surface.
+    //
+    // Keyed by raw TypeId (uint32_t), value is a vector of
+    // NodeIds that have that type in their cache. The graph
+    // grows monotonically (we never remove entries — old node
+    // references are filtered at query time via the AST's
+    // current type_id_ check). Reset on clear() or when the
+    // TypeChecker is destroyed.
+    std::unordered_map<std::uint32_t, std::vector<aura::ast::NodeId>>
+        type_dep_graph_;
+
+    // Issue #387: type dep graph observability (3 counters).
+    // type_dep_graph_size = number of distinct TypeIds tracked
+    // type_dep_graph_lookups = total lookups via
+    //                            affected_nodes_for_type()
+    // type_dep_graph_hits = lookups that found >= 1 dependent
+    //                        node (a "real" hit; non-hits are
+    //                        TypeIds nobody references, often
+    //                        TypeVars that were unified away)
+    std::uint64_t type_dep_graph_lookups_ = 0;
+    std::uint64_t type_dep_graph_hits_ = 0;
+
+public:
+    // Issue #387: record that NodeId `node` references TypeId
+    // `tid`. Called from infer_flat's set_type_with_gen path.
+    // O(1) amortized — the per-TypeId vector grows
+    // monotonically; we don't dedup (the same node can have
+    // its type re-stamped on cache invalidation, and that's
+    // fine — the graph is "all nodes ever seen with this
+    // type", not "current nodes").
+    void record_type_dependency(std::uint32_t tid, aura::ast::NodeId node) {
+        if (tid == 0) return;  // 0 = uninitialized, skip
+        type_dep_graph_[tid].push_back(node);
+    }
+
+    // Issue #387: query the affected-node set for a TypeId.
+    // Returns all NodeIds that have ever been stamped with
+    // this type. Callers should filter against the current
+    // FlatAST (since the graph can contain stale entries
+    // from re-inferred nodes whose type changed).
+    //
+    // Bumps type_dep_graph_lookups_; bumps type_dep_graph_hits_
+    // iff the returned vector is non-empty.
+    std::vector<aura::ast::NodeId>
+    affected_nodes_for_type(std::uint32_t tid) const {
+        ++type_dep_graph_lookups_;
+        std::vector<aura::ast::NodeId> out;
+        auto it = type_dep_graph_.find(tid);
+        if (it != type_dep_graph_.end() && !it->second.empty()) {
+            ++type_dep_graph_hits_;
+            out = it->second;
+        }
+        return out;
+    }
+
+    // Issue #387: number of distinct TypeIds tracked.
+    std::size_t type_dep_graph_size() const {
+        return type_dep_graph_.size();
+    }
+
+    // Issue #387: clear the graph (e.g., on set-code when the
+    // entire AST is rebuilt from scratch).
+    void clear_type_dep_graph() {
+        type_dep_graph_.clear();
+        type_dep_graph_lookups_ = 0;
+        type_dep_graph_hits_ = 0;
+    }
+
+    // Issue #387: getters for observability.
+    std::uint64_t type_dep_graph_lookups() const { return type_dep_graph_lookups_; }
+    std::uint64_t type_dep_graph_hits() const { return type_dep_graph_hits_; }
 };
 
 // Issue #147: post-mutation invariant check. Walks the dirty subtree
