@@ -5,9 +5,10 @@
 // Verifies the strategy classes in aura.core.mutators
 // (ReplaceChildMutator / InsertChildMutator /
 // RemoveChildMutator / NoOpMutator) satisfy the Mutator
-// concept (compile-time), and the generic
-// apply_mutation<>() template correctly dispatches
-// through the concept with proper error propagation.
+// concept (compile-time), the generic apply_mutation<>()
+// template dispatches through the concept, and the
+// apply_by_kind / apply_by_name runtime tag dispatchers
+// route correctly with proper error propagation.
 
 #include <cstdint>
 #include <iostream>
@@ -34,10 +35,8 @@ static int g_failed = 0;
     else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
 } while (0)
 
-// Helper: build a 3-node Let expression (let (a 1) (b 2) body)
-// using add_call for the structural-mutation target. add_let
-// is the simplest 2-child node — val and body. Returns the
-// Let node id. Two child slots are available for Replace/Insert/Remove.
+// Helper: build a 2-child let node. add_let sets children[0]
+// (val) and children[1] (body). Returns the let id.
 static aura::ast::NodeId make_let_2(aura::ast::FlatAST& flat,
                                     aura::ast::StringPool& pool,
                                     const char* name,
@@ -51,10 +50,6 @@ static aura::ast::NodeId make_let_2(aura::ast::FlatAST& flat,
 }
 
 // ── AC1: Strategy classes satisfy Mutator concept ─────────
-//
-// Compile-time verification (the static_asserts in
-// mutators.ixx already lock this; we re-verify here so
-// the test binary's TU also sees the constraint).
 bool test_strategy_classes_satisfy_mutator() {
     std::println("\n--- AC1: strategy classes satisfy Mutator<FlatAST> ---");
     using aura::ast::mutators::ReplaceChildMutator;
@@ -76,10 +71,6 @@ bool test_strategy_classes_satisfy_mutator() {
 }
 
 // ── AC2: ReplaceChildMutator happy path ──────────────────
-//
-// Build a let node (2 children: val, body). Replace
-// child[0] with NULL_NODE. Verify the mutation succeeded
-// and the children span reflects the change.
 bool test_replace_child_success() {
     std::println("\n--- AC2: ReplaceChildMutator happy path ---");
     using namespace aura::ast;
@@ -105,9 +96,6 @@ bool test_replace_child_success() {
 }
 
 // ── AC3: ReplaceChildMutator invalid target ──────────────
-//
-// NULL_NODE is never valid; apply_mutation returns the
-// expected AuraError without crashing.
 bool test_replace_child_invalid_target() {
     std::println("\n--- AC3: ReplaceChildMutator invalid target ---");
     using namespace aura::ast;
@@ -126,8 +114,6 @@ bool test_replace_child_invalid_target() {
 }
 
 // ── AC4: ReplaceChildMutator index out of range ─────────
-//
-// Index 5 on a 2-child let node → MutationOutOfRange.
 bool test_replace_child_out_of_range() {
     std::println("\n--- AC4: ReplaceChildMutator index out of range ---");
     using namespace aura::ast;
@@ -149,9 +135,6 @@ bool test_replace_child_out_of_range() {
 }
 
 // ── AC5: InsertChildMutator happy path ───────────────────
-//
-// Insert at index 0 on a 2-child let → 3 children, new
-// one at position 0, others shifted right.
 bool test_insert_child_happy_path() {
     std::println("\n--- AC5: InsertChildMutator happy path ---");
     using namespace aura::ast;
@@ -174,9 +157,6 @@ bool test_insert_child_happy_path() {
 }
 
 // ── AC6: RemoveChildMutator happy path ───────────────────
-//
-// Remove child[0] from a 2-child let → 1 child, the
-// remaining one being what was at child[1].
 bool test_remove_child_happy_path() {
     std::println("\n--- AC6: RemoveChildMutator happy path ---");
     using namespace aura::ast;
@@ -198,9 +178,6 @@ bool test_remove_child_happy_path() {
 }
 
 // ── AC7: NoOpMutator identity ────────────────────────────
-//
-// NoOp returns the target unchanged. Children span
-// unchanged.
 bool test_no_op_mutator() {
     std::println("\n--- AC7: NoOpMutator identity ---");
     using namespace aura::ast;
@@ -223,10 +200,6 @@ bool test_no_op_mutator() {
 }
 
 // ── AC8: Generic dispatch through lvalue + rvalue ────────
-//
-// apply_mutation<> must accept both lvalue and rvalue
-// strategies. rvalue forwarding is the common case for
-// strategy literals.
 bool test_generic_dispatch_lvalue_and_rvalue() {
     std::println("\n--- AC8: apply_mutation accepts lvalue + rvalue ---");
     using namespace aura::ast;
@@ -236,24 +209,20 @@ bool test_generic_dispatch_lvalue_and_rvalue() {
     StringPool pool;
     auto let_id = make_let_2(flat, pool, "a", 1);
 
-    // rvalue strategy (the common case)
     auto r1 = apply_mutation(flat, let_id,
                               ReplaceChildMutator{0, NULL_NODE});
     CHECK(r1.has_value(), "rvalue ReplaceChildMutator dispatches");
 
-    // lvalue strategy (less common, but supported)
+    // Use a fresh node for the lvalue test (generation was bumped
+    // by mark_dirty_upward in r1).
+    auto let_id2 = make_let_2(flat, pool, "b", 2);
     NoOpMutator noop;
-    auto r2 = apply_mutation(flat, let_id, noop);
+    auto r2 = apply_mutation(flat, let_id2, noop);
     CHECK(r2.has_value(), "lvalue NoOpMutator dispatches");
     return true;
 }
 
 // ── AC9: Monadic chaining with AuraResult ────────────────
-//
-// The whole point of using AuraResult is to enable
-// and_then / transform chains. Verify the apply_mutation
-// output chains cleanly via std::expected's monadic ops,
-// and a failed step short-circuits the chain.
 bool test_monadic_chaining() {
     std::println("\n--- AC9: AuraResult monadic chaining ---");
     using namespace aura::ast;
@@ -262,7 +231,6 @@ bool test_monadic_chaining() {
     FlatAST flat;
     StringPool pool;
     auto let_id = make_let_2(flat, pool, "a", 1);
-    auto one = flat.add_literal(1);
     auto two = flat.add_literal(2);
 
     // Happy path: chain succeeds.
@@ -274,17 +242,14 @@ bool test_monadic_chaining() {
     CHECK(chained_ok.has_value(), "happy-path chain returns success");
     CHECK_EQ(chained_ok.value(), let_id, "chain returns the original target");
 
-    // Failure path: bad index on first step short-circuits the chain.
-    // Use a freshly-built let to avoid generation invalidation from
-    // the previous happy-path apply_mutation (mark_dirty_upward bumps
-    // generation_, so reusing let_id would falsely report
-    // MutationInvalidTarget instead of MutationOutOfRange).
+    // Failure path: bad index on first step short-circuits.
+    // Use a freshly-built let to avoid generation invalidation.
     auto let_id_err = make_let_2(flat, pool, "b", 2);
     auto chained_err = apply_mutation(flat, let_id_err,
-                                        ReplaceChildMutator{99, NULL_NODE}) // bad idx
-        .and_then([&](NodeId id) -> aura::core::AuraResult<NodeId> {
-            // Would succeed if reached.
-            return apply_mutation(flat, id, ReplaceChildMutator{0, one});
+                                        ReplaceChildMutator{99, NULL_NODE})
+        .and_then([&](NodeId /*id*/) -> aura::core::AuraResult<NodeId> {
+            return aura::core::AuraResult<NodeId>{
+                std::in_place, NULL_NODE};
         });
     CHECK(!chained_err.has_value(),
           "monadic chain short-circuits on first error");
@@ -295,10 +260,6 @@ bool test_monadic_chaining() {
 }
 
 // ── AC10: StrategyKind enum + kind_name() ──────────────
-//
-// Verify the tag enum + helper string mapping. This is the
-// foundation for the future tag-dispatch helper
-// (apply_by_kind) — follow-up #2.
 bool test_strategy_kind_enum() {
     std::println("\n--- AC10: StrategyKind + kind_name ---");
     using namespace aura::ast::mutators;
@@ -321,11 +282,6 @@ bool test_strategy_kind_enum() {
 }
 
 // ── AC11: Concept rejects a non-Mutator shape ───────────
-//
-// Compile-time verification that the Mutator concept
-// correctly rejects a strategy without the right shape.
-// This guards against accidental loosening of the concept
-// in future refactors.
 struct BadStrategyNoApply {
     int x = 0;
 };
@@ -341,6 +297,132 @@ bool test_concept_rejects_bad_shapes() {
     static_assert(!aura::core::Mutator<BadStrategyWrongReturn, FlatAST>,
                   "strategy returning int must NOT satisfy Mutator");
     CHECK(true, "static_asserts: bad shapes rejected");
+    return true;
+}
+
+// ── AC12: apply_by_kind dispatch ────────────────────────
+//
+// Drive every StrategyKind through the runtime tag dispatcher
+// and verify each routes to the right strategy.
+bool test_apply_by_kind() {
+    std::println("\n--- AC12: apply_by_kind tag dispatch ---");
+    using namespace aura::ast;
+    using namespace aura::ast::mutators;
+
+    // NoOp: target unchanged.
+    {
+        FlatAST flat;
+        StringPool pool;
+        auto let_id = make_let_2(flat, pool, "a", 1);
+        const auto kids_before = flat.children(let_id).size();
+        auto r = apply_by_kind(flat, let_id, StrategyKind::NoOp, {});
+        CHECK(r.has_value(), "NoOp returns success");
+        CHECK_EQ(flat.children(let_id).size(), kids_before, "NoOp didn't mutate");
+    }
+
+    // ReplaceChild: child[0] -> NULL_NODE.
+    {
+        FlatAST flat;
+        StringPool pool;
+        auto let_id = make_let_2(flat, pool, "a", 1);
+        auto r = apply_by_kind(flat, let_id, StrategyKind::ReplaceChild,
+                               StrategyParams{/*index*/0, /*new_child*/NULL_NODE});
+        CHECK(r.has_value(), "ReplaceChild returns success");
+        CHECK_EQ(flat.children(let_id)[0], NULL_NODE, "child[0] replaced");
+    }
+
+    // InsertChild: insert at index 0.
+    {
+        FlatAST flat;
+        StringPool pool;
+        auto let_id = make_let_2(flat, pool, "a", 1);
+        auto two = flat.add_literal(2);
+        auto r = apply_by_kind(flat, let_id, StrategyKind::InsertChild,
+                               StrategyParams{/*index*/0, /*new_child*/two});
+        CHECK(r.has_value(), "InsertChild returns success");
+        CHECK_EQ(flat.children(let_id).size(), 3u, "child count grew to 3");
+        CHECK_EQ(flat.children(let_id)[0], two, "child[0] is the inserted two");
+    }
+
+    // RemoveChild: erase child[0].
+    {
+        FlatAST flat;
+        StringPool pool;
+        auto let_id = make_let_2(flat, pool, "a", 1);
+        const auto expected_remaining = flat.children(let_id)[1];
+        auto r = apply_by_kind(flat, let_id, StrategyKind::RemoveChild,
+                               StrategyParams{/*index*/0});
+        CHECK(r.has_value(), "RemoveChild returns success");
+        CHECK_EQ(flat.children(let_id).size(), 1u, "child count shrank to 1");
+        CHECK_EQ(flat.children(let_id)[0], expected_remaining,
+                 "remaining child is the original body");
+    }
+
+    // Error path: out-of-range index propagates from strategy.
+    {
+        FlatAST flat;
+        StringPool pool;
+        auto let_id = make_let_2(flat, pool, "a", 1);
+        auto r = apply_by_kind(flat, let_id, StrategyKind::ReplaceChild,
+                               StrategyParams{/*index*/99, /*new_child*/NULL_NODE});
+        CHECK(!r.has_value(), "bad index returns AuraError");
+        CHECK_EQ(static_cast<int>(r.error().kind),
+                 static_cast<int>(aura::core::AuraErrorKind::MutationOutOfRange),
+                 "error kind propagated from strategy");
+    }
+    return true;
+}
+
+// ── AC13: apply_by_name string-tagged dispatch ───────────
+//
+// Verify kind_from_name is the inverse of kind_name, and
+// apply_by_name routes correctly. Unknown names return
+// MutationInvalidField.
+bool test_apply_by_name() {
+    std::println("\n--- AC13: apply_by_name string dispatch ---");
+    using namespace aura::ast::mutators;
+
+    // Round-trip: every kind_name must parse back via kind_from_name.
+    for (auto k : {StrategyKind::NoOp, StrategyKind::ReplaceChild,
+                   StrategyKind::InsertChild, StrategyKind::RemoveChild}) {
+        auto name = kind_name(k);
+        auto parsed = kind_from_name(name);
+        CHECK(parsed.has_value(), "kind_from_name parses its own kind_name");
+        if (parsed) {
+            CHECK_EQ(static_cast<int>(*parsed), static_cast<int>(k),
+                     "round-trip preserves kind");
+        }
+    }
+
+    // Unknown name returns nullopt.
+    auto bogus = kind_from_name("nonexistent-strategy");
+    CHECK(!bogus.has_value(), "kind_from_name rejects unknown names");
+
+    // apply_by_name routes through.
+    {
+        using namespace aura::ast;
+        FlatAST flat;
+        StringPool pool;
+        auto let_id = make_let_2(flat, pool, "a", 1);
+        auto r = apply_by_name(flat, let_id, "replace-child",
+                                StrategyParams{0, NULL_NODE});
+        CHECK(r.has_value(), "apply_by_name('replace-child') succeeds");
+        CHECK_EQ(flat.children(let_id)[0], NULL_NODE,
+                 "child[0] replaced via name");
+    }
+
+    // apply_by_name unknown returns MutationInvalidField.
+    {
+        using namespace aura::ast;
+        FlatAST flat;
+        StringPool pool;
+        auto let_id = make_let_2(flat, pool, "a", 1);
+        auto r = apply_by_name(flat, let_id, "explode-and-die", {});
+        CHECK(!r.has_value(), "unknown name returns AuraError");
+        CHECK_EQ(static_cast<int>(r.error().kind),
+                 static_cast<int>(aura::core::AuraErrorKind::MutationInvalidField),
+                 "error kind is MutationInvalidField");
+    }
     return true;
 }
 
@@ -368,6 +450,10 @@ int main() {
     test_strategy_kind_enum();
     std::println("\nAC #11: concept rejects bad shapes");
     test_concept_rejects_bad_shapes();
+    std::println("\nAC #12: apply_by_kind tag dispatch");
+    test_apply_by_kind();
+    std::println("\nAC #13: apply_by_name string dispatch");
+    test_apply_by_name();
 
     std::println("\n════════════════════════════════════════");
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
