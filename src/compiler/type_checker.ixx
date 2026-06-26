@@ -737,6 +737,18 @@ export struct TypeChecker {
         // for the full rationale.
         std::uint64_t per_defuse_index_used_total = 0;
         std::uint64_t per_defuse_index_walk_fallback_total = 0;
+        // Issue #411 fu1 fu4: per-DefUseIndex visited
+        // count (the actual O(uses) cost in nodes).
+        // Bumped on the per-DefUseIndex path when the
+        // indexed lookup returns the use-sites directly
+        // (no O(n) walk). Pre-fu4 this was 0 because the
+        // per-DefUseIndex path still did the O(n) walk
+        // (the metric only fired, the actual work was
+        // O(n)). Post-fu4 this is the real wall-clock
+        // signal: the ratio of per_defuse_index_visited
+        // to per_symbol_visited tells the user how much
+        // wall-clock work the optimization is saving.
+        std::uint64_t per_defuse_index_visited_total = 0;
     };
     IncrementalStats stats() const { return stats_; }
     void reset_stats() { stats_ = {}; }

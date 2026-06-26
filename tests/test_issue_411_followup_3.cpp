@@ -123,7 +123,7 @@ bool test_typed_mutate_populated_tracker_takes_per_defuse_index() {
     // The name "f" matches the sym's name. The tracker
     // size >= 1 signals to the service to pass the
     // tracker pointer to infer_flat_partial.
-    cs.eval("(set-code \"(define setup (begin (compile:per-defuse-index-add \\\"f\\\" \\\"use1\\\")))\")");
+    cs.eval("(set-code \"(define setup (begin (compile:per-defuse-index-add \\\"f\\\" 42)))\")");
     cs.eval("(eval-current)");
     cs.eval("(setup)");
     // Verify the tracker is populated.

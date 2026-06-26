@@ -70,12 +70,14 @@ bool test_add_and_get_for_one_index() {
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
     using aura::compiler::per_defuse_index::DefUseIndex;
     using aura::compiler::per_defuse_index::Caller;
-    t.add_caller(DefUseIndex{"foo"}, Caller{"caller1_for_foo"});
+    // Issue #411 fu1 fu4: Caller is now {NodeId node_id}
+    // (was {std::string location}). Use distinct NodeIds
+    // for each test.
+    t.add_caller(DefUseIndex{"foo"}, Caller{101});
     auto callers = t.get_callers(DefUseIndex{"foo"});
     CHECK_EQ(callers.size(), 1u, "foo has 1 caller");
     if (!callers.empty())
-        CHECK_EQ(callers[0].location, std::string{"caller1_for_foo"},
-                 "caller location matches");
+        CHECK_EQ(callers[0].node_id, 101u, "caller node_id matches");
     return true;
 }
 
@@ -90,9 +92,9 @@ bool test_per_index_isolation() {
     // the other. This is the core property of the
     // per-DefUseIndex approach vs. the pre-existing global
     // list.
-    t.add_caller(DefUseIndex{"foo"}, Caller{"caller1_for_foo"});
-    t.add_caller(DefUseIndex{"foo"}, Caller{"caller2_for_foo"});
-    t.add_caller(DefUseIndex{"bar"}, Caller{"caller1_for_bar"});
+    t.add_caller(DefUseIndex{"foo"}, Caller{201});
+    t.add_caller(DefUseIndex{"foo"}, Caller{202});
+    t.add_caller(DefUseIndex{"bar"}, Caller{301});
 
     auto foo_callers = t.get_callers(DefUseIndex{"foo"});
     auto bar_callers = t.get_callers(DefUseIndex{"bar"});
@@ -100,14 +102,11 @@ bool test_per_index_isolation() {
     CHECK_EQ(foo_callers.size(), 2u, "foo has exactly 2 callers (per-index isolation)");
     CHECK_EQ(bar_callers.size(), 1u, "bar has exactly 1 caller (per-index isolation)");
     if (foo_callers.size() == 2) {
-        CHECK_EQ(foo_callers[0].location, std::string{"caller1_for_foo"},
-                 "foo[0] is caller1_for_foo");
-        CHECK_EQ(foo_callers[1].location, std::string{"caller2_for_foo"},
-                 "foo[1] is caller2_for_foo");
+        CHECK_EQ(foo_callers[0].node_id, 201u, "foo[0] is caller1 (201)");
+        CHECK_EQ(foo_callers[1].node_id, 202u, "foo[1] is caller2 (202)");
     }
     if (bar_callers.size() == 1) {
-        CHECK_EQ(bar_callers[0].location, std::string{"caller1_for_bar"},
-                 "bar[0] is caller1_for_bar");
+        CHECK_EQ(bar_callers[0].node_id, 301u, "bar[0] is caller1 (301)");
     }
     return true;
 }
@@ -116,7 +115,8 @@ bool test_get_callers_for_unregistered_index() {
     std::println("\n--- AC4: get_callers for unregistered DefUseIndex returns empty ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
     using aura::compiler::per_defuse_index::DefUseIndex;
-    t.add_caller(DefUseIndex{"foo"}, {"x"});
+    using aura::compiler::per_defuse_index::Caller;
+    t.add_caller(DefUseIndex{"foo"}, Caller{999});
     auto missing = t.get_callers(DefUseIndex{"missing"});
     CHECK_EQ(missing.size(), 0u, "unregistered index returns empty caller list");
     return true;
@@ -126,10 +126,11 @@ bool test_size_for_index() {
     std::println("\n--- AC5: size_for_index reports the correct per-index count ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
     using aura::compiler::per_defuse_index::DefUseIndex;
-    t.add_caller(DefUseIndex{"foo"}, {"c1"});
-    t.add_caller(DefUseIndex{"foo"}, {"c2"});
-    t.add_caller(DefUseIndex{"foo"}, {"c3"});
-    t.add_caller(DefUseIndex{"bar"}, {"c1"});
+    using aura::compiler::per_defuse_index::Caller;
+    t.add_caller(DefUseIndex{"foo"}, Caller{1});
+    t.add_caller(DefUseIndex{"foo"}, Caller{2});
+    t.add_caller(DefUseIndex{"foo"}, Caller{3});
+    t.add_caller(DefUseIndex{"bar"}, Caller{1});
     CHECK_EQ(t.size_for_index(DefUseIndex{"foo"}), 3u, "foo has 3 callers");
     CHECK_EQ(t.size_for_index(DefUseIndex{"bar"}), 1u, "bar has 1 caller");
     CHECK_EQ(t.size_for_index(DefUseIndex{"missing"}), 0u,
@@ -141,11 +142,12 @@ bool test_total_size() {
     std::println("\n--- AC6: total_size sums across all indexes ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
     using aura::compiler::per_defuse_index::DefUseIndex;
-    t.add_caller(DefUseIndex{"foo"}, {"c1"});
-    t.add_caller(DefUseIndex{"foo"}, {"c2"});
-    t.add_caller(DefUseIndex{"bar"}, {"c1"});
-    t.add_caller(DefUseIndex{"baz"}, {"c1"});
-    t.add_caller(DefUseIndex{"baz"}, {"c2"});
+    using aura::compiler::per_defuse_index::Caller;
+    t.add_caller(DefUseIndex{"foo"}, Caller{1});
+    t.add_caller(DefUseIndex{"foo"}, Caller{2});
+    t.add_caller(DefUseIndex{"bar"}, Caller{1});
+    t.add_caller(DefUseIndex{"baz"}, Caller{1});
+    t.add_caller(DefUseIndex{"baz"}, Caller{2});
     CHECK_EQ(t.total_size(), 5u, "total_size == 5 (sum across 3 indexes)");
     return true;
 }
@@ -154,9 +156,10 @@ bool test_index_count() {
     std::println("\n--- AC7: index_count reports the distinct count ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
     using aura::compiler::per_defuse_index::DefUseIndex;
-    t.add_caller(DefUseIndex{"foo"}, {"c1"});
-    t.add_caller(DefUseIndex{"foo"}, {"c2"});  // same index
-    t.add_caller(DefUseIndex{"bar"}, {"c1"});  // new index
+    using aura::compiler::per_defuse_index::Caller;
+    t.add_caller(DefUseIndex{"foo"}, Caller{1});
+    t.add_caller(DefUseIndex{"foo"}, Caller{2});  // same index
+    t.add_caller(DefUseIndex{"bar"}, Caller{1});  // new index
     CHECK_EQ(t.index_count(), 2u, "index_count == 2 (foo + bar, dedup'd)");
     return true;
 }
@@ -165,8 +168,9 @@ bool test_clear() {
     std::println("\n--- AC8: clear() removes all state ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
     using aura::compiler::per_defuse_index::DefUseIndex;
-    t.add_caller(DefUseIndex{"foo"}, {"c1"});
-    t.add_caller(DefUseIndex{"bar"}, {"c1"});
+    using aura::compiler::per_defuse_index::Caller;
+    t.add_caller(DefUseIndex{"foo"}, Caller{1});
+    t.add_caller(DefUseIndex{"bar"}, Caller{1});
     CHECK(t.total_size() > 0, "tracker non-empty before clear");
     t.clear();
     CHECK_EQ(t.total_size(), 0u, "total_size == 0 after clear");
@@ -195,7 +199,8 @@ bool test_copyable_and_movable() {
     std::println("\n--- AC10: copyable + movable ---");
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t;
     using aura::compiler::per_defuse_index::DefUseIndex;
-    t.add_caller(DefUseIndex{"foo"}, {"c1"});
+    using aura::compiler::per_defuse_index::Caller;
+    t.add_caller(DefUseIndex{"foo"}, Caller{1});
     // Copy ctor
     aura::compiler::per_defuse_index::PerDefUseIndexTracker t2(t);
     CHECK_EQ(t2.total_size(), 1u, "copy ctor preserves state");

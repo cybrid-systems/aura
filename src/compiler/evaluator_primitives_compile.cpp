@@ -1851,7 +1851,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
-    // (compile:per-defuse-index-add <idx-name> <caller-loc>)
+    // (compile:per-defuse-index-add <idx-name> <caller-node-id>)
     //   — Issue #411 fu1 follow-up #2: add a caller to a
     //   per-DefUseIndex tracker. The tracker lives on
     //   CompilerService (per-service state, lifetime =
@@ -1863,19 +1863,25 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //   read this tracker to look up the use-sites of a
     //   binding in O(uses) instead of the current O(n) walk.
     //
+    //   Issue #411 fu1 fu4: the second arg is now a
+    //   NodeId (int) instead of a string. The tracker
+    //   stores NodeIds directly so the indexed lookup
+    //   in TypeChecker::infer_flat_partial can iterate
+    //   the use-sites without the O(n) walk.
+    //
     //   Returns the new size_for_index for the index.
     add("compile:per-defuse-index-add", [&ev](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return make_void();
         if (!ev.compiler_service_)
             return make_int(0);
         auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         const std::string idx_name = ev.string_heap_[as_string_idx(a[0])];
-        const std::string caller_loc = ev.string_heap_[as_string_idx(a[1])];
+        const auto caller_node_id = static_cast<aura::ast::NodeId>(as_int(a[1]));
         using aura::compiler::per_defuse_index::DefUseIndex;
         using aura::compiler::per_defuse_index::Caller;
         svc->per_defuse_index_tracker().add_caller(
-            DefUseIndex{idx_name}, Caller{caller_loc});
+            DefUseIndex{idx_name}, Caller{caller_node_id});
         return make_int(static_cast<std::int64_t>(
             svc->per_defuse_index_tracker().size_for_index(DefUseIndex{idx_name})));
     });
@@ -1883,12 +1889,16 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     // (compile:per-defuse-index-callers <idx-name>)
     //   — Issue #411 fu1 follow-up #2: return the list of
     //   callers registered for a specific DefUseIndex as a
-    //   hash. Keys are caller locations (the string passed
-    //   to compile:per-defuse-index-add); values are
-    //   integer indices (just 0..N-1 since the Aura
-    //   primitive only needs to report presence, not
-    //   position). Used by the test_issue_411_followup_2
-    //   tests to verify the per-DefUseIndex isolation.
+    //   hash. Keys are caller NodeIds (stringified via
+    //   std::to_string) since the Aura hash needs string
+    //   keys; values are the same NodeId as int (for
+    //   programmatic lookup via hash-ref). The NodeId is
+    //   the use-site that the type-checker will
+    //   re-infer when the per-DefUseIndex path fires
+    //   (Issue #411 fu1 fu4). Used by
+    //   test_issue_411_followup_2/3 to verify per-DefUseIndex
+    //   isolation + the fu4 test to verify the indexed
+    //   lookup returns the right use-sites.
     add("compile:per-defuse-index-callers", [&ev](const auto& a) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(std::max<std::size_t>(8, kv.size() * 2));
@@ -1940,7 +1950,13 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         std::vector<std::pair<std::string, EvalValue>> kv;
         kv.reserve(callers.size());
         for (std::size_t i = 0; i < callers.size(); ++i) {
-            kv.push_back({callers[i].location, make_int(static_cast<std::int64_t>(i))});
+            // Key: stringified NodeId (so hash keys are
+            // strings). Value: same NodeId as int. This
+            // way the test can do (hash-ref callers
+            // "<nodeid>") to check the presence + get
+            // the NodeId back.
+            const std::string key = std::to_string(callers[i].node_id);
+            kv.push_back({key, make_int(static_cast<std::int64_t>(callers[i].node_id))});
         }
         return build_hash(kv);
     });

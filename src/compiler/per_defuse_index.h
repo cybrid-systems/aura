@@ -26,9 +26,20 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+// Issue #411 fu1 fu4: NodeId type alias (mirrors
+// `export using NodeId = std::uint32_t` in
+// aura/core/mutation.ixx). Defined here as a local alias
+// (not an import) so the per_defuse_index header doesn't
+// pull in the full mutation module — this keeps the
+// header usable from the Aura primitive surface which
+// imports only the value module. The 32-bit width
+// matches the canonical NodeId.
+using NodeId = std::uint32_t;
 
 namespace aura::compiler::per_defuse_index {
 
@@ -44,12 +55,27 @@ struct DefUseIndex {
     }
 };
 
-// Caller — a per-DefUseIndex call site. The `location` field
-// is a free-form string identifying the caller (e.g. a
-// source position or a NodeId stringified). The struct is
-// POD-style for cheap construction in tight loops.
+// Caller — a per-DefUseIndex call site. The `node_id`
+// field is the NodeId of the Variable use-site (or the
+// Call/Apply node, depending on what the registration
+// was for). The struct is POD-style for cheap
+// construction in tight loops.
+//
+// Issue #411 fu1 fu4: pre-#411 fu1 fu4 the field was
+// `std::string location` (a free-form string). The O(uses)
+// wall-clock optimization (the actual perf win, not just
+// the metric) requires the indexed lookup to return
+// NodeIds directly, so the per-DefUseIndex path can
+// iterate use-sites without paying the O(n)
+// `affected_subtree_for_symbol` walk cost. The string
+// representation was only needed for Aura-side debugging
+// (the Aura primitive `(compile:per-defuse-index-callers
+// <idx>)` returns a hash of {location: index} pairs).
+// Post-fu4 the Aura primitive returns a vector of
+// NodeIds instead, which is what the inference loop
+// needs.
 struct Caller {
-    std::string location;
+    NodeId node_id;
 };
 
 // PerDefUseIndexTracker — a per-DefUseIndex caller registry.
