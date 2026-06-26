@@ -720,3 +720,77 @@ message): could add `.git/hooks/pre-commit` that runs
 `python3 build.py gate` and aborts on failure. Or just
 add the checklist to `AGENTS.md`. Defer to a separate
 #501b / follow-up — not blocking.
+
+## Session 2026-06-26 — Issue #412: type cache generation counter (scope-limited)
+
+Commit `925c7968` pushed to origin/main. 9 files, +322/-3.
+
+#412's full scope is fixing false-positive `stale_cache`
+rejections in the type-checker cache hit path. Pre-#412 the
+check was `if (reg_.free_vars(tid).empty()) return cached`
+— too aggressive for polymorphic types with `TYPE_VAR`
+children. The proposed fix is a generation counter.
+
+This scope-limited close ships the **foundation +
+observability**:
+
+- `FlatAST::type_cache_generation_` atomic counter (bumped
+  by `mark_dirty_upward` / `mark_dirty_upward_until`).
+- `FlatAST::type_cache_gen_` parallel `pmr::vector<uint32_t>`.
+  `set_type()` stamps the current gen atomically.
+- `synthesize_flat` cache hit path augments `free_vars`
+  check with the gen check:
+  - `gen_matches && free_vars_empty` → hit (existing)
+  - `gen_matches && !free_vars_empty` → hit + `gen_saved`
+    (NEW: rescued from stale)
+  - `!gen_matches` → stale (recompute)
+- `TypeCheckResult` + `InnerStats` + `IncrementalStats` gain
+  `gen_saved` counter, plumbed through `infer_flat`.
+- `CompilerMetrics`: +1 lifetime counter
+  `typecheck_gen_saved_total`.
+- `CompilerSnapshot`: mirrors it + derives
+  `typecheck_gen_saved_ratio_bp` (basis points: `gen_saved /
+  (stale + gen_saved) * 10000`).
+- **(compile:type-cache-stats)** Aura primitive returns hash
+  with 5 fields: cache-hits-total, cache-misses-total,
+  stale-cache-total, gen-saved-total, gen-saved-ratio-bp.
+
+**Verified:** 23/23 test_issue_412 (7 ACs / 23 sub-checks),
+no regressions in test_issue_410 (17/17) or test_issue_411
+(20/20), full gate green. #412 closed
+(state_reason: completed).
+
+**6 follow-ups tracked** for #412:
+1. Per-binding generation (bump gen only when a specific
+   binding's structure changes — current global gen is
+   over-invalidating)
+2. Refinement-aware gen bumping (Occurrence refinements
+   that change narrowed types)
+3. Structural-only gen bumping (distinguish
+   `mutate:rebind` from `typecheck-current` no-op)
+4. Per-call `gen_bump_count_total` metric
+5. Cross-workspace gen coordination (COW + parent_id)
+6. Quantitative benchmark in tests/bench/ (target:
+   `gen_saved_ratio_bp > 20%`)
+
+**Today's totals (so far):**
+- 4 commits to origin/main
+  - 9f2d6ad #252, 13b0c43 #253, b745053 #254 (yesterday)
+  - 5f14cf5 / e537b8c CI fix ir_soa.ixx (yesterday)
+  - 25b2c04 #255, 354e5b0 #256, 4391182 #257 (yesterday)
+  - 27ac871 #258, 5e9eac6 #259, 36be201 COW fix (yesterday)
+  - e91e54b1 CI fix + #410 close (today)
+  - 043f6d82 #411 (today)
+  - 925c7968 #412 (today)
+- 11 issues closed (all scope-limited)
+- ~35.4K tests across 107 binaries, 0 failures
+
+**Test pattern note (#412 AC3/AC5):** the Aura
+`typecheck-current` primitive doesn't plumb metrics to
+service.ixx (it creates a local TypeChecker and throws it
+away). The C++ `cs.typecheck()` method is the canonical
+entry point that accumulates into the lifetime counters.
+For #411 follow-up #1 wiring, watch out for this — the
+auto-invoke path uses `tc.infer_flat_partial` directly with
+metrics plumbed, but the `typecheck-current` Aura primitive
+doesn't yet plumb metrics. Fix in a follow-up.
