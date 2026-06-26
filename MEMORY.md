@@ -1522,3 +1522,34 @@ readable at the FlatAST level).
 - 29 commits to origin/main
 - **10 issues closed** (all scope-limited)
 - **15+ test binaries, 159+ tests, 0 failures**
+
+## Session 2026-06-26 — Issue #409: Fine-grained constraint dependency tracking (scope-limited)
+
+Commit `65922c5c` pushed to origin/main. 6 files, +418/-5.
+
+Wires a var → constraints reverse map on
+`ConstraintSystem` so `solve_delta` can process only
+the constraints that reference a tracked var rep.
+Pre-#409, `solve_delta` walked the full dirty set.
+Post-#409, the worklist is filtered through
+`var_to_constraints_` + dedup by dirty bit.
+
+**Wiring:**
+- `var_to_constraints_` (unordered_map<uint32_t, vector<size_t>> keyed by Union-Find rep).
+- `add` / `add_delta`: maintain the map.
+- `unify`: merge the maps when two var reps merge.
+- `clear`: also clears the map.
+- `solve_delta_impl`: filter worklist through the map.
+
+**Observability:**
+- 2 lifetime counters + 1 derived ratio.
+- New Aura primitive `(compile:constraint-dep-stats)`.
+
+**Tests:** test_issue_409, 11/11 (5 ACs).
+
+**Today's totals (so far, 2026-06-26, ~10.5 hours):**
+- 31 commits to origin/main
+- **11 issues closed** (all scope-limited): #410, #411,
+  #412, #411 fu1 (4 fu), #412 fu1, #413, #386, #338,
+  #433, #434, #390, **#409**
+- 12+ test binaries, 170+ tests, 0 failures
