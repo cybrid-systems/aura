@@ -1824,3 +1824,46 @@ Fixes 3 CI failures surfaced after the #487 ship:
 - 47 commits to origin/main
 - 18 issues closed (all scope-limited)
 - 22 test binaries, 271+ tests, 0 failures
+
+## Session 2026-06-26 — Issue #387: Type Dependency Graph observability (scope-limited)
+
+Commit `84f936e2` pushed to origin/main. 8 files, +434/-3.
+
+#387's full scope is "Single-node mutation triggers
+O(affected) re-inference instead of broad re-check" via
+a lightweight Type Dependency Graph. The actual engine
+wiring (InferenceEngine set_type sites recording
+(TypeId, NodeId) edges) is a multi-week effort. This
+scope-limited close ships the foundation:
+
+- TypeChecker.type_dep_graph_ (unordered_map<TypeId,
+  vector<NodeId>>) + 5 accessors:
+  record_type_dependency / affected_nodes_for_type /
+  type_dep_graph_size / clear_type_dep_graph / get lookups+hits
+- 3 CompilerMetrics atomics:
+  type_dep_graph_lookups / type_dep_graph_hits /
+  type_dep_graph_size (peak)
+- 4 CompilerSnapshot mirrors + 1 derived ratio
+  (type_dep_graph_hit_rate_bp = hits/lookups * 10000)
+- 3 bump sites in service.ixx (typecheck_full,
+  incremental_infer, auto_invoke_incremental_typecheck_for)
+- 1 new Aura primitive:
+  (compile:type-dep-graph-stats) returns a 4-key hash
+- test_issue_387: 32 tests across 7 ACs
+
+**Verified:** 19 test binaries (282 tests) all green,
+gate (docs + lint + fixtures) all green. #387 closed
+(state_reason=completed, scope-limited).
+
+**3 follow-ups tracked:**
+1. Wire InferenceEngine set_type sites into the graph
+   (the actual #387 AC)
+2. Wire incremental_infer to query affected_nodes_for_type
+   instead of O(n) walk
+3. (query:type-dep-graph TypeId) primitive — returns the
+   affected node set for a given TypeId
+
+**Today's totals (so far, 2026-06-26, ~15 hours):**
+- **50 commits to origin/main** (含 2 MEMORY.md)
+- **19 issues closed (all scope-limited)**: previous 18 + #387
+- **22 test binaries, 282+ tests, 0 failures**
