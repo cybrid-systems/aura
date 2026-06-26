@@ -82,6 +82,18 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     std::uint64_t should_relower_total = 0;
     std::uint64_t affected_subtree_total = 0;
     std::uint64_t dirty_trigger_rate_bp = 0;
+    // Issue #387: Type Dependency Graph observability.
+    // Mirrors CompilerMetrics::{type_dep_graph_lookups,
+    // type_dep_graph_hits, type_dep_graph_size}.
+    std::uint64_t type_dep_graph_lookups = 0;
+    std::uint64_t type_dep_graph_hits = 0;
+    std::uint64_t type_dep_graph_size = 0;
+    // Derived: hit rate in basis points (0-10000). High
+    // hit rate means most lookups find dependent nodes
+    // (the graph is useful); low hit rate means the
+    // graph has many empty entries (TypeVars that
+    // unified away).
+    std::uint64_t type_dep_graph_hit_rate_bp = 0;
     // Issue #254: IR SoA dual-emit counters (lifetime total).
     // Mirrors CompilerMetrics::ir_soa_instructions_emitted +
     // CompilerMetrics::ir_soa_functions_emitted.

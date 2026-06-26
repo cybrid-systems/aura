@@ -1025,6 +1025,13 @@ aura_add_issue_test(test_issue_385)
 aura_issue_test_link_llvm_jit(test_issue_385)
 aura_add_issue_test(test_issue_487)
 aura_issue_test_link_llvm_jit(test_issue_487)
+# Issue #387: Type Dependency Graph observability
+# foundation. Pure unit test (TypeChecker + flat, no
+# LLVM/JIT). Tests record + query round-trip directly on
+# TypeChecker; the Aura primitive surface is exercised by
+# tests/run-tests.sh.
+aura_add_issue_test(test_issue_387)
+aura_issue_test_link_llvm_jit(test_issue_387)
 # Issue #411 fu1 follow-up #1: per-DefUseIndex caller tracking.
 # Pure-header test (no LLVM/JIT needed) — registers without
 # aura_issue_test_link_llvm_jit.
