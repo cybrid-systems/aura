@@ -307,6 +307,20 @@ struct CompilerMetrics {
     //     pruning effectively.
     std::atomic<std::uint64_t> delta_constraints_processed_total{0};
     std::atomic<std::uint64_t> delta_constraints_total{0};
+    // Issue #341: match + Occurrence Typing
+    // integration observability. 2 lifetime counters:
+    //   - match_subject_narrowed_total: count of
+    //     __match_tmp lets whose subject type was
+    //     refined by a prior narrowing in the env
+    //     (e.g. (if (type? x "Foo") (let ((__match_tmp
+    //     x)) (match x ...)) ...)).
+    //   - match_subject_total: count of all
+    //     __match_tmp lets processed by the type
+    //     checker. The ratio narrowed / total
+    //     measures how often narrowing actually
+    //     feeds into match exhaustiveness.
+    std::atomic<std::uint64_t> match_subject_narrowed_total{0};
+    std::atomic<std::uint64_t> match_subject_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)

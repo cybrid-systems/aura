@@ -166,6 +166,15 @@ struct CompilerSnapshot {
     std::uint64_t delta_constraints_processed_total = 0;
     std::uint64_t delta_constraints_total = 0;
     std::uint64_t delta_solve_constraints_ratio_bp = 0;
+    // Issue #341: match + Occurrence Typing
+    // observability. Mirrors the 2 lifetime counters
+    // in CompilerMetrics. The derived
+    // match_narrowed_ratio_bp is narrowed / total *
+    // 10000 — measures how often narrowing feeds
+    // into match exhaustiveness.
+    std::uint64_t match_subject_narrowed_total = 0;
+    std::uint64_t match_subject_total = 0;
+    std::uint64_t match_narrowed_ratio_bp = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.

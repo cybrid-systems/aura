@@ -3191,7 +3191,55 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
     // ── Match exhaustiveness check (Issue #260: shared with post-mutation) ──
     auto let_name = std::string(pool.resolve(v.sym_id));
     if (let_name == "__match_tmp" && !v.children.empty()) {
+        // Issue #341: bump the match-subject counter for
+        // observability (every __match_tmp let processed
+        // by the type checker bumps it).
+        if (cs_.metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(
+                cs_.metrics_);
+            m->match_subject_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
         TypeId subject_type = val_norm;
+        // Issue #341: if the value is a Variable node
+        // that was narrowed by a prior (if (type? x
+        // "Foo") ...) in the env, use the narrowed
+        // type as the subject type. This lets the
+        // exhaustiveness checker see the refined type
+        // for ADT constructors — e.g. (if (type? x
+        // "Option") (let ((__match_tmp x)) (match x
+        // ((some v) ...) ((none) ...)))) would
+        // check exhaustiveness against Option's
+        // constructors instead of the unrefined
+        // subject type.
+        if (!v.children.empty() && v.child(0) != NULL_NODE) {
+            auto val_v = flat.get(v.child(0));
+            if (val_v.tag == NodeTag::Variable &&
+                val_v.sym_id != INVALID_SYM) {
+                auto var_name = std::string(
+                    pool.resolve(val_v.sym_id));
+                if (env_.is_bound(var_name)) {
+                    auto env_type = env_.lookup(var_name);
+                    // Only use the env-bound type if it's
+                    // a concrete type (not a type variable
+                    // — type vars are not narrowed). This
+                    // filters out the case where env_ has
+                    // a fresh var (the let-poly path).
+                    if (reg_.tag_of(env_type) !=
+                        TypeTag::TYPE_VAR) {
+                        if (cs_.metrics_) {
+                            auto* m = static_cast<
+                                struct CompilerMetrics*>(
+                                cs_.metrics_);
+                            m->match_subject_narrowed_total
+                                .fetch_add(1,
+                                    std::memory_order_relaxed);
+                        }
+                        subject_type = env_type;
+                    }
+                }
+            }
+        }
         if (reg_.tag_of(subject_type) == TypeTag::FUNC) {
             if (auto* f = reg_.func_of(subject_type))
                 subject_type = f->ret;
