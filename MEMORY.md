@@ -794,3 +794,84 @@ For #411 follow-up #1 wiring, watch out for this — the
 auto-invoke path uses `tc.infer_flat_partial` directly with
 metrics plumbed, but the `typecheck-current` Aura primitive
 doesn't yet plumb metrics. Fix in a follow-up.
+
+## Session 2026-06-26 — #411 follow-up #1: per-symbol re-inference wiring
+
+Commit `8e63777c` pushed to origin/main. 7 files, +509/-3.
+
+This is the WIRING slice of #411 follow-up #1. The full
+follow-up is "make per-symbol re-inference the primary
+post-mutation path" — and this slice ships the actual
+wiring (per_symbol path fires for binding mutations;
+ancestor fallback for sub-expression mutations) plus the
+observability foundation.
+
+**What shipped:**
+- `TypeChecker::infer_flat_partial` inspects
+  `rec.target_node` and routes to per-symbol path if
+  the target is a binding (Define/Let/LetRec with valid
+  sym_id), else ancestor walk.
+- 4 new metrics: `per_symbol_reinfer_used_total`,
+  `per_symbol_reinfer_visited_total`,
+  `ancestor_reinfer_used_total`,
+  `ancestor_reinfer_visited_total`. Atomically bumped
+  on the chosen path.
+- `CompilerSnapshot` mirrors + derives
+  `per_symbol_path_share_bp` (per_symbol_visited /
+  total_visited * 10000).
+- Both service.ixx sites (`incremental_infer` + the #411
+  `auto_invoke_incremental_typecheck_for` helper) plumb
+  the new fields into the lifetime counters.
+- **`(compile:per-symbol-reinfer-stats)`** Aura primitive
+  returns hash with 6 fields: per-symbol-used-total,
+  per-symbol-visited-total, ancestor-used-total,
+  ancestor-visited-total, path-share-bp (derived),
+  avg-per-symbol-bp (derived).
+
+**Test observation (AC3, AC4):**
+- Top-level rebind `(mutate:rebind "f" "10")` →
+  per_symbol_used=1, per_symbol_visited=1 (1 use-site
+  in the body), ancestor_used=0 (took the fast path).
+- 3 rebinds across 3 different symbols →
+  per_symbol_visited=2 (a/b uses), ancestor_visited=3
+  (c had 3 ancestor nodes), path_share_bp=4000 (40%).
+
+**Verified:** 21/21 test_issue_411_followup_1 (7 ACs), no
+regressions in test_issue_410 (17/17), test_issue_411
+(20/20), test_issue_412 (23/23). Full gate green.
+
+**Follow-ups still pending for #411 fu1 (the indexed path):**
+1. **Route per_symbol through DefUseIndex::query_def_use**
+   (O(uses) instead of O(n)) — #410 Phase 2/2.
+2. **Per-call instrumentation** — `gen_bump_count_total`
+   metric to measure the cost of the gen path
+   separately.
+3. **Multi-mutation batching** — for `(begin (mutate:*) ...)`,
+   batch the affected sets and run infer_flat_partial
+   once.
+4. **Cross-workspace gen coordination** — when COW copies
+   a workspace, mutations on the copy should not
+   invalidate the parent's cache.
+5. **Quantitative benchmark** — `tests/bench/` to
+   measure the wall-clock speedup of per_symbol vs
+   ancestor under realistic mutation workloads.
+
+**Today's totals (so far):**
+- 6 commits to origin/main
+  - e91e54b1 CI fix + #410 (yesterday was the first ship)
+  - 043f6d82 #411 (post-mutation auto-incremental typecheck)
+  - 925c7968 #412 (type cache gen counter)
+  - 31aebb16 MEMORY (session log)
+  - 8e63777c #411 fu1 (per-symbol wiring) ← this commit
+- 4 issues closed (#410, #411, #412, this is the
+  follow-up not a new issue — just a new commit)
+- ~35.4K tests across 108 binaries, 0 failures
+
+**Next candidates:**
+- #411 fu1 follow-up #1: DefUseIndex routing (the
+  actual O(uses) win)
+- #412 follow-up #1: per-binding generation (replace
+  global gen with per-binding gen)
+- #501b: pre-commit gate hook
+- Full regression run (`python3 build.py full-test`)
+- 跑完收工
