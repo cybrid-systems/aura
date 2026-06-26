@@ -12,6 +12,7 @@ module;
 #include <vector>
 #include "runtime_shared.h"
 #include "observability_metrics.h"
+#include "per_defuse_index.h"
 
 module aura.compiler.evaluator;
 
@@ -1744,7 +1745,22 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     //     with an O(uses) indexed lookup.
     add("compile:per-symbol-reinfer-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
+            // Issue #411 fu1 follow-up #2: 10 keys now
+            // (4 raw per-symbol + 2 derived + 4 raw
+            // per-DefUseIndex). Cap 8 is too small — the
+            // insert loop would fail at the 9th key,
+            // destroy the table, and return make_void().
+            // Use cap = next_pow2(max(8, kv.size() * 2))
+            // so the open-addressing loop's
+            // `(h >> 1 + at) & (hcap - 1)` masking works
+            // correctly (the mask is only correct for
+            // power-of-2 caps).
+            std::size_t cap = std::max<std::size_t>(8, kv.size() * 2);
+            // Round up to next power of 2.
+            std::size_t p2 = 1;
+            while (p2 < cap) p2 <<= 1;
+            cap = p2;
+            auto* ht = FlatHashTable::create(cap);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1784,6 +1800,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         std::uint64_t per_symbol_used = 0, per_symbol_visited = 0;
         std::uint64_t ancestor_used = 0, ancestor_visited = 0;
+        // Issue #411 fu1 follow-up #2: per-DefUseIndex
+        // tracker metrics (read from the same metrics
+        // pointer as the per_symbol / ancestor counters).
+        std::uint64_t per_defuse_index_used = 0;
+        std::uint64_t per_defuse_index_visited = 0;
+        std::uint64_t per_defuse_index_walk_fallback = 0;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
             per_symbol_used = m->per_symbol_reinfer_used_total.load(
@@ -1794,12 +1816,23 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::memory_order_relaxed);
             ancestor_visited = m->ancestor_reinfer_visited_total.load(
                 std::memory_order_relaxed);
+            per_defuse_index_used = m->per_defuse_index_used_total.load(
+                std::memory_order_relaxed);
+            per_defuse_index_visited = m->per_defuse_index_visited_total.load(
+                std::memory_order_relaxed);
+            per_defuse_index_walk_fallback =
+                m->per_defuse_index_walk_fallback_total.load(
+                    std::memory_order_relaxed);
         }
         const std::uint64_t total_visited = per_symbol_visited + ancestor_visited;
         const std::uint64_t path_share_bp =
             (total_visited > 0) ? (per_symbol_visited * 10000u) / total_visited : 0;
         const std::uint64_t avg_per_symbol_bp =
             (per_symbol_used > 0) ? (per_symbol_visited * 10000u) / per_symbol_used : 0;
+        const std::uint64_t per_defuse_index_visited_avg_bp =
+            (per_defuse_index_used > 0)
+                ? (per_defuse_index_visited * 10000u) / per_defuse_index_used
+                : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"per-symbol-used-total", make_int(static_cast<std::int64_t>(per_symbol_used))},
             {"per-symbol-visited-total", make_int(static_cast<std::int64_t>(per_symbol_visited))},
@@ -1807,6 +1840,169 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             {"ancestor-visited-total", make_int(static_cast<std::int64_t>(ancestor_visited))},
             {"path-share-bp", make_int(static_cast<std::int64_t>(path_share_bp))},
             {"avg-per-symbol-bp", make_int(static_cast<std::int64_t>(avg_per_symbol_bp))},
+            // Issue #411 fu1 follow-up #2: per-DefUseIndex
+            // tracker observability (the underlying data
+            // structure for the per-symbol O(uses) path).
+            {"per-defuse-index-used-total", make_int(static_cast<std::int64_t>(per_defuse_index_used))},
+            {"per-defuse-index-visited-total", make_int(static_cast<std::int64_t>(per_defuse_index_visited))},
+            {"per-defuse-index-walk-fallback-total", make_int(static_cast<std::int64_t>(per_defuse_index_walk_fallback))},
+            {"per-defuse-index-visited-avg-bp", make_int(static_cast<std::int64_t>(per_defuse_index_visited_avg_bp))},
+        };
+        return build_hash(kv);
+    });
+
+    // (compile:per-defuse-index-add <idx-name> <caller-loc>)
+    //   — Issue #411 fu1 follow-up #2: add a caller to a
+    //   per-DefUseIndex tracker. The tracker lives on
+    //   CompilerService (per-service state, lifetime =
+    //   service lifetime). The Aura primitive surface lets
+    //   users register per-DefUseIndex call sites
+    //   explicitly, which is the same pattern as the
+    //   existing dep_caller_fn_ registration hooks. The
+    //   future per-DefUseIndex re-inference path will
+    //   read this tracker to look up the use-sites of a
+    //   binding in O(uses) instead of the current O(n) walk.
+    //
+    //   Returns the new size_for_index for the index.
+    add("compile:per-defuse-index-add", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+            return make_void();
+        if (!ev.compiler_service_)
+            return make_int(0);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
+        const std::string idx_name = ev.string_heap_[as_string_idx(a[0])];
+        const std::string caller_loc = ev.string_heap_[as_string_idx(a[1])];
+        using aura::compiler::per_defuse_index::DefUseIndex;
+        using aura::compiler::per_defuse_index::Caller;
+        svc->per_defuse_index_tracker().add_caller(
+            DefUseIndex{idx_name}, Caller{caller_loc});
+        return make_int(static_cast<std::int64_t>(
+            svc->per_defuse_index_tracker().size_for_index(DefUseIndex{idx_name})));
+    });
+
+    // (compile:per-defuse-index-callers <idx-name>)
+    //   — Issue #411 fu1 follow-up #2: return the list of
+    //   callers registered for a specific DefUseIndex as a
+    //   hash. Keys are caller locations (the string passed
+    //   to compile:per-defuse-index-add); values are
+    //   integer indices (just 0..N-1 since the Aura
+    //   primitive only needs to report presence, not
+    //   position). Used by the test_issue_411_followup_2
+    //   tests to verify the per-DefUseIndex isolation.
+    add("compile:per-defuse-index-callers", [&ev](const auto& a) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(std::max<std::size_t>(8, kv.size() * 2));
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE; // avoid HASH_EMPTY collision
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        if (!ev.compiler_service_)
+            return make_int(0);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
+        const std::string idx_name = ev.string_heap_[as_string_idx(a[0])];
+        using aura::compiler::per_defuse_index::DefUseIndex;
+        auto callers = svc->per_defuse_index_tracker().get_callers(DefUseIndex{idx_name});
+        std::vector<std::pair<std::string, EvalValue>> kv;
+        kv.reserve(callers.size());
+        for (std::size_t i = 0; i < callers.size(); ++i) {
+            kv.push_back({callers[i].location, make_int(static_cast<std::int64_t>(i))});
+        }
+        return build_hash(kv);
+    });
+
+    // (compile:per-defuse-index-stats)
+    //   — Issue #411 fu1 follow-up #2: snapshot of the
+    //   per-DefUseIndex tracker's internal state. Returns
+    //   a hash with 3 fields: total-size, index-count,
+    //   defuse-service-ptr (the pointer to the
+    //   CompilerService that owns the tracker, exposed
+    //   for debugging only). Used by
+    //   test_issue_411_followup_2 to verify the tracker
+    //   is wired into the service.
+    add("compile:per-defuse-index-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        if (!ev.compiler_service_)
+            return make_int(0);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
+        const auto& tracker = svc->per_defuse_index_tracker();
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"total-size", make_int(static_cast<std::int64_t>(tracker.total_size()))},
+            {"index-count", make_int(static_cast<std::int64_t>(tracker.index_count()))},
+            {"defuse-service-ptr", make_int(static_cast<std::int64_t>(
+                reinterpret_cast<std::uintptr_t>(svc)))},
         };
         return build_hash(kv);
     });
