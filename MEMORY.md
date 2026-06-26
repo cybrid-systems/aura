@@ -935,3 +935,76 @@ builds on.
 - 1 RAII guard, 1 generation counter, 1 tiered re-inference,
   1 per-DefUseIndex tracker shipped
 - ~35.4K tests, 0 failures
+
+## Session 2026-06-26 — #411 fu1 follow-up #2: per-DefUseIndex wiring
+
+Commit `fe61c8bd` pushed to origin/main. 6 files, +559/-3.
+
+This is the WIRING slice of #411 fu1 follow-up #2. The
+data structure shipped in #411 fu1 follow-up #1 (commit
+26190e82) is now exposed via the Aura primitive surface,
+metrics, and CompilerService. TypeChecker::infer_flat_partial
+still uses the O(n) per_symbol walk — that's the next
+commit in this series (the actual O(uses) wiring).
+
+**What shipped:**
+- `CompilerService::per_defuse_index_tracker_` — per-service
+  per-DefUseIndex caller tracker (lifetime = service).
+  Public accessors `per_defuse_index_tracker()` (ref and
+  const ref).
+- 3 new Aura primitives:
+  - `(compile:per-defuse-index-add <idx> <caller>)` →
+    adds a caller, returns the new size
+  - `(compile:per-defuse-index-callers <idx>)` → returns
+    a hash of `{caller_loc: index}` pairs
+  - `(compile:per-defuse-index-stats)` → returns hash
+    with `total-size`, `index-count`, `defuse-service-ptr`
+- 3 new lifetime-total metrics:
+  - `per_defuse_index_used_total`
+  - `per_defuse_index_visited_total`
+  - `per_defuse_index_walk_fallback_total`
+- `CompilerSnapshot` mirrors the 3 + derives
+  `per_defuse_index_visited_avg_bp` (basis points: visited
+  / max(used, 1) * 10000).
+- `(compile:per-symbol-reinfer-stats)` extended with 4
+  new keys (3 raw + 1 derived). **Bug fix:** the hash
+  table cap was 8, but with 10 keys the open-addressing
+  loop would fail at the 9th key and destroy the table.
+  Fixed by rounding up to the next power of 2 (cap=16
+  for the 10-key hash).
+
+**Test pattern note:** when a hash key is missing,
+`hash-ref` returns a **valid unique_ptr wrapping a void
+value** (not a null pointer). Comparing `!r` would always
+be false for missing keys because the pointer is non-null.
+The correct check is `r && !is_int(*r)` or similar — fix
+applied to AC4.
+
+**Verified:** 27/27 test_issue_411_followup_2 (8 ACs), no
+regressions in test_issue_410/411/412/411_followup_1 or
+test_per_defuse_index. Full gate green.
+
+**Today's totals (so far, 2026-06-26 ~4.5 hours):**
+- 9 commits to origin/main:
+  - e91e54b1 CI fix
+  - 043f6d82 #411
+  - 925c7968 #412
+  - 31aebb16 MEMORY
+  - 8e63777c #411 fu1
+  - 26190e82 #411 fu1 fu1
+  - 67e611a8 MEMORY
+  - fe61c8bd #411 fu1 fu2 ← this commit
+- 4 issues closed (#410, #411, #412, #411 fu1 + 2)
+- 5 个新 ship: CI fix, RAII guard, gen counter, tiered
+  re-inference, per-DefUseIndex tracker (data + wiring)
+- ~35.4K tests, 0 failures across 6 test binaries
+
+**Remaining follow-ups:**
+1. **#411 fu1 follow-up #3**: route `TypeChecker::infer_flat_partial`
+   through the per-DefUseIndex tracker for O(uses) instead
+   of the O(n) walk. The wiring is in place; this is the
+   actual perf optimization.
+2. **#412 follow-up #1**: per-binding generation
+3. **#501b**: pre-commit gate hook
+4. 跑 `python3 build.py full-test` 验证今天 5+ 个 ship
+   没回归
