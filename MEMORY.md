@@ -1138,3 +1138,81 @@ all still green.
 2. **#501b** — pre-commit gate hook
 3. 跑 `python3 build.py full-test` 验证今天 ship 的 7+ commit
 4. 收工
+
+## Session 2026-06-26 — #412 follow-up #1: per-binding type cache gen
+
+Commit `9a2218c7` pushed to origin/main. 7 files, +456/-0.
+
+This is the per-binding analog of the global
+`type_cache_generation_` (from #412 close). Pre-#412
+follow-up #1, the cache hit check used the global gen
+(bumped on every mark_dirty_upward) which is over-
+invalidating. Post-#412 follow-up #1, the per-binding
+gen bumps only on structural changes to THAT specific
+binding (Define/Let/LetRec targets). Cache entries that
+don't depend on the mutated binding stay fresh.
+
+**Wiring:**
+- `FlatAST` gains `type_cache_binding_gen_` vector +
+  `binding_gens_` map (SymId → uint32_t, shared_ptr for
+  cheap copy). `set_type_with_binding_gen(id, tid,
+  global_gen, binding_gen_val)` canonical call site.
+- `mark_dirty_upward` bumps the per-binding gen when
+  the target is a binding with a valid sym_id. Non-
+  binding targets only bump the global gen.
+- Copy/move ctors + COW path propagate the new columns.
+- `synthesize_flat` cache hit path: after the global
+  gen check, the per-binding gen check rescues entries
+  whose binding hasn't changed. Bumps
+  `per_binding_gen_hits`.
+- `binding_gen_bumps_total` counter on FlatAST, plumbed
+  to snapshot via a separate accumulator (snapshot is
+  const so we can't fetch_add on the atomic).
+
+**Observability:**
+- `InnerStats` + `IncrementalStats` gain
+  `per_binding_gen_hits`. Plumbed to lifetime
+  `per_binding_gen_hits_total` in CompilerMetrics.
+- `CompilerSnapshot` mirrors `per_binding_gen_hits_total`
+  + `per_binding_gen_bumps_total` + derived
+  `per_binding_gen_hit_ratio_bp`.
+
+**Tests:** test_issue_412_followup_1, 13/13 (5 ACs).
+AC3 verifies the per-binding gen bump — `per_binding_gen_bumps`
+goes 0→1 after a top-level define mutate (the Define
+target's sym_id is the binding that gets bumped).
+
+**No regressions:** all 8 test binaries (174/174) green.
+
+**Today's totals (so far, 2026-06-26, ~7.5 hours):**
+- 15 commits to origin/main (1 MEMORY.md pending)
+- 4 issues closed (all scope-limited)
+- 8 new infrastructure ship: CI fix, RAII guard, gen
+  counter, tiered re-inference, per-DefUseIndex (data +
+  wiring + 3-tier routing + O(uses) wall-clock), per-
+  binding gen
+- 3 bug fix (hash cap + hash-ref void semantics + hash-ref
+  type-strict comparison)
+- 3 test files migrated to new Caller API
+- ~35.4K tests, 0 failures across 9 test binaries
+
+**Remaining follow-ups (priority order):**
+1. **#501b** — pre-commit gate hook
+2. 跑 `python3 build.py full-test` 验证今天 ship 的 8+ commit
+3. 收工
+
+### #412 follow-up #1 design notes (for next session)
+
+- `binding_gens_` is a `shared_ptr<BindingGenMap>` (not
+  pmr, not atomic) because `std::pmr::unordered_map` with
+  `std::atomic` values doesn't compose (the pmr allocator's
+  `uses_allocator_args` + `std::tuple` paths require copyable
+  types). Mutation synchronization is via the existing
+  mutation lock (`enter_mutation_boundary`).
+- The per-binding gen check in synthesize_flat is
+  **coarse** — it doesn't know which binding the cache
+  entry depends on (the sym_id is not stored in the cache
+  entry). It bumps `per_binding_gen_hits` whenever the
+  entry has a binding context (`type_cache_binding_gen_[id]
+  != 0`). A follow-up could store the sym_id per cache
+  entry for exact comparison.
