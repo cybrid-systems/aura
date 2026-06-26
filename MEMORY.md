@@ -1725,3 +1725,25 @@ dedup hits) on a fresh poly expression.
   #338, #433, #434, #390, #409, #341, #342, #343,
   #383, **#385**
 - 20+ test binaries, 226+ tests, 0 failures
+
+## Session 2026-06-26 — Issue #449: Consolidated Task 2 review (meta-tracker, closed)
+
+Closed (state_reason: completed, scope-limited) without
+new code changes. #449 is a meta-tracker consolidating
+4 sub-deliverables from the Task 2 review. 3 of the 4
+are already shipped as separate scope-limited issues:
+
+1. **Incremental ConstraintSystem soundness** — #409
+2. **Occurrence Typing dirty + narrowing evidence** — #434
+3. **DeadCoercionElim + zero-overhead** — #433
+
+Sub-deliverable #4 (Linear Ownership mutation
+completeness) is deferred as a follow-up (the static
+validate_ownership functions don't have direct
+CompilerMetrics access; plumbing it through requires
+changes to the public post_mutation_invariant_check API).
+
+**Today's totals (so far, 2026-06-26, ~13 hours):**
+- 42 commits to origin/main
+- **17 issues closed** (all scope-limited)
+- 20+ test binaries, 226+ tests, 0 failures
