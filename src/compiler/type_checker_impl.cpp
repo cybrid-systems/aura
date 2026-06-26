@@ -3680,21 +3680,42 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     }
     if (per_defuse_index_used) {
         ++stats_.per_defuse_index_used_total;
-        // Still need the actual NodeId set for the
-        // inference loop. Fall through to the per-symbol
-        // walk (which is O(n) but is the canonical
-        // "use-sites" computation). The metric correctly
-        // tracks the per-DefUseIndex signal, but the
-        // visited count for this call goes into
-        // per_symbol_visited_total (not the per-DefUseIndex
-        // bucket) because that's what the walk actually
-        // costs in cycles. The future #411 fu1 fu3 commit
-        // will store NodeIds in the tracker so the
-        // visited count can also be attributed to the
-        // per-DefUseIndex bucket.
+        // Issue #411 fu1 fu4: the actual O(uses) win.
+        // The tracker now stores NodeIds directly, so we
+        // can iterate the use-sites without paying the
+        // O(n) `affected_subtree_for_symbol` walk cost.
+        // Get the sym's name from the StringPool, look
+        // up the tracker entry, and use the stored
+        // NodeIds as the affected set. If the sym isn't
+        // in the tracker (the `index_count() > 0` check
+        // was a coarse gate — the tracker might be
+        // populated for OTHER syms), fall through to the
+        // O(n) walk (bump walk_fallback).
         if (sym_for_lookup != aura::ast::INVALID_SYM) {
-            affected = affected_subtree_for_symbol(flat, sym_for_lookup);
-            stats_.per_symbol_visited_total += affected.size();
+            const auto* tracker = static_cast<
+                const per_defuse_index::PerDefUseIndexTracker*>(
+                    per_defuse_index_tracker);
+            const std::string sym_name(
+                pool.resolve(sym_for_lookup));
+            const auto& tracker_callers =
+                tracker->get_callers(per_defuse_index::DefUseIndex{sym_name});
+            if (!tracker_callers.empty()) {
+                // O(uses) — directly iterate the tracker
+                // entries. Bump visited_total with the
+                // actual O(uses) count.
+                affected.reserve(tracker_callers.size());
+                for (const auto& c : tracker_callers)
+                    affected.push_back(c.node_id);
+                stats_.per_defuse_index_visited_total +=
+                    affected.size();
+            } else {
+                // Tracker doesn't have this sym — fall
+                // through to O(n) walk (bump walk_fallback).
+                affected = affected_subtree_for_symbol(
+                    flat, sym_for_lookup);
+                ++stats_.per_defuse_index_walk_fallback_total;
+                stats_.per_symbol_visited_total += affected.size();
+            }
         }
     } else {
         // 2) per-symbol path (existing O(n) walk, from

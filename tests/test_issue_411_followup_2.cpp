@@ -75,7 +75,7 @@ bool test_add_caller_primitive() {
     // side-effect is the caller registration). The test
     // pattern of binding the result and calling it would
     // fail because the result is an int, not a function.
-    cs.eval("(set-code \"(begin (compile:per-defuse-index-add \\\"foo\\\" \\\"c1\\\"))\")");
+    cs.eval("(set-code \"(begin (compile:per-defuse-index-add \\\"foo\\\" 101))\")");
     cs.eval("(eval-current)");
     // Now read back via the stats primitive — total-size should be 1.
     auto r = cs.eval("(hash-ref (compile:per-defuse-index-stats) \"total-size\")");
@@ -92,8 +92,8 @@ bool test_add_caller_primitive() {
 bool test_callers_primitive() {
     std::println("\n--- AC3: (compile:per-defuse-index-callers) returns hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(begin (compile:per-defuse-index-add \\\"foo\\\" \\\"c1\\\") "
-             "(compile:per-defuse-index-add \\\"foo\\\" \\\"c2\\\"))\")");
+    cs.eval("(set-code \"(begin (compile:per-defuse-index-add \\\"foo\\\" 101) "
+             "(compile:per-defuse-index-add \\\"foo\\\" 102))\")");
     cs.eval("(eval-current)");
     // Define a helper that returns the callers hash.
     cs.eval("(set-code \"(define cs_hash (compile:per-defuse-index-callers \\\"foo\\\"))\")");
@@ -105,21 +105,26 @@ bool test_callers_primitive() {
         ++g_failed; return false;
     }
     CHECK(true, "(compile:per-defuse-index-callers) returns a hash");
-    // Verify the 2 callers exist.
-    auto rc1 = cs.eval("(hash-ref cs_hash \"c1\")");
-    auto rc2 = cs.eval("(hash-ref cs_hash \"c2\")");
-    if (rc1 && aura::compiler::types::is_int(*rc1))
-        CHECK(true, "hash-ref cs_hash \"c1\" returns int");
+    // Verify the 2 callers exist. hash-ref keys are
+    // strings (the tracker stores NodeIds stringified
+    // for Aura-side display), so the key must be a
+    // string. The hash-ref primitive does type-strict
+    // comparison — int key 101 doesn't match string key
+    // "101". Use string keys throughout.
+    auto r101 = cs.eval("(hash-ref cs_hash \"101\")");
+    auto r102 = cs.eval("(hash-ref cs_hash \"102\")");
+    if (r101 && aura::compiler::types::is_int(*r101))
+        CHECK(true, "hash-ref cs_hash \"101\" returns int");
     else {
-        std::println("  FAIL: hash-ref cs_hash \"c1\" did not return int (val={})",
-                     rc1 ? rc1->val : -1);
+        std::println("  FAIL: hash-ref cs_hash \"101\" did not return int (val={})",
+                     r101 ? r101->val : -1);
         ++g_failed;
     }
-    if (rc2 && aura::compiler::types::is_int(*rc2))
-        CHECK(true, "hash-ref cs_hash \"c2\" returns int");
+    if (r102 && aura::compiler::types::is_int(*r102))
+        CHECK(true, "hash-ref cs_hash \"102\" returns int");
     else {
-        std::println("  FAIL: hash-ref cs_hash \"c2\" did not return int (val={})",
-                     rc2 ? rc2->val : -1);
+        std::println("  FAIL: hash-ref cs_hash \"102\" did not return int (val={})",
+                     r102 ? r102->val : -1);
         ++g_failed;
     }
     return true;
@@ -129,29 +134,29 @@ bool test_per_index_isolation_via_auras() {
     std::println("\n--- AC4: per-DefUseIndex isolation via Aura surface ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(begin "
-             "  (compile:per-defuse-index-add \\\"foo\\\" \\\"fc1\\\") "
-             "  (compile:per-defuse-index-add \\\"foo\\\" \\\"fc2\\\") "
-             "  (compile:per-defuse-index-add \\\"bar\\\" \\\"bc1\\\"))\")");
+             "  (compile:per-defuse-index-add \\\"foo\\\" 201) "
+             "  (compile:per-defuse-index-add \\\"foo\\\" 202) "
+             "  (compile:per-defuse-index-add \\\"bar\\\" 301))\")");
     cs.eval("(eval-current)");
-    // Per-DefUseIndex isolation: fc1 IS in foo, bc1 is NOT
-    // in foo, fc1 is NOT in bar, bc1 IS in bar.
-    auto rfc1_in_foo = cs.eval("(hash-ref (compile:per-defuse-index-callers \"foo\") \"fc1\")");
-    auto rbc1_in_foo = cs.eval("(hash-ref (compile:per-defuse-index-callers \"foo\") \"bc1\")");
-    auto rfc1_in_bar = cs.eval("(hash-ref (compile:per-defuse-index-callers \"bar\") \"fc1\")");
-    auto rbc1_in_bar = cs.eval("(hash-ref (compile:per-defuse-index-callers \"bar\") \"bc1\")");
+    // Per-DefUseIndex isolation: 201 IS in foo, 301 is NOT
+    // in foo, 201 is NOT in bar, 301 IS in bar.
+    auto r201_in_foo = cs.eval("(hash-ref (compile:per-defuse-index-callers \"foo\") \"201\")");
+    auto r301_in_foo = cs.eval("(hash-ref (compile:per-defuse-index-callers \"foo\") \"301\")");
+    auto r201_in_bar = cs.eval("(hash-ref (compile:per-defuse-index-callers \"bar\") \"201\")");
+    auto r301_in_bar = cs.eval("(hash-ref (compile:per-defuse-index-callers \"bar\") \"301\")");
     // The isolation checks use is_int() — a missing key
     // returns a valid EvalResult wrapping a void value
     // (the unique_ptr is non-null, just is_int() ==
     // false). Comparing `!r` would always be false for
     // missing keys because the pointer is non-null.
-    CHECK(rfc1_in_foo && aura::compiler::types::is_int(*rfc1_in_foo),
-          "fc1 IS in foo's caller list (expected, is_int)");
-    CHECK(!rbc1_in_foo || !aura::compiler::types::is_int(*rbc1_in_foo),
-          "bc1 is NOT in foo's caller list (per-DefUseIndex isolation)");
-    CHECK(!rfc1_in_bar || !aura::compiler::types::is_int(*rfc1_in_bar),
-          "fc1 is NOT in bar's caller list (per-DefUseIndex isolation)");
-    CHECK(rbc1_in_bar && aura::compiler::types::is_int(*rbc1_in_bar),
-          "bc1 IS in bar's caller list (expected, is_int)");
+    CHECK(r201_in_foo && aura::compiler::types::is_int(*r201_in_foo),
+          "201 IS in foo's caller list (expected, is_int)");
+    CHECK(!r301_in_foo || !aura::compiler::types::is_int(*r301_in_foo),
+          "301 is NOT in foo's caller list (per-DefUseIndex isolation)");
+    CHECK(!r201_in_bar || !aura::compiler::types::is_int(*r201_in_bar),
+          "201 is NOT in bar's caller list (per-DefUseIndex isolation)");
+    CHECK(r301_in_bar && aura::compiler::types::is_int(*r301_in_bar),
+          "301 IS in bar's caller list (expected, is_int)");
     return true;
 }
 
@@ -159,9 +164,9 @@ bool test_stats_primitive() {
     std::println("\n--- AC5: (compile:per-defuse-index-stats) returns hash ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(begin "
-             "  (compile:per-defuse-index-add \\\"s1\\\" \\\"a\\\") "
-             "  (compile:per-defuse-index-add \\\"s1\\\" \\\"b\\\") "
-             "  (compile:per-defuse-index-add \\\"s2\\\" \\\"c\\\"))\")");
+             "  (compile:per-defuse-index-add \\\"s1\\\" 11) "
+             "  (compile:per-defuse-index-add \\\"s1\\\" 12) "
+             "  (compile:per-defuse-index-add \\\"s2\\\" 13))\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(define st (compile:per-defuse-index-stats))");
     if (!r) { std::println("  FAIL: define st failed"); ++g_failed; return false; }

@@ -2506,6 +2506,13 @@ public:
             tc.stats().per_defuse_index_used_total, std::memory_order_relaxed);
         metrics_.per_defuse_index_walk_fallback_total.fetch_add(
             tc.stats().per_defuse_index_walk_fallback_total, std::memory_order_relaxed);
+        // Issue #411 fu1 fu4: per-DefUseIndex visited
+        // count (the O(uses) signal). Pre-fu4 this was
+        // always 0 (the per-DefUseIndex path still did
+        // the O(n) walk). Post-fu4 it's the real
+        // wall-clock signal.
+        metrics_.per_defuse_index_visited_total.fetch_add(
+            tc.stats().per_defuse_index_visited_total, std::memory_order_relaxed);
         return n;
     }
 
@@ -4822,6 +4829,10 @@ public:
             tc.stats().per_defuse_index_used_total, std::memory_order_relaxed);
         metrics_.per_defuse_index_walk_fallback_total.fetch_add(
             tc.stats().per_defuse_index_walk_fallback_total, std::memory_order_relaxed);
+        // Issue #411 fu1 fu4: per-DefUseIndex visited
+        // count (the O(uses) signal).
+        metrics_.per_defuse_index_visited_total.fetch_add(
+            tc.stats().per_defuse_index_visited_total, std::memory_order_relaxed);
         metrics_.incremental_typecheck_auto_invocations_total.fetch_add(
             1, std::memory_order_relaxed);
         metrics_.incremental_typecheck_re_inferred_total.fetch_add(
