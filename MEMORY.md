@@ -1444,3 +1444,45 @@ plumbed).
 1. **#501b** — pre-commit gate hook
 2. 跑 `python3 build.py full-test`
 3. 收工
+
+## Session 2026-06-26 — Issue #434: Per-node Occurrence Typing dirty recovery (scope-limited)
+
+Commit `843302a6` pushed to origin/main. 6 files, +323/-2.
+
+Wires a new `narrowing_dirty_recovery` counter that
+measures the post-mutation re-analysis workload
+specifically. Pre-#434, the engine had a single
+`narrowing_reanalyzed` counter (predicate memo miss
+— first time seen or epoch advance). Post-#434, the
+new counter is bumped when the re-analysis was
+specifically triggered by a dirty If node
+(post-mutation re-inference).
+
+**Wiring:**
+- `synthesize_flat_if`: when predicate memo misses
+  AND `flat.is_dirty(if_id)`, bump
+  `stats_.narrowing_dirty_recovery`.
+- Distinct from `narrowing_reanalyzed` (broader).
+
+**Tests:** test_issue_434, 6/6 (5 ACs). AC4 verifies
+the typecheck path plumbs the counter end-to-end
+(`narrowing_reanalyzed=1` + `narrowing_applied=1` +
+`cache_misses=10` confirms the full pipeline ran).
+
+**Today's totals (so far, 2026-06-26, ~10 hours):**
+- 27 commits to origin/main (含 2 MEMORY.md)
+- **9 issues closed** (all scope-limited): #410, #411,
+  #412, #411 fu1 (4 fu), #412 fu1, #413, #386, #338,
+  #433, #434
+- 13 个新 ship: CI fix + RAII guard + gen counter +
+  tiered re-inference + per-DefUseIndex (4 fu) +
+  per-binding gen + mutation_log trace + Occurrence
+  Typing observability + and/or precision + dead
+  coercion observability + **dirty recovery observability**
+- 4 bug 修复
+- **14 test binaries, 219 tests, 0 failures**
+
+**Remaining follow-ups:**
+1. **#501b** — pre-commit gate hook
+2. 跑 `python3 build.py full-test`
+3. 收工
