@@ -2415,6 +2415,15 @@ public:
                                                        std::memory_order_relaxed);
         metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
                                                     std::memory_order_relaxed);
+        // Issue #386: narrowing observability. Mirror
+        // the per-call stats into the lifetime
+        // CompilerMetrics counters.
+        metrics_.narrowing_applied_total.fetch_add(
+            tc.stats().narrowing_applied, std::memory_order_relaxed);
+        metrics_.narrowing_skipped_total.fetch_add(
+            tc.stats().narrowing_skipped, std::memory_order_relaxed);
+        metrics_.narrowing_reanalyzed_total.fetch_add(
+            tc.stats().narrowing_reanalyzed, std::memory_order_relaxed);
 
         // Issue #116: the typecheck command doesn't proceed to
         // IR lowering (it just reports types + diagnostics), so
@@ -2513,6 +2522,15 @@ public:
         // wall-clock signal.
         metrics_.per_defuse_index_visited_total.fetch_add(
             tc.stats().per_defuse_index_visited_total, std::memory_order_relaxed);
+        // Issue #386: narrowing observability. Mirror
+        // the per-call stats into the lifetime
+        // CompilerMetrics counters.
+        metrics_.narrowing_applied_total.fetch_add(
+            tc.stats().narrowing_applied, std::memory_order_relaxed);
+        metrics_.narrowing_skipped_total.fetch_add(
+            tc.stats().narrowing_skipped, std::memory_order_relaxed);
+        metrics_.narrowing_reanalyzed_total.fetch_add(
+            tc.stats().narrowing_reanalyzed, std::memory_order_relaxed);
         return n;
     }
 
@@ -4515,6 +4533,25 @@ public:
             last_invalidation_trace_records_ = trace_records_from_flat;
         }
         s.invalidation_trace_records_total = invalidation_trace_records_acc_;
+        // Issue #386: mirror the 3 narrowing
+        // observability counters and compute the
+        // derived applied ratio (basis points:
+        // applied / (applied + skipped) * 10000).
+        // 0 when no narrowing has happened yet.
+        s.narrowing_applied_total =
+            metrics_.narrowing_applied_total.load(std::memory_order_relaxed);
+        s.narrowing_skipped_total =
+            metrics_.narrowing_skipped_total.load(std::memory_order_relaxed);
+        s.narrowing_reanalyzed_total =
+            metrics_.narrowing_reanalyzed_total.load(std::memory_order_relaxed);
+        const std::uint64_t narrow_total =
+            s.narrowing_applied_total + s.narrowing_skipped_total;
+        if (narrow_total > 0) {
+            s.narrowing_applied_ratio_bp =
+                (s.narrowing_applied_total * 10000u) / narrow_total;
+        } else {
+            s.narrowing_applied_ratio_bp = 0;
+        }
         // Issue #259: type metadata propagation observability.
         // Read lifetime totals from CompilerMetrics, compute
         // the derived coverage (basis points: 0-10000).
@@ -4884,6 +4921,15 @@ public:
         // count (the O(uses) signal).
         metrics_.per_defuse_index_visited_total.fetch_add(
             tc.stats().per_defuse_index_visited_total, std::memory_order_relaxed);
+        // Issue #386: narrowing observability. Mirror
+        // the per-call stats into the lifetime
+        // CompilerMetrics counters.
+        metrics_.narrowing_applied_total.fetch_add(
+            tc.stats().narrowing_applied, std::memory_order_relaxed);
+        metrics_.narrowing_skipped_total.fetch_add(
+            tc.stats().narrowing_skipped, std::memory_order_relaxed);
+        metrics_.narrowing_reanalyzed_total.fetch_add(
+            tc.stats().narrowing_reanalyzed, std::memory_order_relaxed);
         metrics_.incremental_typecheck_auto_invocations_total.fetch_add(
             1, std::memory_order_relaxed);
         metrics_.incremental_typecheck_re_inferred_total.fetch_add(

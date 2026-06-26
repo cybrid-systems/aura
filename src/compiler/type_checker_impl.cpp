@@ -2637,6 +2637,14 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             ++predicate_memo_hits_;
         } else {
             ++predicate_memo_misses_;
+            // Issue #386: re-analysis signal. Bumped
+            // on every cache miss (a predicate that
+            // wasn't in the memo — either first time
+            // seen or epoch advanced). High
+            // re-analysis rate is a tuning signal:
+            // indicates the memo is dropping too
+            // eagerly.
+            ++stats_.narrowing_reanalyzed;
             occ = analyze_predicate_flat(flat, pool, cond_id, reg_);
             predicate_memo_[cond_id] = PredicateMemoEntry{
                 cond_id, cache_epoch_, occ};
@@ -2718,8 +2726,24 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
         // Then-branch: variable has refined type
         env_.push_scope();
         ownership_env_.push_scope();
-        if (env_.is_bound(occ->var_name))
+        if (env_.is_bound(occ->var_name)) {
+            // Issue #386: narrowing applied
+            // (refined type successfully pushed
+            // into env). Bumped on the success
+            // path only.
+            ++stats_.narrowing_applied;
             env_.bind(occ->var_name, occ->refined_type);
+        } else {
+            // Issue #386: narrowing analyzed
+            // (predicate memo missed, occ
+            // returned) but the var isn't
+            // bound in env (e.g. narrowing
+            // target is a free variable or the
+            // narrowing is in a context where
+            // the var isn't in scope). Bump
+            // skipped for observability.
+            ++stats_.narrowing_skipped;
+        }
         TypeId then_type = synthesize_flat(flat, pool, then_id, flat.get(then_id));
         ownership_env_.pop_scope();
         env_.pop_scope();
@@ -3506,6 +3530,10 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     stats_.cache_misses += r.cache_misses;
     stats_.stale_cache += r.stale_cache;
     stats_.gen_saved += r.gen_saved;
+    // Issue #386: aggregate narrowing counters.
+    stats_.narrowing_applied += r.narrowing_applied;
+    stats_.narrowing_skipped += r.narrowing_skipped;
+    stats_.narrowing_reanalyzed += r.narrowing_reanalyzed;
     last_coercions_ = std::move(r.coercions);
     return r.inferred_type;
 }
@@ -3559,6 +3587,15 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
     result.predicate_memo_hits = engine.predicate_memo_hits();
     result.predicate_memo_misses = engine.predicate_memo_misses();
     result.predicate_memo_evictions = engine.predicate_memo_evictions();
+    // Issue #386: narrowing observability
+    // (per-call engine stats). The full #386 scope
+    // wires narrowing into the let/if paths, this
+    // slice ships the observability foundation
+    // (counters for the application paths the
+    // engine took).
+    result.narrowing_applied = es.narrowing_applied;
+    result.narrowing_skipped = es.narrowing_skipped;
+    result.narrowing_reanalyzed = es.narrowing_reanalyzed;
     return result;
 }
 
@@ -3828,6 +3865,10 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     stats_.cache_misses += es.cache_misses;
     stats_.stale_cache += es.stale_cache;
     stats_.gen_saved += es.gen_saved;
+    // Issue #386: aggregate narrowing counters.
+    stats_.narrowing_applied += es.narrowing_applied;
+    stats_.narrowing_skipped += es.narrowing_skipped;
+    stats_.narrowing_reanalyzed += es.narrowing_reanalyzed;
     // Issue #411 follow-up #1: per_symbol / ancestor path
     // tracking already bumped on this infer_flat_partial
     // call (at the top of the function). The per-call

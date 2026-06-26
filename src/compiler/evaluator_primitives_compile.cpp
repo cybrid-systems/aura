@@ -433,6 +433,86 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (compile:occurrence-typing-stats)
+    //   — Issue #386: deep Occurrence Typing
+    //   narrowing observability. Returns a hash with
+    //   4 fields: applied-total / skipped-total /
+    //   reanalyzed-total / applied-ratio-bp. The
+    //   full #386 scope is wiring narrowing into the
+    //   let/if paths + strengthening
+    //   consistent_unify for refined types +
+    //   leveraging per-node occurrence-dirty for
+    //   targeted re-analysis. This scope-limited
+    //   slice ships the observability foundation.
+    add("compile:occurrence-typing-stats",
+        [&ev](const auto&) -> EvalValue {
+        auto build_hash =
+            [&](std::span<const std::pair<std::string, EvalValue>> kv)
+            -> EvalValue {
+            auto cap = std::max<std::size_t>(8, kv.size() * 2);
+            std::size_t hcap = 8;
+            while (hcap < cap) hcap *= 2;
+            auto* ht = FlatHashTable::create(hcap);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) *
+                        0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
+                          0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        if (!ev.compiler_service_)
+            return make_int(0);
+        auto* svc = static_cast<class CompilerService*>(
+            ev.compiler_service_);
+        auto snap = svc->snapshot();
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"applied-total",
+             make_int(static_cast<std::int64_t>(
+                 snap.narrowing_applied_total))},
+            {"skipped-total",
+             make_int(static_cast<std::int64_t>(
+                 snap.narrowing_skipped_total))},
+            {"reanalyzed-total",
+             make_int(static_cast<std::int64_t>(
+                 snap.narrowing_reanalyzed_total))},
+            {"applied-ratio-bp",
+             make_int(static_cast<std::int64_t>(
+                 snap.narrowing_applied_ratio_bp))},
+        };
+        return build_hash(kv);
+    });
+
     // (compile:status)
     //   → ((:key value) ...)  association list
     //   Returns incremental compilation status:

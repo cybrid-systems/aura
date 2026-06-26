@@ -219,6 +219,23 @@ struct CompilerMetrics {
     // (compile:mutation-log-invalidation-trace
     // mutation-id).
     std::atomic<std::uint64_t> invalidation_trace_records_total{0};
+    // Issue #386: deep Occurrence Typing narrowing
+    // observability. 3 lifetime-total counters that
+    // measure the application paths the engine took
+    // across the session:
+    //   - narrowing_applied_total: push of refined
+    //     type into env succeeded
+    //   - narrowing_skipped_total: narrowing analyzed
+    //     but rejected (var not bound, etc.)
+    //   - narrowing_reanalyzed_total: predicate
+    //     re-analyzed (cache miss)
+    // The applied/(applied+skipped) ratio measures
+    // narrowing effectiveness. The reanalyzed /
+    // (memo_hits+misses) ratio measures memo
+    // effectiveness.
+    std::atomic<std::uint64_t> narrowing_applied_total{0};
+    std::atomic<std::uint64_t> narrowing_skipped_total{0};
+    std::atomic<std::uint64_t> narrowing_reanalyzed_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)
