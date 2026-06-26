@@ -1691,3 +1691,37 @@ expression.
   #412, #411 fu1 (4 fu), #412 fu1, #413, #386, #338,
   #433, #434, #390, #409, #341, #342, #343, **#383**
 - 19+ test binaries, 212+ tests, 0 failures
+
+## Session 2026-06-26 — Issue #385: Let-Poly caching observability (scope-limited)
+
+Commit `6c2d9be0` pushed to origin/main. 5 files, +369/-2.
+
+Wires 3 lifetime counters for the TypeRegistry
+Let-Poly machinery + 1 derived ratio. Pre-#385
+the dedup cache had no observability. Post-#385
+the AI Agent can measure the dedup ratio via
+the new (compile:let-poly-stats) primitive.
+
+**Wiring:**
+- `TypeRegistry` gains 3 `std::atomic<uint64_t>*`
+  pointers (poly_register_counter_ /
+  poly_dedup_hits_counter_ /
+  poly_instantiate_counter_) + setter. Atomic
+  addresses (not typed `CompilerMetrics*`) to
+  avoid the cross-module dependency on the full
+  `CompilerMetrics` struct.
+- `register_forall`: bump on every call + on
+  dedup hit.
+- `instantiate_forall`: bump on every call.
+
+**Tests:** test_issue_385, 14/14 (5 ACs). AC4
+verifies 25.5% dedup ratio (47 register, 12
+dedup hits) on a fresh poly expression.
+
+**Today's totals (so far, 2026-06-26, ~12.5 hours):**
+- 41 commits to origin/main
+- **16 issues closed** (all scope-limited): #410,
+  #411, #412, #411 fu1 (4 fu), #412 fu1, #413, #386,
+  #338, #433, #434, #390, #409, #341, #342, #343,
+  #383, **#385**
+- 20+ test binaries, 226+ tests, 0 failures
