@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**470** registrations scanned from `src/**/*.cpp`.
+**471** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -163,7 +163,7 @@ Runtime canonical list: `(api-reference)`.
 - `synthesize:optimize` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (29)
+## Compile: (30)
 
 - `compile:ast-ops-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
@@ -176,6 +176,7 @@ Runtime canonical list: `(api-reference)`.
 - `compile:dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:epoch` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:incremental-typecheck-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:inline-pass-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:invalidations-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:ir-soa-stats` — `src/compiler/evaluator_primitives_compile.cpp`
