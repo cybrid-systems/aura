@@ -1579,7 +1579,18 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                 auto type_name = pool.resolve(type_lit.sym_id);
                 auto type_id = reg.lookup_type(std::string(type_name));
                 if (type_id.valid()) {
-                    return OccurrenceInfoFlat{std::string(pool.resolve(var_node.sym_id)), type_id};
+                    // Issue #342: populate provenance
+                    // fields (predicate_name +
+                    // source_cond_id) so subsequent
+                    // diagnostics can attach a
+                    // BlameInfo with the Narrowing
+                    // party.
+                    OccurrenceInfoFlat occ{
+                        std::string(pool.resolve(var_node.sym_id)),
+                        type_id};
+                    occ.predicate_name = "type?";
+                    occ.source_cond_id = cond_id;
+                    return occ;
                 }
             }
             return std::nullopt;
@@ -1591,14 +1602,29 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
             auto arg = flat.get(arg_id);
             if (arg.tag == NodeTag::Variable) {
                 auto var_name = pool.resolve(arg.sym_id);
+                // Issue #342: helper to construct the
+                // OccurrenceInfoFlat with provenance
+                // fields populated (predicate_name +
+                // source_cond_id).
+                auto make_occ = [&](const std::string& pname,
+                                     aura::core::TypeId tid) {
+                    OccurrenceInfoFlat occ{std::string(var_name), tid};
+                    occ.predicate_name = pname;
+                    occ.source_cond_id = cond_id;
+                    return occ;
+                };
+                auto make_occ_sv = [&](std::string_view pname,
+                                        aura::core::TypeId tid) {
+                    return make_occ(std::string(pname), tid);
+                };
                 if (fn_name == "string?")
-                    return OccurrenceInfoFlat{std::string(var_name), reg.string_type()};
+                    return make_occ("string?", reg.string_type());
                 else if (fn_name == "number?" || fn_name == "integer?")
-                    return OccurrenceInfoFlat{std::string(var_name), reg.int_type()};
+                    return make_occ_sv(fn_name, reg.int_type());
                 else if (fn_name == "boolean?")
-                    return OccurrenceInfoFlat{std::string(var_name), reg.bool_type()};
+                    return make_occ("boolean?", reg.bool_type());
                 else if (fn_name == "null?" || fn_name == "void?")
-                    return OccurrenceInfoFlat{std::string(var_name), reg.void_type()};
+                    return make_occ_sv(fn_name, reg.void_type());
                 else if (fn_name == "pair?")
                     // Issue #279: pair? should refine to the Pair type,
                     // not register a fresh (Dynamic)->Dynamic func type.
@@ -1611,26 +1637,26 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                     // given the TypeRegistry constructor pre-registers it,
                     // but we fall back to dynamic_type() in the safety
                     // case to avoid UB.
-                    return OccurrenceInfoFlat{std::string(var_name), [&]() {
+                    return make_occ("pair?", [&]() {
                         auto p = reg.lookup_type("Pair");
                         return p.valid() ? p : reg.dynamic_type();
-                    }()};
+                    }());
                 else if (fn_name == "list?")
                     // Issue #279: add list? predicate for Vector refinement
                     // (was missing pre-#279). Same lookup_type fallback
                     // pattern as pair?.
-                    return OccurrenceInfoFlat{std::string(var_name), [&]() {
+                    return make_occ("list?", [&]() {
                         auto v = reg.lookup_type("Vector");
                         return v.valid() ? v : reg.dynamic_type();
-                    }()};
+                    }());
                 else if (fn_name == "symbol?")
-                    return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
+                    return make_occ("symbol?", reg.dynamic_type());
                 else if (fn_name == "float?")
-                    return OccurrenceInfoFlat{std::string(var_name), reg.lookup_type("Float")};
+                    return make_occ("float?", reg.lookup_type("Float"));
                 else if (fn_name == "hash?")
-                    return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
+                    return make_occ("hash?", reg.dynamic_type());
                 else if (fn_name == "procedure?")
-                    return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
+                    return make_occ("procedure?", reg.dynamic_type());
                 else {
                     // Issue #279 follow-up #4: consult the
                     // custom-predicate registry. If this
@@ -1645,8 +1671,7 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                                 std::string(fn_name))) {
                         auto tid = reg.lookup_type(*custom_type_name);
                         if (tid.valid())
-                            return OccurrenceInfoFlat{
-                                std::string(var_name), tid};
+                            return make_occ_sv(fn_name, tid);
                     }
                 }
             }
@@ -2907,6 +2932,22 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             // into env). Bumped on the success
             // path only.
             ++stats_.narrowing_applied;
+            // Issue #342: bump the provenance
+            // counter if the OccurrenceInfoFlat
+            // has predicate_name + source_cond_id
+            // populated. Pre-#342 this was always
+            // false (the fields didn't exist).
+            if (!occ->predicate_name.empty() &&
+                occ->source_cond_id != 0) {
+                if (cs_.metrics_) {
+                    auto* m = static_cast<
+                        struct CompilerMetrics*>(
+                        cs_.metrics_);
+                    m->narrowing_provenance_total
+                        .fetch_add(1,
+                            std::memory_order_relaxed);
+                }
+            }
             env_.bind(occ->var_name, occ->refined_type);
         } else {
             // Issue #386: narrowing analyzed

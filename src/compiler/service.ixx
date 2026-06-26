@@ -4647,6 +4647,12 @@ public:
         } else {
             s.match_narrowed_ratio_bp = 0;
         }
+        // Issue #342: narrowing provenance
+        // observability. Mirrors the lifetime
+        // counter in CompilerMetrics.
+        s.narrowing_provenance_total =
+            metrics_.narrowing_provenance_total.load(
+                std::memory_order_relaxed);
         const std::uint64_t narrow_total =
             s.narrowing_applied_total + s.narrowing_skipped_total;
         if (narrow_total > 0) {

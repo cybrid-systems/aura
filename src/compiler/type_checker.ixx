@@ -339,6 +339,20 @@ export struct OccurrenceInfoFlat {
     std::string var_name;
     aura::core::TypeId refined_type;
     bool is_negation = false;
+    // Issue #342: provenance fields. The predicate
+    // name (e.g. "number?", "string?") and the source
+    // cond NodeId are recorded so subsequent
+    // diagnostics can attach a BlameInfo with the
+    // Narrowing party. Pre-#342 only the var_name +
+    // refined_type were tracked; post-mutation or
+    // error path diagnostics couldn't point to the
+    // specific predicate that produced the
+    // narrowing.
+    //
+    // source_cond_id: 0 = no source (defensive;
+    // should always be set in the normal path).
+    std::string predicate_name;
+    std::uint32_t source_cond_id = 0;
 };
 export class InferenceEngine {
     aura::core::TypeRegistry& reg_;
