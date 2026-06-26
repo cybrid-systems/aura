@@ -72,13 +72,20 @@ concept NodeHandle = std::integral<T> || requires(T t) {
 // Anything that exposes:
 //   - get(id) → NodeView-like (returns view with tag +
 //     children span)
-//   - children(id) → a std::ranges::view
+//   - children(id) → a std::ranges::range
 //   - tag(id) → returns Tag
 //
-// Today this is satisfied by FlatAST in aura.core.ast.
-// We use ranges::view (not just ranges::range) so callers
-// can pipe through ranges::views::filter / transform
-// without copying.
+// Today this is satisfied by FlatAST in aura.core.ast
+// (FlatAST::children() returns std::span<const NodeId>,
+// which is a borrowed_range but NOT a std::ranges::view).
+// We constrain to std::ranges::range (not view) so span
+// qualifies — spans can still pipe through
+// ranges::views::filter / transform in C++23 because
+// they're borrowed.
+//
+// If a future caller writes a transformation that needs
+// ownership of the children range (e.g., std::ranges::to),
+// they can wrap with std::views::all at the call site.
 //
 // Two-parameter form: ASTContainer<C, Id> where C is the
 // container type and Id is the node handle type. The
@@ -87,7 +94,7 @@ concept NodeHandle = std::integral<T> || requires(T t) {
 export template <typename C, typename Id = std::uint32_t>
 concept ASTContainer = NodeHandle<Id> && requires(C& ast, Id id) {
     { ast.get(id) };
-    { ast.children(id) } -> std::ranges::view;
+    { ast.children(id) } -> std::ranges::range;
     { ast.tag(id) };
 };
 

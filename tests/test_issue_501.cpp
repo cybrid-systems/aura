@@ -132,9 +132,9 @@ struct BadASTNoChildren {
     auto tag(std::uint32_t) const { return 0; }
 };
 
-struct BadASTChildrenNotView {
+struct BadASTChildrenNotRange {
     auto get(std::uint32_t) const { return 0; }
-    std::vector<std::uint32_t> children(std::uint32_t) { return {}; }
+    int children(std::uint32_t) { return 0; } // int is NOT a std::ranges::range
     auto tag(std::uint32_t) const { return 0; }
 };
 
@@ -146,8 +146,8 @@ bool test_ast_container_concept() {
                   "GoodAST (default Id=uint32_t) also satisfies");
     static_assert(!aura::core::ASTContainer<BadASTNoChildren, std::uint32_t>,
                   "BadASTNoChildren does NOT satisfy");
-    static_assert(!aura::core::ASTContainer<BadASTChildrenNotView, std::uint32_t>,
-                  "BadASTChildrenNotView does NOT satisfy");
+    static_assert(!aura::core::ASTContainer<BadASTChildrenNotRange, std::uint32_t>,
+                  "BadASTChildrenNotRange does NOT satisfy");
     CHECK(true, "static_asserts for ASTContainer");
     return true;
 }
