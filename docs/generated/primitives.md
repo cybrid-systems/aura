@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**485** registrations scanned from `src/**/*.cpp`.
+**486** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -95,12 +95,13 @@ Runtime canonical list: `(api-reference)`.
 - `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `mutate:wrap` — `src/compiler/evaluator_primitives_mutate.cpp`
 
-## Ast: (24)
+## Ast: (25)
 
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:defs` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:generation` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `ast:list-snapshots` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:node-lifecycle-stats` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:nodes` — `src/compiler/evaluator_primitives_ast.cpp`

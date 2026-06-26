@@ -997,6 +997,99 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (ast:generation-stats)
+    //   — Issue #343: long-term stability
+    //   observability. Returns a hash with 5
+    //   fields: current-generation (live value
+    //   of FlatAST::generation_, uint16_t) /
+    //   bump-generation-total (lifetime total
+    //   of generation bumps) /
+    //   generation-wrap-total (lifetime total
+    //   of uint16_t wrap-arounds) /
+    //   stable-ref-invalidations-total
+    //   (lifetime total of StableNodeRef
+    //   rejections) /
+    //   node-gen-stale-access-total (lifetime
+    //   total of stale NodeId accesses).
+    //   Companion to (query:stable-ref-stats)
+    //   which returns the SUM of the 3 lifetime
+    //   counters; post-#343 the AI Agent can
+    //   react to each category independently
+    //   (e.g. checkpoint when wrap-count > 0,
+    //   investigate when stale-access-count
+    //   grows faster than bump-count).
+    add("ast:generation-stats",
+        [&ev](const auto&) -> EvalValue {
+        auto build_hash =
+            [&](std::span<const std::pair<std::string, EvalValue>> kv)
+            -> EvalValue {
+            auto cap = std::max<std::size_t>(8, kv.size() * 2);
+            std::size_t hcap = 8;
+            while (hcap < cap) hcap *= 2;
+            auto* ht = FlatHashTable::create(hcap);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) *
+                        0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
+                          0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        if (!ev.compiler_service_)
+            return make_int(0);
+        auto* svc = static_cast<class CompilerService*>(
+            ev.compiler_service_);
+        auto snap = svc->snapshot();
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"current-generation",
+             make_int(static_cast<std::int64_t>(
+                 snap.current_generation))},
+            {"bump-generation-total",
+             make_int(static_cast<std::int64_t>(
+                 snap.bump_generation_count))},
+            {"generation-wrap-total",
+             make_int(static_cast<std::int64_t>(
+                 snap.generation_wrap_count))},
+            {"stable-ref-invalidations-total",
+             make_int(static_cast<std::int64_t>(
+                 snap.stable_ref_invalidations))},
+            {"node-gen-stale-access-total",
+             make_int(static_cast<std::int64_t>(
+                 snap.node_gen_stale_access_count))},
+        };
+        return build_hash(kv);
+    });
+
     // (compile:status)
     //   → ((:key value) ...)  association list
     //   Returns incremental compilation status:

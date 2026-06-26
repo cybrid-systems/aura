@@ -83,6 +83,25 @@ struct CompilerSnapshot {
     std::uint64_t is_valid_check_count = 0;
     std::uint64_t stable_ref_invalidations = 0;
     std::uint64_t atomic_batch_commits = 0;
+    // Issue #343: long-term stability observability.
+    // - current_generation: the live value of
+    //   FlatAST::generation_ (uint16_t, 1..65535).
+    //   Useful for AI agents deciding when to
+    //   checkpoint before the next wrap.
+    // - generation_wrap_count: lifetime total of
+    //   uint16_t wrap-arounds (every 65K bumps).
+    // - node_gen_stale_access_count: lifetime total
+    //   of raw NodeId accesses that hit a stale
+    //   node_gen_ (a mutation advanced the per-node
+    //   generation past the accessor's read).
+    //   Pre-#343 these were only accessible via
+    //   (query:stable-ref-stats) which returns the
+    //   SUM; post-#343 the snapshot exposes them
+    //   individually so the AI Agent can react to
+    //   each category independently.
+    std::uint16_t current_generation = 0;
+    std::uint64_t generation_wrap_count = 0;
+    std::uint64_t node_gen_stale_access_count = 0;
     // Issue #256: AST operation observability. Mirrors
     // CompilerMetrics::{children_call_count,
     // parent_of_call_count, mark_dirty_upward_call_count,
