@@ -2468,16 +2468,21 @@ public:
         tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
         // Issue #258: plumb metrics for solve_delta timing.
         tc.set_metrics(&metrics_);
-        auto n = tc.infer_flat_partial(*current_ast_, *current_pool_, rec, diag);
-        // Issue #258: accumulate incremental typecheck stats
-        // into CompilerMetrics (lifetime totals) — the
-        // multi-mutation perf signal.
-        metrics_.typecheck_cache_hits_total.fetch_add(tc.stats().cache_hits,
-                                                      std::memory_order_relaxed);
-        metrics_.typecheck_cache_misses_total.fetch_add(tc.stats().cache_misses,
-                                                        std::memory_order_relaxed);
-        metrics_.typecheck_stale_cache_total.fetch_add(tc.stats().stale_cache,
-                                                       std::memory_order_relaxed);
+        // Issue #411 fu1 follow-up #3: plumb the
+        // per-DefUseIndex tracker so infer_flat_partial can
+        // route through the O(uses) path when the sym is
+        // registered. When the tracker is non-null AND has
+        // at least one index registered, the
+        // per-DefUseIndex path fires (bumps
+        // per_defuse_index_used_total). When null or
+        // empty, falls back to the O(n) walk (bumps
+        // per_symbol_used_total). The split is
+        // observable via (compile:per-symbol-reinfer-stats).
+        auto* tracker_ptr = per_defuse_index_tracker_.index_count() > 0
+                                ? static_cast<void*>(&per_defuse_index_tracker_)
+                                : nullptr;
+        auto n = tc.infer_flat_partial(*current_ast_, *current_pool_, rec, diag,
+                                       tracker_ptr);
         metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
                                                     std::memory_order_relaxed);
         // Issue #411 follow-up #1: per-symbol / ancestor
@@ -2494,6 +2499,13 @@ public:
             tc.stats().ancestor_used_total, std::memory_order_relaxed);
         metrics_.ancestor_reinfer_visited_total.fetch_add(
             tc.stats().ancestor_visited_total, std::memory_order_relaxed);
+        // Issue #411 fu1 follow-up #3: per-DefUseIndex
+        // path tracking. Mirror the per-call stats into
+        // the lifetime CompilerMetrics counters.
+        metrics_.per_defuse_index_used_total.fetch_add(
+            tc.stats().per_defuse_index_used_total, std::memory_order_relaxed);
+        metrics_.per_defuse_index_walk_fallback_total.fetch_add(
+            tc.stats().per_defuse_index_walk_fallback_total, std::memory_order_relaxed);
         return n;
     }
 
@@ -4772,7 +4784,15 @@ public:
         // accumulate into the lifetime totals (Issue #258 /
         // #411 wiring).
         tc.set_metrics(&metrics_);
-        auto n = tc.infer_flat_partial(flat, pool, rec, diag);
+        // Issue #411 fu1 follow-up #3: plumb the
+        // per-DefUseIndex tracker (same as incremental_infer
+        // above). When the tracker is non-null AND has
+        // at least one index, the O(uses) per-DefUseIndex
+        // path fires.
+        auto* tracker_ptr2 = per_defuse_index_tracker_.index_count() > 0
+                                 ? static_cast<void*>(&per_defuse_index_tracker_)
+                                 : nullptr;
+        auto n = tc.infer_flat_partial(flat, pool, rec, diag, tracker_ptr2);
         metrics_.typecheck_cache_hits_total.fetch_add(
             tc.stats().cache_hits, std::memory_order_relaxed);
         metrics_.typecheck_cache_misses_total.fetch_add(
@@ -4795,6 +4815,13 @@ public:
             tc.stats().ancestor_used_total, std::memory_order_relaxed);
         metrics_.ancestor_reinfer_visited_total.fetch_add(
             tc.stats().ancestor_visited_total, std::memory_order_relaxed);
+        // Issue #411 fu1 follow-up #3: per-DefUseIndex
+        // path tracking. Mirror the per-call stats into
+        // the lifetime CompilerMetrics counters.
+        metrics_.per_defuse_index_used_total.fetch_add(
+            tc.stats().per_defuse_index_used_total, std::memory_order_relaxed);
+        metrics_.per_defuse_index_walk_fallback_total.fetch_add(
+            tc.stats().per_defuse_index_walk_fallback_total, std::memory_order_relaxed);
         metrics_.incremental_typecheck_auto_invocations_total.fetch_add(
             1, std::memory_order_relaxed);
         metrics_.incremental_typecheck_re_inferred_total.fetch_add(
