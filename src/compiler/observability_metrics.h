@@ -110,6 +110,18 @@ struct CompilerMetrics {
     // primitive read a single source of truth). The actual
     // elision logic is in pass_manager.ixx.
     std::atomic<std::uint64_t> linear_elide_count{0};
+    // Issue #433: dead coercion elimination
+    // observability. The pass eliminates CastOps whose
+    // source type == target type (identity) or that
+    // sit between two casts of the same source (chain).
+    // The lifetime total is accumulated in service.ixx
+    // after each dce.run() call. Pre-#433 the pass
+    // existed (pass_manager.ixx:705) and was wired
+    // into the pipeline (service.ixx:1442) but the
+    // eliminated_count was never surfaced to the user
+    // — the metric lived only on the per-call pass
+    // instance.
+    std::atomic<std::uint64_t> dead_coercion_eliminated_total{0};
     // Issue #254: IR SoA dual-emit counters (lifetime total).
     // Bumped by service.ixx after each lower_to_ir call when
     // dual-emit is enabled. The underlying counters live on

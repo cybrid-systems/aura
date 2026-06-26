@@ -1453,6 +1453,22 @@ public:
             metrics_.linear_elide_count.fetch_add(ts.linear_elide_count(),
                                                   std::memory_order_relaxed);
         }
+        // Issue #433: dead coercion elimination
+        // observability. Accumulate the dce pass's
+        // eliminated_count() into the lifetime
+        // CompilerMetrics counter. The pass existed
+        // pre-#433 and was wired into the pipeline
+        // (here, in the dce.run() call above), but
+        // the eliminated_count was never surfaced
+        // to the user — the metric lived only on
+        // the per-call pass instance. Post-#433 the
+        // lifetime total is readable via snapshot()
+        // and the new (compile:dead-coercion-stats)
+        // Aura primitive.
+        if (dce.eliminated_count() > 0) {
+            metrics_.dead_coercion_eliminated_total.fetch_add(
+                dce.eliminated_count(), std::memory_order_relaxed);
+        }
 
         if (ar.has_error()) {
             for (auto& d : ar.result().diagnostics) {
@@ -4435,6 +4451,11 @@ public:
         s.closure_stale_returns = metrics_.closure_stale_returns.load(std::memory_order_relaxed);
         // Issue #253: linear-move elision count (lifetime total).
         s.linear_elide_count = metrics_.linear_elide_count.load(std::memory_order_relaxed);
+        // Issue #433: dead coercion elimination
+        // (lifetime total of CastOps eliminated by the
+        // DeadCoercionEliminationPass).
+        s.dead_coercion_eliminated_total =
+            metrics_.dead_coercion_eliminated_total.load(std::memory_order_relaxed);
         // Issue #254: IR SoA dual-emit counters (lifetime total).
         s.ir_soa_instructions_emitted =
             metrics_.ir_soa_instructions_emitted.load(std::memory_order_relaxed);

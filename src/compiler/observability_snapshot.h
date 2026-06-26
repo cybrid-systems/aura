@@ -60,6 +60,17 @@ struct CompilerSnapshot {
     // linear_ownership_state == Owned). Mirrors
     // CompilerMetrics::linear_elide_count.
     std::uint64_t linear_elide_count = 0;
+    // Issue #433: dead coercion elimination
+    // observability. Mirrors the
+    // dead_coercion_eliminated_total counter in
+    // CompilerMetrics. The dce_hit_rate_bp derived
+    // metric is eliminated / (eliminated + remaining)
+    // — measures what share of CastOps were
+    // eliminated. We don't have a "remaining" counter
+    // yet (would require scanning the IR post-pass
+    // to count remaining CastOps); the follow-up
+    // will add it.
+    std::uint64_t dead_coercion_eliminated_total = 0;
     // Issue #254: IR SoA dual-emit counters (lifetime total).
     // Mirrors CompilerMetrics::ir_soa_instructions_emitted +
     // CompilerMetrics::ir_soa_functions_emitted.
