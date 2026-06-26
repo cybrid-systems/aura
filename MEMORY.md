@@ -1272,3 +1272,8 @@ trace increments 0→2 on a single binding mutation
 - State: completed (scope-limited)
 - Tests: test_issue_413 8/8, regression 182/182
 - Follow-ups: (1) (compile:mutation-log-invalidation-trace mutation-id) primitive, (2) reverse-mapping (SymId → latest mutation_id), (3) wire to mutation_log diff in post_mutation_invariant_check, (4) trace pruning, (5) bench
+
+**#413 close CORRECTION (2026-06-26 13:10+):** The "no GitHub token in this session" claim above is WRONG. Anqi pointed out `~/.github-token` exists (ghp_... classic PAT). #413 was actually closed via the REST API in this session:
+  - `curl PATCH /repos/cybrid-systems/aura/issues/413` with state=closed, state_reason=completed → response state=closed, state_reason=completed ✓
+  - `curl POST /repos/cybrid-systems/aura/issues/413/comments` with the close comment → comment_id 4806553853, in_reply_to 13283492 ✓
+TOOLS.md now records the `~/.github-token` location + usage pattern for ALL future Aura issue close operations. The "no gh CLI" part is still true — use raw `curl` to the REST API.
