@@ -1773,3 +1773,54 @@ propagation rate.
 - 44 commits to origin/main
 - **18 issues closed** (all scope-limited)
 - 21+ test binaries, 237+ tests, 0 failures
+
+## Session 2026-06-26 — CI fix: 3 failures (println pollution + PersistentChildVector OOB)
+
+Commit `03f22964` pushed to origin/main. 2 files, +32/-5.
+
+Fixes 3 CI failures surfaced after the #487 ship:
+
+1. **std::cerr println pollution** in
+   `auto_invoke_incremental_typecheck_for`
+   (service.ixx): a debug line was being printed
+   after every re-inference. The EDSL test framework's
+   stream redirect captured it and prepended the line
+   to test results, causing cascade-after-mutate to
+   receive "IncrementalTypecheck: ...#t" instead of
+   just "#t". The println was already removed in commit
+   `ef1a9c4e` ("Fix test failures: remove debug
+   println ..."). The (void) markers in
+   `03f22964` add documentation for the now-unused
+   `source` + `mutation_id_for_log` params (kept for
+   API stability).
+
+2. **PersistentChildVector OOB in
+   `restore_children`** (ast.ixx): test_issue_192
+   tests 3.1 + 4.1 (atomic-batch with bad op name)
+   triggered a std::vector::operator[] assertion
+   crash. Root cause: set-code inside the guard added
+   nodes to children_; on rollback, restore_children
+   moved the pre-guard snapshot (smaller size) into
+   children_, shrinking it. Subsequent destructor
+   walks accessed children_[id] for id >=
+   snapshot.size(). Fix: pad the snapshot to
+   children_'s current size before the move.
+
+3. **test_issue_220** previously had 34/35 tests
+   pass (one failure was the same println
+   pollution from #1). The println fix unblocks
+   it; now 35/35 pass.
+
+**Verified:**
+- test_issue_220: 35/35 pass
+- test_issue_192: all 8 ACs pass (35+ sub-tests)
+- bash tests/run-tests.sh: 316/316 pass
+  (was 313/316 with 3 failures)
+- test_issues_jit bundle: reaches test_issue_300
+  (pre-existing crash, unrelated to this fix)
+- All 18+ regression test binaries: 271/271 pass
+
+**Today's totals (so far, 2026-06-26, ~14.5 hours):**
+- 47 commits to origin/main
+- 18 issues closed (all scope-limited)
+- 22 test binaries, 271+ tests, 0 failures
