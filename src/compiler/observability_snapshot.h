@@ -201,6 +201,12 @@ struct CompilerSnapshot {
     // populated by analyze_predicate_flat
     // post-#342.
     std::uint64_t narrowing_provenance_total = 0;
+    // Issue #383: ConstraintSystem worklist + consistent_
+    // unify observability. Mirrors the 3 lifetime
+    // counters in CompilerMetrics.
+    std::uint64_t consistent_unify_total = 0;
+    std::uint64_t consistent_subtype_total = 0;
+    std::uint64_t worklist_restart_total = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.

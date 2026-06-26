@@ -490,6 +490,18 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
 }
 
 bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
+    // Issue #383: bump the consistent_unify counter
+    // for observability. Every call (success or
+    // failure) bumps it. The full #383 scope also
+    // strengthens consistent_unify edge cases with
+    // Dynamic + Forall + Occurrence mixtures; this
+    // slice ships the observability foundation.
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(
+            metrics_);
+        m->consistent_unify_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
     t1 = find(t1);
     t2 = find(t2);
 
@@ -554,6 +566,15 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
 }
 
 bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
+    // Issue #383: bump the consistent_subtype
+    // counter for observability. See consistent_unify
+    // above for the full rationale.
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(
+            metrics_);
+        m->consistent_subtype_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
     sub = find(sub);
     sup = find(sup);
 
@@ -751,9 +772,27 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             dirty_count_, std::memory_order_relaxed);
     }
     std::size_t max_passes = 10;
+    // Issue #383: worklist_restart detection. The
+    // pre-#383 worklist was a single-pass per
+    // worklist vector; if processing added new
+    // constraints (e.g. via unify → consistent_unify
+    // → register_forall), they'd sit in the
+    // dirty set but not be processed until the
+    // next solve_delta call. Post-#383, we
+    // re-scan the dirty set at the end of each
+    // pass and append any new entries to the
+    // worklist (a "restart"). The restart count is
+    // bumped into the lifetime counter for
+    // observability.
+    auto worklist_initial_size = worklist.size();
     while (!worklist.empty() && max_passes-- > 0) {
         auto current = std::move(worklist);
         worklist.clear();
+        // Issue #383: capture the dirty set size
+        // before the pass; if it grew, the pass
+        // added new constraints and we need a
+        // restart to process them.
+        const auto dirty_before = dirty_count_;
         for (auto idx : current) {
             // Skip indices that are out of range (defensive: a
             // stale dirty bit for a constraint that was later
@@ -769,6 +808,43 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                 ok = consistent_unify(c.lhs, c.rhs);
             if (!ok)
                 return SolveResult::CONFLICT;
+        }
+        // Issue #383: worklist restart detection. If
+        // the dirty set grew during the pass (new
+        // constraints added by unify /
+        // consistent_unify / register_forall), append
+        // the new entries to the worklist for the
+        // next pass. Bump the lifetime counter for
+        // observability.
+        if (dirty_count_ > dirty_before) {
+            if (metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(
+                    metrics_);
+                m->worklist_restart_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            // Re-scan constraint_dirty_ for new
+            // entries that weren't in the original
+            // worklist. We walk the full dirty
+            // vector (cheap) and pick up any new
+            // dirty entries.
+            for (std::size_t i = 0;
+                 i < constraint_dirty_.size(); ++i) {
+                if (constraint_dirty_[i]) {
+                    bool already_in =
+                        std::find(worklist.begin(),
+                                  worklist.end(),
+                                  i) != worklist.end();
+                    bool was_in_initial =
+                        std::find(
+                            current.begin(),
+                            current.end(),
+                            i) != current.end();
+                    if (!already_in && !was_in_initial) {
+                        worklist.push_back(i);
+                    }
+                }
+            }
         }
     }
 
