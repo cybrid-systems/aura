@@ -2,13 +2,10 @@
 //
 // Tests the unchecked pair access functions directly.
 //
-#include <cstdio>
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
 
 // ── Minimal pair pool (matching aura_jit_runtime.cpp layout) ──
+
+import std;
 static int64_t* g_pair_cars = nullptr;
 static int64_t* g_pair_cdrs = nullptr;
 static size_t g_pair_count = 0;

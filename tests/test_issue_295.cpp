@@ -6,12 +6,10 @@
 //  - (ws:try-mutation expr-string) wraps eval in snapshot/rollback
 //  - Rollback returns #f on failure
 //  - Coverage holes exclude signals that ARE asserted
-#include <iostream>
-#include <cstdio>
-#include <cstring>
-#include <string>
 #include <unistd.h>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 
@@ -43,7 +41,7 @@ static std::string first_line(const std::string& out) {
 
 // AC #1: coverage-holes returns signals without assertions
 bool test_coverage_holes() {
-    std::cout << "\n--- AC #1: coverage-holes returns un-asserted signals ---\n";
+    std::println("\n--- AC #1: coverage-holes returns un-asserted signals ---");
     std::string src = R"AU(
 (load "lib/std/eda.aura")
 (define m
@@ -69,7 +67,7 @@ bool test_coverage_holes() {
 
 // AC #2: coverage-holes returns empty when all signals are asserted
 bool test_coverage_holes_full() {
-    std::cout << "\n--- AC #2: all-asserted → empty coverage holes ---\n";
+    std::println("\n--- AC #2: all-asserted → empty coverage holes ---");
     std::string src = R"AU(
 (load "lib/std/eda.aura")
 (define m
@@ -96,7 +94,7 @@ bool test_coverage_holes_full() {
 
 // AC #3: ws:try-mutation on success returns (result . snap-id)
 bool test_ws_try_success() {
-    std::cout << "\n--- AC #3: ws:try-mutation success ---\n";
+    std::println("\n--- AC #3: ws:try-mutation success ---");
     std::string src = R"AU(
 (define r (ws:try-mutation "(+ 1 2)"))
 (display "is-pair=") (display (pair? r)) (newline)
@@ -117,7 +115,7 @@ bool test_ws_try_success() {
 
 // AC #4: ws:try-mutation on parse failure returns #f (rollback)
 bool test_ws_try_rollback() {
-    std::cout << "\n--- AC #4: ws:try-mutation rollback on failure ---\n";
+    std::println("\n--- AC #4: ws:try-mutation rollback on failure ---");
     std::string src = R"AU(
 (define r (ws:try-mutation "((unbalanced parens"))
 (display "r=") (display r) (newline)
@@ -131,7 +129,7 @@ bool test_ws_try_rollback() {
 
 // AC #5: ws:try-mutation with bad arg returns #f
 bool test_ws_try_bad_arg() {
-    std::cout << "\n--- AC #5: ws:try-mutation bad arg ---\n";
+    std::println("\n--- AC #5: ws:try-mutation bad arg ---");
     std::string src = R"AU(
 (define r (ws:try-mutation 42))
 (display "r=") (display r) (newline)
@@ -144,15 +142,13 @@ bool test_ws_try_bad_arg() {
 }
 
 int run_tests() {
-    std::cout << "═══ Issue #295 ═══\n";
+    std::println("═══ Issue #295 ═══");
     test_coverage_holes();
     test_coverage_holes_full();
     test_ws_try_success();
     test_ws_try_rollback();
     test_ws_try_bad_arg();
-    std::cout << "\n═══ Results: " << g_passed << "/" << g_passed + g_failed
-              << " passed, " << g_failed << "/" << g_passed + g_failed
-              << " failed ═══\n";
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══\n", g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 

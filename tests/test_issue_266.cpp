@@ -3,8 +3,6 @@
 // test_issue_266.cpp — Issue #266: finer-grained SoA rollback for
 // children_ / sym_id_ under MutationBoundaryGuard.
 
-#include <cstdio>
-#include <string>
 
 #include "test_harness.hpp"
 using aura::test::g_passed;

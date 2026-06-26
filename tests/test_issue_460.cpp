@@ -11,14 +11,10 @@
 //            - compile:mark-block-dirty! + compile:is-block-dirty?
 //              (regression from #196)
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <unordered_map>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

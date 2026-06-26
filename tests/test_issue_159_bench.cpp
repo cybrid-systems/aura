@@ -20,20 +20,8 @@
 //   - JSON to tests/bench_results/issue_159_bench.json
 //   - Human-readable table to stdout (PASS/FAIL/median_us)
 
-#include <algorithm>
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <map>
-#include <print>
-#include <sstream>
-#include <string>
-#include <vector>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

@@ -26,13 +26,8 @@
 //   AC5: CompilerSnapshot fields are populated correctly
 //   AC6: snapshot() with no workspace gives 0 marker counts
 
-#include <cstdio>
-#include <cstdlib>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

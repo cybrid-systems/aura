@@ -4,13 +4,6 @@
 #include "compiler/observability_snapshot.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/observability_logger.h"  // for snapshot_to_json
-#include <cstdio>
-#include <filesystem>
-#include <format>
-#include <future>
-#include <iostream>
-#include <print>
-#include <set>
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -47,7 +40,6 @@ extern "C" bool aura_emit_object_file(const void* mod, const char* path);
 extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
                                       const void* functions, unsigned int num_functions);
 
-#include <cstdlib>                    // atexit
 extern "C" void aura_reset_runtime(); // Issue #137: cleanup at exit
 extern "C" void aura_set_prim_registration(const char* c_code);
 extern "C" void aura_set_string_pool(const char** strings, unsigned int count);

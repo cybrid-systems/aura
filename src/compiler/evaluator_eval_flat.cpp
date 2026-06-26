@@ -2,26 +2,7 @@
 // aura.compiler.evaluator module partition.
 
 module;
-#include <atomic>
 
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <cmath>
-#include <expected>
-#include <functional>
-#include <iostream>
-#include <memory>
-#include <mutex>
-#include <optional>
-#include <span>
-#include <shared_mutex>
-#include <string>
-#include <unordered_map>
-#include <unordered_set>
-#include <variant>
-#include <vector>
 #include "runtime_shared.h"
 #include "observability_metrics.h"
 

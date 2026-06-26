@@ -34,10 +34,6 @@
 //   AC5: Trivial inlining of macro-introduced callees is also
 //        blocked (consistency between the two paths)
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <print>
 
 // Unified test harness (Issue #226)
 #include "test_harness.hpp"
@@ -123,6 +119,8 @@ bool test_default_skips_macro_introduced() {
     auto callee_fid = module.add_function(std::move(callee));
     auto caller = make_caller_with_call(callee_fid);
     module.add_function(std::move(caller));
+
+import std;
 
     aura::compiler::InlinePass pass;
     pass.run(module);

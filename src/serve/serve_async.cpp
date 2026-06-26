@@ -9,26 +9,16 @@
 #include "thread_pool.h"
 #include "aura_platform.h"
 
-#include <print>
-#include <iostream>
-#include <thread>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <vector>
-#include <array>
+
+import std;
 #if AURA_HAVE_EPOLL
 #include <sys/epoll.h>
 #endif
-#include <cstdio>
-#include <cerrno>
-#include <cstring>
-#include <string>
 #include <poll.h>
-#include <deque>
 #include <dlfcn.h>
-#include <unordered_map>
-#include <memory>
 
 import aura.compiler.service;
 import aura.compiler.evaluator;

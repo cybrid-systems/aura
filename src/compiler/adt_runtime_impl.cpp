@@ -11,17 +11,8 @@
 
 module;
 
-#include <array>
-#include <cstdint>
-#include <cstdio>
-#include <functional>
-#include <optional>
-#include <span>
-#include <string>
-#include <unordered_map>
-#include <vector>
-
 module aura.compiler.adt_runtime;
+import std;
 
 import aura.compiler.value;
 

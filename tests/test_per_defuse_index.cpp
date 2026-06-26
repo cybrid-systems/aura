@@ -34,14 +34,10 @@
 //   AC9: DefUseIndex equality (FNV-1a hash on name)
 //   AC10: copyable + movable
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <print>
 
 #include "compiler/per_defuse_index.h"
 
+import std;
 namespace aura_per_defuse_index_detail {
 static int g_passed = 0;
 static int g_failed = 0;

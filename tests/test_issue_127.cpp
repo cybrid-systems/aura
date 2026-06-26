@@ -1,6 +1,5 @@
 // @category: unit
 // @reason: no CompilerService usage; pure C++ test
-#include <unordered_map>
 // test_issue_127.cpp — Verify the Result<T> aliases
 // (Issue #127).
 //
@@ -16,21 +15,14 @@
 //      lower_to_ir_with_cache_result are declared and
 //      callable from the lowering module.
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <memory>
-#include <print>
-#include <string>
-#include <vector>
-#include <type_traits>
-#include <expected>
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

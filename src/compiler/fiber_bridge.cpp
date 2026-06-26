@@ -16,9 +16,8 @@
 // Issue #451's aura_fiber_static_gc_pause_attributed_to_mutation
 // lives in fiber.cpp (next to the static counter).
 
-#include <cstddef>
-#include <cstdint>
 
+import std;
 extern "C" {
 
 // Issue #438: per-thread mutation boundary depth.

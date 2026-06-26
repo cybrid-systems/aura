@@ -27,13 +27,8 @@
 //   AC5: empty batch is a no-op (no error, returns #t)
 //   AC6: bad arg types return error
 
-#include <cstdio>
-#include <cstdlib>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

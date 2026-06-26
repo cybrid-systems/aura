@@ -16,6 +16,7 @@ module;
 #include <vector>
 
 module aura.compiler.type_checker;
+import std;
 import aura.core.mutation;
 // Issue #411 fu1 follow-up #3: per-DefUseIndex tracker
 // for O(uses) re-inference routing. The header is shared

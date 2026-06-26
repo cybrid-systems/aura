@@ -41,17 +41,11 @@
 // the existing infrastructure is wired up and the coarse gate
 // continues to work post-#168 / #145 / #224.
 
-#include <atomic>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <print>
-#include <string>
-#include <vector>
 
 // Unified test harness (Issue #226 cycle 1+2).
 #include "test_harness.hpp"
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

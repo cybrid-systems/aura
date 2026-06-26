@@ -33,12 +33,8 @@
 //   AC7: set_type stamps the cache with the current gen
 //        (low-level FlatAST test)
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <print>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

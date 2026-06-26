@@ -7,12 +7,10 @@
 //            - Env::lookup_cell_ptr SoA walk skips stale frames
 //            - frame.version_ still works for direct lookup paths
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

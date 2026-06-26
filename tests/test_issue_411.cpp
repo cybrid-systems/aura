@@ -51,12 +51,8 @@
 //        typed_mutate in Eager mode (the actual AC from #411)
 //   AC8: full regression — existing eval still works
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <print>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

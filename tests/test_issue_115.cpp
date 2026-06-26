@@ -12,14 +12,6 @@
 // flakes in test_gc_safepoint_running_fiber in some sandbox
 // environments.
 
-#include <atomic>
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
-#include <print>
-#include <string>
-#include <thread>
-#include <vector>
 
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
@@ -30,6 +22,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

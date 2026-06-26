@@ -2,15 +2,7 @@
 // aura.compiler.evaluator module partition.
 
 module;
-#include <iostream>
 
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
-#include <ctime>
-#include <limits>
-#include <span>
-#include <string>
 
 module aura.compiler.evaluator;
 
@@ -148,7 +140,7 @@ Primitives::Primitives() {
     };
     table_["current-time"] = [](std::span<const EvalValue> a) {
         (void)a;
-        return make_int(static_cast<std::int64_t>(::time(nullptr)));
+        return make_int(static_cast<std::int64_t>(std::time(nullptr)));
     };
     // Populate ordered_names_ with all primitives registered directly via table_[]
     for (auto& [name, _] : table_) {

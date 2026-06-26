@@ -1,13 +1,7 @@
 module;
-#include <cstddef>
-#include <cstdint>
-#include <cstdlib>
-#include <span>
-#include <stdexcept>
-#include <string>
-#include <vector>
 
 module aura.core.ast;
+import std;
 import aura.core.type;
 
 namespace aura::ast {

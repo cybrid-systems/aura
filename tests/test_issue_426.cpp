@@ -17,13 +17,10 @@
 //            - (regression) prior #456/#460/#448
 //              primitives still work
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

@@ -41,12 +41,8 @@
 //        a known-shape body)
 //   AC7: full regression — existing eval still works
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <print>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

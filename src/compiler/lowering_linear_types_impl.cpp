@@ -18,10 +18,8 @@
 
 module;
 
-#include <cstdint>
-#include <optional>
-
 module aura.compiler.lowering_linear_types;
+import std;
 
 import aura.core.ast;
 import aura.compiler.ir;

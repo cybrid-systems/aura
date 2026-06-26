@@ -21,10 +21,6 @@
 // Test strategy: direct C++ tests on IRModule + IRFunction, no
 // Aura layer needed (matches test_issue_171.cpp pattern).
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <print>
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local

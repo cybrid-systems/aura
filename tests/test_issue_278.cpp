@@ -3,13 +3,10 @@
 //          (Issue #278: lib/std query/mutate wrappers +
 //          mutation-log:summary + ast:stable-refs-valid?)
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

@@ -2,13 +2,10 @@
 // @reason: Structured C++ IR for SV (Issue #435 Phase 5
 //          — ConstraintIR + list IR baseline for the same).
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

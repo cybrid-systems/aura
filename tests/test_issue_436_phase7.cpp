@@ -5,13 +5,10 @@
 //          constructs. Phase 7 ships the WireIR type + Aura
 //          bridge; list-based eda:wire is unchanged.
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

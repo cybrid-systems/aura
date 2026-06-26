@@ -14,12 +14,10 @@
 //            - flush_mutation_boundary coexists with the #453
 //              trampolines (regression: the #285 path still works)
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

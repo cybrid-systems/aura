@@ -2,10 +2,8 @@
 
 #include "git_ctx.h"
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 
+import std;
 #ifdef AURA_HAVE_LIBGIT2
 #include <git2/diff.h>
 #include <git2/commit.h>

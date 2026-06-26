@@ -23,12 +23,8 @@
 //   AC5: snapshot has 4 per-DefUseIndex fields (already
 //        in #411 fu2; just verify the wiring still works)
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <print>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

@@ -36,12 +36,8 @@
 //   AC6: regression — typecheck still works for basic cases
 //   AC7: snapshot has 5 new per-symbol fields
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <print>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

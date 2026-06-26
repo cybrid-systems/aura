@@ -11,18 +11,14 @@
 //   5. Basic block range-based iteration
 //   6. The view is cheap to copy (static_assert in the .ixx)
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <print>
-#include <string>
-#include <vector>
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 import aura.compiler.ir;

@@ -2,16 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_ctor.cpp.
 
 module;
-#include <atomic>
 
-#include <cstdint>
-#include <format>
-#include <functional>
-#include <map>
-#include <span>
-#include <string>
-#include <utility>
-#include <vector>
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
 

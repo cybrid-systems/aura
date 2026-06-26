@@ -1,11 +1,8 @@
 // serve/gc_coordinator.cpp — GC coordinator implementation
 #include "gc_coordinator.h"
 #include "scheduler.h"
-#include <cstdio>
-#include <cstring>
-#include <algorithm>
-#include <chrono>
 
+import std;
 namespace aura::serve {
 
 // ── Constructor ─────────────────────────────────────────

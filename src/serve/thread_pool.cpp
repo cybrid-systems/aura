@@ -1,10 +1,8 @@
 // serve/thread_pool.cpp — Thread pool implementation (jthread-based)
 #include "thread_pool.h"
 #include <unistd.h>
-#include <cstdio>
-#include <cerrno>
-#include <cstring>
 
+import std;
 namespace aura::serve {
 
 ThreadPool::ThreadPool(size_t num_threads) {

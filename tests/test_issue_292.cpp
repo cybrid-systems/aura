@@ -1,10 +1,8 @@
 // @category: integration
 // @reason: Issue #292 — guard predicates in query:pattern
-#include <iostream>
-#include <cstdio>
-#include <cstring>
-#include <print>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 import aura.core.ast;

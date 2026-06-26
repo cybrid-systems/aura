@@ -19,19 +19,11 @@
 //   5. The shared_ptr field is the same type in both
 //      ClosureBridgeData and IRClosure (consistency)
 
-#include <atomic>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <memory>
-#include <print>
-#include <string>
-#include <vector>
 
 // Unified test harness (Issue #226).
 #include "test_harness.hpp"
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

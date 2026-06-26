@@ -20,9 +20,6 @@
 // as the legacy Wrap, same final IR after fold).
 
 module;
-#include <cstddef>
-#include <cstdint>
-#include <unordered_map>
 
 module aura.compiler.constant_folding;
 import std;

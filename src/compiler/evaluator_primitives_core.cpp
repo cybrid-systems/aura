@@ -7,8 +7,6 @@
 
 module;
 
-#include <functional>
-#include <string>
 
 module aura.compiler.evaluator;
 

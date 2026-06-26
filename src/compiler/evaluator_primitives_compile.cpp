@@ -3,13 +3,6 @@
 
 module;
 
-#include <atomic>
-#include <cstdint>
-#include <functional>
-#include <span>
-#include <string>
-#include <utility>
-#include <vector>
 #include "runtime_shared.h"
 #include "observability_metrics.h"
 #include "per_defuse_index.h"

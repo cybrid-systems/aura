@@ -13,7 +13,8 @@
 // This file is added to test_concurrent's per-target
 // sources only — aura's main binary gets the real one from
 // service.ixx.
-#include <cstdint>
+
+import std;
 extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args,
                                                std::int32_t argc) {
     (void)prim_id;

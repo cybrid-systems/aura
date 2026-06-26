@@ -4,11 +4,8 @@
 #include "aura_platform.h"
 
 #include <unistd.h>
-#include <cstdio>
-#include <cerrno>
-#include <cstring>
-#include <system_error>
-#include <cstdlib>  // random() for steal victim selection
+
+import std;
 #if AURA_HAVE_EVENTFD
 #include <sys/eventfd.h>
 #endif

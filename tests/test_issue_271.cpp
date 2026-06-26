@@ -4,11 +4,10 @@
 // test_issue_271.cpp — Issue #271: incremental tag_arity_index_
 // maintenance across mutate without full O(N) rebuild.
 
-#include <iostream>
-#include <print>
-#include <string>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

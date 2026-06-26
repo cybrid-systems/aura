@@ -50,12 +50,7 @@
 #ifndef AURA_TEST_HARNESS_HPP
 #define AURA_TEST_HARNESS_HPP
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
+import std;
 
 namespace aura::test {
 

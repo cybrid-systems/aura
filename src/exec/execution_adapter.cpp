@@ -3,10 +3,8 @@
 #include "serve/scheduler.h"
 #include "serve/fiber.h" // YieldReason
 
-#include <cstdio>
-#include <cerrno>
-#include <cstring>
 
+import std;
 namespace aura::exec {
 
 // ── operation_state::start — begin execution ─────────

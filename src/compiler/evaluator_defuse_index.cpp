@@ -3,16 +3,6 @@
 
 module;
 
-#include <atomic>
-#include <cstdint>
-#include <optional>
-#include <span>
-#include <string>
-#include <tuple>
-#include <functional>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
 #include "runtime_shared.h"
 
 module aura.compiler.evaluator;

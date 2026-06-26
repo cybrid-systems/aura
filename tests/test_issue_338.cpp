@@ -30,12 +30,8 @@
 //        2-key hash
 //   AC6: existing eval still works (regression)
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <print>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

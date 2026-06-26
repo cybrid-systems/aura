@@ -22,12 +22,9 @@
 // tree-walker fallback agree with the explicit IR path. The
 // tree-walker-only path is exercised implicitly for special
 // forms (define, lambda, EDSL).
-#include <iostream>
-#include <iomanip>
-#include <sstream>
-#include <string>
-#include <vector>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 import aura.compiler.value;
@@ -89,24 +86,18 @@ static bool run_case(const TestCase& tc, int idx) {
     auto r2 = cs.eval_ir(tc.src);
     if (!r1 && !r2) return true;  // both failed (e.g. parse error on both)
     if (!r1 || !r2) {
-        std::cerr << "  DIVERGENCE [" << idx << "] \"" << tc.desc
-                  << "\": only one path returned a value ("
-                  << "eval=" << (r1 ? "ok" : "null")
-                  << ", eval_ir=" << (r2 ? "ok" : "null") << ")\n";
+        std::println(std::cerr, "  DIVERGENCE [{}] \"{}\": only one path returned a value (eval={}, eval_ir={})\n", idx, tc.desc, (r1 ? "ok" : "null"), (r2 ? "ok" : "null"));
         return false;
     }
     if (!values_equal(*r1, *r2)) {
-        std::cerr << "  DIVERGENCE [" << idx << "] \"" << tc.desc
-                  << "\": src=\"" << tc.src
-                  << "\" eval.val=0x" << std::hex << r1->val
-                  << " eval_ir.val=0x" << r2->val << std::dec << "\n";
+        std::println(std::cerr, "  DIVERGENCE [{}] \"{}\": src=\"{}\" eval.val=0x{}{} eval_ir.val=0x{}{}\n", idx, tc.desc, tc.src, std::hex, r1->val, r2->val, std::dec);
         return false;
     }
     return true;
 }
 
 int run_tests() {
-    std::cout << "═══ Issue #297 ═══\n";
+    std::println("═══ Issue #297 ═══");
     int total = 0, matches = 0;
     std::vector<std::string> divergence_descs;
     for (size_t i = 0; i < kCases.size(); ++i) {
@@ -117,17 +108,15 @@ int run_tests() {
             divergence_descs.push_back(kCases[i].desc);
         }
     }
-    std::cout << "\nRan " << total << " cases, " << matches
-              << " matched, " << (total - matches) << " diverged.\n";
+    std::println("\nRan {} cases, {} matched, {} diverged.\n", total, matches, (total - matches));
     if (matches == total) {
-        std::cout << "✓ All paths agree (eval == eval_ir) on all "
-                  << total << " cases.\n";
+        std::println("✓ All paths agree (eval == eval_ir) on all {} cases.\n", total);
         CHECK(true, "100% path agreement across " + std::to_string(total) +
               " cases");
     } else {
-        std::cout << "✗ Divergences found:\n";
+        std::println("✗ Divergences found:");
         for (const auto& d : divergence_descs) {
-            std::cout << "  - " << d << "\n";
+            std::println("  - {}", d);
         }
         // For the test to PASS at the harness level, we need matches == total.
         // But for debugging, divergence is a real signal — log it.
@@ -136,9 +125,7 @@ int run_tests() {
               std::to_string(matches) + " (divergences: " +
               std::to_string(divergence_descs.size()) + ")");
     }
-    std::cout << "\n═══ Results: " << g_passed << "/" << g_passed + g_failed
-              << " passed, " << g_failed << "/" << g_passed + g_failed
-              << " failed ═══\n";
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══\n", g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 

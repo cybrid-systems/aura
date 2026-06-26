@@ -33,16 +33,14 @@
 // The full migration is the work of Cycle 2.5+ (per the
 // issue body's "ship in 3-4 smaller commits" guidance).
 
-#include <cstdio>
-#include <cstring>
-#include <string>
-#include <vector>
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

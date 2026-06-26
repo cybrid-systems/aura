@@ -29,12 +29,8 @@
 //   AC5: existing passes + regression still pass (no breakage
 //        from the new elision logic in TypeSpecializationWrap)
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <print>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

@@ -20,14 +20,6 @@
 //
 // All tests use C++ APIs directly; no CompilerService dependency.
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <memory>
-#include <print>
-#include <string>
-#include <vector>
 
 // mangle_aot_name is defined in aot_mangle.h (extracted from
 // aura_jit_bridge.cpp in Issue #136 so tests can call it
@@ -39,6 +31,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 namespace aura_issue_136_detail {

@@ -1,15 +1,11 @@
 // Non-module TU: P2996 reflection (Issue #268).
 
-#include <array>
-#include <cstdint>
-#include <string>
-#include <string_view>
-#include <vector>
 
 #include "reflect/reflect.hh"
 #include "nodeview_wire.hh"
 #include "test_issue_178_bridge.h"
 
+import std;
 namespace {
 
 int g_passed = 0;

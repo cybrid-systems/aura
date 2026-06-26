@@ -58,17 +58,11 @@
 //   - src/compiler/type_checker_impl.cpp:3383 — find_occurrence_contexts
 //     per-node kOccurrenceDirty filter
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <memory>
-#include <print>
-#include <string>
-#include <vector>
 
 // Unified test harness (Issue #226).
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

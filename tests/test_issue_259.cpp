@@ -37,12 +37,8 @@
 //   AC4: type_propagation_coverage_bp is in valid range (0-10000)
 //   AC5: zero regression — existing eval still works
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <print>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

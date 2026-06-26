@@ -38,10 +38,6 @@
 // Per Aura workflow: develop on main, no feature branches
 // (MEMORY.md, 2026-06-10).
 
-#include <chrono>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 
 // Use the cross-boundary header so the test exercises the
 // raw encoding (the same one lib/runtime.c uses).
@@ -52,6 +48,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

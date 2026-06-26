@@ -2,15 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
-#include <span>
-#include <shared_mutex>
 
-#include <cstdint>
-#include <functional>
-#include <string>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
 #include "runtime_shared.h"
 
 module aura.compiler.evaluator;

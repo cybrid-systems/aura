@@ -3,12 +3,7 @@
 
 module;
 
-#include <functional>
-#include <cstdint>
-#include <span>
 
-#include <string>
-#include <vector>
 
 module aura.compiler.evaluator;
 

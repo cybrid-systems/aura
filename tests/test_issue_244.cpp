@@ -55,13 +55,8 @@
 //        (lowercase "macrointroduced" should match nothing).
 //   AC10: No workspace (before set-code) → no-workspace error.
 
-#include <cstdio>
-#include <cstdlib>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

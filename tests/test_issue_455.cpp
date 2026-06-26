@@ -10,12 +10,10 @@
 //            - (smoke) aura JIT + macro expansion still works post-#455
 //              (regression via define + macro + eval)
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

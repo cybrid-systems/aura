@@ -23,14 +23,8 @@
 // All tests use (compile:type-dep-graph-stats) where possible
 // to also exercise the Aura primitive surface.
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstdint>
-#include <iostream>
-#include <string>
-#include <vector>
-#include <print>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

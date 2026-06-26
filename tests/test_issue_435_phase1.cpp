@@ -4,13 +4,10 @@
 //          dedicated C++ type pattern from #436 Phase 7
 //          scaled up for the foundation SV construct.
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

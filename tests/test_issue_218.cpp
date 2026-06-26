@@ -17,11 +17,10 @@
 // test_issue_178 (reflect TU). TSan/ASan runs:
 //   tests/run_issue_218_tsan.sh
 
-#include <cstdio>
-#include <print>
-#include <string>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

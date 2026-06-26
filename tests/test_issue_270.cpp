@@ -7,11 +7,10 @@
 // Verifies multi-match apply in a single primitive call (would fail
 // without atomic batch + stable refs when the second match is skipped).
 
-#include <iostream>
-#include <print>
-#include <string>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

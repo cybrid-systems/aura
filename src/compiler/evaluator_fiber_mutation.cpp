@@ -2,11 +2,7 @@
 // aura.compiler.evaluator module partition.
 
 module;
-#include <atomic>
 
-#include <thread>
-#include <unordered_map>
-#include <vector>
 #include "messaging_bridge.h"
 #include "serve/fiber.h"
 

@@ -44,12 +44,10 @@
 //   AC #8: bare `:nested-arity` (no value) defaults to #t
 //   AC #9: pattern root `...` matches any node
 
-#include <iostream>
-#include <print>
-#include <string>
-#include <string_view>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

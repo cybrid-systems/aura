@@ -3,10 +3,8 @@
 #include "gc_coordinator.h"
 #include "aura_platform.h"
 #include <unistd.h>
-#include <cstdio>
-#include <cerrno>
-#include <cstring>
-#include <system_error>
+
+import std;
 #if AURA_HAVE_EPOLL
 #include <sys/epoll.h>
 #endif

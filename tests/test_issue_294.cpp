@@ -9,12 +9,10 @@
 // Tests run via the Aura --script entry point (cs.eval doesn't have
 // access to lib/std/eda.aura by default). The helpers are exercised
 // by piping Aura source to the build/aura binary.
-#include <iostream>
-#include <cstdio>
-#include <cstring>
-#include <string>
 #include <unistd.h>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 
@@ -48,7 +46,7 @@ static std::string run_aura(const std::string& src) {
 
 // AC #1: eda:query:always-ff-with-clock returns matching always_ff blocks
 bool test_always_ff_with_clock() {
-    std::cout << "\n--- AC #1: eda:query:always-ff-with-clock ---\n";
+    std::println("\n--- AC #1: eda:query:always-ff-with-clock ---");
     std::string src = R"AU(
 (load "lib/std/eda.aura")
 (define m
@@ -77,7 +75,7 @@ bool test_always_ff_with_clock() {
 
 // AC #2: eda:query:assertions-involving-signal returns matching assertions
 bool test_assertions_involving() {
-    std::cout << "\n--- AC #2: eda:query:assertions-involving-signal ---\n";
+    std::println("\n--- AC #2: eda:query:assertions-involving-signal ---");
     std::string src = R"AU(
 (load "lib/std/eda.aura")
 (define m
@@ -103,7 +101,7 @@ bool test_assertions_involving() {
 
 // AC #3: eda:query:reset-condition-for-register returns the reset signal
 bool test_reset_condition() {
-    std::cout << "\n--- AC #3: eda:query:reset-condition-for-register ---\n";
+    std::println("\n--- AC #3: eda:query:reset-condition-for-register ---");
     std::string src = R"AU(
 (load "lib/std/eda.aura")
 (define m
@@ -129,7 +127,7 @@ bool test_reset_condition() {
 
 // AC #4: reset-condition returns #f when no multi-edge sensitivity
 bool test_reset_no_match() {
-    std::cout << "\n--- AC #4: no multi-edge → #f ---\n";
+    std::println("\n--- AC #4: no multi-edge → #f ---");
     std::string src = R"AU(
 (load "lib/std/eda.aura")
 (define m
@@ -154,7 +152,7 @@ bool test_reset_no_match() {
 
 // AC #5: query:always-ff returns 0 for non-matching clk
 bool test_always_ff_mismatch() {
-    std::cout << "\n--- AC #5: wrong clock returns 0 ---\n";
+    std::println("\n--- AC #5: wrong clock returns 0 ---");
     std::string src = R"AU(
 (load "lib/std/eda.aura")
 (define m
@@ -178,15 +176,13 @@ bool test_always_ff_mismatch() {
 }
 
 int run_tests() {
-    std::cout << "═══ Issue #294 ═══\n";
+    std::println("═══ Issue #294 ═══");
     test_always_ff_with_clock();
     test_assertions_involving();
     test_reset_condition();
     test_reset_no_match();
     test_always_ff_mismatch();
-    std::cout << "\n═══ Results: " << g_passed << '/' << (g_passed + g_failed)
-              << " passed, " << g_failed << '/' << (g_passed + g_failed)
-              << " failed ═══\n";
+    std::println("\n═══ Results: {}{}{} passed, {}{}{} failed ═══\n", g_passed, '/', (g_passed + g_failed), g_failed, '/', (g_passed + g_failed));
     return g_failed > 0 ? 1 : 0;
 }
 

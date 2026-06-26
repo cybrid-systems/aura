@@ -8,12 +8,8 @@
 
 module;
 
-#include <cstdio>
-#include <span>
-#include <utility>
-#include <vector>
-
 module aura.compiler.matcher;
+import std;
 
 import aura.core.ast;
 import aura.core.mutation;

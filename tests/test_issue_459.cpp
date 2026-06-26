@@ -9,12 +9,10 @@
 //            - mutate:atomic-batch primitive is still callable (regression)
 //            - (smoke) define + eval works post-#459 (regression)
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

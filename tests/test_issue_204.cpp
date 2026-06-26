@@ -20,10 +20,6 @@
 //   5. mark_env_frame_roots before mark_from_roots (no prior
 //      resize) is a safe no-op (mark vector not sized yet)
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <vector>
 
 #include "serve/gc_coordinator.h"
 
@@ -32,6 +28,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

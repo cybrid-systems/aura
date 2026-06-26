@@ -40,13 +40,6 @@
 //      cost is the per-call guard code. Verified via the
 //      existing Aura benchmark suite — see run logs.
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 // shape.h + shape_profiler.h are traditional headers (not
 // modules — see the "recursive union" note in shape.h for the
@@ -61,6 +54,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

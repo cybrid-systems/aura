@@ -2,14 +2,11 @@
 //
 // Tests: check_shape_guard, SpecJITController, Profiler+SpecJIT integration
 //
-#include <cstdio>
-#include <cstring>
-#include <cstdint>
-#include <string>
 #include "../src/compiler/spec_jit_controller.h"
 #include "../src/compiler/shape.h"
 #include "../src/compiler/shape_profiler.h"
 
+import std;
 using namespace aura::compiler::shape;
 
 static int tests_run = 0;

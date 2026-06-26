@@ -2,19 +2,9 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
-#include <cstdint>
-#include <iostream>
 
-#include <array>
-#include <cstdio>
-#include <cstdlib>
 #include <dirent.h>
-#include <fstream>
-#include <functional>
-#include <span>
-#include <string>
 #include <sys/stat.h>
-#include <vector>
 #include "runtime_shared.h"
 
 module aura.compiler.evaluator;

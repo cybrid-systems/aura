@@ -15,17 +15,18 @@
 //
 // Run under ASan (from build_asan):
 //   ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 ./build_asan/test_pcv_heap_use_after_free
-#include <iostream>
+
+import std;
 import aura.compiler.service;
 int main() {
-    std::cout << "step 1: create CS\n"; std::cout.flush();
+    std::println("step 1: create CS");
     aura::compiler::CompilerService cs;
-    std::cout << "step 2: set-code\n"; std::cout.flush();
+    std::println("step 2: set-code");
     cs.eval("(set-code \"(define a 1)\")");
-    std::cout << "step 3: defrag\n"; std::cout.flush();
+    std::println("step 3: defrag");
     cs.eval("(arena:defrag)");
-    std::cout << "step 4: defrag-stats\n"; std::cout.flush();
+    std::println("step 4: defrag-stats");
     auto r = cs.eval("(arena:defrag-stats)"); (void)r;
-    std::cout << "step 5: about to destruct CS (UAF expected under ASan)\n"; std::cout.flush();
+    std::println("step 5: about to destruct CS (UAF expected under ASan)");
     return 0;
 }

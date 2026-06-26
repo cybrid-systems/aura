@@ -3,8 +3,6 @@
 
 module;
 
-#include <functional>
-#include <span>
 #include "runtime_shared.h"
 
 module aura.compiler.evaluator;

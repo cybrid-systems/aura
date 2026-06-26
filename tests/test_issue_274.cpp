@@ -3,11 +3,10 @@
 // test_issue_274.cpp — Issue #274: MutationVisitor concept +
 // run_mutation_pipeline + StableNodeRef helpers.
 
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

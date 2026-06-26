@@ -26,12 +26,10 @@
 //   AC #6: shared matcher's state reset between matches
 //          (a failed match doesn't pollute the next)
 
-#include <iostream>
-#include <print>
-#include <string>
-#include <string_view>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 
