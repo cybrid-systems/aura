@@ -8,6 +8,7 @@ module;
 
 export module aura.core.mutation;
 import std;
+import aura.core.error;
 
 namespace aura::ast {
 
@@ -125,6 +126,35 @@ export [[nodiscard]] constexpr std::string_view mutation_error_string(MutationEr
             return "rollback index out of range";
     }
     return "unknown mutation error";
+}
+
+// Issue #474: AuraErrorKind is defined in aura.core.error
+// (the new unified error module). The kind-only conversion
+// (MutationError → AuraErrorKind) lives here because
+// AuraErrorKind is a complete enum at this scope (forward-
+// declared above, outside the export namespace, so no
+// circular dep on aura.core.error). The AuraError-struct
+// conversion (MutationError → AuraError) lives in
+// mutation_impl.cpp where the full AuraError definition
+// is visible.
+
+// Issue #474: convert aura::ast::MutationError to the
+// unified AuraErrorKind. One-way mapping (some AuraErrorKind
+// values don't have a MutationError equivalent; those map
+// to InternalInvariantViolation for now). Used by adapters
+// at module boundaries during the migration.
+export [[nodiscard]] constexpr ::aura::core::AuraErrorKind
+mutation_error_to_aura_error_kind(MutationError err) noexcept {
+    switch (err) {
+        case MutationError::NotCommitted:        return ::aura::core::AuraErrorKind::MutationNotCommitted;
+        case MutationError::NoRollbackData:      return ::aura::core::AuraErrorKind::MutationNoRollbackData;
+        case MutationError::InvalidTarget:       return ::aura::core::AuraErrorKind::MutationInvalidTarget;
+        case MutationError::InvalidParent:       return ::aura::core::AuraErrorKind::MutationInvalidParent;
+        case MutationError::InvalidField:        return ::aura::core::AuraErrorKind::MutationInvalidField;
+        case MutationError::UnknownStructuralOp: return ::aura::core::AuraErrorKind::MutationUnknownStructuralOp;
+        case MutationError::OutOfRange:          return ::aura::core::AuraErrorKind::MutationOutOfRange;
+    }
+    return ::aura::core::AuraErrorKind::InternalInvariantViolation;
 }
 
 // Issue #275: constrain record types that participate in rollback.

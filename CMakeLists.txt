@@ -1035,6 +1035,11 @@ aura_issue_test_link_llvm_jit(test_issue_487)
 # tests/run-tests.sh.
 aura_add_issue_test(test_issue_387)
 aura_issue_test_link_llvm_jit(test_issue_387)
+# Issue #474: Aura unified error type foundation.
+# Pure-header test (no LLVM/JIT needed). Tests
+# AuraError + AuraResult + monadic ops + mutation
+# conversion helpers.
+aura_add_issue_test(test_issue_474)
 # Issue #411 fu1 follow-up #1: per-DefUseIndex caller tracking.
 # Pure-header test (no LLVM/JIT needed) — registers without
 # aura_issue_test_link_llvm_jit.
