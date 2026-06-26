@@ -450,6 +450,37 @@ public:
         // binding hadn't changed). Finer than the
         // global gen alone.
         std::uint64_t per_binding_gen_hits = 0;
+        // Issue #386: deep integration of Occurrence
+        // Typing narrowing into the inference core.
+        // 3 observability counters that measure the
+        // application paths the engine took. The full
+        // #386 scope is wiring narrowing into the
+        // let/if/combined paths, strengthening
+        // consistent_unify for refined types, and
+        // leveraging per-node occurrence-dirty for
+        // targeted re-analysis. This scope-limited
+        // slice ships the wiring + observability:
+        //   - narrowing_applied_total: count of
+        //     times narrowing was successfully pushed
+        //     into a let-body or if-then scope
+        //     (env_.bind(occ->var_name, occ->refined_type)
+        //     was actually reached and accepted by
+        //     consistent_unify).
+        //   - narrowing_skipped_total: count of
+        //     times narrowing was analyzed but
+        //     REJECTED (e.g. var not in env, refined
+        //     type not more specific, narrowing was
+        //     a negation in a then-branch).
+        //   - narrowing_reanalyzed_total: count of
+        //     times the engine re-analyzed a
+        //     narrowing (post-mutation or
+        //     cache_epoch advance). The
+        //     re-analysis rate is a per-session
+        //     tuning signal — a high rate indicates
+        //     the cache is dropping too eagerly.
+        std::uint64_t narrowing_applied = 0;
+        std::uint64_t narrowing_skipped = 0;
+        std::uint64_t narrowing_reanalyzed = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. per_symbol_used_total counts how
         // many mutations took the per-symbol path; the
@@ -668,6 +699,16 @@ export struct TypeCheckResult {
     std::uint64_t predicate_memo_hits = 0;
     std::uint64_t predicate_memo_misses = 0;
     std::uint64_t predicate_memo_evictions = 0;
+
+    // Issue #386: narrowing observability (per-call
+    // result). See InnerStats::narrowing_applied /
+    // narrowing_skipped / narrowing_reanalyzed for the
+    // full rationale. These mirror the 3
+    // observability counters on the engine, copied into
+    // the result for the caller.
+    std::uint64_t narrowing_applied = 0;
+    std::uint64_t narrowing_skipped = 0;
+    std::uint64_t narrowing_reanalyzed = 0;
 };
 
 // Pure: type-check a FlatAST subtree and return the inferred
@@ -736,6 +777,14 @@ export struct TypeChecker {
         // rescues. See InnerStats::per_binding_gen_hits
         // for the full rationale.
         std::uint64_t per_binding_gen_hits = 0;
+        // Issue #386: narrowing observability
+        // (per-call result). See InnerStats for the
+        // full rationale. The narrowing counters
+        // measure which of the 3 application paths
+        // the engine took.
+        std::uint64_t narrowing_applied = 0;
+        std::uint64_t narrowing_skipped = 0;
+        std::uint64_t narrowing_reanalyzed = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. See InnerStats for the full
         // field-by-field rationale.

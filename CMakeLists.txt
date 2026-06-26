@@ -1001,6 +1001,8 @@ aura_add_issue_test(test_issue_412_followup_1)
 aura_issue_test_link_llvm_jit(test_issue_412_followup_1)
 aura_add_issue_test(test_issue_413)
 aura_issue_test_link_llvm_jit(test_issue_413)
+aura_add_issue_test(test_issue_386)
+aura_issue_test_link_llvm_jit(test_issue_386)
 # Issue #411 fu1 follow-up #1: per-DefUseIndex caller tracking.
 # Pure-header test (no LLVM/JIT needed) — registers without
 # aura_issue_test_link_llvm_jit.

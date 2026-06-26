@@ -116,6 +116,14 @@ struct CompilerSnapshot {
     // mutations only bump the global gen, no binding to
     // trace).
     std::uint64_t invalidation_trace_records_total = 0;
+    // Issue #386: narrowing observability. Mirrors
+    // the 3 lifetime counters in CompilerMetrics. The
+    // applied_ratio_bp = applied / (applied + skipped)
+    // * 10000 measures narrowing effectiveness.
+    std::uint64_t narrowing_applied_total = 0;
+    std::uint64_t narrowing_skipped_total = 0;
+    std::uint64_t narrowing_reanalyzed_total = 0;
+    std::uint64_t narrowing_applied_ratio_bp = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.
