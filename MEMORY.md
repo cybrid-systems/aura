@@ -1277,3 +1277,67 @@ trace increments 0→2 on a single binding mutation
   - `curl PATCH /repos/cybrid-systems/aura/issues/413` with state=closed, state_reason=completed → response state=closed, state_reason=completed ✓
   - `curl POST /repos/cybrid-systems/aura/issues/413/comments` with the close comment → comment_id 4806553853, in_reply_to 13283492 ✓
 TOOLS.md now records the `~/.github-token` location + usage pattern for ALL future Aura issue close operations. The "no gh CLI" part is still true — use raw `curl` to the REST API.
+
+## Session 2026-06-26 — Issue #386: Occurrence Typing narrowing observability (scope-limited)
+
+Commit `5b78b227` pushed to origin/main. 8 files, +425/-3.
+
+The full #386 scope is wiring Occurrence Typing
+narrowing into the let/if/combined paths, strengthening
+`consistent_unify` for refined types, and leveraging
+per-node occurrence-dirty for targeted re-analysis. This
+scope-limited slice ships the **observability
+foundation**: 3 counters measure the application paths
+the engine took.
+
+**Wiring:**
+- `InnerStats` (engine-local) gains `narrowing_applied`
+  / `narrowing_skipped` / `narrowing_reanalyzed`.
+- `TypeCheckResult` + `IncrementalStats` mirror the 3.
+- `synthesize_flat_if`: bump `narrowing_applied` on the
+  success path (var bound in env + refined type set);
+  bump `narrowing_skipped` on rejection (var not in env).
+- `analyze_predicate_flat` memo miss: bump
+  `narrowing_reanalyzed` (predicate re-walked).
+- Aggregated in 3 spots: `type_check_flat_pure` return
+  path, `infer_flat_partial`, `auto_invoke_incremental_
+  typecheck_for`, and `cs.typecheck`.
+
+**Observability:**
+- `CompilerMetrics` gains 3 lifetime-total counters.
+- `CompilerSnapshot` mirrors them + derives
+  `narrowing_applied_ratio_bp` (basis points: applied
+  / (applied + skipped) * 10000).
+- New Aura primitive `(compile:occurrence-typing-stats)`
+  returns 4-key hash (applied-total / skipped-total /
+  reanalyzed-total / applied-ratio-bp).
+
+**Tests:** test_issue_386, 15/15 (6 ACs). AC3 is the
+key signal: typecheck on `(let ((x 5)) (if (number? x)
+(+ x 1) 0))` bumps `narrowing_applied_total` 0→1.
+
+**Bug found during ship:** My initial edit on
+`synthesize_flat_if` was lost (the `++stats_.narrowing_applied`
+inside the `if (env_.is_bound(...))` block was missing).
+The test caught it: `narrowing_reanalyzed=1` fired (memo
+miss) but `narrowing_applied=0` (the bind branch was
+never reached because the bump code was missing). Fixed
+by re-adding the increment. Lesson: always verify the
+counter actually fires, not just that the test compiled.
+
+**Today's totals (so far, 2026-06-26, ~8.5 hours):**
+- 21 commits to origin/main (含 2 MEMORY.md)
+- 6 issues closed: #410, #411, #412, #411 fu1 (4 sub-fu),
+  #412 fu1, #413, #386 (all scope-limited)
+- 10 个新 ship: CI fix + RAII guard + gen counter +
+  tiered re-inference + per-DefUseIndex (4 fu) + per-
+  binding gen + mutation_log trace + **Occurrence Typing
+  observability**
+- 3 bug 修复 (hash cap + hash-ref void + narrowing bump
+  missing)
+- **11 test binaries, 197 tests, 0 failures**
+
+**Remaining follow-ups:**
+1. **#501b** — pre-commit gate hook
+2. 跑 `python3 build.py full-test`
+3. 收工
