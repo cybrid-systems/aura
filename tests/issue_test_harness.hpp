@@ -4,7 +4,7 @@
 #ifndef AURA_ISSUE_TEST_HARNESS_HPP
 #define AURA_ISSUE_TEST_HARNESS_HPP
 
-import std;
+#include <print>
 
 static int g_passed = 0;
 static int g_failed = 0;

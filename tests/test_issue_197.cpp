@@ -38,7 +38,7 @@ import aura.compiler.pass_manager;
 
 
 namespace aura_issue_197_detail {
-#define PRINTLN(msg) do { std::fprintf(stdout, "%s\n", (msg)); } while(0)
+#define PRINTLN(msg) do { std::print( "%s\n", (msg)); } while(0)
 
 // Helper: build a single-block callee with N params and a body
 // that does Local(2, 0) + Local(3, 1) + Add(4, 2, 3) + Return(4).

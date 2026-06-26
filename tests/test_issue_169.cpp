@@ -88,14 +88,14 @@ bool test_no_behavior_change() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #169 — Incremental Compilation v3 (Phase 1: config flag) ═══\n");
+    std::println("═══ Issue #169 — Incremental Compilation v3 (Phase 1: config flag) ═══");
 
     test_enum_values();
     test_set_get();
     test_no_behavior_change();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_169_detail

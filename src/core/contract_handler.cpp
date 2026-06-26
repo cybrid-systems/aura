@@ -14,7 +14,12 @@
 // The hook is set via set_contract_violation_hook(). It's a free
 // function pointer (not a std::function) because the handler runs
 // at global scope and must remain trivially constructible.
-
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <print>
+#include <string>
 
 #include <contracts>
 
@@ -22,8 +27,6 @@
 // We pass a C struct (not std::contracts::contract_violation) so
 // the hook signature doesn't depend on <contracts> at every call
 // site. The C struct is a faithful subset of the std one.
-
-import std;
 extern "C" {
 struct AuraContractViolation {
     std::uint16_t kind;     // 1=pre, 2=post, 3=assert
@@ -98,7 +101,11 @@ void handle_contract_violation(const std::contracts::contract_violation& v) {
 
     // 1. Always log to stderr (matches the previous behavior + adds
     //    context that was previously missing).
-    std::println(std::cerr, "contract violation: {} ({}) at {}:{}{} — {}\n", kind_str(cv.kind), semantic_str(cv.semantic), (cv.file ? cv.file : "?"), cv.line, (cv.function ? cv.function[0] ? std::string(" in ") + cv.function : "" : ""), (cv.comment ? cv.comment : "(no comment)"));
+    std::println(std::cerr, "contract violation: {} ({}) at {}:{}{} — {}",
+                 kind_str(cv.kind), semantic_str(cv.semantic),
+                 (cv.file ? cv.file : "?"), cv.line,
+                 (cv.function ? cv.function[0] ? std::string(" in ") + cv.function : "" : ""),
+                 (cv.comment ? cv.comment : "(no comment)"));
 
     // 2. Call the user-registered hook, if any. The hook can record
     //    the violation into DiagnosticCollector, observability

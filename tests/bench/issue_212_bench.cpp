@@ -26,8 +26,19 @@
 //   - The benchmark runs in-process (no subprocess), uses
 //     std::chrono::steady_clock, and takes <2s total.
 
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <print>
+#include <sstream>
+#include <string>
+#include <vector>
 
-import std;
 import aura.compiler.ir;
 import aura.compiler.constant_folding;
 import aura.compiler.pass_manager;

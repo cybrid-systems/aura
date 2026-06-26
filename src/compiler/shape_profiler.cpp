@@ -7,14 +7,15 @@
 //
 #include "shape_profiler.h"
 #include "value_tags.h"
+#include <algorithm>
+#include <cstdint>
+#include <unordered_set>
 
 // We need EvalValue tag helpers. Since value is a C++ module,
 // include the relevant inline functions directly (they're constexpr/header-only style).
 // The actual EvalValue struct and tag helpers are inline in value.ixx.
 // To avoid module dependency, this file only uses the shape.h types.
 // The shape_of function is implemented below using raw integer bit tests.
-
-import std;
 namespace aura::compiler::shape {
 
 // ═══════════════════════════════════════════════════════════════

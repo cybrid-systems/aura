@@ -49,10 +49,26 @@
 // for measuring the PCV-specific overhead, not for measuring
 // the lock/mutex overhead in the real enter_mutation_boundary.
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <memory>
+#include <numeric>
+#include <print>
+#include <random>
+#include <span>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "core/persistent_child_vector.hh"
 
-import std;
 using PCV = aura::ast::PersistentChildVector<std::uint32_t>;
 using NodeId = std::uint32_t;
 static constexpr NodeId NULL_NODE = ~0u;

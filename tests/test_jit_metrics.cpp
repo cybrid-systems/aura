@@ -10,19 +10,37 @@
 // struct-timespec conflict between std module and the system
 // headers pulled in by LLVM's Core.h via aura_jit.h.
 
+#include <cstdio>
+#include <iostream>
+#include <print>
+#include <cstdlib>
+#include <cstring>
+#include <cstdint>
+#include <atomic>
+#include <thread>
+#include <vector>
+#include <string>
+#include <mutex>
+#include <deque>
+#include <unordered_set>
+#include <map>
+#include <memory>
+#include <utility>
+#include <functional>
+#include <algorithm>
+#include <cmath>
 
 #include "compiler/aura_jit.h"
 
-import std;
 static int g_passed = 0;
 static int g_failed = 0;
 
 #define CHECK(cond, msg) do { \
     if (!(cond)) { \
-        std::fprintf(stderr, "  FAIL: %s (line %d)\n", (msg), __LINE__); \
+        std::println(std::cerr, "  FAIL: {} (line {})", (msg), __LINE__); \
         ++g_failed; \
     } else { \
-        std::fprintf(stdout, "  PASS: %s\n", (msg)); \
+        std::println("  PASS: {}", (msg)); \
         ++g_passed; \
     } \
 } while(0)
@@ -30,7 +48,7 @@ static int g_failed = 0;
 // ── Test 1: Metrics struct is default-initialized to zero ──
 // All counters start at 0; format() produces a non-empty string.
 bool test_metrics_initial_state() {
-    std::fprintf(stdout, "\n--- Test: Metrics default state ---\n");
+    std::println("\n--- Test: Metrics default state ---");
     aura::jit::AuraJIT jit;
     const auto& m = jit.metrics();
 
@@ -55,7 +73,7 @@ bool test_metrics_initial_state() {
 // Verify that the format() output reflects the current counter
 // state. This is what telemetry will use.
 bool test_metrics_format_reflects_state() {
-    std::fprintf(stdout, "\n--- Test: format() reflects counter state ---\n");
+    std::println("\n--- Test: format() reflects counter state ---");
     aura::jit::AuraJIT jit;
     auto& m = jit.mutable_metrics();
     m.compile_count.fetch_add(7);
@@ -65,7 +83,7 @@ bool test_metrics_format_reflects_state() {
 
     char buf[256];
     m.format(buf, sizeof(buf));
-    std::fprintf(stdout, "  Format output: %s\n", buf);
+    std::println("  Format output: %s", buf);
     CHECK(std::strstr(buf, "compiles=7") != nullptr, "format() shows compiles=7");
     CHECK(std::strstr(buf, "hot_swaps=3") != nullptr, "format() shows hot_swaps=3");
     CHECK(std::strstr(buf, "cached_fns=2") != nullptr, "format() shows cached_fns=2");
@@ -77,7 +95,7 @@ bool test_metrics_format_reflects_state() {
 // Spin up several threads incrementing the same counter. Final
 // value should be exactly N_threads * N_increments.
 bool test_metrics_atomic_concurrent() {
-    std::fprintf(stdout, "\n--- Test: atomic concurrent increments ---\n");
+    std::println("\n--- Test: atomic concurrent increments ---");
     aura::jit::AuraJIT jit;
     auto& m = jit.mutable_metrics();
 
@@ -105,7 +123,7 @@ bool test_metrics_atomic_concurrent() {
 // If the buffer is too small, snprintf truncates; if null or
 // 0 size, we return without crashing.
 bool test_metrics_format_edge_cases() {
-    std::fprintf(stdout, "\n--- Test: format() edge cases ---\n");
+    std::println("\n--- Test: format() edge cases ---");
     aura::jit::AuraJIT jit;
     auto& m = jit.mutable_metrics();
     m.compile_count.fetch_add(42);
@@ -135,7 +153,7 @@ bool test_metrics_format_edge_cases() {
 // counter is wired correctly (without needing a real LLVM
 // compile cycle).
 bool test_hot_swap_counter() {
-    std::fprintf(stdout, "\n--- Test: hot_swap_count tracking ---\n");
+    std::println("\n--- Test: hot_swap_count tracking ---");
     aura::jit::AuraJIT jit;
     auto& m = jit.mutable_metrics();
 
@@ -166,7 +184,7 @@ extern "C" void aura_deopt_inc();
 extern "C" void aura_counters_reset();
 
 bool test_phase5_runtime_accessors() {
-    std::fprintf(stdout, "\n--- Test: Phase 5 runtime telemetry accessors ---\n");
+    std::println("\n--- Test: Phase 5 runtime telemetry accessors ---");
     // Reset and read baseline.
     aura_counters_reset();
     auto bypass0 = aura_bypass_count();
@@ -195,7 +213,7 @@ bool test_phase5_runtime_accessors() {
 }
 
 int main() {
-    std::fprintf(stdout, "═══ JIT metrics tests (Issue #114) ═══\n");
+    std::println("═══ JIT metrics tests (Issue #114) ═══");
 
     test_metrics_initial_state();
     test_metrics_format_reflects_state();
@@ -204,7 +222,7 @@ int main() {
     test_hot_swap_counter();
     test_phase5_runtime_accessors();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }

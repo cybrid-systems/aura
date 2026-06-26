@@ -5,8 +5,8 @@
 // We provide a stub here that's never actually called (the
 // test doesn't trigger init()).
 
+#include <cstdint>
 
-import std;
 extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id,
                                                 std::int64_t* args,
                                                 std::int32_t argc) {

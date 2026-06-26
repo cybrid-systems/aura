@@ -29,13 +29,23 @@
 // with -O0 -g flags; the binary is the same).
 
 
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <iostream>
+#include <memory>
+#include <print>
+#include <random>
+#include <string>
+#include <thread>
+#include <vector>
+
 // Unified test harness (Issue #226 cycle 1+2).
 #include "test_harness.hpp"
 
 #include "serve/scheduler.h"
 #include "serve/fiber.h"
 
-import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

@@ -82,9 +82,9 @@ using aura::compiler::types::STRING_BIAS_VAL;
 
 
 
-#define PASS(msg) do { std::fprintf(stdout, "  PASS: %s\n", (msg)); } while(0)
+#define PASS(msg) do { std::print( "  PASS: %s\n", (msg)); } while(0)
 
-#define PRINTLN(msg) do { std::fprintf(stdout, "%s\n", (msg)); } while(0)
+#define PRINTLN(msg) do { std::print( "%s\n", (msg)); } while(0)
 
 // ── Test 1: exhaustive collision test for the v2 encoding ──
 //
@@ -127,7 +127,7 @@ bool test_v2_no_collisions() {
         }
         ++n_checked;
     }
-    std::fprintf(stdout, "  checked %d indices\n", n_checked);
+    std::println("  checked %d indices", n_checked);
     PASS("4 K indices, no collisions");
     return true;
 }
@@ -288,9 +288,9 @@ bool test_v2_micro_benchmark() {
     auto t3 = std::chrono::steady_clock::now();
     auto old_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
 
-    std::fprintf(stdout, "  v2 is_string:    %ld ns (%.2f ns/op, %lu hits)\n",
+    std::print( "  v2 is_string:    %ld ns (%.2f ns/op, %lu hits)\n",
                  v2_ns, static_cast<double>(v2_ns) / N, v2_hits);
-    std::fprintf(stdout, "  old is_string:   %ld ns (%.2f ns/op, %lu hits)\n",
+    std::print( "  old is_string:   %ld ns (%.2f ns/op, %lu hits)\n",
                  old_ns, static_cast<double>(old_ns) / N, old_hits);
     CHECK(v2_hits == static_cast<std::uint64_t>(N), "v2 hits == N");
     CHECK(old_hits == static_cast<std::uint64_t>(N), "old hits == N");
@@ -317,7 +317,7 @@ bool test_v2_pool_capacity() {
     std::int64_t v = make_string_raw_v2(MAX_V2_IDX);
     CHECK(is_string_raw_v2(v), "max v2 idx is still a string");
     CHECK(string_idx_raw_v2(v) == MAX_V2_IDX, "max v2 idx roundtrips");
-    std::fprintf(stdout, "  max idx = 2^60 - 1 = %lu (capacity is 2^60)\n", MAX_V2_IDX);
+    std::println("  max idx = 2^60 - 1 = %lu (capacity is 2^60)", MAX_V2_IDX);
     PASS("v2 pool capacity is 2^60 (down from 2^62, acceptable for any practical string pool)");
     return true;
 }
@@ -346,7 +346,7 @@ bool test_v2_exhaustive_64() {
             CHECK(false, "v2 idx classified as ref (impossible)");
             // Also report which ref type it would have been
             // (for diagnostic purposes).
-            std::fprintf(stderr, "    idx=%lu → ref_type=%lu\n",
+            std::print(std::cerr, "    idx=%lu → ref_type=%lu\n",
                          idx, ref_type(v));
         }
         // Predicate order: is_string(v) && is_ref(v) is ALWAYS
@@ -432,22 +432,21 @@ bool test_v2_inline_agrees_with_raw() {
                   "inline rejects outside string range (safety belt)");
         }
     }
-    std::fprintf(stdout, "  checked: in-range=%d, out-of-range=%d\n",
-                 n_string_range, n_outside_range);
+    std::println("  checked: in-range=%d, out-of-range=%d", n_string_range, n_outside_range);
     PASS("inline and raw helpers agree in string range; "
          "inline rejects out-of-range tag matches (safety belt)");
     return true;
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #181 — EvalValue 64-bit tagged encoding (Cycles 1-3) ═══\n");
-    std::fprintf(stdout, "  Option A encoding: dedicated (v & 3) == 2 tag for strings.\n");
-    std::fprintf(stdout, "  Cycle 1: prototype + micro-bench.\n");
-    std::fprintf(stdout, "  Cycle 2: migration of all production sites (value.ixx,\n");
-    std::fprintf(stdout, "    aura_jit_runtime.cpp, service.ixx, aura_jit.cpp,\n");
-    std::fprintf(stdout, "    shape_profiler.cpp, spec_jit_controller.cpp).\n");
-    std::fprintf(stdout, "  Cycle 3: integration + Contracts + ShapeProfiler verification +\n");
-    std::fprintf(stdout, "    exhaustive tests.\n\n");
+    std::println("═══ Issue #181 — EvalValue 64-bit tagged encoding (Cycles 1-3) ═══");
+    std::println("  Option A encoding: dedicated (v & 3) == 2 tag for strings.");
+    std::println("  Cycle 1: prototype + micro-bench.");
+    std::println("  Cycle 2: migration of all production sites (value.ixx,");
+    std::println("    aura_jit_runtime.cpp, service.ixx, aura_jit.cpp,");
+    std::println("    shape_profiler.cpp, spec_jit_controller.cpp).");
+    std::println("  Cycle 3: integration + Contracts + ShapeProfiler verification +");
+    std::println("    exhaustive tests.\n");
 
     test_v2_no_collisions();
     test_v2_historical_collisions_fixed();
@@ -461,8 +460,8 @@ int run_tests() {
     test_v2_predicate_disjoint();
     test_v2_inline_agrees_with_raw();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_181_detail

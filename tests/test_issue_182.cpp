@@ -588,8 +588,8 @@ std::optional<std::string> pipeline_check_and_emit(IrNode const& m) {
 
 
 
-#define PASS(msg) do { std::fprintf(stdout, "  PASS: %s\n", (msg)); ++g_passed; } while(0)
-#define PRINTLN(msg) do { std::fprintf(stdout, "%s\n", (msg)); } while(0)
+#define PASS(msg) do { std::print( "  PASS: %s\n", (msg)); ++g_passed; } while(0)
+#define PRINTLN(msg) do { std::print( "%s\n", (msg)); } while(0)
 
 // ═══════════════════════════════════════════════════════════
 // Test cases
@@ -658,7 +658,7 @@ bool test_display() {
     auto m = make_module("counter", ports, body);
 
     std::string s = display_module(m);
-    std::fprintf(stdout, "  module display:\n%s\n", s.c_str());
+    std::print( "  module display:\n%s\n", s.c_str());
 
     CHECK(s.find("module counter") != std::string::npos,
           "display contains 'module counter'");
@@ -760,7 +760,7 @@ bool test_nested_expr() {
     // Display of nested
     std::string s = display_expr(plus);
     CHECK(s == "+(q_next, 1)", "display of q_next + 1");
-    std::fprintf(stdout, "  q_next + 1 → '%s'\n", s.c_str());
+    std::print( "  q_next + 1 → '%s'\n", s.c_str());
 
     return true;
 }
@@ -869,7 +869,7 @@ bool test_cycle3_emit_verilog() {
     auto m = make_module("counter", ports, body);
 
     std::string s = emit_verilog(m);
-    std::fprintf(stdout, "  emit-verilog:\n%s\n", s.c_str());
+    std::print( "  emit-verilog:\n%s\n", s.c_str());
 
     CHECK(s.find("module counter") != std::string::npos,
           "emit contains module header");
@@ -899,7 +899,7 @@ bool test_cycle3_emit_always() {
     auto m = make_module("tick", {make_port("clk", "input", 1)}, mod_body);
 
     std::string s = emit_verilog(m);
-    std::fprintf(stdout, "  always emit:\n%s\n", s.c_str());
+    std::print( "  always emit:\n%s\n", s.c_str());
 
     CHECK(s.find("always @(posedge clk)") != std::string::npos,
           "emit contains sensitivity list");
@@ -995,7 +995,7 @@ bool test_end_to_end_counter() {
     std::string s = display_module(counter);
     PRINTLN("");
     PRINTLN("End-to-end counter module display:");
-    std::fprintf(stdout, "%s\n", s.c_str());
+    std::print( "%s\n", s.c_str());
     PRINTLN("");
 
     return true;
@@ -1006,13 +1006,12 @@ bool test_end_to_end_counter() {
 // ═══════════════════════════════════════════════════════════
 
 int run_tests() {
-    std::fprintf(stdout,
-                 "═══ Issue #182 — Hardware IR + Verilog Backend (Cycle 1-4, C++) ═══\n");
-    std::fprintf(stdout, "  Cycle 1: IR + display + basic query.\n");
-    std::fprintf(stdout, "  Cycle 2: dependency query + mutate helpers.\n");
-    std::fprintf(stdout, "  Cycle 3: Verilog emitter (eda:emit-verilog).\n");
-    std::fprintf(stdout, "  Cycle 4: dependent types + type-checked pipeline.\n");
-    std::fprintf(stdout, "  Aura stdlib mirror: lib/std/eda.aura (#229-#231 fixed).\n\n");
+    std::println("═══ Issue #182 — Hardware IR + Verilog Backend (Cycle 1-4, C++) ═══");
+    std::println("  Cycle 1: IR + display + basic query.");
+    std::println("  Cycle 2: dependency query + mutate helpers.");
+    std::println("  Cycle 3: Verilog emitter (eda:emit-verilog).");
+    std::println("  Cycle 4: dependent types + type-checked pipeline.");
+    std::println("  Aura stdlib mirror: lib/std/eda.aura (#229-#231 fixed).\n");
 
     test_ir_construction();
     test_ir_accessors();
@@ -1031,8 +1030,8 @@ int run_tests() {
     test_cycle4_pipeline();
     test_end_to_end_counter();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_182_detail

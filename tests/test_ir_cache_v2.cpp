@@ -6,7 +6,10 @@
 
 // FNV-1a 64-bit (matches CompilerService::fnv1a_64)
 
-import std;
+#include <cstdio>
+#include <iostream>
+#include <print>
+#include <string>
 static std::size_t fnv1a_64(const std::string& s) {
     std::uint64_t h = 0xcbf29ce484222325ULL;
     for (unsigned char c : s) {
@@ -21,7 +24,7 @@ static int pass_count = 0;
 
 #define ASSERT(cond, msg) do { \
     if (!(cond)) { \
-        std::fprintf(stderr, "FAIL: %s (line %d)\n", msg, __LINE__); \
+        std::println(std::cerr, "FAIL: {} (line {})", msg, __LINE__); \
         fail_count++; \
     } else { \
         pass_count++; \

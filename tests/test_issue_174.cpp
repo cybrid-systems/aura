@@ -32,7 +32,7 @@ import aura.compiler.value;
 
 
 namespace aura_issue_174_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 // Helper: build an Env, bind a few name→value pairs, and
 // return it. The pool_ is set to the canonical pool so
@@ -190,9 +190,9 @@ bool test_bindings_with_names() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #174 Cycle 1 — Env::bindings_ migration ═══\n");
-    std::fprintf(stdout, "  Adds bindings_symid_iter(), bindings_with_names(),\n");
-    std::fprintf(stdout, "  and bindings_legacy_uses metric.\n\n");
+    std::println("═══ Issue #174 Cycle 1 — Env::bindings_ migration ═══");
+    std::println("  Adds bindings_symid_iter(), bindings_with_names(),");
+    std::println("  and bindings_legacy_uses metric.\n");
 
     test_bindings_symid_iter_matches_bindings();
     test_bindings_legacy_uses_counter();
@@ -200,8 +200,8 @@ int run_tests() {
     test_bind_symid_mirrors_to_legacy();
     test_bindings_with_names();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_174_detail

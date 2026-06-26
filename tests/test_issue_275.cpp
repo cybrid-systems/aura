@@ -5,7 +5,6 @@
 
 #include "test_harness.hpp"
 
-import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

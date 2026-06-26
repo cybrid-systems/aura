@@ -11,19 +11,26 @@
 // (subsequent compiles). The cache itself is exposed via the
 // public Metrics struct, so we can verify hit/miss counts.
 
+#include <cstdio>
+#include <iostream>
+#include <print>
+#include <cstring>
+#include <cstdint>
+#include <atomic>
+#include <thread>
+#include <vector>
 
 #include "compiler/aura_jit.h"
 
-import std;
 static int g_passed = 0;
 static int g_failed = 0;
 
 #define CHECK(cond, msg) do { \
     if (!(cond)) { \
-        std::fprintf(stderr, "  FAIL: %s (line %d)\n", (msg), __LINE__); \
+        std::println(std::cerr, "  FAIL: {} (line {})", (msg), __LINE__); \
         ++g_failed; \
     } else { \
-        std::fprintf(stdout, "  PASS: %s\n", (msg)); \
+        std::println("  PASS: {}", (msg)); \
         ++g_passed; \
     } \
 } while(0)
@@ -32,7 +39,7 @@ static int g_failed = 0;
 // (Sanity check that the Metrics counters handle concurrent
 // updates without loss — the per-function cache relies on this.)
 bool test_concurrent_compile_count() {
-    std::fprintf(stdout, "\n--- Test: concurrent compile_count ---\n");
+    std::println("\n--- Test: concurrent compile_count ---");
     aura::jit::AuraJIT jit;
     auto& m = jit.mutable_metrics();
 
@@ -61,7 +68,7 @@ bool test_concurrent_compile_count() {
 // Each counter should track its own value; updating one
 // shouldn't affect the others.
 bool test_metric_independence() {
-    std::fprintf(stdout, "\n--- Test: metric counter independence ---\n");
+    std::println("\n--- Test: metric counter independence ---");
     aura::jit::AuraJIT jit;
     auto& m = jit.mutable_metrics();
 
@@ -90,7 +97,7 @@ bool test_metric_independence() {
 // that there's no race in the format() method either (called
 // from a separate thread while counters are being updated).
 bool test_concurrent_stress_with_format() {
-    std::fprintf(stdout, "\n--- Test: concurrent stress + format ---\n");
+    std::println("\n--- Test: concurrent stress + format ---");
     aura::jit::AuraJIT jit;
     auto& m = jit.mutable_metrics();
 
@@ -116,7 +123,7 @@ bool test_concurrent_stress_with_format() {
         while (!stop.load(std::memory_order_relaxed)) {
             m.format(buf, sizeof(buf));
             // Touch the buffer to ensure it's not optimized out
-            if (buf[0] == 'X') std::fprintf(stderr, "no\n");
+            if (buf[0] == 'X') std::println(std::cerr, "no");
         }
     });
 
@@ -135,18 +142,18 @@ bool test_concurrent_stress_with_format() {
     char final[512];
     m.format(final, sizeof(final));
     CHECK(final[0] != '\0', "final format produces a non-empty string");
-    std::fprintf(stdout, "  Final: %s\n", final);
+    std::println("  Final: %s", final);
     return true;
 }
 
 int main() {
-    std::fprintf(stdout, "═══ JIT concurrent compile stress tests (Issue #114) ═══\n");
+    std::println("═══ JIT concurrent compile stress tests (Issue #114) ═══");
 
     test_concurrent_compile_count();
     test_metric_independence();
     test_concurrent_stress_with_format();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }

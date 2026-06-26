@@ -23,14 +23,19 @@
 // the production data structure layout (ClosureBridgeData +
 // IRClosure fields) and exercises the epoch logic.
 
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <print>
+#include <memory>
+#include <string>
+#include <vector>
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-
-import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 
@@ -87,7 +92,7 @@ static bool is_bridge_stale(uint64_t bridge_epoch, uint64_t current_epoch) {
 
 
 
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::println("{}", (msg))
 
 // ── Test 1: bridge_epoch() / reset() / bump_bridge_epoch() ────
 void test_1_epoch_basics() {

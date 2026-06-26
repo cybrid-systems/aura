@@ -196,7 +196,7 @@ bool test_independent_flatast() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #161 — Phase 2: pure-function parser ═══\n");
+    std::println("═══ Issue #161 — Phase 2: pure-function parser ═══");
 
     test_parse_to_flat_basic();
     test_determinism();
@@ -204,8 +204,8 @@ int run_tests() {
     test_edge_cases();
     test_independent_flatast();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_161_detail

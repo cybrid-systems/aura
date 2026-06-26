@@ -136,7 +136,7 @@ bool test_matcher_stashes_guard() {
         /*nested_arity=*/true);
     m.setup_guard_detection();
     auto guard_pat = pat_flat.get(guard_node);
-    std::fprintf(stderr, "TEST: guard_node children[0]=%u, head sym=%u\n",
+    std::print(std::cerr, "TEST: guard_node children[0]=%u, head sym=%u\n",
         guard_pat.children[0], pat_flat.get(guard_pat.children[0]).sym_id);
     bool matched = m.match_subtree(five, guard_node);
     CHECK(matched, "matcher returns true for :guard pattern");

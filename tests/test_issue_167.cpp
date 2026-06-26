@@ -207,7 +207,7 @@ bool test_full_metadata() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #167 — IR layer SoA/DOD migration (Phase 1) ═══\n");
+    std::println("═══ Issue #167 — IR layer SoA/DOD migration (Phase 1) ═══");
 
     test_empty_module();
     test_add_instructions();
@@ -216,8 +216,8 @@ int run_tests() {
     test_block_ranges();
     test_full_metadata();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_167_detail

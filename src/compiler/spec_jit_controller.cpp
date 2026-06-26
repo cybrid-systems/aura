@@ -4,6 +4,8 @@
 //
 #include "spec_jit_controller.h"
 #include "value_tags.h"
+#include <algorithm>
+#include <cstdio>
 
 // Shape guard runtime — checks runtime arg values against expected shape map.
 // Returns true if all args match. Used at the call site before invoking
@@ -14,8 +16,6 @@
 //   shape_map entry 1 (Int)     → value must be a fixnum (bit0=0, > FLOAT_BIAS)
 //   shape_map entry 2 (Float)   → value must be in float bias range
 //
-
-import std;
 namespace aura::compiler::shape {
 
 // ── FLOAT_BIAS / STRING_BIAS from value_tags.h (issue #58, #181) ──

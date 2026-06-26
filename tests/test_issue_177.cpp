@@ -45,7 +45,7 @@ import aura.compiler.ir;
 
 
 namespace aura_issue_177_detail {
-#define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
+#define PRINTLN(msg) std::print( "%s\n", (msg))
 
 // ── Test 1: type_id_ rollback end-to-end ────────────────
 //
@@ -172,19 +172,19 @@ bool test_nested_boundaries() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #213 / #177 — integration smoke test ═══\n");
-    std::fprintf(stdout, "  Verifies the full #213 chain end-to-end:\n");
-    std::fprintf(stdout, "    - Cycle 1: rollback mechanism\n");
-    std::fprintf(stdout, "    - Cycle 2: 13/19 mutate:* primitives migrated\n");
-    std::fprintf(stdout, "    - Cycle 3: g_mutation_stack → per-fiber state\n\n");
+    std::println("═══ Issue #213 / #177 — integration smoke test ═══");
+    std::println("  Verifies the full #213 chain end-to-end:");
+    std::println("    - Cycle 1: rollback mechanism");
+    std::println("    - Cycle 2: 13/19 mutate:* primitives migrated");
+    std::println("    - Cycle 3: g_mutation_stack → per-fiber state\n");
 
     test_type_id_rollback();
     test_int_val_rollback();
     test_mutation_stack_depth();
     test_nested_boundaries();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_177_detail

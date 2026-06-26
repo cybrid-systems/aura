@@ -18,13 +18,19 @@
 //   - Cross-host AOT cache
 //   - Shared library (.so) linking + dlopen load-back
 
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <print>
+#include <string>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include "test_harness.hpp"
-
-import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)

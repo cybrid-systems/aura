@@ -169,7 +169,7 @@ bool test_fiber_join_50_stress() {
 }
 
 int main() {
-    std::fprintf(stdout, "═══ Issue #164 — fiber:join spin-fallback elimination ═══\n");
+    std::println("═══ Issue #164 — fiber:join spin-fallback elimination ═══");
 
     test_fiber_join_basic();
     test_fiber_join_already_done();
@@ -178,7 +178,7 @@ int main() {
     test_fiber_join_spawn_batch_join_batch();
     test_fiber_join_50_stress();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }

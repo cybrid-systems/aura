@@ -232,7 +232,7 @@ bool test_typecheck_current_cache_reuse() {
 }
 
 int run_tests() {
-    std::fprintf(stdout, "═══ Issue #159 — incremental typecheck + eval (Phases 1-5) ═══\n");
+    std::println("═══ Issue #159 — incremental typecheck + eval (Phases 1-5) ═══");
 
     // Phase 1 tests
     test_primitive_exported();
@@ -247,8 +247,8 @@ int run_tests() {
     // Phase 5 test
     test_typecheck_current_cache_reuse();
 
-    std::fprintf(stdout, "\n──────────────────────────────────────\n");
-    std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
+    std::println("\n──────────────────────────────────────");
+    std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 }  // namespace aura_issue_159_detail

@@ -6,7 +6,10 @@
 #include "../src/compiler/shape.h"
 #include "../src/compiler/shape_profiler.h"
 
-import std;
+#include <cstdio>
+#include <iostream>
+#include <print>
+#include <string>
 using namespace aura::compiler::shape;
 
 static int tests_run = 0;
@@ -15,10 +18,10 @@ static int tests_passed = 0;
 #define TEST(name, expr) do { \
     tests_run++; \
     if (!(expr)) { \
-        std::fprintf(stderr, "FAIL: %s (%s)\n", name, #expr); \
+        std::println(std::cerr, "FAIL: %s ({})", name, #expr); \
     } else { \
         tests_passed++; \
-        std::fprintf(stdout, "PASS: %s\n", name); \
+        std::println("PASS: {}", name); \
     } \
 } while(0)
 
@@ -698,7 +701,6 @@ int main() {
     // ═══════════════════════════════════════════════════════════
     // Summary
     // ═══════════════════════════════════════════════════════════
-    std::fprintf(stdout, "\n=== Results: %d/%d passed ===\n",
-                 tests_passed, tests_run);
+    std::println("\n=== Results: %d/{} passed ===", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
 }
