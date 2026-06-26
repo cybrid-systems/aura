@@ -4464,6 +4464,42 @@ public:
         } else {
             s.typecheck_gen_saved_ratio_bp = 0;
         }
+        // Issue #412 follow-up #1: mirror the 2
+        // per-binding gen counters and compute the
+        // derived hit ratio (basis points:
+        // per_binding_gen_hits / (per_binding_gen_hits +
+        // stale_cache) * 10000). 0 when no per-binding
+        // hits have happened yet.
+        s.per_binding_gen_hits_total =
+            metrics_.per_binding_gen_hits_total.load(std::memory_order_relaxed);
+        // The per_binding_gen_bumps_total counter comes
+        // from the workspace FlatAST (it's bumped on
+        // every mark_dirty_upward on a binding node).
+        // Read from the workspace if available. The
+        // accumulator is a separate field (NOT
+        // per_binding_gen_bumps_total in CompilerMetrics)
+        // because snapshot() is const and we can't
+        // fetch_add on a const atomic. The accumulator
+        // is mutable so the lifetime total persists
+        // across snapshots.
+        std::uint64_t binding_gen_bumps_from_flat = 0;
+        if (auto* ws = evaluator_.workspace_flat()) {
+            binding_gen_bumps_from_flat = ws->binding_gen_bumps_total();
+        }
+        if (binding_gen_bumps_from_flat > last_per_binding_gen_bumps_) {
+            per_binding_gen_bumps_acc_ +=
+                binding_gen_bumps_from_flat - last_per_binding_gen_bumps_;
+            last_per_binding_gen_bumps_ = binding_gen_bumps_from_flat;
+        }
+        s.per_binding_gen_bumps_total = per_binding_gen_bumps_acc_;
+        const std::uint64_t pb_total = s.per_binding_gen_hits_total +
+                                         s.typecheck_stale_cache_total;
+        if (pb_total > 0) {
+            s.per_binding_gen_hit_ratio_bp =
+                (s.per_binding_gen_hits_total * 10000u) / pb_total;
+        } else {
+            s.per_binding_gen_hit_ratio_bp = 0;
+        }
         // Issue #259: type metadata propagation observability.
         // Read lifetime totals from CompilerMetrics, compute
         // the derived coverage (basis points: 0-10000).
@@ -6023,6 +6059,16 @@ public:
     // primitive and the upcoming (infer_flat_partial)
     // indexed path (#411 fu1 follow-up #3).
     per_defuse_index::PerDefUseIndexTracker per_defuse_index_tracker_;
+
+    // Issue #412 follow-up #1: per-binding gen bumps
+    // accumulator. snapshot() is const so we can't
+    // fetch_add on the CompilerMetrics atomic. Instead,
+    // we accumulate here (mutable, lifetime total) and
+    // read the FlatAST's per-binding gen bumps counter
+    // each snapshot to compute the delta. This gives a
+    // persistent lifetime total across workspace swaps.
+    mutable std::uint64_t per_binding_gen_bumps_acc_ = 0;
+    mutable std::uint64_t last_per_binding_gen_bumps_ = 0;
 
     // Issue #225 cycle 3: public test hook for the bridge
     // invalidation helper. Production code triggers this

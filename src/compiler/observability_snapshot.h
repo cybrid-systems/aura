@@ -95,6 +95,16 @@ struct CompilerSnapshot {
     // counter has been bumped.
     std::uint64_t typecheck_gen_saved_total = 0;
     std::uint64_t typecheck_gen_saved_ratio_bp = 0;
+    // Issue #412 follow-up #1: per-binding gen
+    // observability. Mirrors the 2 lifetime counters in
+    // CompilerMetrics. The derived
+    // per_binding_gen_hit_ratio_bp = per_binding_gen_hits /
+    // (per_binding_gen_hits + stale_cache) * 10000
+    // measures the share of stale rejections rescued by
+    // the per-binding check (post-#412 follow-up #1).
+    std::uint64_t per_binding_gen_hits_total = 0;
+    std::uint64_t per_binding_gen_bumps_total = 0;
+    std::uint64_t per_binding_gen_hit_ratio_bp = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.

@@ -633,6 +633,13 @@ private:
         // Issue #412: parallel type_cache_gen_ column. 0 = no
         // cache entry yet (matches type_id_ == 0 semantics).
         type_cache_gen_.push_back(0);
+        // Issue #412 follow-up #1: parallel
+        // type_cache_binding_gen_ column. 0 = no binding
+        // context (e.g. a top-level expression that
+        // doesn't depend on any binding). Bumped on
+        // structural changes to the binding the cache
+        // entry is for.
+        type_cache_binding_gen_.push_back(0);
         dirty_.push_back(0);
         ppa_dirty_.push_back(0);
         // Issue #437: verify_dirty_ column. Mirrors ppa_dirty_'s
@@ -770,6 +777,46 @@ private:
     // the binding structure didn't change). 0 = no cache
     // entry yet (matches type_id_ == 0 semantics).
     std::pmr::vector<std::uint32_t> type_cache_gen_;
+    // Issue #412 follow-up #1: per-binding generation
+    // column. Parallel to type_cache_gen_; stores the
+    // gen of THE SPECIFIC BINDING the cache entry is
+    // for (0 = no binding context, e.g. a top-level
+    // expression that doesn't depend on any binding).
+    // The per-binding gen is bumped only when THAT
+    // specific binding's structure changes (a separate
+    // bump from the global type_cache_generation_ which
+    // bumps on every dirty event). On cache hit, the
+    // check is: global gen matches AND per-binding gen
+    // matches → entry is fresh. This is finer-grained
+    // than the global gen alone (which over-invalidates
+    // when a different binding mutates).
+    std::pmr::vector<std::uint32_t> type_cache_binding_gen_;
+    // Issue #412 follow-up #1: per-binding generation
+    // map. SymId → uint32_t. Each binding has its own
+    // gen counter that bumps only when THAT binding's
+    // structure changes (e.g. mutate:rebind on a
+    // top-level define). Bumping on every dirty event
+    // would be over-invalidating (the current global
+    // gen behavior). The per-binding gen rescues cache
+    // entries that don't depend on the mutated binding
+    // from being re-inferred.
+    //
+    // Non-pmr / non-atomic — std::pmr allocator's
+    // uses_allocator_args + std::atomic + std::tuple
+    // don't compose well. The mutation primitives
+    // synchronize via the mutation lock
+    // (enter_mutation_boundary), so concurrent access
+    // isn't a concern. The map is small (only the
+    // bindings that have been touched are in it), so
+    // std::unordered_map's default allocator is fine.
+    // COW path creates a fresh map on the clone so
+    // mutations on the clone don't affect the parent.
+    struct BindingGenMap {
+        std::unordered_map<aura::ast::SymId, std::uint32_t> gens;
+        BindingGenMap() = default;
+    };
+    std::shared_ptr<BindingGenMap> binding_gens_ =
+        std::make_shared<BindingGenMap>();
     // Issue #79: per-node error kind, 0 = no error, non-zero = ErrorKind
     // enum value. Populated by the type-checker and runtime evaluator;
     // queryable via the AuraQuery `(has-error? N)` clause.
@@ -886,6 +933,12 @@ private:
     // theoretical max (~4B dirty events per FlatAST lifetime
     // is far beyond any realistic mutation count).
     mutable std::atomic<std::uint32_t> type_cache_generation_{0};
+    // Issue #412 follow-up #1: per-binding gen bump
+    // counter. Bumped on every bump_binding_gen() call
+    // (when a mark_dirty_upward targets a binding node).
+    // Lifetime total; plumbed to CompilerMetrics via the
+    // snapshot for observability.
+    mutable std::atomic<std::uint64_t> binding_gen_bumps_total_{0};
     // Issue #261: NodeId lifecycle observability counters.
     mutable std::atomic<std::uint64_t> node_recycle_total_{0};
     mutable std::atomic<std::uint64_t> node_slot_reuse_count_{0};
@@ -1196,6 +1249,8 @@ public:
         , col_(std::move(other.col_))
         , type_id_(std::move(other.type_id_))
         , type_cache_gen_(std::move(other.type_cache_gen_))
+        , type_cache_binding_gen_(std::move(other.type_cache_binding_gen_))
+        , binding_gens_(std::move(other.binding_gens_))
         , error_kind_(std::move(other.error_kind_))
         , value_cache_(std::move(other.value_cache_))
         , mutation_log_(std::move(other.mutation_log_))
@@ -1247,6 +1302,8 @@ public:
             col_ = std::move(other.col_);
             type_id_ = std::move(other.type_id_);
             type_cache_gen_ = std::move(other.type_cache_gen_);
+            type_cache_binding_gen_ = std::move(other.type_cache_binding_gen_);
+            binding_gens_ = std::move(other.binding_gens_);
             error_kind_ = std::move(other.error_kind_);
             node_gen_ = std::move(other.node_gen_);
             free_list_ = std::move(other.free_list_);
@@ -1355,6 +1412,8 @@ public:
             col_ = other.col_;
             type_id_ = other.type_id_;
             type_cache_gen_ = other.type_cache_gen_;
+            type_cache_binding_gen_ = other.type_cache_binding_gen_;
+            binding_gens_ = other.binding_gens_;
             error_kind_ = other.error_kind_;
             node_gen_ = other.node_gen_;
             free_list_ = other.free_list_;
@@ -2289,6 +2348,9 @@ public:
         std::pmr::vector<std::uint32_t> new_type_id(alloc);
         // Issue #412: COW scratch for type_cache_gen_.
         std::pmr::vector<std::uint32_t> new_type_cache_gen(alloc);
+        // Issue #412 follow-up #1: COW scratch for
+        // per-binding cache gen.
+        std::pmr::vector<std::uint32_t> new_type_cache_binding_gen(alloc);
         std::pmr::vector<std::uint8_t> new_error_kind(alloc);
         std::pmr::vector<std::uint32_t> new_node_first_mutation(alloc);
         std::pmr::vector<std::uint16_t> new_node_gen(alloc);
@@ -2310,6 +2372,7 @@ public:
         new_ppa_dirty.reserve(live_count);
         new_type_id.reserve(live_count);
         new_type_cache_gen.reserve(live_count);
+        new_type_cache_binding_gen.reserve(live_count);
         new_error_kind.reserve(live_count);
         new_node_first_mutation.reserve(live_count);
         new_node_gen.reserve(live_count);
@@ -2362,6 +2425,11 @@ public:
             // re-populate both fields via
             // set_type_with_gen().
             new_type_cache_gen.push_back(0);
+            // Issue #412 follow-up #1: parallel
+            // per-binding cache gen. Also reset to 0
+            // after COW; the next type-checker pass will
+            // re-populate via set_type_with_binding_gen().
+            new_type_cache_binding_gen.push_back(0);
             new_error_kind.push_back(error_kind_[id]);
             new_node_first_mutation.push_back(node_first_mutation_[id]);
             new_node_gen.push_back(generation_);
@@ -2393,6 +2461,21 @@ public:
         macro_dirty_ = std::move(new_macro_dirty);
         type_id_ = std::move(new_type_id);
         type_cache_gen_ = std::move(new_type_cache_gen);
+        // Issue #412 follow-up #1: COW the
+        // per-binding cache gen column. The
+        // binding_gens_ map is NOT COW'd — the new flat
+        // starts with an empty map and only entries
+        // that the clone's mutations touch are added.
+        // This ensures mutations on the clone don't
+        // invalidate the parent's cache.
+        type_cache_binding_gen_ = std::move(new_type_cache_binding_gen);
+        // Issue #412 follow-up #1: COW the
+        // binding_gens_ map. The clone gets a fresh
+        // empty map (the COW contract is that mutations
+        // on the clone don't affect the parent). The
+        // existing entries will be re-built lazily as
+        // the clone's mutations bump them.
+        binding_gens_ = std::make_shared<BindingGenMap>();
         error_kind_ = std::move(new_error_kind);
         node_first_mutation_ = std::move(new_node_first_mutation);
         node_gen_ = std::move(new_node_gen);
@@ -3177,6 +3260,26 @@ public:
         // diverges. See set_type_with_gen() and
         // synthesize_flat()'s cache hit path.
         type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #412 follow-up #1: per-binding gen. If the
+        // target node is a binding (Define/Let/LetRec)
+        // with a valid sym_id, bump THAT binding's gen
+        // (not just the global gen). This is the
+        // per-binding granular invalidation signal: the
+        // global gen invalidates ALL cache entries (over-
+        // invalidating), the per-binding gen only
+        // invalidates cache entries that depend on this
+        // specific binding. For non-binding targets (sub-
+        // expression mutations), only the global gen
+        // bumps (no binding to bump).
+        if (id < tag_.size()) {
+            auto tgv = get(id);
+            if ((tgv.tag == NodeTag::Define ||
+                 tgv.tag == NodeTag::Let ||
+                 tgv.tag == NodeTag::LetRec) &&
+                tgv.sym_id != INVALID_SYM) {
+                bump_binding_gen(tgv.sym_id);
+            }
+        }
     }
 
     // Issue #262: propagate dirty upward but stop at `stop_at` (exclusive).
@@ -3958,6 +4061,78 @@ public:
             return;
         type_id_[id] = tid;
         type_cache_gen_[id] = gen;
+    }
+
+    // Issue #412 follow-up #1: per-binding type cache
+    // generation accessors. Each binding (identified by
+    // SymId) has its own gen counter that bumps only
+    // when THAT specific binding's structure changes
+    // (e.g. mutate:rebind on a top-level define). The
+    // per-binding gen is finer-grained than the global
+    // type_cache_generation_ (which bumps on every
+    // dirty event): bumping on every dirty event would
+    // be over-invalidating. The per-binding gen
+    // rescues cache entries that don't depend on the
+    // mutated binding from being re-inferred.
+    //
+    // The map is a per-FlatAST map from SymId to atomic
+    // gen. The type-checker reads the gen when
+    // populating a cache entry (alongside the global
+    // gen) and on cache hit to validate. Bumps happen
+    // when a binding's structure actually changes
+    // (mutate:* primitives that target a Define / Let /
+    // LetRec node).
+    //
+    // Returns 0 for bindings that haven't been touched
+    // yet (the default-constructed gen). The 0 sentinel
+    // matches the global gen's pre-#412 behavior (0 =
+    // no cache entry yet).
+    std::uint32_t binding_gen(SymId sym) const {
+        if (!binding_gens_)
+            return 0;
+        auto it = binding_gens_->gens.find(sym);
+        if (it == binding_gens_->gens.end())
+            return 0;
+        return it->second;
+    }
+    void bump_binding_gen(SymId sym) {
+        if (!binding_gens_)
+            binding_gens_ = std::make_shared<BindingGenMap>();
+        binding_gens_->gens[sym]++;
+        binding_gen_bumps_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #412 follow-up #1: per-binding gen bump
+    // counter accessor. Returns the lifetime total of
+    // per-binding gen bumps (one per call to
+    // bump_binding_gen). Plumbed to CompilerMetrics via
+    // the snapshot for observability.
+    std::uint64_t binding_gen_bumps_total() const {
+        return binding_gen_bumps_total_.load(std::memory_order_relaxed);
+    }
+    // Per-node cache gen accessor for the BINDING the
+    // cache entry is for. 0 = no binding context.
+    // Mirrors type_cache_gen() / type_cache_binding_gen_
+    // column.
+    std::uint32_t type_cache_binding_gen(NodeId id) const {
+        return id < type_cache_binding_gen_.size()
+                   ? type_cache_binding_gen_[id]
+                   : 0;
+    }
+    // The canonical call site for the type-checker when
+    // populating a cache entry for a Variable node (or
+    // any node whose type depends on a specific binding).
+    // Stores the type, the global gen, and the per-binding
+    // gen. On cache hit, the check is: global gen matches
+    // AND per-binding gen matches → entry is fresh.
+    void set_type_with_binding_gen(NodeId id, std::uint32_t tid,
+                                  std::uint32_t global_gen,
+                                  std::uint32_t binding_gen_val) {
+        if (id >= type_id_.size() || id >= type_cache_gen_.size() ||
+            id >= type_cache_binding_gen_.size())
+            return;
+        type_id_[id] = tid;
+        type_cache_gen_[id] = global_gen;
+        type_cache_binding_gen_[id] = binding_gen_val;
     }
 
     // ── Error kind access (Issue #79) ────────────────────────
