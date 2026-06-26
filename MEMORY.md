@@ -1008,3 +1008,66 @@ test_per_defuse_index. Full gate green.
 3. **#501b**: pre-commit gate hook
 4. 跑 `python3 build.py full-test` 验证今天 5+ 个 ship
    没回归
+
+## Session 2026-06-26 — #411 fu1 follow-up #3: per-DefUseIndex into TypeChecker
+
+Commit `b4a5e586` pushed to origin/main. 5 files, +399/-30.
+
+This is the actual O(uses) wiring: `TypeChecker::infer_flat_partial`
+now takes a `void* per_defuse_index_tracker` parameter. When
+the caller (CompilerService) passes the tracker AND it has
+at least one index registered, the O(uses) per-DefUseIndex
+path fires. Falls back to per-symbol (O(n) walk from #411 fu1)
+when tracker is empty, then to ancestor (O(depth)) when
+neither yields an affected set.
+
+**3-tier routing (the actual perf win):**
+1. **per-DefUseIndex** (O(uses)) — tracker present + non-empty
+2. **per-symbol** (O(n) walk) — tracker empty or sym not in tracker
+3. **ancestor** (O(depth)) — sub-expression mutation (no binding)
+
+**Stats wired:**
+- `per_defuse_index_used_total` — bumped on per-DefUseIndex path
+- `per_defuse_index_walk_fallback_total` — bumped when tracker
+  present but fell back to O(n) walk
+- `per_symbol_used_total` / `per_symbol_visited_total` — bumped
+  on per-symbol path (unchanged from #411 fu1)
+- `ancestor_used_total` / `ancestor_visited_total` — bumped on
+  ancestor path (unchanged from #411 fu1)
+
+**Tests:** test_issue_411_followup_3, 15/15 pass (5 ACs).
+Verifies initial counters 0, per-symbol-reinfer-stats has 4
+per-DefUseIndex keys, empty tracker → per-symbol path,
+populated tracker → per-DefUseIndex path, snapshot has 4
+fields.
+
+**No regressions:** test_issue_410/411/412, test_issue_411_followup_1/2,
+test_per_defuse_index — all still green.
+
+**Today's totals (so far, 2026-06-26, ~5 hours):**
+- 11 commits to origin/main
+- 4 issues closed (all scope-limited)
+- 6 new infrastructure ship (CI fix, RAII guard, gen counter,
+  tiered re-inference, per-DefUseIndex data, per-DefUseIndex
+  wiring, per-DefUseIndex into TypeChecker — the 3-tier routing)
+- 2 bug fix (hash cap + hash-ref void value semantics)
+- ~35.4K tests, 0 failures across 7 test binaries
+
+**Remaining follow-ups (priority order):**
+1. **#412 follow-up #1**: per-binding generation
+2. **#501b**: pre-commit gate hook
+3. 跑 `python3 build.py full-test` 验证今天 ship 的 6+ commit
+   没回归
+4. 收工
+
+**Next-session pickup point:** the 3-tier routing is
+wired but the per-DefUseIndex path is O(uses) in COUNT
+only (the actual node-id set still comes from the O(n)
+walk in `affected_subtree_for_symbol`). The full O(uses)
+WALL-CLOCK speedup needs the per-DefUseIndexTracker to
+store NodeIds directly (currently it stores string
+Caller objects). That's a separate follow-up: replace
+the `Caller` struct's `location: string` with a
+`Caller { node_id: NodeId }` and have the per-DefUseIndex
+path iterate the use-sites directly without the O(n)
+walk.
