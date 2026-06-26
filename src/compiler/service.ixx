@@ -31,6 +31,7 @@ module;
 #include "value_tags.h" // Issue #181 Cycle 2: v2 string encoding helpers
 #include "observability_metrics.h"
 #include "observability_snapshot.h"
+#include "per_defuse_index.h"
 #include <atomic>
 #include "messaging_bridge.h"
 #include <unistd.h>
@@ -4515,6 +4516,25 @@ public:
         } else {
             s.per_symbol_path_share_bp = 0;
         }
+        // Issue #411 fu1 follow-up #2: mirror the 3
+        // per-DefUseIndex counters and compute the
+        // derived average (basis points:
+        // per_defuse_index_visited / max(per_defuse_index_used, 1) * 10000).
+        // 0 when no per-DefUseIndex invocations have
+        // happened yet.
+        s.per_defuse_index_used_total =
+            metrics_.per_defuse_index_used_total.load(std::memory_order_relaxed);
+        s.per_defuse_index_visited_total =
+            metrics_.per_defuse_index_visited_total.load(std::memory_order_relaxed);
+        s.per_defuse_index_walk_fallback_total =
+            metrics_.per_defuse_index_walk_fallback_total.load(std::memory_order_relaxed);
+        if (s.per_defuse_index_used_total > 0) {
+            s.per_defuse_index_visited_avg_bp =
+                (s.per_defuse_index_visited_total * 10000u) /
+                s.per_defuse_index_used_total;
+        } else {
+            s.per_defuse_index_visited_avg_bp = 0;
+        }
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
         // shared_lock on workspace_mtx_ to keep the flat
@@ -5267,6 +5287,23 @@ public:
     aura::ast::FlatAST* workspace_flat() { return evaluator_.workspace_flat(); }
     aura::ast::StringPool* workspace_pool() { return evaluator_.workspace_pool(); }
 
+    // Issue #411 fu1 follow-up #2: per-DefUseIndex caller
+    // tracker accessor. The tracker is per-service
+    // (lifetime = CompilerService lifetime). Aura
+    // primitives access it via the Evaluator's
+    // compiler_service_ void* pointer. The tracker is
+    // NOT auto-populated by mutations yet — that's the
+    // next follow-up. For now, the Aura primitives
+    // (compile:per-defuse-index-add, etc.) let the user
+    // populate it explicitly, which is the same pattern
+    // as the existing dep_caller_fn_ registration hooks.
+    per_defuse_index::PerDefUseIndexTracker& per_defuse_index_tracker() {
+        return per_defuse_index_tracker_;
+    }
+    const per_defuse_index::PerDefUseIndexTracker& per_defuse_index_tracker() const {
+        return per_defuse_index_tracker_;
+    }
+
     // Get last compiled IR module (for --inspect dump).
     const std::optional<aura::ir::IRModule>& last_ir_module() const { return last_ir_mod_; }
 
@@ -5939,6 +5976,15 @@ public:
         if (current_ast_ && current_ast_ != evaluator_.workspace_flat())
             current_ast_->release_children_for_teardown();
     }
+
+    // Issue #411 fu1 follow-up #2: per-DefUseIndex caller
+    // tracker. Per-service state (lifetime = CompilerService
+    // lifetime). See per_defuse_index_tracker() accessor
+    // above. Holds the per-DefUseIndex map of callers;
+    // queried by the (compile:per-defuse-index-callers)
+    // primitive and the upcoming (infer_flat_partial)
+    // indexed path (#411 fu1 follow-up #3).
+    per_defuse_index::PerDefUseIndexTracker per_defuse_index_tracker_;
 
     // Issue #225 cycle 3: public test hook for the bridge
     // invalidation helper. Production code triggers this

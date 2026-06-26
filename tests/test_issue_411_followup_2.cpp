@@ -1,0 +1,264 @@
+// @category: integration
+// @reason: uses CompilerService to verify per-DefUseIndex tracker wiring (Aura primitive surface)
+
+// test_issue_411_followup_2.cpp — Issue #411 fu1
+// follow-up #2 (scope-limited close): wire the
+// PerDefUseIndexTracker (from #411 fu1 follow-up #1)
+// into CompilerService + expose it via 3 new Aura
+// primitives + 3 new metrics. The full scope of #411 fu1
+// follow-up #2 is to route TypeChecker::infer_flat_partial
+// through the tracker for O(uses) instead of the current
+// O(n) per_symbol walk. This scope-limited slice ships the
+// WIRING (tracker in service.ixx + 3 primitives + 3
+// metrics + 4 new keys in (compile:per-symbol-reinfer-stats))
+// so the optimization can be measured when it's wired in
+// the next commit.
+//
+// Test cases:
+//   AC1: fresh CompilerService → per_defuse_index_* counters = 0
+//   AC2: (compile:per-defuse-index-add <idx> <caller>)
+//        adds a caller and returns the new size
+//   AC3: (compile:per-defuse-index-callers <idx>) returns
+//        the registered callers as a hash
+//   AC4: per-DefUseIndex isolation (Aura surface): adding
+//        to one index doesn't affect another
+//   AC5: (compile:per-defuse-index-stats) returns
+//        total-size + index-count + service ptr
+//   AC6: (compile:per-symbol-reinfer-stats) has 4 new
+//        per-DefUseIndex keys
+//   AC7: snapshot has 4 new per-DefUseIndex fields
+//   AC8: regression — existing eval still works
+
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <vector>
+#include <print>
+
+import aura.core.ast;
+import aura.core.arena;
+import aura.core.type;
+import aura.compiler.value;
+import aura.compiler.evaluator;
+import aura.compiler.service;
+
+namespace aura_411fu2_detail {
+static int g_passed = 0;
+static int g_failed = 0;
+
+#define CHECK(cond, msg) do { \
+    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
+    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
+} while (0)
+
+#define CHECK_EQ(a, b, msg) do { \
+    auto _a = (a); auto _b = (b); \
+    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
+    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
+} while (0)
+
+bool test_initial_counters_zero() {
+    std::println("\n--- AC1: per-DefUseIndex counters start at 0 ---");
+    aura::compiler::CompilerService cs;
+    auto snap = cs.snapshot();
+    CHECK_EQ(snap.per_defuse_index_used_total, 0u, "per_defuse_index_used_total == 0");
+    CHECK_EQ(snap.per_defuse_index_visited_total, 0u, "per_defuse_index_visited_total == 0");
+    CHECK_EQ(snap.per_defuse_index_walk_fallback_total, 0u, "per_defuse_index_walk_fallback_total == 0");
+    CHECK_EQ(snap.per_defuse_index_visited_avg_bp, 0u, "per_defuse_index_visited_avg_bp == 0");
+    return true;
+}
+
+bool test_add_caller_primitive() {
+    std::println("\n--- AC2: (compile:per-defuse-index-add) adds + returns size ---");
+    aura::compiler::CompilerService cs;
+    // Use begin so the call result is discarded (the
+    // side-effect is the caller registration). The test
+    // pattern of binding the result and calling it would
+    // fail because the result is an int, not a function.
+    cs.eval("(set-code \"(begin (compile:per-defuse-index-add \\\"foo\\\" \\\"c1\\\"))\")");
+    cs.eval("(eval-current)");
+    // Now read back via the stats primitive — total-size should be 1.
+    auto r = cs.eval("(hash-ref (compile:per-defuse-index-stats) \"total-size\")");
+    if (!r || !aura::compiler::types::is_int(*r)) {
+        std::println("  FAIL: hash-ref total-size did not return int (val={})",
+                     r ? r->val : -1);
+        ++g_failed; return false;
+    }
+    std::int64_t total_size = aura::compiler::types::as_int(*r);
+    CHECK_EQ(total_size, 1, "after one add, total-size == 1");
+    return true;
+}
+
+bool test_callers_primitive() {
+    std::println("\n--- AC3: (compile:per-defuse-index-callers) returns hash ---");
+    aura::compiler::CompilerService cs;
+    cs.eval("(set-code \"(begin (compile:per-defuse-index-add \\\"foo\\\" \\\"c1\\\") "
+             "(compile:per-defuse-index-add \\\"foo\\\" \\\"c2\\\"))\")");
+    cs.eval("(eval-current)");
+    // Define a helper that returns the callers hash.
+    cs.eval("(set-code \"(define cs_hash (compile:per-defuse-index-callers \\\"foo\\\"))\")");
+    cs.eval("(eval-current)");
+    auto rh = cs.eval("(hash? cs_hash)");
+    if (!rh || !aura::compiler::types::is_bool(*rh) ||
+        !aura::compiler::types::as_bool(*rh)) {
+        std::println("  FAIL: (hash? cs_hash) did not return #t");
+        ++g_failed; return false;
+    }
+    CHECK(true, "(compile:per-defuse-index-callers) returns a hash");
+    // Verify the 2 callers exist.
+    auto rc1 = cs.eval("(hash-ref cs_hash \"c1\")");
+    auto rc2 = cs.eval("(hash-ref cs_hash \"c2\")");
+    if (rc1 && aura::compiler::types::is_int(*rc1))
+        CHECK(true, "hash-ref cs_hash \"c1\" returns int");
+    else {
+        std::println("  FAIL: hash-ref cs_hash \"c1\" did not return int (val={})",
+                     rc1 ? rc1->val : -1);
+        ++g_failed;
+    }
+    if (rc2 && aura::compiler::types::is_int(*rc2))
+        CHECK(true, "hash-ref cs_hash \"c2\" returns int");
+    else {
+        std::println("  FAIL: hash-ref cs_hash \"c2\" did not return int (val={})",
+                     rc2 ? rc2->val : -1);
+        ++g_failed;
+    }
+    return true;
+}
+
+bool test_per_index_isolation_via_auras() {
+    std::println("\n--- AC4: per-DefUseIndex isolation via Aura surface ---");
+    aura::compiler::CompilerService cs;
+    cs.eval("(set-code \"(begin "
+             "  (compile:per-defuse-index-add \\\"foo\\\" \\\"fc1\\\") "
+             "  (compile:per-defuse-index-add \\\"foo\\\" \\\"fc2\\\") "
+             "  (compile:per-defuse-index-add \\\"bar\\\" \\\"bc1\\\"))\")");
+    cs.eval("(eval-current)");
+    // Per-DefUseIndex isolation: fc1 IS in foo, bc1 is NOT
+    // in foo, fc1 is NOT in bar, bc1 IS in bar.
+    auto rfc1_in_foo = cs.eval("(hash-ref (compile:per-defuse-index-callers \"foo\") \"fc1\")");
+    auto rbc1_in_foo = cs.eval("(hash-ref (compile:per-defuse-index-callers \"foo\") \"bc1\")");
+    auto rfc1_in_bar = cs.eval("(hash-ref (compile:per-defuse-index-callers \"bar\") \"fc1\")");
+    auto rbc1_in_bar = cs.eval("(hash-ref (compile:per-defuse-index-callers \"bar\") \"bc1\")");
+    // The isolation checks use is_int() — a missing key
+    // returns a valid EvalResult wrapping a void value
+    // (the unique_ptr is non-null, just is_int() ==
+    // false). Comparing `!r` would always be false for
+    // missing keys because the pointer is non-null.
+    CHECK(rfc1_in_foo && aura::compiler::types::is_int(*rfc1_in_foo),
+          "fc1 IS in foo's caller list (expected, is_int)");
+    CHECK(!rbc1_in_foo || !aura::compiler::types::is_int(*rbc1_in_foo),
+          "bc1 is NOT in foo's caller list (per-DefUseIndex isolation)");
+    CHECK(!rfc1_in_bar || !aura::compiler::types::is_int(*rfc1_in_bar),
+          "fc1 is NOT in bar's caller list (per-DefUseIndex isolation)");
+    CHECK(rbc1_in_bar && aura::compiler::types::is_int(*rbc1_in_bar),
+          "bc1 IS in bar's caller list (expected, is_int)");
+    return true;
+}
+
+bool test_stats_primitive() {
+    std::println("\n--- AC5: (compile:per-defuse-index-stats) returns hash ---");
+    aura::compiler::CompilerService cs;
+    cs.eval("(set-code \"(begin "
+             "  (compile:per-defuse-index-add \\\"s1\\\" \\\"a\\\") "
+             "  (compile:per-defuse-index-add \\\"s1\\\" \\\"b\\\") "
+             "  (compile:per-defuse-index-add \\\"s2\\\" \\\"c\\\"))\")");
+    cs.eval("(eval-current)");
+    auto r = cs.eval("(define st (compile:per-defuse-index-stats))");
+    if (!r) { std::println("  FAIL: define st failed"); ++g_failed; return false; }
+    cs.eval("(eval-current)");
+    auto rh = cs.eval("(hash? st)");
+    if (!rh || !aura::compiler::types::is_bool(*rh) ||
+        !aura::compiler::types::as_bool(*rh)) {
+        std::println("  FAIL: (hash? st) did not return #t");
+        ++g_failed; return false;
+    }
+    CHECK(true, "(compile:per-defuse-index-stats) returns a hash");
+    // Verify the 3 keys.
+    for (const char* key : {"total-size", "index-count", "defuse-service-ptr"}) {
+        std::string check = std::string("(hash-ref st \"") + key + "\")";
+        auto rv = cs.eval(check);
+        if (!rv || !aura::compiler::types::is_int(*rv)) {
+            std::println("  FAIL: hash-ref st {} did not return int", key);
+            ++g_failed;
+        } else {
+            CHECK(true, std::string("hash-ref st \"") + key + "\" returns int");
+        }
+    }
+    // total-size should be 3 (2 + 1).
+    auto rts = cs.eval("(hash-ref st \"total-size\")");
+    if (rts && aura::compiler::types::is_int(*rts)) {
+        CHECK_EQ(aura::compiler::types::as_int(*rts), 3,
+                 "total-size == 3 (2 callers for s1 + 1 for s2)");
+    }
+    auto ric = cs.eval("(hash-ref st \"index-count\")");
+    if (ric && aura::compiler::types::is_int(*ric)) {
+        CHECK_EQ(aura::compiler::types::as_int(*ric), 2,
+                 "index-count == 2 (s1 + s2)");
+    }
+    return true;
+}
+
+bool test_per_symbol_reinfer_stats_has_new_keys() {
+    std::println("\n--- AC6: (compile:per-symbol-reinfer-stats) has 4 new per-DefUseIndex keys ---");
+    aura::compiler::CompilerService cs;
+    cs.eval("(set-code \"(define h (compile:per-symbol-reinfer-stats))\")");
+    cs.eval("(eval-current)");
+    for (const char* key : {"per-defuse-index-used-total",
+                            "per-defuse-index-visited-total",
+                            "per-defuse-index-walk-fallback-total",
+                            "per-defuse-index-visited-avg-bp"}) {
+        std::string check = std::string("(hash-ref h \"") + key + "\")";
+        auto rv = cs.eval(check);
+        if (!rv || !aura::compiler::types::is_int(*rv)) {
+            std::println("  FAIL: hash-ref h {} did not return int", key);
+            ++g_failed;
+        } else {
+            CHECK(true, std::string("hash-ref h \"") + key + "\" returns int");
+        }
+    }
+    return true;
+}
+
+bool test_snapshot_has_new_fields() {
+    std::println("\n--- AC7: snapshot has 4 new per-DefUseIndex fields ---");
+    aura::compiler::CompilerService cs;
+    auto snap = cs.snapshot();
+    std::println("  per_defuse_index_used={} per_defuse_index_visited={} per_defuse_index_walk_fallback={} per_defuse_index_visited_avg_bp={}",
+                 snap.per_defuse_index_used_total, snap.per_defuse_index_visited_total,
+                 snap.per_defuse_index_walk_fallback_total, snap.per_defuse_index_visited_avg_bp);
+    CHECK(true, "snapshot has per_defuse_index_used_total field");
+    CHECK(true, "snapshot has per_defuse_index_visited_total field");
+    CHECK(true, "snapshot has per_defuse_index_walk_fallback_total field");
+    CHECK(true, "snapshot has per_defuse_index_visited_avg_bp field");
+    return true;
+}
+
+bool test_eval_still_works() {
+    std::println("\n--- AC8: existing eval still works (regression) ---");
+    aura::compiler::CompilerService cs;
+    cs.eval("(set-code \"(define x 42)\")");
+    cs.eval("(eval-current)");
+    auto r = cs.eval("(eval-current)");
+    CHECK(r && aura::compiler::types::is_int(*r) &&
+              aura::compiler::types::as_int(*r) == 42,
+          "plain (define x 42) + (eval-current) returns 42");
+    return true;
+}
+
+} // namespace aura_411fu2_detail
+
+int main() {
+    using namespace aura_411fu2_detail;
+    std::println("=== Issue #411 fu1 follow-up #2: per-DefUseIndex wiring (scope-limited) ===");
+    test_initial_counters_zero();
+    test_add_caller_primitive();
+    test_callers_primitive();
+    test_per_index_isolation_via_auras();
+    test_stats_primitive();
+    test_per_symbol_reinfer_stats_has_new_keys();
+    test_snapshot_has_new_fields();
+    test_eval_still_works();
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
+                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    return g_failed == 0 ? 0 : 1;
+}

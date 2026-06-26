@@ -296,6 +296,36 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> per_symbol_reinfer_visited_total{0};
     std::atomic<std::uint64_t> ancestor_reinfer_used_total{0};
     std::atomic<std::uint64_t> ancestor_reinfer_visited_total{0};
+    // Issue #411 fu1 follow-up #2: per-DefUseIndex tracker
+    // observability. The full #411 fu1 follow-up #2 scope
+    // is to wire the per-DefUseIndex tracker into the
+    // type-checker re-inference path (replace the global
+    // dep_caller_fn_ lookups with PerDefUseIndexTracker
+    // calls + use it in TypeChecker::infer_flat_partial's
+    // per_symbol path). This scope-limited slice ships the
+    // TRACKER + observability so the optimization can be
+    // measured.
+    //
+    //   - per_defuse_index_used_total: how many mutations
+    //     took the per-DefUseIndex indexed path (O(uses),
+    //     via the PerDefUseIndexTracker). For top-level
+    //     rebinds on hot symbols with many callers, this
+    //     is the common case.
+    //   - per_defuse_index_visited_total: total nodes
+    //     visited across all per-DefUseIndex invocations.
+    //     Pairs with the typecheck_visited counts — the
+    //     speedup is the ratio of per_symbol_visited
+    //     (O(n) walk) to per_defuse_index_visited (O(uses)
+    //     indexed).
+    //   - per_defuse_index_walk_fallback_total: how many
+    //     times the per-DefUseIndex path had to fall back
+    //     to the O(n) walk (the sym wasn't in the
+    //     tracker). Signals the index coverage — a low
+    //     fallback count means the tracker captures the
+    //     common case well.
+    std::atomic<std::uint64_t> per_defuse_index_used_total{0};
+    std::atomic<std::uint64_t> per_defuse_index_visited_total{0};
+    std::atomic<std::uint64_t> per_defuse_index_walk_fallback_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

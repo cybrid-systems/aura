@@ -143,6 +143,21 @@ struct CompilerSnapshot {
     std::uint64_t ancestor_reinfer_used_total = 0;
     std::uint64_t ancestor_reinfer_visited_total = 0;
     std::uint64_t per_symbol_path_share_bp = 0;
+    // Issue #411 fu1 follow-up #2: per-DefUseIndex tracker
+    // observability. Mirrors the 3 lifetime counters in
+    // CompilerMetrics. The derived
+    // per_defuse_index_visited_avg =
+    // per_defuse_index_visited / max(per_defuse_index_used, 1)
+    // tells the user the average re-inferred node count
+    // per per-DefUseIndex mutation. The follow-up
+    // per-DefUseIndex walk reduction (issue #411 fu1
+    // follow-up #3) will reduce this metric further by
+    // replacing the O(n) walk with an O(uses) indexed
+    // lookup.
+    std::uint64_t per_defuse_index_used_total = 0;
+    std::uint64_t per_defuse_index_visited_total = 0;
+    std::uint64_t per_defuse_index_walk_fallback_total = 0;
+    std::uint64_t per_defuse_index_visited_avg_bp = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).
