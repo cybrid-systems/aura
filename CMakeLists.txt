@@ -1047,6 +1047,12 @@ aura_add_issue_test(test_issue_474)
 # Queryable) satisfy for real types and reject
 # non-matching types.
 aura_add_issue_test(test_issue_501)
+# Issue #501 Phase 2: apply Mutator concept to mutation
+# strategy classes (scope-limited close). Tests the 4
+# concrete strategies in aura.core.mutators (Replace /
+# Insert / Remove / NoOp) plus the generic apply_mutation
+# dispatch template + monadic AuraResult chaining.
+aura_add_issue_test(test_issue_501_phase2)
 # Issue #411 fu1 follow-up #1: per-DefUseIndex caller tracking.
 # Pure-header test (no LLVM/JIT needed) — registers without
 # aura_issue_test_link_llvm_jit.
