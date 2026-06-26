@@ -1216,3 +1216,51 @@ target's sym_id is the binding that gets bumped).
   entry has a binding context (`type_cache_binding_gen_[id]
   != 0`). A follow-up could store the sym_id per cache
   entry for exact comparison.
+
+## Session 2026-06-26 — Issue #413: mutation_log-integrated invalidation trace
+
+Commit `24980803` pushed to origin/main. 6 files, +346/-2.
+
+Pre-#413, when `mark_dirty_upward` bumped the per-binding
+gen, there was NO record of WHICH mutation caused the
+bump. Users debugging "why was this binding's cache
+invalidated" had to grep through mutation_log and reason
+about which mutations affected which bindings.
+
+Post-#413, every per-binding gen bump appends an
+`InvalidationRecord` to `invalidation_trace_` capturing
+`(mutation_id, SymId, binding_gen_at_bump)`. The
+mutation_id is inferred from `next_mutation_id_ - 1`
+(the counter was bumped in `add_mutation` /
+`add_mutation_subtree` BEFORE `mark_dirty_upward` was
+called) — avoids threading `mutation_id` through the
+mark_dirty_upward call signature.
+
+**Wiring:**
+- `FlatAST` gains `invalidation_trace_` (pmr vector of
+  InvalidationRecord) + `invalidation_trace_records_total_`
+  atomic counter + 3 accessors.
+- `mark_dirty_upward`: when target is binding with valid
+  sym_id AND `next_mutation_id_ > 1`, push an
+  InvalidationRecord + bump the lifetime counter.
+
+**Observability:**
+- `CompilerMetrics` gains `invalidation_trace_records_total`.
+- `CompilerSnapshot` mirrors it.
+- `service.ixx` accumulates FlatAST's counter into a
+  per-service accumulator (snapshot is const).
+- New Aura primitive `(compile:mutation-log-invalidation-stats)`
+  returns hash with 2 fields: records-total + trace-size.
+
+**Tests:** test_issue_413, 8/8 (6 ACs). AC3 verifies the
+trace increments 0→2 on a single binding mutation
+(target binding + ancestor container both bump).
+
+**Today's totals (so far, 2026-06-26, ~7.75 hours):**
+- 17 commits to origin/main (含 1 MEMORY.md pending)
+- 5 issues closed (all scope-limited)
+- 9 个新基础设施 ship: CI fix + RAII guard + gen
+  counter + tiered re-inference + per-DefUseIndex (4 fu) +
+  per-binding gen + **mutation_log invalidation trace**
+- 3 bug 修复
+- 10 test binaries, 182 tests, 0 failures
