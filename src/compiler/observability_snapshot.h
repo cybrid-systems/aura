@@ -124,6 +124,15 @@ struct CompilerSnapshot {
     std::uint64_t narrowing_skipped_total = 0;
     std::uint64_t narrowing_reanalyzed_total = 0;
     std::uint64_t narrowing_applied_ratio_bp = 0;
+    // Issue #338: and/or precision observability.
+    // Mirrors the 2 lifetime counters in
+    // CompilerMetrics. meet_uses + join_uses is the
+    // total number of times the new helpers fired
+    // in the and/or branches (the total
+    // intersection + union work done by the
+    // precision-improved paths).
+    std::uint64_t and_or_meet_uses_total = 0;
+    std::uint64_t and_or_join_uses_total = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.
