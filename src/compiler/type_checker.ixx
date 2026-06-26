@@ -1098,8 +1098,10 @@ public:
     //
     // Bumps type_dep_graph_lookups_; bumps type_dep_graph_hits_
     // iff the returned vector is non-empty.
+    //
+    // Note: not const — bumps the observability counters.
     std::vector<aura::ast::NodeId>
-    affected_nodes_for_type(std::uint32_t tid) const {
+    affected_nodes_for_type(std::uint32_t tid) {
         ++type_dep_graph_lookups_;
         std::vector<aura::ast::NodeId> out;
         auto it = type_dep_graph_.find(tid);

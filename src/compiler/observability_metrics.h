@@ -137,6 +137,18 @@ struct CompilerMetrics {
     //     the dirty-trigger rate.
     std::atomic<std::uint64_t> should_relower_total{0};
     std::atomic<std::uint64_t> affected_subtree_total{0};
+    // Issue #387: Type Dependency Graph observability (3
+    // lifetime-total counters, threaded from TypeChecker
+    // through CompilerService::typecheck_full() / incremental_infer).
+    // type_dep_graph_lookups = total queries to
+    //                            affected_nodes_for_type()
+    // type_dep_graph_hits = queries that found >= 1 dependent
+    //                        node (real hit)
+    // type_dep_graph_size = peak number of distinct TypeIds
+    //                       tracked (snapshot, not lifetime)
+    std::atomic<std::uint64_t> type_dep_graph_lookups{0};
+    std::atomic<std::uint64_t> type_dep_graph_hits{0};
+    std::atomic<std::uint64_t> type_dep_graph_size{0};
     // Issue #254: IR SoA dual-emit counters (lifetime total).
     // Bumped by service.ixx after each lower_to_ir call when
     // dual-emit is enabled. The underlying counters live on

@@ -2464,6 +2464,17 @@ public:
             tc.stats().schema_cache_lookups, std::memory_order_relaxed);
         metrics_.schema_cache_hits_total.fetch_add(
             tc.stats().schema_cache_hits, std::memory_order_relaxed);
+        // Issue #387: Type Dependency Graph observability.
+        // Mirror the per-call TypeChecker counters into the
+        // lifetime CompilerMetrics atomics.
+        metrics_.type_dep_graph_lookups.fetch_add(
+            tc.type_dep_graph_lookups(), std::memory_order_relaxed);
+        metrics_.type_dep_graph_hits.fetch_add(
+            tc.type_dep_graph_hits(), std::memory_order_relaxed);
+        metrics_.type_dep_graph_size.store(
+            std::max(metrics_.type_dep_graph_size.load(std::memory_order_relaxed),
+                     static_cast<std::uint64_t>(tc.type_dep_graph_size())),
+            std::memory_order_relaxed);
 
         // Issue #116: the typecheck command doesn't proceed to
         // IR lowering (it just reports types + diagnostics), so
@@ -2534,6 +2545,21 @@ public:
                                        tracker_ptr);
         metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
                                                     std::memory_order_relaxed);
+        // Issue #387: Type Dependency Graph observability.
+        // Mirror the per-call TypeChecker counters into the
+        // lifetime CompilerMetrics atomics. The graph is
+        // built by infer_flat_partial's set_type_with_gen
+        // path; lookups happen during affected-set
+        // computation (the actual O(affected) wiring is the
+        // follow-up).
+        metrics_.type_dep_graph_lookups.fetch_add(
+            tc.type_dep_graph_lookups(), std::memory_order_relaxed);
+        metrics_.type_dep_graph_hits.fetch_add(
+            tc.type_dep_graph_hits(), std::memory_order_relaxed);
+        metrics_.type_dep_graph_size.store(
+            std::max(metrics_.type_dep_graph_size.load(std::memory_order_relaxed),
+                     static_cast<std::uint64_t>(tc.type_dep_graph_size())),
+            std::memory_order_relaxed);
         // Issue #411 follow-up #1: per-symbol / ancestor
         // path tracking. Mirror the per-call TypeChecker
         // stats into the lifetime CompilerMetrics
@@ -4509,6 +4535,21 @@ public:
         } else {
             s.dirty_trigger_rate_bp = 0;
         }
+        // Issue #387: Type Dependency Graph observability.
+        // Mirrors the 3 atomics; derives type_dep_graph_hit_rate_bp.
+        s.type_dep_graph_lookups =
+            metrics_.type_dep_graph_lookups.load(std::memory_order_relaxed);
+        s.type_dep_graph_hits =
+            metrics_.type_dep_graph_hits.load(std::memory_order_relaxed);
+        s.type_dep_graph_size =
+            metrics_.type_dep_graph_size.load(std::memory_order_relaxed);
+        if (s.type_dep_graph_lookups > 0) {
+            s.type_dep_graph_hit_rate_bp =
+                (s.type_dep_graph_hits * 10000u) /
+                s.type_dep_graph_lookups;
+        } else {
+            s.type_dep_graph_hit_rate_bp = 0;
+        }
         // Issue #254: IR SoA dual-emit counters (lifetime total).
         s.ir_soa_instructions_emitted =
             metrics_.ir_soa_instructions_emitted.load(std::memory_order_relaxed);
@@ -5137,6 +5178,17 @@ public:
             tc.stats().schema_cache_lookups, std::memory_order_relaxed);
         metrics_.schema_cache_hits_total.fetch_add(
             tc.stats().schema_cache_hits, std::memory_order_relaxed);
+        // Issue #387: Type Dependency Graph observability.
+        // Mirror the per-call TypeChecker counters into the
+        // lifetime CompilerMetrics atomics.
+        metrics_.type_dep_graph_lookups.fetch_add(
+            tc.type_dep_graph_lookups(), std::memory_order_relaxed);
+        metrics_.type_dep_graph_hits.fetch_add(
+            tc.type_dep_graph_hits(), std::memory_order_relaxed);
+        metrics_.type_dep_graph_size.store(
+            std::max(metrics_.type_dep_graph_size.load(std::memory_order_relaxed),
+                     static_cast<std::uint64_t>(tc.type_dep_graph_size())),
+            std::memory_order_relaxed);
         metrics_.incremental_typecheck_auto_invocations_total.fetch_add(
             1, std::memory_order_relaxed);
         metrics_.incremental_typecheck_re_inferred_total.fetch_add(
