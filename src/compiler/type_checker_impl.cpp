@@ -21,6 +21,14 @@ import aura.core.mutation;
 // for O(uses) re-inference routing. The header is shared
 // with CompilerService (see per_defuse_index.h).
 #include "per_defuse_index.h"
+// Issue #409: full CompilerMetrics definition so
+// solve_delta_impl can bump the new per-#409 counters
+// (delta_constraints_processed_total /
+// delta_constraints_total). The forward decl in the
+// type_checker.ixx is sufficient for the metrics_
+// pointer, but the fetch_add on the atomic needs the
+// full type.
+#include "observability_metrics.h"
 
 namespace aura::compiler {
 
@@ -165,6 +173,7 @@ ConstraintSystem::ConstraintSystem(TypeRegistry& reg)
     : reg_(reg) {}
 
 void ConstraintSystem::add(Constraint c) {
+    const auto new_idx = constraints_.size();
     constraints_.push_back(std::move(c));
     // Issue #148: keep constraint_dirty_ in sync with constraints_.
     // New constraints added via plain add() are NOT marked dirty
@@ -172,6 +181,21 @@ void ConstraintSystem::add(Constraint c) {
     // the entry point for incremental callers.
     if (constraint_dirty_.size() < constraints_.size())
         constraint_dirty_.resize(constraints_.size(), false);
+    // Issue #409: maintain the var → constraints reverse
+    // map. Use find() to normalize the var to its
+    // Union-Find rep (the rep is what unify produces and
+    // what downstream var_to_constraints_ lookups should
+    // key on). The append-only vec can have stale entries
+    // for constraints that are no longer dirty — those are
+    // filtered at lookup time by the dirty bit check.
+    if (c.lhs.valid()) {
+        auto rep = find(c.lhs).index;
+        var_to_constraints_[rep].push_back(new_idx);
+    }
+    if (c.rhs.valid()) {
+        auto rep = find(c.rhs).index;
+        var_to_constraints_[rep].push_back(new_idx);
+    }
 }
 
 // Issue #148: incremental constraint add. Same as add() but
@@ -187,6 +211,16 @@ void ConstraintSystem::add_delta(Constraint c) {
     if (!constraint_dirty_[new_idx]) {
         constraint_dirty_[new_idx] = true;
         ++dirty_count_;
+    }
+    // Issue #409: also maintain the reverse map for
+    // delta constraints. See add() above for rationale.
+    if (c.lhs.valid()) {
+        auto rep = find(c.lhs).index;
+        var_to_constraints_[rep].push_back(new_idx);
+    }
+    if (c.rhs.valid()) {
+        auto rep = find(c.rhs).index;
+        var_to_constraints_[rep].push_back(new_idx);
     }
 }
 
@@ -412,6 +446,27 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
                     return false; // conflicting bindings
                 }
             }
+            // Issue #409: merge the var_to_constraints_
+            // reverse maps. r2's constraints are now
+            // r1's constraints (they reference the
+            // same var rep). We append r2's vec to
+            // r1's vec and erase r2's entry. Duplicate
+            // indices are harmless (the worklist is
+            // deduped by the solve loop). The
+            // append-only pattern keeps the merge O(
+            // |r2 entries|) — no need to rewrite r1's
+            // vec.
+            {
+                auto it_r2 = var_to_constraints_.find(
+                    static_cast<std::uint32_t>(r2));
+                if (it_r2 != var_to_constraints_.end()) {
+                    auto& dst = var_to_constraints_[static_cast<
+                        std::uint32_t>(r1)];
+                    dst.insert(dst.end(), it_r2->second.begin(),
+                                it_r2->second.end());
+                    var_to_constraints_.erase(it_r2);
+                }
+            }
         }
         return true;
     }
@@ -634,11 +689,47 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         return SolveResult::SOLVED;
 
     // Build the delta worklist from constraint_dirty_.
+    // Issue #409: this is the pre-#409 path. The
+    // post-#409 worklist is filtered by the var_to_
+    // constraints_ reverse map (only include
+    // constraints that reference a dirty var rep).
+    // We keep the old path as a fallback when the
+    // reverse map is empty (e.g. for callers that
+    // haven't gone through the fresh_var/unify
+    // path that populates it).
     std::vector<std::size_t> worklist;
     worklist.reserve(dirty_count_);
-    for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
-        if (constraint_dirty_[i]) {
-            worklist.push_back(i);
+    if (var_to_constraints_.empty()) {
+        // Legacy path: process all dirty constraints.
+        for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+            if (constraint_dirty_[i]) {
+                worklist.push_back(i);
+            }
+        }
+    } else {
+        // Issue #409: fine-grained path. Walk the
+        // reverse map and collect every constraint
+        // index that is currently dirty AND referenced
+        // by at least one var rep. We do not filter
+        // by which var is "dirty" (the dirty flag is
+        // on constraints, not vars) — instead, we
+        // collect all reverse-mapped dirty constraint
+        // indices. This is still a strict subset of
+        // the full worklist when the reverse map is
+        // populated (constraints that reference no
+        // var are skipped — those are int/float/
+        // string equalities that don't need re-solving
+        // unless they were added via add_delta).
+        std::vector<bool> seen(constraints_.size(), false);
+        for (const auto& [rep, indices] : var_to_constraints_) {
+            (void)rep;
+            for (auto idx : indices) {
+                if (idx < constraint_dirty_.size() &&
+                    constraint_dirty_[idx] && !seen[idx]) {
+                    worklist.push_back(idx);
+                    seen[idx] = true;
+                }
+            }
         }
     }
 
@@ -646,6 +737,19 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     // solve() — the delta set is small, so 10 passes is enough
     // for fixpoint in practice. If a delta is large enough to
     // need more, the caller can re-invoke solve() for a full pass.
+    // Issue #409: bump the processed counter for the metric.
+    // The counter is plumbed via metrics_ to
+    // CompilerMetrics::delta_constraints_processed_total
+    // by the caller (CompilerService). Pre-#409 the
+    // counter didn't exist; the worklist size was the
+    // signal but not surfaced.
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->delta_constraints_processed_total.fetch_add(
+            worklist.size(), std::memory_order_relaxed);
+        m->delta_constraints_total.fetch_add(
+            dirty_count_, std::memory_order_relaxed);
+    }
     std::size_t max_passes = 10;
     while (!worklist.empty() && max_passes-- > 0) {
         auto current = std::move(worklist);
@@ -693,6 +797,8 @@ void ConstraintSystem::clear() {
     // Issue #148: reset delta tracking.
     constraint_dirty_.clear();
     dirty_count_ = 0;
+    // Issue #409: reset the reverse map.
+    var_to_constraints_.clear();
     fresh_counter_ = 0;
     first_free_var_ = 0;
 } // ═══════════════════════════════════════════════════════════
