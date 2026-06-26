@@ -1588,3 +1588,38 @@ ADT constructors.
   #411, #412, #411 fu1 (4 fu), #412 fu1, #413, #386,
   #338, #433, #434, #390, #409, **#341**
 - 16+ test binaries, 181+ tests, 0 failures
+
+## Session 2026-06-26 — Issue #342: Narrowing blame/provenance (scope-limited)
+
+Commit `274dfc05` pushed to origin/main. 5 files, +334/-17.
+
+Extends `OccurrenceInfoFlat` with provenance fields
+(predicate_name + source_cond_id) and wires them
+through `analyze_predicate_flat`. Pre-#342, the
+struct only carried var_name + refined_type +
+is_negation. Post-#342, every analyze_predicate_flat
+that returns a populated OccurrenceInfoFlat also
+populates the predicate name and source cond NodeId.
+
+**Wiring:**
+- `OccurrenceInfoFlat` gains `predicate_name`
+  + `source_cond_id` fields.
+- `analyze_predicate_flat` populates via `make_occ` helper.
+- `synthesize_flat_if` bumps
+  `narrowing_provenance_total` counter.
+- `BlameParty` gains `Narrowing` enum value.
+
+**Observability:**
+- 1 lifetime counter.
+- New Aura primitive `(compile:narrowing-blame-stats)`.
+
+**Tests:** test_issue_342, 5/5 (5 ACs). AC4 verifies
+provenance populates (narrowing_provenance_total ==
+narrowing_applied_total == 1 on a fresh expression).
+
+**Today's totals (so far, 2026-06-26, ~11.5 hours):**
+- 35 commits to origin/main
+- **13 issues closed** (all scope-limited): #410, #411,
+  #412, #411 fu1 (4 fu), #412 fu1, #413, #386, #338,
+  #433, #434, #390, #409, #341, **#342**
+- 17+ test binaries, 186+ tests, 0 failures
