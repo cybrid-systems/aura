@@ -105,6 +105,17 @@ struct CompilerSnapshot {
     std::uint64_t per_binding_gen_hits_total = 0;
     std::uint64_t per_binding_gen_bumps_total = 0;
     std::uint64_t per_binding_gen_hit_ratio_bp = 0;
+    // Issue #413: invalidation trace records count
+    // (lifetime total). Mirrors the
+    // invalidation_trace_records_total in
+    // CompilerMetrics. The mutation_log size and the
+    // invalidation trace size are usually equal — every
+    // mutation that targets a binding produces one
+    // invalidation record. Mismatch indicates a mutation
+    // that didn't target a binding (sub-expression
+    // mutations only bump the global gen, no binding to
+    // trace).
+    std::uint64_t invalidation_trace_records_total = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.

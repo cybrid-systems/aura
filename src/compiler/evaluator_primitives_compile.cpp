@@ -2023,6 +2023,83 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (compile:mutation-log-invalidation-stats)
+    //   — Issue #413: snapshot of the mutation_log-
+    //   integrated invalidation trace. Returns a hash
+    //   with 2 fields: records-total (lifetime total
+    //   of (mutation_id, SymId) traces recorded) +
+    //   trace-size (current vector size in the active
+    //   workspace FlatAST). The difference between
+    //   trace-size and records-total indicates how
+    //   many traces were accumulated in prior
+    //   workspaces that have since been swapped out.
+    add("compile:mutation-log-invalidation-stats",
+        [&ev](const auto&) -> EvalValue {
+        auto build_hash =
+            [&](std::span<const std::pair<std::string, EvalValue>> kv)
+            -> EvalValue {
+            auto cap = std::max<std::size_t>(8, kv.size() * 2);
+            // Round up to next power of 2.
+            std::size_t hcap = 8;
+            while (hcap < cap) hcap *= 2;
+            auto* ht = FlatHashTable::create(hcap);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) *
+                        0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) |
+                          0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        if (!ev.compiler_service_)
+            return make_int(0);
+        auto* svc = static_cast<class CompilerService*>(
+            ev.compiler_service_);
+        std::uint64_t trace_size = 0;
+        if (auto* ws = ev.workspace_flat()) {
+            trace_size = static_cast<std::uint64_t>(
+                ws->invalidation_trace_size());
+        }
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"records-total",
+             make_int(static_cast<std::int64_t>(
+                 svc->snapshot().invalidation_trace_records_total))},
+            {"trace-size",
+             make_int(static_cast<std::int64_t>(trace_size))},
+        };
+        return build_hash(kv);
+    });
+
 } // register_compile_primitives
 
 } // namespace aura::compiler::primitives_detail

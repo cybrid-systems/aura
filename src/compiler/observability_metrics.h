@@ -210,6 +210,15 @@ struct CompilerMetrics {
     //     binding-specific (vs. every dirty event
     //     bumping the global gen).
     std::atomic<std::uint64_t> per_binding_gen_hits_total{0};
+    // Issue #413: mutation_log-integrated invalidation
+    // trace. The lifetime total of (mutation_id,
+    // SymId, binding_gen) triples recorded when
+    // mark_dirty_upward bumps the per-binding gen.
+    // Each entry corresponds to one invalidation that
+    // can be traced back via
+    // (compile:mutation-log-invalidation-trace
+    // mutation-id).
+    std::atomic<std::uint64_t> invalidation_trace_records_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)
