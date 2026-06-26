@@ -1341,3 +1341,66 @@ counter actually fires, not just that the test compiled.
 1. **#501b** — pre-commit gate hook
 2. 跑 `python3 build.py full-test`
 3. 收工
+
+## Session 2026-06-26 — Issue #338: and/or precision in Occurrence Typing (scope-limited)
+
+Commit `0578c504` pushed to origin/main. 10 files, +434/-22.
+
+Wires the new `TypeRegistry::meet` (greatest lower bound) +
+`TypeRegistry::join` (least upper bound) helpers into
+`analyze_predicate_flat`. Pre-#338, the (and ...) and (or ...)
+branches fell back to `dynamic_type()` on any refined-type
+mismatch (overly conservative). Post-#338, the engine uses
+the new helpers — the structural behavior is identical for
+the common case (both narrow to the same type — meet returns
+`a`, join returns `a`), but the helpers are the right
+extension point when real intersection / union types land.
+
+**Wiring:**
+- `TypeRegistry` gains 2 helpers: `meet` / `join`. Aura's
+  shallow type lattice returns dynamic on tag mismatch
+  (no real intersection / union types yet).
+- `analyze_predicate_flat` (and ...) branch: call `meet`
+  unconditionally for same-var conjuncts.
+- `analyze_predicate_flat` (or ...) branch: call `join`
+  unconditionally for same-var disjuncts (made consistent
+  with the meet path).
+- `analyze_predicate_flat` signature: now takes 2 out-params
+  (`bool& meet_used`, `bool& join_used`) so the static
+  function can signal to `InferenceEngine::stats_`. 4 call
+  sites updated.
+
+**Observability:**
+- `InnerStats` + `TypeCheckResult` + `IncrementalStats`
+  gain `and_or_meet_uses` + `and_or_join_uses`.
+- `CompilerMetrics` gains 2 lifetime counters.
+- New Aura primitive `(compile:and-or-precision-stats)`
+  returns 2-key hash.
+
+**Tests:** test_issue_338, 9/9 (6 ACs). AC3 ((and number? x
+number? x)) bumps `and_or_meet_uses_total` 0→1. AC4
+((or number? x number? x)) bumps `and_or_join_uses_total` 0→1.
+
+**Bug caught + fixed (during ship):**
+- First version: or branch was gated on `result->refined_type
+  != inner->refined_type`, so identical disjuncts never called
+  join (asymmetric with the and branch which calls meet
+  unconditionally). Test AC4 caught it.
+- Fix: make or branch call join unconditionally. Helper is
+  idempotent on equal types, so behavior is preserved.
+
+**Today's totals (so far, 2026-06-26, ~9 hours):**
+- 23 commits to origin/main (含 2 MEMORY.md)
+- **7 issues closed** (all scope-limited): #410, #411, #412,
+  #411 fu1 (4 fu), #412 fu1, #413, #386, #338
+- 11 个新 ship: CI fix + RAII guard + gen counter + tiered
+  re-inference + per-DefUseIndex (4 fu) + per-binding gen +
+  mutation_log trace + Occurrence Typing observability +
+  **and/or precision**
+- 4 bug 修复
+- **12 test binaries, 206 tests, 0 failures**
+
+**Remaining follow-ups:**
+1. **#501b** — pre-commit gate hook
+2. 跑 `python3 build.py full-test`
+3. 收工
