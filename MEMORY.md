@@ -1553,3 +1553,38 @@ Post-#409, the worklist is filtered through
   #412, #411 fu1 (4 fu), #412 fu1, #413, #386, #338,
   #433, #434, #390, **#409**
 - 12+ test binaries, 170+ tests, 0 failures
+
+## Session 2026-06-26 — Issue #341: Match + Occurrence Typing integration (scope-limited)
+
+Commit `960fa5a3` pushed to origin/main. 5 files, +332/-2.
+
+Wires a per-call check in `synthesize_flat_let`'s
+`__match_tmp` branch that consults the env for a
+previously narrowed subject type. Pre-#341, the
+match exhaustiveness checker used the unrefined
+subject type. Post-#341, if the value is a Variable
+that was narrowed by a prior (if (type? x "Foo")
+...) in the env, the let path uses the env-bound
+type — improving exhaustiveness diagnostics for
+ADT constructors.
+
+**Wiring:**
+- `synthesize_flat_let` for `__match_tmp`:
+  - Bump `match_subject_total` counter.
+  - If value is a Variable, look up env-bound
+    type. If concrete (not TYPE_VAR), use it as
+    subject type and bump
+    `match_subject_narrowed_total`.
+
+**Observability:**
+- 2 lifetime counters + 1 derived ratio.
+- New Aura primitive `(compile:match-narrowing-stats)`.
+
+**Tests:** test_issue_341, 11/11 (5 ACs).
+
+**Today's totals (so far, 2026-06-26, ~11 hours):**
+- 33 commits to origin/main
+- **12 issues closed** (all scope-limited): #410,
+  #411, #412, #411 fu1 (4 fu), #412 fu1, #413, #386,
+  #338, #433, #434, #390, #409, **#341**
+- 16+ test binaries, 181+ tests, 0 failures
