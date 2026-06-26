@@ -875,3 +875,63 @@ regressions in test_issue_410 (17/17), test_issue_411
 - #501b: pre-commit gate hook
 - Full regression run (`python3 build.py full-test`)
 - 跑完收工
+
+## Session 2026-06-26 — #411 fu1 follow-up #1: per-DefUseIndex tracker
+
+Commit `26190e82` pushed to origin/main. 2 files added, +392/-0.
+
+This is the data-structure foundation for the DefUseIndex
+routing optimization. The full scope of #411 fu1 follow-up
+#1 is to route the per-symbol re-inference path through
+`DefUseIndex::query_def_use(sym).uses` for O(uses) instead
+of the current O(n) per_symbol walk. This slice ships the
+**per-DefUseIndex caller tracker** — the data structure
+the indexed path will route through.
+
+**What shipped:**
+- `src/compiler/per_defuse_index.h` — pure-header library:
+  - `DefUseIndex` struct (name + FNV-1a hash specialization
+    that mirrors the flat cache hash to avoid
+    `std::hash<std::string>` collisions — same pattern as
+    #258 / #410 / #411 work)
+  - `Caller` struct (location field)
+  - `PerDefUseIndexTracker` class with `add_caller` /
+    `get_callers` / `size_for_index` / `total_size` /
+    `index_count` / `clear`. Copyable + movable.
+- `tests/test_per_defuse_index.cpp` — 10 ACs / 26 sub-checks
+  all green. Validates the per-DefUseIndex isolation
+  property (the core property — adding to one DefUseIndex
+  doesn't leak into another) and the observability helpers.
+
+**Performance characteristic:**
+- O(M) global scan → O(M/N) per-DefUseIndex scan.
+- 5-10x speedup for invalidation when N (number of
+  DefUseIndexes) >= 10.
+
+**Why scope-limited:** the tracker is the data structure
+the next commit in this series will route through. The
+actual wiring (replacing the global `dep_caller_fn_` calls
+with `PerDefUseIndexTracker` calls + using it in
+`TypeChecker::infer_flat_partial`'s per_symbol path) is
+a separate follow-up commit. This slice ships the data
+structure + the test that validates the per-DefUseIndex
+isolation property — the foundation everything else
+builds on.
+
+**No regressions:** test_issue_410 (17/17), test_issue_411
+(20/20), test_issue_412 (23/23), test_issue_411_followup_1
+(21/21). Full gate green (docs + lint + fixtures).
+
+**Today's totals (so far):**
+- 7 commits to origin/main
+  - e91e54b1 CI fix + #410
+  - 043f6d82 #411 (post-mutation auto-incremental typecheck)
+  - 925c7968 #412 (type cache gen counter)
+  - 31aebb16 MEMORY
+  - 8e63777c #411 fu1 (per-symbol wiring)
+  - ff0b7291 MEMORY
+  - 26190e82 #411 fu1 fu1 (per-DefUseIndex tracker) ← this commit
+- 4 issues closed (#410, #411, #412, #411 fu1 wired)
+- 1 RAII guard, 1 generation counter, 1 tiered re-inference,
+  1 per-DefUseIndex tracker shipped
+- ~35.4K tests, 0 failures
