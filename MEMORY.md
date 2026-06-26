@@ -1919,3 +1919,48 @@ Phase 0 foundation ships the unified error type:
 - **52 commits to origin/main** (含 2 MEMORY.md)
 - **20 issues closed (all scope-limited)**: previous 19 + #474
 - **23 test binaries, 321+ tests, 0 failures**
+
+## Session 2026-06-26 — Issue #501: Aura core Concepts foundation (Phase 1)
+
+Commit `1e735f12` pushed to origin/main. 5 files, +369.
+
+Anqi's Architecture Refactor proposal (Concepts +
+Ranges + Module Partitions) called for explicit
+compile-time constraints on Aura's template / generic
+code. This Phase 1 slice ships the foundation:
+
+- `src/core/concepts.ixx` (NEW `aura.core.concepts`):
+  - `NodeHandle<T>` — integral OR strong typedef
+  - `ASTContainer<C, Id>` — get/children/tag
+  - `Mutator<M, C, Id>` — apply() returns AuraResult
+  - `ArenaAllocator<A>` — allocate + deallocate noexcept
+  - `Queryable<Q, C, Id>` — find_calls() returns
+    AuraResult<vector<Id>>
+- `tests/test_issue_501.cpp`: 7 compile-time tests
+  (static_asserts) across 7 ACs
+
+**Design choices:**
+- Explicit template parameters (no `auto` placeholders
+  in requires-clauses — GCC 16 edge cases).
+- Default `Id = std::uint32_t` for common case.
+- 2-arg / 3-arg overloads match current usage patterns.
+
+**Verified:**
+- test_issue_501: 7/7 pass
+- 20 regression binaries: 328+ tests, 0 failures
+- Gate: all green
+
+**6 follow-ups tracked (Phase 2-4):**
+1. Apply `ASTContainer` to query_impl.cpp + query.ixx
+2. Apply `Mutator` to mutation.ixx strategy classes
+3. Apply `ArenaAllocator` to arena.ixx internal allocator
+4. Apply `Queryable` to query.ixx dispatcher
+5. (Phase 3) Migrate children iteration / DefUseIndex
+   walk / invalidation propagation to std::ranges
+6. (Phase 4) Split `core.ixx` into module partitions
+   (`core:ast`, `core:mutation`, `core:arena`, `core:type`)
+
+**Today's totals (2026-06-26, ~16.5 hours):**
+- **54 commits to origin/main** (含 2 MEMORY.md)
+- **21 issues closed (all scope-limited)**
+- **24 test binaries, 328+ tests, 0 failures**
