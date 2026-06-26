@@ -2479,6 +2479,20 @@ public:
                                                        std::memory_order_relaxed);
         metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
                                                     std::memory_order_relaxed);
+        // Issue #411 follow-up #1: per-symbol / ancestor
+        // path tracking. Mirror the per-call TypeChecker
+        // stats into the lifetime CompilerMetrics
+        // counters so the
+        // (compile:per-symbol-reinfer-stats) Aura primitive
+        // sees a single source of truth.
+        metrics_.per_symbol_reinfer_used_total.fetch_add(
+            tc.stats().per_symbol_used_total, std::memory_order_relaxed);
+        metrics_.per_symbol_reinfer_visited_total.fetch_add(
+            tc.stats().per_symbol_visited_total, std::memory_order_relaxed);
+        metrics_.ancestor_reinfer_used_total.fetch_add(
+            tc.stats().ancestor_used_total, std::memory_order_relaxed);
+        metrics_.ancestor_reinfer_visited_total.fetch_add(
+            tc.stats().ancestor_visited_total, std::memory_order_relaxed);
         return n;
     }
 
@@ -4482,6 +4496,25 @@ public:
         } else {
             s.incremental_typecheck_avg_re_inferred_bp = 0;
         }
+        // Issue #411 follow-up #1: mirror the 4 per-symbol
+        // counters and compute the derived path-share
+        // metric. 0 when no re-inference has happened yet.
+        s.per_symbol_reinfer_used_total =
+            metrics_.per_symbol_reinfer_used_total.load(std::memory_order_relaxed);
+        s.per_symbol_reinfer_visited_total =
+            metrics_.per_symbol_reinfer_visited_total.load(std::memory_order_relaxed);
+        s.ancestor_reinfer_used_total =
+            metrics_.ancestor_reinfer_used_total.load(std::memory_order_relaxed);
+        s.ancestor_reinfer_visited_total =
+            metrics_.ancestor_reinfer_visited_total.load(std::memory_order_relaxed);
+        const std::uint64_t total_visited = s.per_symbol_reinfer_visited_total +
+                                            s.ancestor_reinfer_visited_total;
+        if (total_visited > 0) {
+            s.per_symbol_path_share_bp =
+                (s.per_symbol_reinfer_visited_total * 10000u) / total_visited;
+        } else {
+            s.per_symbol_path_share_bp = 0;
+        }
         // Issue #247: populate marker distribution by walking
         // workspace_flat_->marker_column(). We grab a
         // shared_lock on workspace_mtx_ to keep the flat
@@ -4728,6 +4761,20 @@ public:
             tc.stats().stale_cache, std::memory_order_relaxed);
         metrics_.typecheck_gen_saved_total.fetch_add(
             tc.stats().gen_saved, std::memory_order_relaxed);
+        // Issue #411 follow-up #1: per-symbol / ancestor
+        // path tracking. The auto-invoke path also routes
+        // through infer_flat_partial, so it benefits from
+        // the per-symbol optimization. Mirror the per-call
+        // stats into the lifetime counters (same as
+        // incremental_infer above).
+        metrics_.per_symbol_reinfer_used_total.fetch_add(
+            tc.stats().per_symbol_used_total, std::memory_order_relaxed);
+        metrics_.per_symbol_reinfer_visited_total.fetch_add(
+            tc.stats().per_symbol_visited_total, std::memory_order_relaxed);
+        metrics_.ancestor_reinfer_used_total.fetch_add(
+            tc.stats().ancestor_used_total, std::memory_order_relaxed);
+        metrics_.ancestor_reinfer_visited_total.fetch_add(
+            tc.stats().ancestor_visited_total, std::memory_order_relaxed);
         metrics_.incremental_typecheck_auto_invocations_total.fetch_add(
             1, std::memory_order_relaxed);
         metrics_.incremental_typecheck_re_inferred_total.fetch_add(

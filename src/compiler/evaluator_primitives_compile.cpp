@@ -1717,6 +1717,100 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (compile:per-symbol-reinfer-stats) — Issue #411
+    // follow-up #1: per-symbol re-inference path
+    // observability. Returns a hash with 6 fields:
+    //   - per-symbol-used-total: lifetime count of
+    //     mutations that took the per-symbol path (the
+    //     fast path, O(uses))
+    //   - per-symbol-visited-total: total nodes visited
+    //     across all per-symbol invocations
+    //   - ancestor-used-total: lifetime count of mutations
+    //     that fell back to the ancestor walk (the slow
+    //     path, O(depth))
+    //   - ancestor-visited-total: total nodes visited
+    //     across all ancestor invocations
+    //   - path-share-bp: derived share of re-inference
+    //     work that went through the per-symbol path
+    //     (per_symbol_visited / total_visited * 10000,
+    //     basis points). Higher = more work on the fast
+    //     path.
+    //   - avg-per-symbol-bp: derived average re-inferred
+    //     nodes per per-symbol mutation
+    //     (per_symbol_visited / max(per_symbol_used, 1) *
+    //     10000). The follow-up #410 Phase 2/2 (O(uses)
+    //     DefUseIndex routing) will reduce this metric
+    //     further by replacing the O(n) per_symbol walk
+    //     with an O(uses) indexed lookup.
+    add("compile:per-symbol-reinfer-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE; // avoid HASH_EMPTY collision
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t per_symbol_used = 0, per_symbol_visited = 0;
+        std::uint64_t ancestor_used = 0, ancestor_visited = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            per_symbol_used = m->per_symbol_reinfer_used_total.load(
+                std::memory_order_relaxed);
+            per_symbol_visited = m->per_symbol_reinfer_visited_total.load(
+                std::memory_order_relaxed);
+            ancestor_used = m->ancestor_reinfer_used_total.load(
+                std::memory_order_relaxed);
+            ancestor_visited = m->ancestor_reinfer_visited_total.load(
+                std::memory_order_relaxed);
+        }
+        const std::uint64_t total_visited = per_symbol_visited + ancestor_visited;
+        const std::uint64_t path_share_bp =
+            (total_visited > 0) ? (per_symbol_visited * 10000u) / total_visited : 0;
+        const std::uint64_t avg_per_symbol_bp =
+            (per_symbol_used > 0) ? (per_symbol_visited * 10000u) / per_symbol_used : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"per-symbol-used-total", make_int(static_cast<std::int64_t>(per_symbol_used))},
+            {"per-symbol-visited-total", make_int(static_cast<std::int64_t>(per_symbol_visited))},
+            {"ancestor-used-total", make_int(static_cast<std::int64_t>(ancestor_used))},
+            {"ancestor-visited-total", make_int(static_cast<std::int64_t>(ancestor_visited))},
+            {"path-share-bp", make_int(static_cast<std::int64_t>(path_share_bp))},
+            {"avg-per-symbol-bp", make_int(static_cast<std::int64_t>(avg_per_symbol_bp))},
+        };
+        return build_hash(kv);
+    });
+
 } // register_compile_primitives
 
 } // namespace aura::compiler::primitives_detail

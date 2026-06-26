@@ -3541,7 +3541,58 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                             const aura::ast::StringPool& pool,
                                             const aura::ast::MutationRecord& rec,
                                             aura::diag::DiagnosticCollector& diag) {
-    const auto affected = affected_subtree_from_mutation(flat, rec);
+    // Issue #411 follow-up #1: per-symbol re-inference
+    // wiring. The baseline (ancestor-walk) used
+    // `affected_subtree_from_mutation` which marks every
+    // ancestor of the mutated node as affected — for a
+    // mutation deep in the AST this re-infers O(depth)
+    // nodes that didn't actually need re-inference. The
+    // per-symbol path (`affected_subtree_for_symbol`)
+    // returns only the Variable use-sites of the binding
+    // the mutation changed, which is O(uses) and is
+    // almost always a strict subset of the ancestor set.
+    //
+    // The two paths compose: try per-symbol first (when
+    // the mutation record carries a meaningful sym_id —
+    // a binding Define/Let), fall back to ancestor when
+    // the sym_id is INVALID (e.g. mutate:replace-type on
+    // a sub-expression with no binding). This is the
+    // "tiered" approach: optimize the common case
+    // (rebind / set-body on a top-level define) without
+    // regressing the uncommon case.
+    //
+    // The metrics plumbed back (per_symbol_used_total,
+    // per_symbol_visited_total, ancestor_used_total,
+    // ancestor_visited_total) let the user measure the
+    // speedup ratio via the
+    // (compile:per-symbol-reinfer-stats) Aura primitive.
+    std::vector<aura::ast::NodeId> affected;
+    if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size()) {
+        auto tgv = flat.get(rec.target_node);
+        const auto sym = tgv.sym_id;
+        if (sym != aura::ast::INVALID_SYM &&
+            (tgv.tag == aura::ast::NodeTag::Define ||
+             tgv.tag == aura::ast::NodeTag::Let ||
+             tgv.tag == aura::ast::NodeTag::LetRec)) {
+            // Per-symbol path: only the use-sites of this
+            // binding need re-inference, not the whole
+            // ancestor chain.
+            affected = affected_subtree_for_symbol(flat, sym);
+            ++stats_.per_symbol_used_total;
+            stats_.per_symbol_visited_total += affected.size();
+        }
+    }
+    if (affected.empty()) {
+        // Fallback: ancestor walk (the pre-#411-follow-up-1
+        // path). Used when the mutation record doesn't
+        // carry a binding sym_id (sub-expression mutation
+        // like replace-type) or when the per-symbol path
+        // returns empty (no use-sites of the changed
+        // binding in the workspace).
+        affected = affected_subtree_from_mutation(flat, rec);
+        ++stats_.ancestor_used_total;
+        stats_.ancestor_visited_total += affected.size();
+    }
     if (affected.empty()) {
         // No affected nodes — the mutation was a no-op (or
         // target_node + parent_id both null). Count as a
@@ -3584,6 +3635,11 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     stats_.cache_misses += es.cache_misses;
     stats_.stale_cache += es.stale_cache;
     stats_.gen_saved += es.gen_saved;
+    // Issue #411 follow-up #1: per_symbol / ancestor path
+    // tracking already bumped on this infer_flat_partial
+    // call (at the top of the function). The per-call
+    // engine doesn't carry the per_symbol / ancestor
+    // counts; we accumulate them on stats_ directly here.
 
     return re_inferred;
 }
