@@ -2275,6 +2275,24 @@ public:
     // to children_; back-references to the old PCVs in the
     // snapshot are released as the snapshot goes out of scope).
     void restore_children(std::vector<PersistentChildVector<NodeId>>&& snapshot) {
+        // Issue #487: pad the snapshot up to children_'s current
+        // size before the move. Without padding, if the in-flight
+        // mutation added nodes (e.g. set-code inside a MutationBoundary
+        // guard, or any primitive that grew children_ before the
+        // rollback fires), the snapshot would be smaller than the
+        // current children_. The subsequent move would shrink
+        // children_, and any access to children_[id] for id >=
+        // snapshot.size() (e.g. a destructor that walks every node)
+        // would trigger std::vector::operator[]'s debug-mode
+        // assertion. This was crashing test_issue_192 tests 3.1 +
+        // 4.1 (the atomic-batch bad-op path).
+        //
+        // The padding is cheap (empty PCVs are zero-sized; the
+        // per-node COW means a moved-empty PCV is a single
+        // shared_ptr that doesn't allocate).
+        if (snapshot.size() < children_.size()) {
+            snapshot.resize(children_.size());
+        }
         children_ = std::move(snapshot);
         bump_generation();
     }
