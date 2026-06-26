@@ -1404,3 +1404,43 @@ number? x)) bumps `and_or_meet_uses_total` 0→1. AC4
 1. **#501b** — pre-commit gate hook
 2. 跑 `python3 build.py full-test`
 3. 收工
+
+## Session 2026-06-26 — Issue #433: DeadCoercionEliminationPass observability (scope-limited)
+
+Commit `f4b5ee69` pushed to origin/main. 5 files, +201/-2.
+
+The `DeadCoercionEliminationPass` (pass_manager.ixx:705)
+already existed and was already wired into the lowering
+pipeline (service.ixx:1442, in the run-passes block).
+This issue ships the observability layer + integration
+verification.
+
+**Wiring:**
+- `CompilerMetrics` gains `dead_coercion_eliminated_total`.
+- `service.ixx` post-`dce.run()`: accumulate
+  `dce.eliminated_count()` into the lifetime total.
+- `CompilerSnapshot` mirrors the lifetime total.
+- New Aura primitive `(compile:dead-coercion-stats)`
+  returns the lifetime total as an int.
+
+**Tests:** test_issue_433, 7/7 (5 ACs). AC4 verifies dce
+is wired into the pipeline (counter stays 0 for a fresh
+program with no identity casts — confirms the metric is
+plumbed).
+
+**Today's totals (so far, 2026-06-26, ~9.5 hours):**
+- 25 commits to origin/main (含 2 MEMORY.md)
+- **8 issues closed** (all scope-limited): #410, #411,
+  #412, #411 fu1 (4 fu), #412 fu1, #413, #386, #338, #433
+- 12 个新 ship: CI fix + RAII guard + gen counter +
+  tiered re-inference + per-DefUseIndex (4 fu) +
+  per-binding gen + mutation_log trace + Occurrence
+  Typing observability + and/or precision + **dead
+  coercion observability**
+- 4 bug 修复
+- **13 test binaries, 213 tests, 0 failures**
+
+**Remaining follow-ups:**
+1. **#501b** — pre-commit gate hook
+2. 跑 `python3 build.py full-test`
+3. 收工
