@@ -4630,6 +4630,23 @@ public:
         } else {
             s.delta_solve_constraints_ratio_bp = 0;
         }
+        // Issue #341: match + Occurrence Typing
+        // observability. Mirror the 2 lifetime
+        // counters and compute the derived ratio
+        // (basis points: narrowed / total * 10000).
+        s.match_subject_narrowed_total =
+            metrics_.match_subject_narrowed_total.load(
+                std::memory_order_relaxed);
+        s.match_subject_total =
+            metrics_.match_subject_total.load(
+                std::memory_order_relaxed);
+        if (s.match_subject_total > 0) {
+            s.match_narrowed_ratio_bp =
+                (s.match_subject_narrowed_total * 10000u) /
+                s.match_subject_total;
+        } else {
+            s.match_narrowed_ratio_bp = 0;
+        }
         const std::uint64_t narrow_total =
             s.narrowing_applied_total + s.narrowing_skipped_total;
         if (narrow_total > 0) {
