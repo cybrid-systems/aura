@@ -5056,6 +5056,8 @@ public:
         const aura::ast::MutationRecord& rec,
         std::uint64_t mutation_id_for_log,
         const char* source) {
+        (void)source;          // was: tag for the debug log (removed in #487 fix)
+        (void)mutation_id_for_log;  // ditto
         if (incremental_typecheck_mode_ != IncrementalTypecheckMode::Eager)
             return 0;
         aura::compiler::TypeChecker tc(type_registry_);
@@ -5139,11 +5141,18 @@ public:
             1, std::memory_order_relaxed);
         metrics_.incremental_typecheck_re_inferred_total.fetch_add(
             n, std::memory_order_relaxed);
-        if (n > 0) {
-            std::println(std::cerr,
-                         "IncrementalTypecheck: {} mutation {} re-inferred {} node(s)",
-                         source, mutation_id_for_log, n);
-        }
+        // Note: a previous version of this method printed a
+        // debug line to stderr ("IncrementalTypecheck: ...")
+        // after the re-inference. That output was being
+        // captured by the EDSL test framework's stream
+        // redirect, polluting the result strings of tests
+        // like edsl-ir-cache:cascade-after-mutate (expected
+        // "#t" got the debug line + "#t"). The line was
+        // left over from the #411 ship and serves no
+        // production purpose — the counters above
+        // (incremental_typecheck_auto_invocations_total +
+        // incremental_typecheck_re_inferred_total) are the
+        // observability surface. Removed.
         return n;
     }
 
