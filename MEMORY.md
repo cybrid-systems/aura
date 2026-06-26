@@ -1747,3 +1747,29 @@ changes to the public post_mutation_invariant_check API).
 - 42 commits to origin/main
 - **17 issues closed** (all scope-limited)
 - 20+ test binaries, 226+ tests, 0 failures
+
+## Session 2026-06-26 — Issue #487: Dirty propagation + IR re-lower (scope-limited)
+
+Commit `078edebf` pushed to origin/main. 5 files, +314/-4.
+
+Wires 2 lifetime counters for the dirty propagation
++ IR re-lower path + 1 derived ratio. Pre-#487 the
+should_relower() decision in lookup_define_v2 fired
+but wasn't surfaced. Post-#487 the new primitive
+exposes both the re-lower rate and the dirty
+propagation rate.
+
+**Wiring:**
+- `lookup_define_v2`: bump `should_relower_total` on
+  the should_relower=true branch.
+- `infer_flat_partial`'s ancestor path: bump
+  `affected_subtree_total` on every
+  affected_subtree_from_mutation call.
+
+**Tests:** test_issue_487, 11/11 (5 ACs). AC4 verifies
+`affected_subtree_total = 1` on fresh `mutate:rebind`.
+
+**Today's totals (so far, 2026-06-26, ~13.5 hours):**
+- 44 commits to origin/main
+- **18 issues closed** (all scope-limited)
+- 21+ test binaries, 237+ tests, 0 failures
