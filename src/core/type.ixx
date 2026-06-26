@@ -205,6 +205,29 @@ public:
     // Lookup type by name (returns invalid TypeId if not found)
     TypeId lookup_type(const std::string& name) const;
 
+    // Issue #385: poly metrics pointers. 3
+    // std::atomic<uint64_t>* addresses plumbed
+    // from CompilerService via set_poly_metrics().
+    // The TypeRegistry only needs to bump these
+    // counters (no other CompilerMetrics state),
+    // so we avoid the cross-module dependency on
+    // the CompilerMetrics struct. Null by default
+    // (unit tests that construct TypeRegistry
+    // directly don't need it). The lifetime of
+    // the pointed-to atomics is managed by
+    // CompilerMetrics (a CompilerService-owned
+    // field).
+    std::atomic<std::uint64_t>* poly_register_counter_ = nullptr;
+    std::atomic<std::uint64_t>* poly_dedup_hits_counter_ = nullptr;
+    std::atomic<std::uint64_t>* poly_instantiate_counter_ = nullptr;
+    void set_poly_metrics(std::atomic<std::uint64_t>* reg,
+                          std::atomic<std::uint64_t>* dedup,
+                          std::atomic<std::uint64_t>* inst) {
+        poly_register_counter_ = reg;
+        poly_dedup_hits_counter_ = dedup;
+        poly_instantiate_counter_ = inst;
+    }
+
     // Bump the generation counter and clear all non-predefined entries.
     // After compact() returns, any TypeId with generation less than
     // generation() (i.e. type_id.generation < next_generation_) is

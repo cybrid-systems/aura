@@ -349,6 +349,23 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> consistent_unify_total{0};
     std::atomic<std::uint64_t> consistent_subtype_total{0};
     std::atomic<std::uint64_t> worklist_restart_total{0};
+    // Issue #385: mutation-aware Let-Poly caching
+    // observability. 3 lifetime counters:
+    //   - poly_register_total: every call to
+    //     TypeRegistry::register_forall (whether
+    //     dedup hit or new entry created).
+    //   - poly_dedup_hits_total: dedup hit count
+    //     (the pre-#385 dedup loop returned an
+    //     existing TypeId for a same-var + same-
+    //     body call). Pre-#385 this wasn't
+    //     surfaced; post-#385 the ratio
+    //     dedup_hits / register is the cache
+    //     effectiveness signal.
+    //   - poly_instantiate_total: every call to
+    //     TypeRegistry::instantiate_forall.
+    std::atomic<std::uint64_t> poly_register_total{0};
+    std::atomic<std::uint64_t> poly_dedup_hits_total{0};
+    std::atomic<std::uint64_t> poly_instantiate_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)

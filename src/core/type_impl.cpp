@@ -383,6 +383,12 @@ const EffectType* TypeRegistry::effect_of(TypeId id) const {
 }
 
 TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
+    // Issue #385: bump the register counter for
+    // observability. Every call bumps it.
+    if (poly_register_counter_) {
+        poly_register_counter_->fetch_add(
+            1, std::memory_order_relaxed);
+    }
     // Dedup: same var index + same body returns the existing TypeId.
     // (Caveat: bound var is by INDEX. Two calls with structurally
     // equal bodies but different vars collapse — correct per
@@ -394,6 +400,15 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
         if (f.var.index != var.index)
             continue;
         if (f.body == body || type_equals(f.body, body)) {
+            // Issue #385: bump the dedup-hit counter.
+            // The cache hit means the existing
+            // TypeId is returned without allocating
+            // a new entry. The dedup_hits / register
+            // ratio measures the cache effectiveness.
+            if (poly_dedup_hits_counter_) {
+                poly_dedup_hits_counter_->fetch_add(
+                    1, std::memory_order_relaxed);
+            }
             return TypeId{i, next_generation_};
         }
     }
@@ -471,6 +486,15 @@ TypeId TypeRegistry::instantiate(TypeId forall_id, std::function<TypeId()> fresh
 }
 
 TypeId TypeRegistry::instantiate_forall(TypeId forall_id, const std::vector<TypeId>& args) {
+    // Issue #385: bump the instantiate counter for
+    // observability. Every call bumps it (the
+    // function may walk multiple ∀ layers; the
+    // counter is bumped once per call, not once
+    // per layer, to match the call-site rate).
+    if (poly_instantiate_counter_) {
+        poly_instantiate_counter_->fetch_add(
+            1, std::memory_order_relaxed);
+    }
     TypeId result = forall_id;
     std::size_t arg_idx = 0;
     while (auto* ft = forall_of(result)) {
