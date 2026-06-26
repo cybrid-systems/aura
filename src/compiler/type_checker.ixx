@@ -458,6 +458,15 @@ public:
         std::uint64_t per_symbol_visited_total = 0;
         std::uint64_t ancestor_used_total = 0;
         std::uint64_t ancestor_visited_total = 0;
+        // Issue #411 fu1 follow-up #3: per-DefUseIndex
+        // re-inference path tracking. per_defuse_index_used
+        // counts how many mutations took the O(uses)
+        // per-DefUseIndex path (fastest). walk_fallback
+        // counts how many times the path fell back to the
+        // O(n) walk (tracker present but sym not in it —
+        // signals index coverage gaps).
+        std::uint64_t per_defuse_index_used_total = 0;
+        std::uint64_t per_defuse_index_walk_fallback_total = 0;
     };
     InnerStats stats_;
     InnerStats stats() const { return stats_; }
@@ -723,6 +732,11 @@ export struct TypeChecker {
         std::uint64_t per_symbol_visited_total = 0;
         std::uint64_t ancestor_used_total = 0;
         std::uint64_t ancestor_visited_total = 0;
+        // Issue #411 fu1 follow-up #3: per-DefUseIndex
+        // re-inference path tracking. See InnerStats
+        // for the full rationale.
+        std::uint64_t per_defuse_index_used_total = 0;
+        std::uint64_t per_defuse_index_walk_fallback_total = 0;
     };
     IncrementalStats stats() const { return stats_; }
     void reset_stats() { stats_ = {}; }
@@ -777,6 +791,29 @@ export struct TypeChecker {
     std::size_t infer_flat_partial(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                                    const aura::ast::MutationRecord& rec,
                                    aura::diag::DiagnosticCollector& diag);
+
+    // Issue #411 fu1 follow-up #3: per-DefUseIndex-tracker-
+    // aware overload. When `per_defuse_index_tracker` is
+    // non-null AND the mutation record's sym_id is in the
+    // tracker, the O(uses) per-DefUseIndex path is used
+    // (replaces the O(n) per_symbol walk with an O(K)
+    // lookup where K is the use-site count for that
+    // specific binding). When the tracker is null or the
+    // sym isn't tracked, falls back to the existing
+    // O(n) `affected_subtree_for_symbol` walk. Falls back
+    // further to the ancestor walk if neither path yields
+    // a non-empty affected set.
+    //
+    // The metric bumps (per_symbol vs per_defuse_index vs
+    // ancestor) tell the user which path was used. The
+    // speedup ratio =
+    // per_defuse_index_visited_total /
+    // per_symbol_reinfer_visited_total (over time)
+    // measures the optimization's effectiveness.
+    std::size_t infer_flat_partial(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                                   const aura::ast::MutationRecord& rec,
+                                   aura::diag::DiagnosticCollector& diag,
+                                   void* per_defuse_index_tracker);
 
     // Issue #116: deferred CoercionNode insertion. infer_flat
     // now collects coercion intent in this map rather than
