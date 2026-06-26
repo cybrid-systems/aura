@@ -658,6 +658,17 @@ private:
         //   kMacroExpansion = 0x01
         //   kMacroSelfModify = 0x02
         macro_dirty_.push_back(0);
+        // Issue #390: per-node schema cache. 0 = no
+        // schema (matches type_id_ == 0 semantics).
+        // Populated by clone_macro_body from the
+        // source node's schema_cache_ (or type_id_
+        // as a fallback). The schema cache is a
+        // pre-computed type for macro-introduced
+        // nodes that the type checker can use as a
+        // cache hit signal — avoids re-inferring
+        // types for nodes whose schema was already
+        // determined by the macro definition.
+        schema_cache_.push_back(0);
         // Issue #79: per-node error kind (0 = no error, non-zero = ErrorKind).
         // Populated by the type-checker and runtime evaluator; queryable via
         // the AuraQuery `(has-error? N)` clause.
@@ -791,6 +802,14 @@ private:
     // than the global gen alone (which over-invalidates
     // when a different binding mutates).
     std::pmr::vector<std::uint32_t> type_cache_binding_gen_;
+    // Issue #390: per-node schema cache column.
+    // Parallel to type_id_; stores the pre-computed
+    // type for nodes whose schema was determined by
+    // macro definition (clone_macro_body). 0 = no
+    // schema (the type checker will infer normally).
+    // Non-zero = the type checker can use this as a
+    // cache hit signal (avoids re-inference).
+    std::pmr::vector<std::uint32_t> schema_cache_;
     // Issue #412 follow-up #1: per-binding generation
     // map. SymId → uint32_t. Each binding has its own
     // gen counter that bumps only when THAT binding's
@@ -1380,6 +1399,7 @@ public:
         , col_(other.col_)
         , type_id_(other.type_id_)
         , error_kind_(other.error_kind_)
+        , schema_cache_(other.schema_cache_)
         , value_cache_(other.value_cache_)
         , mutation_log_(other.mutation_log_)
         , node_first_mutation_(other.node_first_mutation_)
@@ -1432,6 +1452,7 @@ public:
             type_cache_gen_ = other.type_cache_gen_;
             type_cache_binding_gen_ = other.type_cache_binding_gen_;
             binding_gens_ = other.binding_gens_;
+            schema_cache_ = other.schema_cache_;
             error_kind_ = other.error_kind_;
             node_gen_ = other.node_gen_;
             free_list_ = other.free_list_;
@@ -4143,6 +4164,24 @@ public:
     // the snapshot for observability.
     std::uint64_t binding_gen_bumps_total() const {
         return binding_gen_bumps_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #390: per-node schema cache accessors.
+    // schema_cache(id) returns the cached schema for
+    // node id (0 = no schema, the type checker
+    // will infer normally). set_schema_cache(id, tid)
+    // sets the schema. The type-checker's cache hit
+    // path consults this column (alongside type_id_
+    // and type_cache_gen_) to short-circuit
+    // re-inference for macro-introduced nodes.
+    std::uint32_t schema_cache(aura::ast::NodeId id) const {
+        return id < schema_cache_.size()
+                   ? schema_cache_[id]
+                   : 0;
+    }
+    void set_schema_cache(aura::ast::NodeId id, std::uint32_t tid) {
+        if (id >= schema_cache_.size())
+            schema_cache_.resize(id + 1, 0);
+        schema_cache_[id] = tid;
     }
     // Issue #413: invalidation trace accessors. The
     // invalidation_trace_ vector grows by one entry per

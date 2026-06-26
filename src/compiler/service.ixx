@@ -2448,6 +2448,11 @@ public:
         // Issue #434: per-node occurrence dirty recovery.
         metrics_.narrowing_dirty_recovery_total.fetch_add(
             tc.stats().narrowing_dirty_recovery, std::memory_order_relaxed);
+        // Issue #390: schema cache observability.
+        metrics_.schema_cache_lookups_total.fetch_add(
+            tc.stats().schema_cache_lookups, std::memory_order_relaxed);
+        metrics_.schema_cache_hits_total.fetch_add(
+            tc.stats().schema_cache_hits, std::memory_order_relaxed);
 
         // Issue #116: the typecheck command doesn't proceed to
         // IR lowering (it just reports types + diagnostics), so
@@ -2563,6 +2568,11 @@ public:
         // Issue #434: per-node occurrence dirty recovery.
         metrics_.narrowing_dirty_recovery_total.fetch_add(
             tc.stats().narrowing_dirty_recovery, std::memory_order_relaxed);
+        // Issue #390: schema cache observability.
+        metrics_.schema_cache_lookups_total.fetch_add(
+            tc.stats().schema_cache_lookups, std::memory_order_relaxed);
+        metrics_.schema_cache_hits_total.fetch_add(
+            tc.stats().schema_cache_hits, std::memory_order_relaxed);
         return n;
     }
 
@@ -4590,6 +4600,18 @@ public:
         // Issue #434: per-node occurrence dirty recovery.
         s.narrowing_dirty_recovery_total =
             metrics_.narrowing_dirty_recovery_total.load(std::memory_order_relaxed);
+        // Issue #390: schema cache observability.
+        s.schema_cache_lookups_total =
+            metrics_.schema_cache_lookups_total.load(std::memory_order_relaxed);
+        s.schema_cache_hits_total =
+            metrics_.schema_cache_hits_total.load(std::memory_order_relaxed);
+        if (s.schema_cache_lookups_total > 0) {
+            s.schema_cache_hit_rate_bp =
+                (s.schema_cache_hits_total * 10000u) /
+                s.schema_cache_lookups_total;
+        } else {
+            s.schema_cache_hit_rate_bp = 0;
+        }
         const std::uint64_t narrow_total =
             s.narrowing_applied_total + s.narrowing_skipped_total;
         if (narrow_total > 0) {
@@ -4984,6 +5006,11 @@ public:
         // Issue #434: per-node occurrence dirty recovery.
         metrics_.narrowing_dirty_recovery_total.fetch_add(
             tc.stats().narrowing_dirty_recovery, std::memory_order_relaxed);
+        // Issue #390: schema cache observability.
+        metrics_.schema_cache_lookups_total.fetch_add(
+            tc.stats().schema_cache_lookups, std::memory_order_relaxed);
+        metrics_.schema_cache_hits_total.fetch_add(
+            tc.stats().schema_cache_hits, std::memory_order_relaxed);
         metrics_.incremental_typecheck_auto_invocations_total.fetch_add(
             1, std::memory_order_relaxed);
         metrics_.incremental_typecheck_re_inferred_total.fetch_add(

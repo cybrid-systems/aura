@@ -495,6 +495,11 @@ public:
         // recovery. Bumped when the If node is
         // dirty AND the predicate memo missed.
         std::uint64_t narrowing_dirty_recovery = 0;
+        // Issue #390: schema cache observability.
+        // Bumped in the cache hit path when the
+        // schema_cache column was consulted.
+        std::uint64_t schema_cache_lookups = 0;
+        std::uint64_t schema_cache_hits = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. per_symbol_used_total counts how
         // many mutations took the per-symbol path; the
@@ -742,6 +747,11 @@ export struct TypeCheckResult {
     // Issue #434: per-call dirty recovery. See
     // InnerStats for the full rationale.
     std::uint64_t narrowing_dirty_recovery = 0;
+    // Issue #390: per-call schema cache
+    // observability. See InnerStats for the full
+    // rationale.
+    std::uint64_t schema_cache_lookups = 0;
+    std::uint64_t schema_cache_hits = 0;
 };
 
 // Pure: type-check a FlatAST subtree and return the inferred
@@ -824,6 +834,9 @@ export struct TypeChecker {
         std::uint64_t and_or_join_uses = 0;
         // Issue #434: aggregated dirty recovery.
         std::uint64_t narrowing_dirty_recovery = 0;
+        // Issue #390: aggregated schema cache.
+        std::uint64_t schema_cache_lookups = 0;
+        std::uint64_t schema_cache_hits = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. See InnerStats for the full
         // field-by-field rationale.

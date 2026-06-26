@@ -149,6 +149,13 @@ struct CompilerSnapshot {
     // narrowing_dirty_recovery_total counter in
     // CompilerMetrics.
     std::uint64_t narrowing_dirty_recovery_total = 0;
+    // Issue #390: per-node schema cache observability.
+    // Mirrors the 2 lifetime counters in
+    // CompilerMetrics. The hit rate (basis points) is
+    // hits / lookups * 10000.
+    std::uint64_t schema_cache_lookups_total = 0;
+    std::uint64_t schema_cache_hits_total = 0;
+    std::uint64_t schema_cache_hit_rate_bp = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.
