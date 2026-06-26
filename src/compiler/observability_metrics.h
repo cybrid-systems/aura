@@ -279,6 +279,17 @@ struct CompilerMetrics {
     // the re-analysis work is post-mutation
     // (vs. first-time / epoch-advance).
     std::atomic<std::uint64_t> narrowing_dirty_recovery_total{0};
+    // Issue #390: per-node schema cache observability.
+    // 2 lifetime counters: schema_cache_lookups_total
+    // (total lookups against the schema_cache column
+    // in the type-checker cache hit path) and
+    // schema_cache_hits_total (lookups that returned
+    // a non-zero schema that matched the cached
+    // type_id). The hit rate is the share of
+    // macro-introduced nodes that the type checker
+    // was able to short-circuit without re-inference.
+    std::atomic<std::uint64_t> schema_cache_lookups_total{0};
+    std::atomic<std::uint64_t> schema_cache_hits_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)

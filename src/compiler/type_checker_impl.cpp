@@ -1699,6 +1699,26 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                 ++stats_.cache_hits;
                 return tid;
             }
+            // Issue #390: schema cache check. Pre-#390
+            // the type checker only consulted
+            // type_id_ + type_cache_gen_ for cache
+            // hits. Post-#390 the schema_cache_ column
+            // is consulted first — if set, the type
+            // checker can use it as a cache hit signal
+            // (avoids the re-inference for macro-
+            // introduced nodes whose schema was pre-
+            // computed by clone_macro_body). This is a
+            // fast O(1) check that short-circuits
+            // before the more expensive gen check.
+            const auto cached_schema = flat.schema_cache(id);
+            if (cached_schema != 0) {
+                ++stats_.schema_cache_lookups;
+                if (cached_schema == tid.index) {
+                    ++stats_.schema_cache_hits;
+                    ++stats_.cache_hits;
+                    return tid;
+                }
+            }
             if (gen_matches && !free_vars_empty) {
                 // Gen is unchanged, so the unresolved TYPE_VARs
                 // are still valid for this query (no
@@ -3591,6 +3611,9 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     stats_.and_or_join_uses += r.and_or_join_uses;
     // Issue #434: aggregate dirty recovery.
     stats_.narrowing_dirty_recovery += r.narrowing_dirty_recovery;
+    // Issue #390: aggregate schema cache.
+    stats_.schema_cache_lookups += r.schema_cache_lookups;
+    stats_.schema_cache_hits += r.schema_cache_hits;
     last_coercions_ = std::move(r.coercions);
     return r.inferred_type;
 }
@@ -3658,6 +3681,9 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
     result.and_or_join_uses = es.and_or_join_uses;
     // Issue #434: dirty recovery.
     result.narrowing_dirty_recovery = es.narrowing_dirty_recovery;
+    // Issue #390: schema cache.
+    result.schema_cache_lookups = es.schema_cache_lookups;
+    result.schema_cache_hits = es.schema_cache_hits;
     return result;
 }
 
@@ -3936,6 +3962,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     stats_.and_or_join_uses += es.and_or_join_uses;
     // Issue #434: aggregate dirty recovery.
     stats_.narrowing_dirty_recovery += es.narrowing_dirty_recovery;
+    // Issue #390: aggregate schema cache.
+    stats_.schema_cache_lookups += es.schema_cache_lookups;
+    stats_.schema_cache_hits += es.schema_cache_hits;
     // Issue #411 follow-up #1: per_symbol / ancestor path
     // tracking already bumped on this infer_flat_partial
     // call (at the top of the function). The per-call

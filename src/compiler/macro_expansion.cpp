@@ -255,6 +255,25 @@ aura::ast::NodeId clone_macro_body(
         // wrapper node.
         target.set_marker(new_id, cloned_marker);
         target.set_loc(new_id, v.line, v.col);
+        // Issue #390: populate the per-node schema
+        // cache. Pre-#390 the type checker had to
+        // re-infer the type of every macro-cloned
+        // node from scratch (the cloned body had
+        // no pre-computed type). Post-#390 we copy
+        // the source node's schema_cache (or
+        // type_id_ as a fallback) into the cloned
+        // node's schema_cache column, so the type
+        // checker can use it as a cache hit signal
+        // and avoid the re-inference. The
+        // (compile:schema-cache-stats) Aura
+        // primitive reports the hit rate.
+        if (source.schema_cache(body_id) != 0) {
+            target.set_schema_cache(new_id,
+                                     source.schema_cache(body_id));
+        } else if (source.type_id(body_id) != 0) {
+            target.set_schema_cache(new_id,
+                                     source.type_id(body_id));
+        }
         // Issue #290: also OR kMacroExpansion into the
         // macro_dirty_ bitmask on every node in the cloned
         // subtree (root + descendants). Single hook point for
