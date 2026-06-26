@@ -1867,3 +1867,55 @@ gate (docs + lint + fixtures) all green. #387 closed
 - **50 commits to origin/main** (含 2 MEMORY.md)
 - **19 issues closed (all scope-limited)**: previous 18 + #387
 - **22 test binaries, 282+ tests, 0 failures**
+
+## Session 2026-06-26 — Issue #474: AuraError + AuraResult<T> foundation (Phase 0)
+
+Commit `ed6cbfb8` pushed to origin/main. 8 files, +668/-38.
+
+#474 AC: "No documented error-handling policy + 3
+mixed patterns (std::expected / throw / contract_assert)"
+across the codebase. Full migration is multi-week. This
+Phase 0 foundation ships the unified error type:
+
+- src/core/error.ixx (NEW `aura.core.error` module):
+  - `AuraErrorKind` flat enum (39 categories)
+  - `AuraError` struct: kind + message +
+    `std::source_location` + `generation`
+  - `AuraResult<T> = std::expected<T, AuraError>` alias
+  - `VoidResult = AuraResult<void>` alias
+  - `make_unexpected(kind, msg, loc, gen)` builder
+  - `kind_name(k)` static helper for REPL/Aura primitive
+- src/core/mutation.ixx:
+  - `import aura.core.error` (no circular dep)
+  - `mutation_error_to_aura_error_kind(MutationError)`
+    bridge (7 → 7 mapping, one-way for migration)
+- src/core/core.ixx: re-export `aura.core.error`
+- tests/test_issue_474.cpp: 39 tests across 10 ACs
+
+**Design rationale:**
+- Flat enum (not std::variant) keeps AuraError
+  trivially copyable + simpler REPL printing.
+- `std::source_location` = zero-cost capture at call site.
+- `generation` field correlates error with AST
+  invalidation state (debugging gold).
+- Lives in `aura.core` (not `aura.compiler`) so it's
+  usable by `aura::ast` + downstream crates.
+
+**Verified:**
+- test_issue_474: 39/39 pass
+- 19 regression test binaries: 271+ tests, 0 failures
+- Gate (docs + lint + fixtures): all green
+
+**5 follow-ups tracked:**
+1. `diagnostic_to_aura_error()` bridge in compiler/diag.ixx
+2. Migrate mutation.ixx hot-path (mutate:rebind,
+   mutate:replace-pattern, mutate:atomic-batch)
+3. Migrate arena.ixx (allocate_node, defrag)
+4. Migrate ast.ixx query APIs (query:calls,
+   query:references)
+5. docs/contributing.md: error-handling policy section
+
+**Today's totals (2026-06-26, ~16 hours):**
+- **52 commits to origin/main** (含 2 MEMORY.md)
+- **20 issues closed (all scope-limited)**: previous 19 + #474
+- **23 test binaries, 321+ tests, 0 failures**
