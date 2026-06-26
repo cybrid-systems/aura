@@ -443,6 +443,13 @@ public:
         // gen_saved / (stale_cache + gen_saved) ratio
         // measures the improvement.
         std::uint64_t gen_saved = 0;
+        // Issue #412 follow-up #1: per-binding gen
+        // rescues. Bumped when the cache hit path
+        // accepts an entry because the per-binding gen
+        // matches (the global gen had advanced but THIS
+        // binding hadn't changed). Finer than the
+        // global gen alone.
+        std::uint64_t per_binding_gen_hits = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. per_symbol_used_total counts how
         // many mutations took the per-symbol path; the
@@ -725,6 +732,10 @@ export struct TypeChecker {
         // rejections were false positives (now hits) vs.
         // real staleness (still rejected).
         std::uint64_t gen_saved = 0;
+        // Issue #412 follow-up #1: per-binding gen
+        // rescues. See InnerStats::per_binding_gen_hits
+        // for the full rationale.
+        std::uint64_t per_binding_gen_hits = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. See InnerStats for the full
         // field-by-field rationale.

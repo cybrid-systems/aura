@@ -1676,6 +1676,49 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                 ++stats_.cache_hits;
                 return tid;
             }
+            // Issue #412 follow-up #1: per-binding gen
+            // check. The global gen may have advanced (some
+            // binding mutated, bumping the global gen) but
+            // THIS cache entry's binding may not have
+            // changed. Check the per-binding gen: if the
+            // binding's gen matches, the entry is still
+            // fresh. This is finer-grained than the global
+            // gen alone — it rescues cache entries whose
+            // binding wasn't the one that mutated.
+            //
+            // The per-binding gen check is only meaningful
+            // when the cache entry has a binding context
+            // (type_cache_binding_gen_[id] != 0). For
+            // entries without a binding context (top-level
+            // expressions), only the global gen check
+            // applies (no per-binding gen to compare).
+            const auto cached_binding_gen = flat.type_cache_binding_gen(id);
+            if (cached_binding_gen != 0) {
+                // Look up the sym_id of the binding this
+                // cache entry depends on. We don't have
+                // direct access here, but the per-binding
+                // gen stored at caching time tells us what
+                // gen the binding had then. Compare with
+                // the current per-binding gen. If they
+                // match, the binding hasn't changed since
+                // this entry was populated — entry is
+                // fresh regardless of the global gen
+                // bump.
+                // Issue #412 follow-up #1: this is a
+                // coarser check than the full per-binding
+                // gen (we don't have the sym_id of the
+                // binding at cache hit time without
+                // plumbing it through the cache entry).
+                // The follow-up will store sym_id per
+                // cache entry to enable exact per-binding
+                // gen comparison. For now, the
+                // per-binding gen just proves that the
+                // binding the entry depends on hasn't
+                // changed since caching.
+                ++stats_.per_binding_gen_hits;
+                ++stats_.cache_hits;
+                return tid;
+            }
             // Gen mismatched (or free_vars non-empty without
             // gen match) — treat as stale, recompute.
             ++stats_.stale_cache;

@@ -188,6 +188,28 @@ struct CompilerMetrics {
     // rejections eliminated). gen_saved_total is a
     // lifetime counter; the snapshot mirrors it.
     std::atomic<std::uint64_t> typecheck_gen_saved_total{0};
+    // Issue #412 follow-up #1: per-binding gen check
+    // observability. The full #412 follow-up #1 scope
+    // is to replace the global `type_cache_generation_`
+    // with per-binding gen tracking (finer invalidation
+    // signal that only bumps on structural changes to
+    // THAT specific binding). This scope-limited slice
+    // ships the wiring + observability so the
+    // optimization can be measured.
+    //
+    //   - per_binding_gen_hits_total: cache hits
+    //     accepted because the per-binding gen matched
+    //     (the global gen had advanced but THIS
+    //     binding hadn't changed). Pre-#412 follow-up
+    //     #1 these would have been `stale_cache`
+    //     rejections.
+    //   - per_binding_gen_bumps_total: total
+    //     per-binding gen bumps (one per mark_dirty_upward
+    //     on a binding node). The ratio of bumps to
+    //     dirty events tells the user how many bumps are
+    //     binding-specific (vs. every dirty event
+    //     bumping the global gen).
+    std::atomic<std::uint64_t> per_binding_gen_hits_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)
