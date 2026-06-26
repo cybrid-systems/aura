@@ -4174,6 +4174,17 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // returns empty (no use-sites of the changed
         // binding in the workspace).
         affected = affected_subtree_from_mutation(flat, rec);
+        // Issue #487: bump the affected_subtree counter
+        // for observability (the dirty propagation
+        // path fired). Distinct from should_relower
+        // (the IR re-lower decision — happens
+        // downstream of the affected set).
+        if (metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(
+                metrics_);
+            m->affected_subtree_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
         ++stats_.ancestor_used_total;
         stats_.ancestor_visited_total += affected.size();
         // Bump the per-DefUseIndex walk-fallback metric
