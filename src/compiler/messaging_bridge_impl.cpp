@@ -3,6 +3,8 @@
 // ── Messaging bridge globals (non-module .cpp for linker visibility) ──
 // These are set by CompilerService during construction and read by
 // Evaluator messaging primitives.
+
+import std;
 aura::messaging::MessagingBridge aura::messaging::g_messaging_bridge;
 aura::messaging::MailboxReadFn aura::messaging::g_mailbox_read = nullptr;
 aura::messaging::MailboxSenderFn aura::messaging::g_mailbox_last_sender = nullptr;

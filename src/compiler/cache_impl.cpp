@@ -1,22 +1,13 @@
 module;
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <memory_resource>
-#include <string>
-#include <string_view>
-#include <unordered_map>
-#include <utility>
-#include <vector>
+
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include "../reflect/cache_format.h"
+
 module aura.compiler.cache;
+import std;
 
 // C-linkage bridge to reflection-based IR serialization
 // (implemented in ir_reflect_serialize.cpp, compiled with -freflection)

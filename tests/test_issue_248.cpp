@@ -43,13 +43,8 @@
 //   AC6: limit-N caps the result list
 //   AC7: no-workspace returns error pair
 
-#include <cstdio>
-#include <cstdlib>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

@@ -1,12 +1,10 @@
 // @category: integration
 // @reason: PPA dirty bitmask + hardware backend mutate hook
 
-#include <atomic>
-#include <iostream>
-#include <print>
-#include <string>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

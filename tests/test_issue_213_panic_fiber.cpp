@@ -20,15 +20,6 @@
 // MutationBoundaryGuard + workspace_flat_ + workspace_pool_
 // APIs + fiber scheduler are all available.
 
-#include <cstdio>
-#include <cstring>
-#include <string>
-#include <vector>
-#include <atomic>
-#include <thread>
-#include <chrono>
-#include <stdexcept>
-#include <print>
 
 // IMPORTANT: Include serve/fiber.h BEFORE any module imports.
 // fiber.h pulls in <functional> and <ucontext.h> directly.
@@ -46,6 +37,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

@@ -4,9 +4,6 @@
 // See sv_ir.ixx for the design rationale.
 module;
 
-#include <string>
-#include <string_view>
-#include <vector>
 
 module aura.compiler.sv_ir;
 import std;

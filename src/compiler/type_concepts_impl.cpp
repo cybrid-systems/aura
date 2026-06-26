@@ -19,6 +19,8 @@
 
 module aura.compiler.type_concepts;
 
+import std;
+
 namespace aura::compiler {
 
 bool EqualConstraint::unify(ConstraintSystem& cs) const {

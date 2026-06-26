@@ -21,10 +21,6 @@
 //   6. The mutation log size after rollback matches the checkpoint size
 //   7. Nested boundaries: outer rollback rolls back inner commits too
 
-#include <cstdio>
-#include <cstring>
-#include <string>
-#include <vector>
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local

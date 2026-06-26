@@ -9,19 +9,11 @@
 
 module;
 
-#include <array>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <dlfcn.h>
-#include <functional>
-#include <span>
-#include <string>
-#include <vector>
 
 module aura.compiler.ffi_primitives;
 
+import std;
 import aura.compiler.value;
 
 // (Issue #131).
@@ -52,7 +44,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         if (!lib) {
             auto err = ::dlerror();
             auto msg = err ? std::string(err) : "dlopen failed";
-            fprintf(stderr, "c-load: %s\n", msg.c_str());
+            std::println(std::cerr, "c-load: {}", msg);
             return make_int(0);
         }
         auto idx = libs_.size();
@@ -66,9 +58,8 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         // (c-func lib-id "name" sig-string)
         // lib-id -1 uses RTLD_DEFAULT
         if (a.size() < 3 || !types::is_int(a[0]) || !types::is_string(a[1])) {
-            fprintf(stdout, "c-func: expected (c-func lib-id \"name\" signature\n");
-            fprintf(stdout,
-                    "  signature format: \"(ArgType) -> RetType\"  e.g. \"(String) -> Int\"\n");
+            std::println("c-func: expected (c-func lib-id \"name\" signature");
+            std::println("  signature format: \"(ArgType) -> RetType\"  e.g. \"(String) -> Int\"");
             return make_int(0);
         }
         auto raw_lib_id = types::as_int(a[0]);
@@ -76,8 +67,8 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         if (raw_lib_id >= 0) {
             auto lib_idx = static_cast<std::size_t>(raw_lib_id);
             if (lib_idx >= libs_.size()) {
-                fprintf(stdout, "c-func: invalid library handle %zu (use -1 for RTLD_DEFAULT)\n",
-                        lib_idx);
+                std::println("c-func: invalid library handle {} (use -1 for RTLD_DEFAULT)",
+                             lib_idx);
                 return make_int(0);
             }
             lib = libs_[lib_idx];
@@ -89,10 +80,10 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             auto sig = (*sh)[types::as_string_idx(a[2])];
             std::string sig_err;
             if (!parse_ffi_sig(sig, ret_type, arg_types, &sig_err)) {
-                fprintf(stdout, "c-func: invalid signature '%s'\n", sig.c_str());
-                fprintf(stdout, "  reason: %s\n", sig_err.c_str());
-                fprintf(stdout, "  expected: \"(ArgType) -> RetType\"\n");
-                fprintf(stdout, "  valid types: Int, Float, String, Opaque, Void\n");
+                std::println("c-func: invalid signature '{}'", sig);
+                std::println("  reason: {}", sig_err);
+                std::println("  expected: \"(ArgType) -> RetType\"");
+                std::println("  valid types: Int, Float, String, Opaque, Void");
                 return make_int(0);
             }
         } else if (types::is_int(a[2])) {
@@ -101,18 +92,17 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
                 if (types::is_int(a[i]))
                     arg_types.push_back(static_cast<int>(types::as_int(a[i])));
         } else {
-            fprintf(stdout,
-                    "c-func: third arg must be signature string like \"(String) -> Int\"\n");
+            std::println("c-func: third arg must be signature string like \"(String) -> Int\"");
             return make_int(0);
         }
         auto* fn_ptr = ::dlsym(lib, name.c_str());
         if (!fn_ptr) {
             auto* err = ::dlerror();
-            fprintf(stdout, "c-func: symbol '%s' not found in library\n", name.c_str());
+            std::println("c-func: symbol '{}' not found in library", name);
             if (err)
-                fprintf(stdout, "  dlerror: %s\n", err);
-            fprintf(stdout, "  tip: use (c-func -1 \"%s\" \"(String) -> Int\") with RTLD_DEFAULT\n",
-                    name.c_str());
+                std::println("  dlerror: {}", err);
+            std::println("  tip: use (c-func -1 \"{}\" \"(String) -> Int\") with RTLD_DEFAULT",
+                         name);
             return make_int(0);
         }
         auto fidx = funcs_.size();

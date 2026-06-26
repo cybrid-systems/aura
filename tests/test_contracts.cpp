@@ -14,12 +14,11 @@
 // The Aura-level test is tests/contracts_test.aura.
 
 #include <contracts>
-#include <cstdio>
-#include <cstdlib>
-#include <string>
 
 // Custom violation handler — at global scope, exact name + signature so the
 // compiler runtime finds it via symbol lookup.
+
+import std;
 static int violation_count = 0;
 static void handle_contract_violation(const std::contracts::contract_violation& v) {
     violation_count++;

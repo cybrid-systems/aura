@@ -41,16 +41,8 @@
 //   AC8: After full re-lower, the next call skips
 //        (relower_skipped_entirely_count increments)
 
-#include <atomic>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <memory>
-#include <print>
-#include <string>
-#include <vector>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

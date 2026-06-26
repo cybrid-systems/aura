@@ -6,9 +6,9 @@
 //
 // All 4 values are integers. Ratio is in basis points (0-10000).
 // Empty workspace: all metrics are 0.
-#include <iostream>
-#include <string>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 import aura.compiler.value;
@@ -22,18 +22,18 @@ namespace test_298_detail {
 static bool extract_4tuple(aura::compiler::CompilerService& cs,
                            const aura::compiler::types::EvalValue& v,
                            int64_t& e1, int64_t& e2, int64_t& e3, int64_t& e4) {
-    if (!aura::compiler::types::is_pair(v)) { std::cerr << "D: not pair\n"; return false; }
+    if (!aura::compiler::types::is_pair(v)) { std::println(std::cerr, "D: not pair"); return false; }
     auto p1_idx = aura::compiler::types::as_pair_idx(v);
     auto& pairs = cs.evaluator().pairs();
-    if (p1_idx >= pairs.size()) { std::cerr << "D: p1 OOR\n"; return false; }
+    if (p1_idx >= pairs.size()) { std::println(std::cerr, "D: p1 OOR"); return false; }
     auto& p1 = pairs[p1_idx];
     if (!aura::compiler::types::is_int(p1.car)) return false;
     e1 = aura::compiler::types::as_int(p1.car);
-    if (!aura::compiler::types::is_pair(p1.cdr)) { std::cerr << "D: p1.cdr not pair\n"; return false; }
+    if (!aura::compiler::types::is_pair(p1.cdr)) { std::println(std::cerr, "D: p1.cdr not pair"); return false; }
     auto p2_idx = aura::compiler::types::as_pair_idx(p1.cdr);
-    if (p2_idx >= pairs.size()) { std::cerr << "D: p2 OOR\n"; return false; }
+    if (p2_idx >= pairs.size()) { std::println(std::cerr, "D: p2 OOR"); return false; }
     auto& p2 = pairs[p2_idx];
-    if (!aura::compiler::types::is_int(p2.car)) { std::cerr << "D: p2.car not int\n"; return false; }
+    if (!aura::compiler::types::is_int(p2.car)) { std::println(std::cerr, "D: p2.car not int"); return false; }
     e2 = aura::compiler::types::as_int(p2.car);
     if (!aura::compiler::types::is_pair(p2.cdr)) return false;
     auto p3_idx = aura::compiler::types::as_pair_idx(p2.cdr);
@@ -48,10 +48,10 @@ static bool extract_4tuple(aura::compiler::CompilerService& cs,
 }
 
 bool test_returns_4tuple() {
-    std::cout << "\n--- AC #1: returns 4-tuple ---\n";
+    std::println("\n--- AC #1: returns 4-tuple ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(query:incremental-effectiveness)");
-    if (!r) { ++g_failed; std::cerr << "eval returned null\n"; return false; }
+    if (!r) { ++g_failed; std::println(std::cerr, "eval returned null"); return false; }
     int64_t e1, e2, e3, e4;
     bool ok = extract_4tuple(cs, *r, e1, e2, e3, e4);
     CHECK(ok, "result is a 4-tuple");
@@ -59,13 +59,13 @@ bool test_returns_4tuple() {
 }
 
 bool test_empty_workspace_zero() {
-    std::cout << "\n--- AC #2: empty workspace → 0 metrics ---\n";
+    std::println("\n--- AC #2: empty workspace → 0 metrics ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(query:incremental-effectiveness)");
     if (!r) { ++g_failed; return false; }
     int64_t e1, e2, e3, e4;
     if (!extract_4tuple(cs, *r, e1, e2, e3, e4)) {
-        ++g_failed; std::cerr << "not a 4-tuple\n"; return false;
+        ++g_failed; std::println(std::cerr, "not a 4-tuple"); return false;
     }
     CHECK(e1 == 0, "recompile-ratio == 0 (got " + std::to_string(e1) + ")");
     CHECK(e2 == 0, "cascade-depth == 0 (got " + std::to_string(e2) + ")");
@@ -75,7 +75,7 @@ bool test_empty_workspace_zero() {
 }
 
 bool test_ratio_basis_points() {
-    std::cout << "\n--- AC #3: recompile-ratio in basis points ---\n";
+    std::println("\n--- AC #3: recompile-ratio in basis points ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define x 1) (define y 2)\")");
     auto r = cs.eval("(query:incremental-effectiveness)");
@@ -90,7 +90,7 @@ bool test_ratio_basis_points() {
 }
 
 bool test_4tuple_shape_via_aura() {
-    std::cout << "\n--- AC #4: 4-tuple shape via Aura ---\n";
+    std::println("\n--- AC #4: 4-tuple shape via Aura ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define z 100)\")");
     // Structure: (e1 . (e2 . (e3 . e4))) — a dotted pair
@@ -109,14 +109,13 @@ bool test_4tuple_shape_via_aura() {
 }
 
 int run_tests() {
-    std::cout << "═══ Issue #298 ═══\n";
+    std::println("═══ Issue #298 ═══");
     test_returns_4tuple();
     test_empty_workspace_zero();
     test_ratio_basis_points();
     test_4tuple_shape_via_aura();
-    std::cout << "\n═══ Results: " << g_passed << "/" << g_passed + g_failed
-              << " passed, " << g_failed << "/" << g_passed + g_failed
-              << " failed ═══\n";
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
+                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 

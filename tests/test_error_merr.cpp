@@ -12,6 +12,7 @@
 
 #include "issue_test_harness.hpp"  // 3.2 dedup pilot (common CHECK + globals)
 
+import std;
 namespace aura_issue_error_merr_detail {
 bool test_harness_smoke() {
     std::println("\n--- Test: harness smoke (pilot for 1.1) ---");

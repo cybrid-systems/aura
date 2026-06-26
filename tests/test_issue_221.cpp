@@ -28,15 +28,6 @@
 //   8. Perf: 5000 mutations on a 1000-element base, < 2µs/op
 //   9. Wire format roundtrip (per-node count + flat concat)
 
-#include <algorithm>
-#include <chrono>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
-#include <memory>
-#include <random>
-#include <string>
-#include <vector>
 
 #include "../src/core/persistent_child_vector.hh"
 
@@ -45,6 +36,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

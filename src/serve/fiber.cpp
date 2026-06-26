@@ -6,10 +6,8 @@
 
 #include <sys/mman.h>
 #include <unistd.h>
-#include <cstring>
-#include <cstdio>
-#include <cerrno>
-#include <system_error>
+
+import std;
 #if AURA_HAVE_EVENTFD
 #include <sys/eventfd.h>
 #endif

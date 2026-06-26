@@ -24,9 +24,9 @@
 // columns were default-constructing with new_delete_resource, which
 // produced a confused "double-free" ASAN report under compact that
 // the sanitizer could not localize.
-#include <iostream>
-#include <string>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 import aura.compiler.value;
@@ -75,10 +75,10 @@ static bool extract_5tuple(aura::compiler::CompilerService& cs,
 }
 
 bool test_returns_5tuple() {
-    std::cout << "\n--- AC #1: returns 5-tuple ---\n";
+    std::println("\n--- AC #1: returns 5-tuple ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(arena:defrag-stats)");
-    if (!r) { ++g_failed; std::cerr << "eval returned null\n"; return false; }
+    if (!r) { ++g_failed; std::println(std::cerr, "eval returned null"); return false; }
     int64_t e1, e2, e3, e4, e5;
     bool ok = extract_5tuple(cs, *r, e1, e2, e3, e4, e5);
     CHECK(ok, "result is a 5-tuple");
@@ -90,13 +90,13 @@ bool test_empty_workspace_zero() {
     // actions) are 0. fragmentation-bp and compact-estimate may be
     // non-zero because the main arena has its 8MB initial buffer
     // reserved \u2014 that's infrastructure state, not user state.
-    std::cout << "\n--- AC #2: empty workspace \u2192 0 counters ---\n";
+    std::println("\n--- AC #2: empty workspace → 0 counters ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(arena:defrag-stats)");
     if (!r) { ++g_failed; return false; }
     int64_t e1, e2, e3, e4, e5;
     if (!extract_5tuple(cs, *r, e1, e2, e3, e4, e5)) {
-        ++g_failed; std::cerr << "not a 5-tuple\n"; return false;
+        ++g_failed; std::println(std::cerr, "not a 5-tuple"); return false;
     }
     CHECK(e1 == 0, "compaction-count == 0 (got " + std::to_string(e1) + ")");
     CHECK(e2 == 0, "defrag-attempted-count == 0 (got " + std::to_string(e2) + ")");
@@ -107,7 +107,7 @@ bool test_empty_workspace_zero() {
 }
 
 bool test_5tuple_shape_via_aura() {
-    std::cout << "\n--- AC #3: 5-tuple shape via Aura ---\n";
+    std::println("\n--- AC #3: 5-tuple shape via Aura ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define q 100)\")");
     // 5-tuple: (e1 . (e2 . (e3 . (e4 . e5))))
@@ -134,7 +134,7 @@ bool test_5tuple_shape_via_aura() {
 bool test_5tuple_stable_across_calls() {
     // AC #4: (arena:defrag) actually increments the defrag counter
     // (foundation B). Pre-existing dtor fix landed in commit 5d97fb40.
-    std::cout << "\n--- AC #4: (arena:defrag) increments defrag-attempted-count ---\n";
+    std::println("\n--- AC #4: (arena:defrag) increments defrag-attempted-count ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define a 1) (define b 2)\")");
     // Capture pre-defrag snapshot
@@ -168,21 +168,21 @@ bool test_5tuple_request_defrag_safepoint() {
     // (arena:defrag-requested?) can read back, and (arena:defrag)
     // can clear it. The flag is the foundation for fiber-coordinated
     // defrag (the safepoint check in gc_hooks.h can read this).
-    std::cout << "\n--- AC #5: defrag request flag (safepoint scaffold) ---\n";
+    std::println("\n--- AC #5: defrag request flag (safepoint scaffold) ---");
     aura::compiler::CompilerService cs;
     // 1. Fresh: not requested
     auto r0 = cs.eval("(arena:defrag-requested?)");
     if (!r0) { ++g_failed; return false; }
     auto& v0 = *r0;
     if (!(aura::compiler::types::is_bool(v0) && !aura::compiler::types::as_bool(v0))) {
-        ++g_failed; std::cerr << "fresh should report #f\n"; return false;
+        ++g_failed; std::println(std::cerr, "fresh should report #f"); return false;
     }
     // 2. Request defrag
     auto r1 = cs.eval("(arena:request-defrag)");
     if (!r1) { ++g_failed; return false; }
     auto& v1 = *r1;
     if (!(aura::compiler::types::is_bool(v1) && aura::compiler::types::as_bool(v1))) {
-        ++g_failed; std::cerr << "first request should report #t (newly set)\n";
+        ++g_failed; std::println(std::cerr, "first request should report #t (newly set)");
         return false;
     }
     // 3. Now flagged
@@ -190,7 +190,7 @@ bool test_5tuple_request_defrag_safepoint() {
     if (!r2) { ++g_failed; return false; }
     auto& v2 = *r2;
     if (!(aura::compiler::types::is_bool(v2) && aura::compiler::types::as_bool(v2))) {
-        ++g_failed; std::cerr << "after request should report #t\n";
+        ++g_failed; std::println(std::cerr, "after request should report #t");
         return false;
     }
     // 4. Re-request: should return #f (already set, no new request)
@@ -198,7 +198,7 @@ bool test_5tuple_request_defrag_safepoint() {
     if (!r3) { ++g_failed; return false; }
     auto& v3 = *r3;
     if (!(aura::compiler::types::is_bool(v3) && !aura::compiler::types::as_bool(v3))) {
-        ++g_failed; std::cerr << "duplicate request should return #f\n";
+        ++g_failed; std::println(std::cerr, "duplicate request should return #f");
         return false;
     }
     // 5. (arena:defrag) runs and clears the request as a side-effect
@@ -209,7 +209,7 @@ bool test_5tuple_request_defrag_safepoint() {
     if (!r4) { ++g_failed; return false; }
     auto& v4 = *r4;
     if (!(aura::compiler::types::is_bool(v4) && !aura::compiler::types::as_bool(v4))) {
-        ++g_failed; std::cerr << "after defrag should clear the flag\n";
+        ++g_failed; std::println(std::cerr, "after defrag should clear the flag");
         return false;
     }
     CHECK(true, "defrag request flag: fresh=#f, request=#t, set=#t, "
@@ -218,21 +218,14 @@ bool test_5tuple_request_defrag_safepoint() {
 }
 
 int run_tests() {
-    std::cout << "═══ Issue #300 ═══\n";
+    std::println("═══ Issue #300 ═══");
     test_returns_5tuple();
-    std::cout.flush();
     test_empty_workspace_zero();
-    std::cout.flush();
     test_5tuple_shape_via_aura();
-    std::cout.flush();
     test_5tuple_stable_across_calls();
-    std::cout.flush();
     test_5tuple_request_defrag_safepoint();
-    std::cout.flush();
-    std::cout.flush();
-    std::cout << "\n═══ Results: " << g_passed << "/" << g_passed + g_failed
-              << " passed, " << g_failed << "/" << g_passed + g_failed
-              << " failed ═══\n";
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
+                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 

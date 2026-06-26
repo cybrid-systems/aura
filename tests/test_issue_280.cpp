@@ -3,13 +3,10 @@
 //          TypeChecker into lowering, Branch instruction narrow_evidence
 //          (Issue #280).
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

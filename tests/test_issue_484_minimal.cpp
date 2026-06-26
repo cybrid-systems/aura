@@ -1,8 +1,8 @@
 // @category: integration
 // @reason: minimal repro for #484
-#include <iostream>
-#include <print>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 import aura.compiler.value;
@@ -34,18 +34,18 @@ bool test_minimal_repro() {
     std::println("\n--- #484 minimal repro ---");
     aura::compiler::CompilerService cs;
     if (!set_source(cs, "(begin (+ 1 1) (+ 2 2) (+ 3 3))")) {
-        std::cerr << "set_source failed\n";
+        std::println(std::cerr, "set_source failed");
         ++g_failed;
         return false;
     }
     auto before = run_int(cs, "(length (query:pattern \"(+ ... ...)\"))");
-    std::cerr << "before: (+ ... ...) = " << before << "\n";
+    std::println(std::cerr, "before: (+ ... ...) = {}", before);
     cs.eval("(mutate:replace-pattern \"(+ ... ...)\" \"(* ... ...)\" \"test\")");
     cs.evaluator().force_build_tag_arity_index();
     auto after_plus = run_int(cs, "(length (query:pattern \"(+ ... ...)\"))");
     auto after_star = run_int(cs, "(length (query:pattern \"(* ... ...)\"))");
-    std::cerr << "after_plus: " << after_plus << "\n";
-    std::cerr << "after_star: " << after_star << "\n";
+    std::println(std::cerr, "after_plus: {}", after_plus);
+    std::println(std::cerr, "after_star: {}", after_star);
     CHECK(after_plus == 0, "after mutate: no (+ ...) (got " + std::to_string(after_plus) + ")");
     CHECK(after_star == 3, "after mutate: 3 (* ...) (got " + std::to_string(after_star) + ")");
     return true;

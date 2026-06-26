@@ -6,9 +6,7 @@ module;
 #include <cstring>
 #include <expected>
 #include <format>
-#include <iostream>
 #include <optional>
-#include <print>
 #include <span>
 #include <string>
 #include <string_view>
@@ -263,7 +261,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             auto col = blame_loc & 0xFFFFu;
             diag.location = SourceLocation{line, col, 0};
         }
-        std::cerr << diag.format() << std::endl;
+        std::println(std::cerr, "{}", diag.format());
     };
 
     auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {

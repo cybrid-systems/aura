@@ -12,19 +12,14 @@
 //   3. Roundtrip: serialize the exports to JSON, deserialize,
 //      verify equality — the integration smoke test.
 
-#include <cstdio>
-#include <cstring>
-#include <string>
-#include <vector>
-#include <array>
-#include <string_view>
-#include <print>
 
 #include "reflect/reflect.hh"
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 
@@ -157,9 +152,6 @@ bool test_json_roundtrip() {
 // binary), so this test shells out to ./build/aura and
 // checks the output. The test is skipped if aura isn't
 // built.
-#include <cstdlib>
-#include <filesystem>
-#include <sstream>
 #include <unistd.h>
 
 namespace fs = std::filesystem;

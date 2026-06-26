@@ -22,12 +22,8 @@
 //   AC6: stale-returns counter is observable (initial 0,
 //        requires major mutation to bump; not tested here)
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#include <print>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

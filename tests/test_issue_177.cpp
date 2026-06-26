@@ -25,10 +25,6 @@
 //      when no fiber is active (the active_mutation_stack
 //      routing)
 
-#include <cstdio>
-#include <cstring>
-#include <string>
-#include <vector>
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local

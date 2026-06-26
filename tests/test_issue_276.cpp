@@ -1,12 +1,10 @@
 // @category: integration
 // @reason: WorkspaceTree cross-layer StableNodeRef resolution
 
-#include <print>
-#include <sstream>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

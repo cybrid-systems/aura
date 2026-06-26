@@ -3,12 +3,10 @@
 // Verifies FNV-1a hash function used for source canonicalization.
 // Full integration is covered by tests/edsl_ir_cache_test.aura.
 
-#include <cstdio>
-#include <cstdint>
-#include <cstdlib>
-#include <string>
 
 // FNV-1a 64-bit (matches CompilerService::fnv1a_64)
+
+import std;
 static std::size_t fnv1a_64(const std::string& s) {
     std::uint64_t h = 0xcbf29ce484222325ULL;
     for (unsigned char c : s) {

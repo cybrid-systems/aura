@@ -3,14 +3,10 @@
 // Tests: ShapeID, inline_shape_of, compute_shape_id, ShapeProfiler
 //        (stability, invalidation, metrics, edge cases)
 //
-#include <cstdio>
-#include <cassert>
-#include <string>
-#include <type_traits>
-#include <cstdint>
 #include "../src/compiler/shape.h"
 #include "../src/compiler/shape_profiler.h"
 
+import std;
 using namespace aura::compiler::shape;
 
 static int tests_run = 0;

@@ -6,9 +6,9 @@
 // NOT the persistent workspace_flat_. Each cs.eval creates a fresh flat.
 // The test invokes macros via cs.eval (NOT just set-code) so that
 // clone_macro_body actually runs and applies the kMacroExpansion mark.
-#include <iostream>
-#include <print>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 import aura.compiler.value;
@@ -68,7 +68,7 @@ bool test_macro_expansion_marks_subtree() {
     // (begin ...) keeps both in the same eval so they share
     // the same current_flat_.
     auto count = run_int(cs, "(begin (my-add 1 2) (compile:macro-dirty-count))");
-    std::cerr << "macro-dirty-count after expansion: " << count << "\n";
+    std::println(std::cerr, "macro-dirty-count after expansion: {}", count);
     CHECK(count > 0,
           "macro expansion should mark at least the cloned root (got " +
           std::to_string(count) + ")");
@@ -88,14 +88,14 @@ bool test_macro_dirty_predicate() {
     // Just verify the primitive works without crashing.
     auto r = cs.eval("(compile:macro-dirty? 0)");
     if (!r) {
-        ++g_failed; std::cerr << "macro-dirty? 0 returned null\n"; return false;
+        ++g_failed; std::println(std::cerr, "macro-dirty? 0 returned null");return false;
     }
     int64_t b0 = aura::compiler::types::as_int(*r);
-    std::cerr << "macro-dirty? 0 = " << b0 << "\n";
+    std::println(std::cerr, "macro-dirty? 0 = {}", b0);
     // Acceptable: 0 (no bit set), 1 (kMacroExpansion), 2 (kMacroSelfModify), 3 (both).
     if (b0 < 0 || b0 > 3) {
         ++g_failed;
-        std::cerr << "macro-dirty? returned unexpected value: " << b0 << "\n";
+        std::println(std::cerr, "macro-dirty? returned unexpected value: {}", b0);
         return false;
     }
     return true;
@@ -110,7 +110,7 @@ bool test_clear_macro_dirty() {
     }
     // Expand + read count in one eval so they share the flat.
     auto before = run_int(cs, "(begin (m) (compile:macro-dirty-count))");
-    std::cerr << "before clear: " << before << "\n";
+    std::println(std::cerr, "before clear: {}", before);
     CHECK(before > 0, "before clear: count > 0 (got " +
           std::to_string(before) + ")");
 
@@ -118,7 +118,7 @@ bool test_clear_macro_dirty() {
     // eval (the new eval's flat starts at 0 dirty bits).
     cs.eval("(compile:clear-macro-dirty!)");
     auto after = run_int(cs, "(compile:macro-dirty-count)");
-    std::cerr << "after clear: " << after << "\n";
+    std::println(std::cerr, "after clear: {}", after);
     CHECK(after == 0, "after clear: count == 0 (got " +
           std::to_string(after) + ")");
     return true;
@@ -136,7 +136,7 @@ bool test_nested_macro_marks_all_levels() {
     }
     // Combine inc2 expansion + count in one eval.
     auto count = run_int(cs, "(begin (inc2 5) (compile:macro-dirty-count))");
-    std::cerr << "nested macro-dirty-count: " << count << "\n";
+    std::println(std::cerr, "nested macro-dirty-count: {}", count);
     CHECK(count >= 2,
           "nested expansion marks at least 2 subtree roots (got " +
           std::to_string(count) + ")");
@@ -157,8 +157,7 @@ bool test_stats_cumulative() {
     // counters, but again > 0 after expansion.
     auto stats1 = run_int(cs, "(begin (m) (compile:macro-dirty-stats))");
     auto stats2 = run_int(cs, "(begin (m) (compile:macro-dirty-stats))");
-    std::cerr << "stats after 1st expand: " << stats1
-              << ", after 2nd expand: " << stats2 << "\n";
+    std::println(std::cerr, "stats after 1st expand: {}, after 2nd expand: {}\n", stats1, stats2);
     CHECK(stats1 > 0, "stats > 0 after 1st expansion (got " +
           std::to_string(stats1) + ")");
     CHECK(stats2 > 0, "stats > 0 after 2nd expansion (got " +
@@ -179,7 +178,7 @@ bool test_user_code_not_marked() {
     // produce a flat with no kMacroExpansion bits.
     run_int(cs, "(+ 1 2)");
     auto count = run_int(cs, "(compile:macro-dirty-count)");
-    std::cerr << "user-only macro-dirty-count: " << count << "\n";
+    std::println(std::cerr, "user-only macro-dirty-count: {}", count);
     CHECK(count == 0,
           "user-written code without macros: count == 0 (got " +
           std::to_string(count) + ")");

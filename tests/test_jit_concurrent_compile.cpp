@@ -11,15 +11,10 @@
 // (subsequent compiles). The cache itself is exposed via the
 // public Metrics struct, so we can verify hit/miss counts.
 
-#include <cstdio>
-#include <cstring>
-#include <cstdint>
-#include <atomic>
-#include <thread>
-#include <vector>
 
 #include "compiler/aura_jit.h"
 
+import std;
 static int g_passed = 0;
 static int g_failed = 0;
 

@@ -31,19 +31,11 @@
 //      multiple times)
 //   5. End-to-end via Aura eval (basic functional check)
 
-#include <atomic>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <memory>
-#include <print>
-#include <string>
-#include <vector>
 
 // Unified test harness (Issue #226).
 #include "test_harness.hpp"
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

@@ -16,10 +16,9 @@
 //   is_bridge_stale(captured, current) ─checks─> bool
 //   stale closure ─falls back─> body_source re-parse
 
-#include <iostream>
-#include <cstring>
-#include <print>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 import aura.core.ast;

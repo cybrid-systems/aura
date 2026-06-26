@@ -17,13 +17,6 @@
 //   6. End-to-end: a multi-module program reuses cached IR
 //      when an unrelated module is touched.
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <memory>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "observability_metrics.h"
 
@@ -32,6 +25,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

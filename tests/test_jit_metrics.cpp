@@ -10,26 +10,10 @@
 // struct-timespec conflict between std module and the system
 // headers pulled in by LLVM's Core.h via aura_jit.h.
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <cstdint>
-#include <atomic>
-#include <thread>
-#include <vector>
-#include <string>
-#include <mutex>
-#include <deque>
-#include <unordered_set>
-#include <map>
-#include <memory>
-#include <utility>
-#include <functional>
-#include <algorithm>
-#include <cmath>
 
 #include "compiler/aura_jit.h"
 
+import std;
 static int g_passed = 0;
 static int g_failed = 0;
 

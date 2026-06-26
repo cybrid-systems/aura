@@ -20,14 +20,6 @@
 //     8. Metrics::format() output includes unhandled_opcode value
 //     9. Counter can be reset (store 0) without affecting others
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <fstream>
-#include <print>
-#include <string>
-#include <thread>
-#include <vector>
 #include "aura_jit.h"
 #include "test_harness.hpp"   // Provides CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
 
@@ -37,6 +29,8 @@
 // satisfy the link-time reference (aura_jit.cpp's init() registers
 // this symbol even though init() doesn't run for the empty-state
 // tests below).
+
+import std;
 extern "C" std::int64_t aura_jit_prim_dispatch(
     std::int64_t /*prim_id*/, std::int64_t* /*args*/, std::int32_t /*argc*/) {
     return 0;

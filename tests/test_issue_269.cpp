@@ -3,12 +3,10 @@
 // test_issue_269.cpp — Issue #269: FlatAST wire format v2
 // (side-data) in production serialize_soa/deserialize_soa.
 
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

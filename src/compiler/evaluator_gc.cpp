@@ -3,9 +3,6 @@
 
 module;
 
-#include <cstdint>
-#include <mutex>
-#include <vector>
 #include "runtime_shared.h"
 #include "serve/gc_coordinator.h"
 

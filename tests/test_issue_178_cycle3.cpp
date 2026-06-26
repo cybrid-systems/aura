@@ -11,12 +11,10 @@
 //            - mutate:rebind with validate: arg succeeds on valid code
 //            - mutate:rebind without validate: arg preserves existing behavior
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

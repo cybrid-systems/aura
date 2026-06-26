@@ -2,15 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
-#include <span>
 
-#include <cstdint>
-#include <fstream>
-#include <functional>
-#include <iterator>
-#include <string>
-#include <vector>
-#include <atomic>
 #include "runtime_shared.h"
 #include "compiler/aura_jit_bridge.h"
 #include "serve/fiber.h"

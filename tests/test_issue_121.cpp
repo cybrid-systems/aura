@@ -13,19 +13,14 @@
 //   7. macro_expand_all pass-limit warning
 //   8. backward compat: legacy defmacro still works
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <memory>
-#include <print>
-#include <string>
-#include <vector>
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

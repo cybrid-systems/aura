@@ -10,14 +10,10 @@
 //   3. OwnershipNote carries source_mutation_id + blame from MutationRecord
 //   4. MatchClauseInfo.exhaustiveness_checked + subject_type_id set after check
 
-#include <cstdio>
-#include <cstdlib>
-#include <memory>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

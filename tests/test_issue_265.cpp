@@ -1,13 +1,10 @@
 // @category: unit
 // @reason: isolated clone_macro_body hygiene tests (Issue #265)
 
-#include <memory>
-#include <print>
-#include <string>
-#include <unordered_map>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

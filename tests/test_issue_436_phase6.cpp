@@ -3,13 +3,10 @@
 //          generate-if) (Issue #436 Phase 6: SV generate
 //          constructs).
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

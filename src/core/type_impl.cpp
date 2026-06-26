@@ -1,18 +1,7 @@
 module;
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <typeinfo>
-#include <unordered_map>
-#include <unordered_set>
-#include <utility>
-#include <vector>
 
 module aura.core.type;
+import std;
 
 namespace aura::core {
 

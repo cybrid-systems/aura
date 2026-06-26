@@ -8,11 +8,9 @@
 //  - Strategy reflects the per-function block_dirty count threshold
 //  - Backward compat: relower-strategy on non-cached fn returns 'unknown
 //  - estimate_relower_blocks pure-function boundary cases
-#include <iostream>
-#include <cstring>
-#include <print>
-#include <vector>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 import aura.core.ast;
@@ -153,12 +151,12 @@ bool test_cache_stats_3tuple() {
     // The 3-tuple structure is ((dirty-blocks . dirty-funcs) . incremental-cands).
     auto r = cs.eval("(query:compiler-cache-stats)");
     if (!r) {
-        ++g_failed; std::cerr << "eval returned null\n"; return false;
+        ++g_failed; std::println(std::cerr, "eval returned null");return false;
     }
     auto& v = *r;
     if (!aura::compiler::types::is_pair(v)) {
         ++g_failed;
-        std::cerr << "expected pair, got non-pair\n";
+        std::println(std::cerr, "expected pair, got non-pair");
         return false;
     }
     return true;

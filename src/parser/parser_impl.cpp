@@ -1,16 +1,7 @@
 module;
-#include <array>
-#include <cstddef>
-#include <cstdint>
-#include <exception>
-#include <format>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
 
 module aura.parser.parser;
+import std;
 
 namespace aura::parser::detail {
 

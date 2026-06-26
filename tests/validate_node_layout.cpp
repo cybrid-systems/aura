@@ -9,13 +9,11 @@
 // Run:   ./build/validate_node_layout
 
 #include "reflect/read_auto_validate.hh"
-#include <cstdio>
-#include <string>
-#include <vector>
-#include <cstdint>
 
 // Replicate node structs from src/core/ast.ixx
 // (can't import from modules with -freflection)
+
+import std;
 struct Expr { int _; };
 
 enum class NodeTag : std::uint32_t {

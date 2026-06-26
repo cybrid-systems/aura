@@ -4,19 +4,13 @@
 #include "aura_jit.h"
 #include "aot_mangle.h" // mangle_aot_name (Issue #136)
 
-#include <cstdio>
-#include <string>
-#include <cstdlib>
-#include <cstring>
-#include <atomic>
-#include <vector>
-#include <unordered_set>
-#include <cstdint>  // Issue #243: std::uint64_t for g_aot_defuse_version
 #include <unistd.h> // Issue #237 v4: readlink for /proc/self/exe lookup
 
 // Helper: convert aura::ir::IRFunction to aura::jit::FlatFunction
 // This bridges between the compiler's IR types and the JIT's FlatFunction.
 // Caller must keep flat_instrs/name_storage alive for the returned FlatFunction.
+
+import std;
 struct FlatFunctionHolder {
     std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs;
     std::vector<aura::jit::FlatBlock> flat_blocks;

@@ -24,15 +24,6 @@
 //      (verifies the columnar layout treats GapBuffer as a
 //       range via operator[])
 
-#include <algorithm>
-#include <chrono>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <random>
-#include <string>
-#include <vector>
 
 #include "../src/core/gap_buffer.hh"
 
@@ -41,6 +32,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

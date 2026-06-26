@@ -44,13 +44,6 @@
 // the run output (see commit 3f04f95's stderr) now shows the
 // new banners.
 
-#include <cstdio>
-#include <cstdint>
-#include <cstring>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "aot_mangle.h"
 
@@ -60,6 +53,8 @@
 // so we provide a local stub that mirrors the same global
 // state. The real bridge TU is exercised end-to-end by
 // test_issue_237's aura --emit-binary path.
+
+import std;
 namespace aura_issue_243_detail {
 static std::uint64_t g_aot_defuse_version_stub = 0;
 extern "C" void aura_set_aot_defuse_version(std::uint64_t v) {

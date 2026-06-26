@@ -10,10 +10,9 @@
 //  - 4 Aura helpers: (ast:ref-mutation-id), (ast:ref-workspace-id),
 //    (ast:ref-serialize), (ast:ref-deserialize)
 //  - Reject buffers without the #291 magic
-#include <iostream>
-#include <cstring>
-#include <print>
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 import aura.core.ast;
@@ -161,7 +160,7 @@ bool test_aura_serialize_deserialize() {
     auto r = cs.eval("(ast:ref-serialize 7 2 123 5)");
     if (!r || !aura::compiler::types::is_string(*r)) {
         ++g_failed;
-        std::cerr << "ast:ref-serialize returned non-string\n";
+        std::println(std::cerr, "ast:ref-serialize returned non-string");
         return false;
     }
     // Verify the string is 24 bytes

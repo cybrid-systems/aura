@@ -44,15 +44,9 @@
 // Evaluator (readable via (query:verify-tool-stats)).
 
 module;
-#include <cstdint>
-#include <deque>
-#include <optional>
-#include <span>
-#include <string>
-#include <string_view>
-#include <functional>
 
 module aura.compiler.evaluator;
+import std;
 
 import aura.compiler.value;
 import aura.compiler.service;

@@ -2,10 +2,10 @@
 // @reason: tests pure mutation helpers without CompilerService
 // test_issue_275.cpp — Issue #275: pure mutation / rollback module.
 
-#include <print>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

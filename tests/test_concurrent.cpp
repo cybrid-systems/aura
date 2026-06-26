@@ -1,16 +1,6 @@
 // test_concurrent.cpp — Concurrency model unit tests
 // Tests: fiber lifecycle, worker thread scheduling, eventfd wakeup, state transitions
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <cstdint>
-#include <print>
-#include <string>
-#include <atomic>
-#include <chrono>
-#include <thread>
-#include <iostream>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
@@ -26,6 +16,8 @@
 #include "exec/combinators.h"
 
 // ── Test counters ─────────────────────────────────────
+
+import std;
 static int g_passed = 0;
 static int g_failed = 0;
 

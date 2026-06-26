@@ -5,12 +5,11 @@
 // and stable, so the trade-off (manual vs reflect) is
 // acceptable for now.
 
-#include <string>
-#include <cstdio>
-#include <format>
 
 #include "compiler/observability_snapshot.h"
-
+#include <format>
+#include <iterator>
+#include <string>
 namespace aura::compiler {
 
 namespace {

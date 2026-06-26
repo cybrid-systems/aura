@@ -10,13 +10,10 @@
 //              consistency_violations fields
 //            - (smoke) aura_jit_test still works (#461 back-compat)
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <atomic>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

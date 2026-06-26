@@ -3,13 +3,10 @@
 //          memoization for analyze_predicate_flat (Issue #281:
 //          per-cond NodeId memo map + hit/miss stats).
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

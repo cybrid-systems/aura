@@ -23,7 +23,6 @@ module;
 #include <memory_resource>
 #include <mutex>
 #include <optional>
-#include <print>
 #include <shared_mutex>
 #include <span>
 #include <string>

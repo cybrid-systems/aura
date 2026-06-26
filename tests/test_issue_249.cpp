@@ -35,13 +35,8 @@
 //   AC5: bad arg types return error pair
 //   AC6: out-of-range node ID returns error pair
 
-#include <cstdio>
-#include <cstdlib>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
+import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;

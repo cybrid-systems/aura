@@ -34,8 +34,8 @@
 // Per-test binaries don't exercise the violation path; this
 // stub is a safety net so a test that DOES hit a contract
 // violation fails loudly instead of UB-linking.
-#include <cstdlib>
 
+import std;
 struct __builtin_contract_violation_type;
 
 int __tu_has_violation(const __builtin_contract_violation_type& v, unsigned short s) {

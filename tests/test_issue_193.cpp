@@ -20,14 +20,6 @@
 //   - Verify default threshold = 0 (current behavior preserved)
 //   - Verify threshold parameter changes the deopt signal
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <memory>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "compiler/aura_jit.h"
 #include "compiler/spec_jit_controller.h"
@@ -37,6 +29,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

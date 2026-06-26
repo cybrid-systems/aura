@@ -6,12 +6,10 @@
 //            - Defuse version is bumped after a flush
 //            - Yield hook evaluator is queryable
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

@@ -12,8 +12,8 @@
 // Real float behavior is exercised by test_issue_210, which
 // links the full JIT runtime.
 
-#include <cstdint>
 
+import std;
 extern "C" {
 
 // `aura_alloc_float`: tags a double as a float-pool reference.

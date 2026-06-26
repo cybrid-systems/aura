@@ -3,13 +3,10 @@
 //          accessors, and Verilog emitter (Issue #284 Phase 2
 //          item 1 — SV interface foundation piece).
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

@@ -17,10 +17,6 @@
 //      is NOT inlined
 //   5. inlined_count() reports the actual substitution count
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <print>
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local

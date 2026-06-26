@@ -1,15 +1,12 @@
 // @category: integration
 // @reason: fiber scheduler + MutationBoundaryGuard yield handshake
 
-#include <atomic>
-#include <chrono>
-#include <cstdio>
-#include <print>
-#include <thread>
 
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 

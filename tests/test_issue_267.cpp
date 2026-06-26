@@ -1,10 +1,8 @@
 // @category: integration
 // @reason: uses CompilerService; tests #267 macro-introduced query opt-in
 
-#include <iostream>
-#include <print>
-#include <string>
 
+import std;
 import aura.compiler.service;
 import aura.compiler.value;
 

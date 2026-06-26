@@ -1,11 +1,10 @@
 // Minimal common harness for issue/pilot test binaries (refactor 3.2 dedup pilot).
 // Reduces boilerplate in the 3 CMake pilots (test_error_merr, test_primitives_init, test_harness_pilot).
 // Usage: #include "issue_test_harness.hpp" then define your test_foo() funcs; the main + CHECK are provided.
+#ifndef AURA_ISSUE_TEST_HARNESS_HPP
+#define AURA_ISSUE_TEST_HARNESS_HPP
 
-#include <cstdio>
-#include <cstdlib>
-#include <print>
-#include <string>
+import std;
 
 static int g_passed = 0;
 static int g_failed = 0;
@@ -36,3 +35,5 @@ static int run_pilot_tests() {
     std::println("  OVERALL: PASS");
     return 0;
 }
+
+#endif  // AURA_ISSUE_TEST_HARNESS_HPP

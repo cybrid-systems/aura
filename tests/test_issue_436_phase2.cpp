@@ -3,13 +3,10 @@
 //          always_comb / always_ff based on sensitivity context
 //          (Issue #436 Phase 2: automatic idiom upgrade).
 
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <string>
-#include <vector>
 
 #include "test_harness.hpp"
+
+import std;
 using aura::test::g_passed;
 using aura::test::g_failed;
 
