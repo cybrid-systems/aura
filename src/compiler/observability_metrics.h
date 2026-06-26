@@ -333,6 +333,22 @@ struct CompilerMetrics {
     // narrowing_applied_total is a measure of how
     // complete the provenance is.
     std::atomic<std::uint64_t> narrowing_provenance_total{0};
+    // Issue #383: ConstraintSystem worklist + consistent_
+    // unify observability. 3 lifetime counters:
+    //   - consistent_unify_total: every call to
+    //     consistent_unify (success or failure).
+    //   - consistent_subtype_total: every call to
+    //     consistent_subtype (success or failure).
+    //   - worklist_restart_total: number of times
+    //     the solver restarted the worklist after
+    //     a new constraint was added during
+    //     processing (the "fixpoint" stability
+    //     counter). A high restart count indicates
+    //     a workload that benefits from finer-
+    //     grained worklist scheduling.
+    std::atomic<std::uint64_t> consistent_unify_total{0};
+    std::atomic<std::uint64_t> consistent_subtype_total{0};
+    std::atomic<std::uint64_t> worklist_restart_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)
