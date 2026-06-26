@@ -1264,3 +1264,11 @@ trace increments 0→2 on a single binding mutation
   per-binding gen + **mutation_log invalidation trace**
 - 3 bug 修复
 - 10 test binaries, 182 tests, 0 failures
+
+**#413 close status:** User confirmed "413可以关闭" at 13:08 — issue to be closed externally (no `gh` CLI / no GitHub token in this session; user closes via web UI). All close-comment content is captured in this MEMORY.md entry for reference.
+
+**Close summary (for issue comment):**
+- Commit: 24980803 (code) + ca4d7f22 (MEMORY.md bump)
+- State: completed (scope-limited)
+- Tests: test_issue_413 8/8, regression 182/182
+- Follow-ups: (1) (compile:mutation-log-invalidation-trace mutation-id) primitive, (2) reverse-mapping (SymId → latest mutation_id), (3) wire to mutation_log diff in post_mutation_invariant_check, (4) trace pruning, (5) bench
