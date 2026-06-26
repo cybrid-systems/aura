@@ -13,9 +13,42 @@ module;
 export module aura.compiler.query;
 import std;
 import aura.core;
+import aura.core.concepts;
 import aura.diag;
 
 namespace aura::compiler {
+
+// ── Generic AST traversal helper (ASTContainer-constrained) ──────────
+//
+// Walks every child of `root` in `ast` and invokes `vis(child_id)`
+// for each one. Constrained by aura::core::ASTContainer so it works
+// for any AST that exposes get/children/tag — not just FlatAST.
+// This is the first place in the query module that uses the
+// core concept (Phase 3 follow-up #1, applied here).
+//
+// Two-parameter form: walk_children<Id, C, Visitor>(ast, root, vis)
+// where Id is the node handle type, C is the AST container type
+// (constrained via ASTContainer<C, Id>), and Visitor is the
+// per-child callable. The visitor receives each child Id by value.
+//
+// Why a free template instead of a method on ASTIndex?
+//   - Demonstrates that the ASTContainer concept actually compiles
+//     against a real query-layer consumer.
+//   - Lets future AST types (e.g., a cursor AST or a serialized
+//     read-only AST) plug into the same traversal logic without
+//     inheriting from FlatAST.
+export template <typename Id, typename C, typename Visitor>
+    requires aura::core::ASTContainer<C, Id>
+             && std::invocable<Visitor&, Id>
+constexpr std::size_t
+walk_children(C& ast, Id root, Visitor&& vis) {
+    std::size_t count = 0;
+    for (auto child : ast.children(root)) {
+        vis(static_cast<Id>(child));
+        ++count;
+    }
+    return count;
+}
 
 // ── ASTIndex — zero-copy filter views on FlatAST SoA ───────────
 export struct ASTIndex {

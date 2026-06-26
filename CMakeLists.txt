@@ -1053,6 +1053,12 @@ aura_add_issue_test(test_issue_501)
 # Insert / Remove / NoOp) plus the generic apply_mutation
 # dispatch template + monadic AuraResult chaining.
 aura_add_issue_test(test_issue_501_phase2)
+# Issue #501 Phase 3: ASTContainer relaxation + apply
+# to query.ixx (scope-limited close). Verifies FlatAST
+# now satisfies the relaxed ASTContainer (std::span
+# qualifies as std::ranges::range) and the new
+# walk_children<> helper in aura.compiler.query.
+aura_add_issue_test(test_issue_501_phase3)
 # Issue #411 fu1 follow-up #1: per-DefUseIndex caller tracking.
 # Pure-header test (no LLVM/JIT needed) — registers without
 # aura_issue_test_link_llvm_jit.

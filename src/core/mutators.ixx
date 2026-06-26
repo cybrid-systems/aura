@@ -190,6 +190,18 @@ static_assert(aura::core::Mutator<RemoveChildMutator, FlatAST>,
 static_assert(aura::core::Mutator<NoOpMutator, FlatAST>,
               "NoOpMutator must satisfy Mutator<FlatAST>");
 
+// ── Verify FlatAST satisfies ASTContainer ─────────────────
+//
+// After Phase 3 relaxed ASTContainer to std::ranges::range
+// (from std::ranges::view), FlatAST qualifies because
+// FlatAST::children() returns std::span<const NodeId>,
+// which is a borrowed_range. This static_assert locks
+// the contract: if a future refactor of FlatAST breaks
+// ASTContainer (e.g., by changing children() to return a
+// non-range), the build fails immediately.
+static_assert(aura::core::ASTContainer<FlatAST>,
+              "FlatAST must satisfy ASTContainer<FlatAST>");
+
 // ── Generic dispatch template ──────────────────────────────
 //
 // apply_mutation<>() is the Mutator-constrained generic
