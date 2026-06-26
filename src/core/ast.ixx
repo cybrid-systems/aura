@@ -1397,11 +1397,21 @@ public:
         , param_annot_data_(other.param_annot_data_)
         , line_(other.line_)
         , col_(other.col_)
+        , marker_(other.marker_)
+        , dirty_(other.dirty_)
+        , ppa_dirty_(other.ppa_dirty_)
+        , verify_dirty_(other.verify_dirty_)
+        , verification_dirty_(other.verification_dirty_)
+        , macro_dirty_(other.macro_dirty_)
         , type_id_(other.type_id_)
-        , error_kind_(other.error_kind_)
+        , type_cache_gen_(other.type_cache_gen_)
+        , type_cache_binding_gen_(other.type_cache_binding_gen_)
         , schema_cache_(other.schema_cache_)
+        , binding_gens_(other.binding_gens_)
+        , error_kind_(other.error_kind_)
         , value_cache_(other.value_cache_)
         , mutation_log_(other.mutation_log_)
+        , narrowing_log_(other.narrowing_log_)
         , node_first_mutation_(other.node_first_mutation_)
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
@@ -1494,23 +1504,6 @@ public:
         , float_val_(alloc)
         , sym_id_(alloc)
         , children_()
-        // Issue #300 follow-up: these 7 pmr::vector members were
-        // missing from the initializer list and got default-constructed
-        // with the default polymorphic_allocator (new_delete_resource).
-        // That mismatch caused double-frees when (arena:compact) ran on
-        // a fresh CompilerService that had just been through set-code
-        // — the macro_dirty_ column (and 6 others) had its 2-byte
-        // initial buffer freed via new_delete::operator delete while
-        // the FlatAST's other 19 columns were freed via the arena's
-        // monotonic_buffer_resource (no-op), producing a confused
-        // "double-free" report that the sanitizer could not localize.
-        , marker_(alloc)
-        , dirty_(alloc)
-        , ppa_dirty_(alloc)
-        , verify_dirty_(alloc)
-        , verification_dirty_(alloc)
-        , macro_dirty_(alloc)
-
         , parent_(alloc)
         , param_begin_(alloc)
         , param_count_(alloc)
@@ -1519,11 +1512,22 @@ public:
         , param_annot_data_(alloc)
         , line_(alloc)
         , col_(alloc)
+        // Issue #300: these pmr columns must use the arena alloc passed
+        // to FlatAST (not the default new_delete_resource).
+        , marker_(alloc)
+        , dirty_(alloc)
+        , ppa_dirty_(alloc)
+        , verify_dirty_(alloc)
+        , verification_dirty_(alloc)
+        , macro_dirty_(alloc)
         , type_id_(alloc)
+        , type_cache_gen_(alloc)
+        , type_cache_binding_gen_(alloc)
+        , schema_cache_(alloc)
         , error_kind_(alloc)
-        , narrowing_log_(alloc)
         , value_cache_(alloc)
         , mutation_log_(alloc)
+        , narrowing_log_(alloc)
         , node_first_mutation_(alloc)
         , node_gen_(alloc)
         , free_list_(alloc) {}
