@@ -244,4 +244,93 @@ kind_name(StrategyKind k) noexcept {
     return "unknown";
 }
 
+// ── StrategyParams — uniform parameter bag ─────────────────
+//
+// Bundles the parameters shared across the structural
+// strategies (ReplaceChild / InsertChild / RemoveChild).
+// NoOp ignores the params. Keeps the dispatch helper's
+// signature stable as new strategies are added (each new
+// strategy can extend StrategyParams with optional fields,
+// or take a separate params struct in its own dispatch
+// overload).
+export struct StrategyParams {
+    std::uint32_t index = 0;
+    NodeId new_child = NULL_NODE;
+};
+
+// ── apply_by_kind — runtime strategy selection ─────────────
+//
+// Picks the right concrete strategy from a StrategyKind tag
+// + StrategyParams, then routes through apply_mutation<>.
+// This is the entry point for data-driven mutation pipelines
+// (REPL input, mutation logs, mutate:* primitive dispatch).
+//
+// Each case forwards through the Mutator-constrained
+// apply_mutation<> template, so adding a new strategy
+// requires:
+//   1. Add the kind + concrete strategy class.
+//   2. Add a case below.
+//   3. Update the static_assert(Mutator<...>) list.
+//
+// The switch is exhaustive over StrategyKind; adding a new
+// kind without a case triggers an enum-value-not-handled
+// compiler warning (or error with -Werror=switch).
+export [[nodiscard]] AuraResult<NodeId>
+apply_by_kind(FlatAST& flat, NodeId target,
+              StrategyKind kind, const StrategyParams& params) {
+    switch (kind) {
+        case StrategyKind::NoOp:
+            return apply_mutation(flat, target, NoOpMutator{});
+
+        case StrategyKind::ReplaceChild:
+            return apply_mutation(flat, target,
+                ReplaceChildMutator{params.index, params.new_child});
+
+        case StrategyKind::InsertChild:
+            return apply_mutation(flat, target,
+                InsertChildMutator{params.index, params.new_child});
+
+        case StrategyKind::RemoveChild:
+            return apply_mutation(flat, target,
+                RemoveChildMutator{params.index});
+    }
+    // Unreachable: switch is exhaustive over StrategyKind.
+    // Defensive: return InternalInvariantViolation if a
+    // future refactor adds a kind without updating this
+    // switch (and -Werror=switch is off).
+    return std::unexpected(make_unexpected(
+        AuraErrorKind::InternalInvariantViolation,
+        std::format("apply_by_kind: unhandled StrategyKind value {}",
+                    static_cast<std::uint32_t>(kind))));
+}
+
+// ── apply_by_name — string-tagged dispatch ─────────────────
+//
+// Convenience wrapper for callers that have a strategy name
+// (e.g. from REPL input or mutate:* primitive arguments).
+// Returns InvalidTarget if the name doesn't match a known
+// strategy.
+//
+// kind_from_name is the inverse of kind_name.
+export [[nodiscard]] std::optional<StrategyKind>
+kind_from_name(std::string_view name) noexcept {
+    if (name == "no-op")         return StrategyKind::NoOp;
+    if (name == "replace-child") return StrategyKind::ReplaceChild;
+    if (name == "insert-child")  return StrategyKind::InsertChild;
+    if (name == "remove-child")  return StrategyKind::RemoveChild;
+    return std::nullopt;
+}
+
+export [[nodiscard]] AuraResult<NodeId>
+apply_by_name(FlatAST& flat, NodeId target,
+              std::string_view name, const StrategyParams& params) {
+    auto kind = kind_from_name(name);
+    if (!kind) {
+        return std::unexpected(make_unexpected(
+            AuraErrorKind::MutationInvalidField,
+            std::format("apply_by_name: unknown strategy name '{}'", name)));
+    }
+    return apply_by_kind(flat, target, *kind, params);
+}
+
 } // namespace aura::ast::mutators
