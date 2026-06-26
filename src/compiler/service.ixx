@@ -2445,6 +2445,9 @@ public:
             tc.stats().and_or_meet_uses, std::memory_order_relaxed);
         metrics_.and_or_join_uses_total.fetch_add(
             tc.stats().and_or_join_uses, std::memory_order_relaxed);
+        // Issue #434: per-node occurrence dirty recovery.
+        metrics_.narrowing_dirty_recovery_total.fetch_add(
+            tc.stats().narrowing_dirty_recovery, std::memory_order_relaxed);
 
         // Issue #116: the typecheck command doesn't proceed to
         // IR lowering (it just reports types + diagnostics), so
@@ -2557,6 +2560,9 @@ public:
             tc.stats().and_or_meet_uses, std::memory_order_relaxed);
         metrics_.and_or_join_uses_total.fetch_add(
             tc.stats().and_or_join_uses, std::memory_order_relaxed);
+        // Issue #434: per-node occurrence dirty recovery.
+        metrics_.narrowing_dirty_recovery_total.fetch_add(
+            tc.stats().narrowing_dirty_recovery, std::memory_order_relaxed);
         return n;
     }
 
@@ -4581,6 +4587,9 @@ public:
             metrics_.and_or_meet_uses_total.load(std::memory_order_relaxed);
         s.and_or_join_uses_total =
             metrics_.and_or_join_uses_total.load(std::memory_order_relaxed);
+        // Issue #434: per-node occurrence dirty recovery.
+        s.narrowing_dirty_recovery_total =
+            metrics_.narrowing_dirty_recovery_total.load(std::memory_order_relaxed);
         const std::uint64_t narrow_total =
             s.narrowing_applied_total + s.narrowing_skipped_total;
         if (narrow_total > 0) {
@@ -4972,6 +4981,9 @@ public:
             tc.stats().and_or_meet_uses, std::memory_order_relaxed);
         metrics_.and_or_join_uses_total.fetch_add(
             tc.stats().and_or_join_uses, std::memory_order_relaxed);
+        // Issue #434: per-node occurrence dirty recovery.
+        metrics_.narrowing_dirty_recovery_total.fetch_add(
+            tc.stats().narrowing_dirty_recovery, std::memory_order_relaxed);
         metrics_.incremental_typecheck_auto_invocations_total.fetch_add(
             1, std::memory_order_relaxed);
         metrics_.incremental_typecheck_re_inferred_total.fetch_add(

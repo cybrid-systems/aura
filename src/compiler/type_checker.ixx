@@ -398,6 +398,10 @@ public:
     std::uint64_t predicate_memo_hits() const noexcept { return predicate_memo_hits_; }
     std::uint64_t predicate_memo_misses() const noexcept { return predicate_memo_misses_; }
     std::uint64_t predicate_memo_evictions() const noexcept { return predicate_memo_evictions_; }
+    // Issue #434: per-node occurrence dirty recovery.
+    // Returns the lifetime total of narrowing
+    // re-analyses triggered by dirty If nodes.
+    std::uint64_t narrowing_dirty_recovery() const noexcept { return narrowing_dirty_recovery_; }
 
     // Issue #280: capture narrowing evidence from the most
     // recent IfExpr synthesize. Bitmask values are defined
@@ -487,6 +491,10 @@ public:
         // of analyze_predicate_flat.
         std::uint64_t and_or_meet_uses = 0;
         std::uint64_t and_or_join_uses = 0;
+        // Issue #434: per-node occurrence dirty
+        // recovery. Bumped when the If node is
+        // dirty AND the predicate memo missed.
+        std::uint64_t narrowing_dirty_recovery = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. per_symbol_used_total counts how
         // many mutations took the per-symbol path; the
@@ -565,6 +573,18 @@ public:
     std::uint64_t predicate_memo_hits_ = 0;
     std::uint64_t predicate_memo_misses_ = 0;
     std::uint64_t predicate_memo_evictions_ = 0; // cleared on epoch change
+    // Issue #434: per-node occurrence dirty
+    // tracking. The narrowing_dirty_recovery_total
+    // counter bumps when the engine re-analyzes
+    // a narrowing because the If node was in the
+    // dirty range (post-mutation re-inference).
+    // Distinct from narrowing_reanalyzed (which is
+    // the predicate memo miss counter). The dirty
+    // recovery signal is a per-session indicator
+    // of how often post-mutation re-inference is
+    // re-running narrowing analysis on dirty
+    // nodes.
+    std::uint64_t narrowing_dirty_recovery_ = 0;
     // Issue #281 follow-up #5: bound the predicate memo. The
     // memo is keyed by cond NodeId which is stable across
     // mutations within an epoch. Without a cap, a workspace
@@ -719,6 +739,9 @@ export struct TypeCheckResult {
     // See InnerStats for the full rationale.
     std::uint64_t and_or_meet_uses = 0;
     std::uint64_t and_or_join_uses = 0;
+    // Issue #434: per-call dirty recovery. See
+    // InnerStats for the full rationale.
+    std::uint64_t narrowing_dirty_recovery = 0;
 };
 
 // Pure: type-check a FlatAST subtree and return the inferred
@@ -799,6 +822,8 @@ export struct TypeChecker {
         // See InnerStats for the full rationale.
         std::uint64_t and_or_meet_uses = 0;
         std::uint64_t and_or_join_uses = 0;
+        // Issue #434: aggregated dirty recovery.
+        std::uint64_t narrowing_dirty_recovery = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. See InnerStats for the full
         // field-by-field rationale.
