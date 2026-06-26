@@ -443,6 +443,21 @@ public:
         // gen_saved / (stale_cache + gen_saved) ratio
         // measures the improvement.
         std::uint64_t gen_saved = 0;
+        // Issue #411 follow-up #1: per-symbol re-inference
+        // path tracking. per_symbol_used_total counts how
+        // many mutations took the per-symbol path; the
+        // companion visited_total is the total number of
+        // nodes visited (use-sites only) across all those
+        // invocations. ancestor_* mirror the same for the
+        // fallback path. The derived
+        // per_symbol_visited_avg =
+        // per_symbol_visited_total / max(per_symbol_used,
+        // 1) tells the user the average number of nodes
+        // re-inferred per per-symbol mutation.
+        std::uint64_t per_symbol_used_total = 0;
+        std::uint64_t per_symbol_visited_total = 0;
+        std::uint64_t ancestor_used_total = 0;
+        std::uint64_t ancestor_visited_total = 0;
     };
     InnerStats stats_;
     InnerStats stats() const { return stats_; }
@@ -701,6 +716,13 @@ export struct TypeChecker {
         // rejections were false positives (now hits) vs.
         // real staleness (still rejected).
         std::uint64_t gen_saved = 0;
+        // Issue #411 follow-up #1: per-symbol re-inference
+        // path tracking. See InnerStats for the full
+        // field-by-field rationale.
+        std::uint64_t per_symbol_used_total = 0;
+        std::uint64_t per_symbol_visited_total = 0;
+        std::uint64_t ancestor_used_total = 0;
+        std::uint64_t ancestor_visited_total = 0;
     };
     IncrementalStats stats() const { return stats_; }
     void reset_stats() { stats_ = {}; }

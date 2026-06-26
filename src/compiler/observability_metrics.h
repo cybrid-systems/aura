@@ -265,6 +265,37 @@ struct CompilerMetrics {
     // mutation (signal for the per-symbol follow-up).
     std::atomic<std::uint64_t> incremental_typecheck_auto_invocations_total{0};
     std::atomic<std::uint64_t> incremental_typecheck_re_inferred_total{0};
+    // Issue #411 follow-up #1: per-symbol re-inference path
+    // observability. The full #411 follow-up #1 scope is to
+    // route post-mutation re-inference through the per-symbol
+    // path (#410's affected_subtree_for_symbol) instead of
+    // the ancestor-walk path. This scope-limited slice ships
+    // the WIRING + observability so the optimization can be
+    // measured.
+    //
+    //   - per_symbol_reinfer_used_total: how many mutations
+    //     took the per-symbol path (the fast path). For
+    //     mutate:rebind on a top-level define with N uses,
+    //     this is the common case.
+    //   - per_symbol_reinfer_visited_total: total nodes
+    //     visited across all per_symbol invocations. The
+    //     derived per_symbol_visited_avg = visited / max(used,
+    //     1) tells the user the average re-inferred node
+    //     count per per_symbol mutation.
+    //   - ancestor_reinfer_used_total: how many mutations
+    //     fell back to the ancestor walk (sub-expression
+    //     mutations like mutate:replace-type that don't
+    //     carry a binding sym_id).
+    //   - ancestor_reinfer_visited_total: total nodes
+    //     visited across all ancestor invocations. The
+    //     derived ratio_bp = per_symbol_visited /
+    //     (per_symbol_visited + ancestor_visited) * 10000
+    //     measures the share of work that went through the
+    //     fast path.
+    std::atomic<std::uint64_t> per_symbol_reinfer_used_total{0};
+    std::atomic<std::uint64_t> per_symbol_reinfer_visited_total{0};
+    std::atomic<std::uint64_t> ancestor_reinfer_used_total{0};
+    std::atomic<std::uint64_t> ancestor_reinfer_visited_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

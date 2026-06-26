@@ -128,6 +128,21 @@ struct CompilerSnapshot {
     std::uint64_t incremental_typecheck_auto_invocations_total = 0;
     std::uint64_t incremental_typecheck_re_inferred_total = 0;
     std::uint64_t incremental_typecheck_avg_re_inferred_bp = 0;
+    // Issue #411 follow-up #1: per-symbol re-inference path
+    // observability. Mirrors the 4 lifetime counters in
+    // CompilerMetrics. The derived
+    // per_symbol_path_share_bp = per_symbol_visited /
+    // (per_symbol_visited + ancestor_visited) * 10000 is the
+    // share of re-inference work that went through the
+    // per-symbol (fast) path. The follow-up #410 Phase 2/2
+    // (O(uses) DefUseIndex routing) will push this further
+    // toward 100% by replacing the O(n) per_symbol walk with
+    // an O(uses) indexed lookup.
+    std::uint64_t per_symbol_reinfer_used_total = 0;
+    std::uint64_t per_symbol_reinfer_visited_total = 0;
+    std::uint64_t ancestor_reinfer_used_total = 0;
+    std::uint64_t ancestor_reinfer_visited_total = 0;
+    std::uint64_t per_symbol_path_share_bp = 0;
     // Issue #247: SyntaxMarker distribution in the current
     // workspace. Populated by CompilerService::snapshot() by
     // walking workspace_flat_->marker_column() (when set).
