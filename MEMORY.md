@@ -1655,3 +1655,39 @@ verifies `bump_generation_count = 1`,
   #411, #412, #411 fu1 (4 fu), #412 fu1, #413, #386,
   #338, #433, #434, #390, #409, #341, #342, **#343**
 - 18+ test binaries, 201+ tests, 0 failures
+
+## Session 2026-06-26 — Issue #383: ConstraintSystem worklist + consistent_unify (scope-limited)
+
+Commit `84564b2e` pushed to origin/main. 5 files, +365/-2.
+
+Wires 3 lifetime counters for the ConstraintSystem
+solver + worklist restart detection. Pre-#383, the
+solver lacked observability. Post-#383, the AI Agent
+can measure solver behavior under mutation-heavy
+workloads via the new (compile:constraint-solver-stats)
+primitive.
+
+**Wiring:**
+- `consistent_unify` + `consistent_subtype` bump
+  lifetime counters (every call).
+- `solve_delta_impl`: capture `dirty_count_` at the
+  start of each pass; if the dirty set grew during
+  the pass, append new entries to the worklist for
+  the next pass and bump `worklist_restart_total`.
+  Pre-#383 was single-pass; new constraints added
+  during processing would sit in the dirty set but
+  not be processed until the next solve_delta call.
+- `CompilerMetrics` gains 3 lifetime atomics.
+- New Aura primitive `(compile:constraint-solver-stats)`
+  3-key hash.
+
+**Tests:** test_issue_383, 11/11 (5 ACs). AC4 verifies
+`consistent_unify_total = 4` on a poly + gradual
+expression.
+
+**Today's totals (so far, 2026-06-26, ~12 hours):**
+- 39 commits to origin/main
+- **15 issues closed** (all scope-limited): #410, #411,
+  #412, #411 fu1 (4 fu), #412 fu1, #413, #386, #338,
+  #433, #434, #390, #409, #341, #342, #343, **#383**
+- 19+ test binaries, 212+ tests, 0 failures
