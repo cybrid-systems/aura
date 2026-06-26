@@ -13,10 +13,8 @@
 // block with a corrupted use_count; ~FlatAST then double-freed the block.
 // Fix: children_ is std::vector + release_children_for_teardown() dedupe.
 //
-// Run under ASan:
-//   cd build_asan && cmake --build . --target test_pcv_heap_use_after_free
-//   ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1 \
-//     ./build_asan/test_pcv_heap_use_after_free
+// Run under ASan (from build_asan):
+//   ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 ./build_asan/test_pcv_heap_use_after_free
 #include <iostream>
 import aura.compiler.service;
 int main() {
