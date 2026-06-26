@@ -2412,6 +2412,8 @@ public:
                                                         std::memory_order_relaxed);
         metrics_.typecheck_stale_cache_total.fetch_add(tc.stats().stale_cache,
                                                        std::memory_order_relaxed);
+        metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
+                                                    std::memory_order_relaxed);
 
         // Issue #116: the typecheck command doesn't proceed to
         // IR lowering (it just reports types + diagnostics), so
@@ -2475,6 +2477,8 @@ public:
                                                         std::memory_order_relaxed);
         metrics_.typecheck_stale_cache_total.fetch_add(tc.stats().stale_cache,
                                                        std::memory_order_relaxed);
+        metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
+                                                    std::memory_order_relaxed);
         return n;
     }
 
@@ -4412,6 +4416,20 @@ public:
         } else {
             s.multi_mutation_recompute_ratio_bp = 0;
         }
+        // Issue #412: mirror the gen_saved lifetime counter
+        // and compute the derived gen_saved_ratio_bp (basis
+        // points: gen_saved / (stale + gen_saved) * 10000).
+        // Higher = more false-positive stale rejections
+        // eliminated by the gen check.
+        s.typecheck_gen_saved_total =
+            metrics_.typecheck_gen_saved_total.load(std::memory_order_relaxed);
+        const std::uint64_t gen_total = s.typecheck_stale_cache_total + s.typecheck_gen_saved_total;
+        if (gen_total > 0) {
+            s.typecheck_gen_saved_ratio_bp =
+                (s.typecheck_gen_saved_total * 10000u) / gen_total;
+        } else {
+            s.typecheck_gen_saved_ratio_bp = 0;
+        }
         // Issue #259: type metadata propagation observability.
         // Read lifetime totals from CompilerMetrics, compute
         // the derived coverage (basis points: 0-10000).
@@ -4708,6 +4726,8 @@ public:
             tc.stats().cache_misses, std::memory_order_relaxed);
         metrics_.typecheck_stale_cache_total.fetch_add(
             tc.stats().stale_cache, std::memory_order_relaxed);
+        metrics_.typecheck_gen_saved_total.fetch_add(
+            tc.stats().gen_saved, std::memory_order_relaxed);
         metrics_.incremental_typecheck_auto_invocations_total.fetch_add(
             1, std::memory_order_relaxed);
         metrics_.incremental_typecheck_re_inferred_total.fetch_add(

@@ -1639,6 +1639,84 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (compile:type-cache-stats) — Issue #412: observability
+    // for the type cache generation-counter check. Returns a
+    // hash with 4 fields:
+    //   - cache-hits-total: lifetime total cache_hits (post-
+    //     #412, includes the gen_saved rescues — they're
+    //     counted as hits now, not stale)
+    //   - cache-misses-total: lifetime total cache_misses
+    //   - stale-cache-total: lifetime total stale_cache (post-
+    //     #412, only true staleness — false positives
+    //     rescued by the gen check no longer count here)
+    //   - gen-saved-total: lifetime total cache hits rescued
+    //     by the gen check (would have been stale_cache
+    //     pre-#412)
+    //   - gen-saved-ratio-bp: derived ratio (gen_saved /
+    //     (stale + gen_saved) * 10000, basis points). 0
+    //     when neither counter has been bumped. The key AC
+    //     for #412 — higher = more false-positive stale
+    //     rejections eliminated.
+    add("compile:type-cache-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE; // avoid HASH_EMPTY collision
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t hits = 0, misses = 0, stale = 0, gen_saved = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            hits = m->typecheck_cache_hits_total.load(std::memory_order_relaxed);
+            misses = m->typecheck_cache_misses_total.load(std::memory_order_relaxed);
+            stale = m->typecheck_stale_cache_total.load(std::memory_order_relaxed);
+            gen_saved = m->typecheck_gen_saved_total.load(std::memory_order_relaxed);
+        }
+        const std::uint64_t gen_total = stale + gen_saved;
+        const std::uint64_t ratio_bp = (gen_total > 0) ? (gen_saved * 10000u) / gen_total : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"cache-hits-total", make_int(static_cast<std::int64_t>(hits))},
+            {"cache-misses-total", make_int(static_cast<std::int64_t>(misses))},
+            {"stale-cache-total", make_int(static_cast<std::int64_t>(stale))},
+            {"gen-saved-total", make_int(static_cast<std::int64_t>(gen_saved))},
+            {"gen-saved-ratio-bp", make_int(static_cast<std::int64_t>(ratio_bp))},
+        };
+        return build_hash(kv);
+    });
+
 } // register_compile_primitives
 
 } // namespace aura::compiler::primitives_detail

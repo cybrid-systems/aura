@@ -434,6 +434,15 @@ public:
         std::uint64_t cache_hits = 0;
         std::uint64_t cache_misses = 0;
         std::uint64_t stale_cache = 0;
+        // Issue #412: cache hits rescued by the gen check.
+        // Pre-#412 these were counted as stale_cache (the
+        // free_vars check rejected them). Post-#412 the
+        // generation counter confirms the binding structure
+        // didn't change, so the polymorphic TYPE_VAR
+        // children are still valid for this query. The
+        // gen_saved / (stale_cache + gen_saved) ratio
+        // measures the improvement.
+        std::uint64_t gen_saved = 0;
     };
     InnerStats stats_;
     InnerStats stats() const { return stats_; }
@@ -611,6 +620,9 @@ export struct TypeCheckResult {
     std::uint64_t cache_hits = 0;
     std::uint64_t cache_misses = 0;
     std::uint64_t stale_cache = 0;
+    // Issue #412: cache hits rescued by the gen check.
+    // See InnerStats::gen_saved.
+    std::uint64_t gen_saved = 0;
 
     // Issue #280: narrowing evidence bitmask captured from the
     // outermost IfExpr's predicate in the root expression. See
@@ -682,6 +694,13 @@ export struct TypeChecker {
         std::uint64_t cache_hits = 0;
         std::uint64_t cache_misses = 0;
         std::uint64_t stale_cache = 0;
+        // Issue #412: cache hits rescued by the gen check.
+        // See InnerStats::gen_saved for the full rationale.
+        // gen_saved + (stale_cache - gen_saved) is the
+        // breakdown of how many pre-#412 stale_cache
+        // rejections were false positives (now hits) vs.
+        // real staleness (still rejected).
+        std::uint64_t gen_saved = 0;
     };
     IncrementalStats stats() const { return stats_; }
     void reset_stats() { stats_ = {}; }
