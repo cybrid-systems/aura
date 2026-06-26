@@ -290,6 +290,23 @@ struct CompilerMetrics {
     // was able to short-circuit without re-inference.
     std::atomic<std::uint64_t> schema_cache_lookups_total{0};
     std::atomic<std::uint64_t> schema_cache_hits_total{0};
+    // Issue #409: fine-grained constraint dependency
+    // tracking observability. 2 lifetime counters:
+    //   - delta_constraints_processed_total: total
+    //     constraints re-solved via solve_delta
+    //     (post-#409 this is the worklist size
+    //     after reverse-map filtering, smaller than
+    //     pre-#409)
+    //   - delta_constraints_total: total constraints
+    //     added via add_delta (the delta scope). The
+    //     ratio (processed / total) measures how much
+    //     filtering the reverse map achieves; pre-#409
+    //     the ratio was always 1.0 (all dirty
+    //     constraints re-solved). Post-#409 a high
+    //     filter ratio means the reverse map is
+    //     pruning effectively.
+    std::atomic<std::uint64_t> delta_constraints_processed_total{0};
+    std::atomic<std::uint64_t> delta_constraints_total{0};
     std::atomic<std::uint64_t> delta_solve_time_us{0};
     // Issue #259: type metadata propagation observability.
     // IRInstruction has a `type_id` field (0 = unknown/dynamic)

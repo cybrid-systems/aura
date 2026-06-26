@@ -91,6 +91,29 @@ export class ConstraintSystem {
     // would have pointer-chasing on every check.
     std::vector<bool> constraint_dirty_;
     std::size_t dirty_count_ = 0; // O(1) "is anything dirty?"
+    // Issue #409: reverse mapping TypeId (var rep) →
+    // list of constraint indices that reference it.
+    // Used by solve_delta to process only constraints
+    // that depend on the mutated variables (instead of
+    // processing all dirty constraints). Updated on
+    // add / add_delta (the new constraint's var refs
+    // get the new index) and on unify (the merged
+    // variable inherits the union of both reverse
+    // mappings). Pre-#409, solve_delta processed all
+    // dirty constraints in O(dirty_count_) — the
+    // post-#409 path is O(affected_constraints) where
+    // affected_constraints is the union of var_to_
+    // constraints for the dirty vars.
+    //
+    // Stored as unordered_map<uint32_t, vector<size_t>>
+    // (keyed by the Union-Find rep, not the raw var
+    // index — the rep is what unify produces and is
+    // stable across additions). The vectors are
+    // append-only (constraints are never removed in
+    // the current API); stale entries are filtered
+    // out by the dirty bit check at solve_delta time.
+    std::unordered_map<std::uint32_t, std::vector<std::size_t>>
+        var_to_constraints_;
 public:
     explicit ConstraintSystem(aura::core::TypeRegistry& reg);
     void add(Constraint c);

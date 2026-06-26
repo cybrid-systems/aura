@@ -156,6 +156,16 @@ struct CompilerSnapshot {
     std::uint64_t schema_cache_lookups_total = 0;
     std::uint64_t schema_cache_hits_total = 0;
     std::uint64_t schema_cache_hit_rate_bp = 0;
+    // Issue #409: fine-grained constraint dependency
+    // tracking observability. Mirrors the 2 lifetime
+    // counters in CompilerMetrics. The derived
+    // delta_solve_constraints_ratio_bp is
+    // processed / total * 10000 — measures how much
+    // the reverse map prunes. A low ratio means
+    // the filter is doing useful work.
+    std::uint64_t delta_constraints_processed_total = 0;
+    std::uint64_t delta_constraints_total = 0;
+    std::uint64_t delta_solve_constraints_ratio_bp = 0;
     std::uint64_t delta_solve_time_us = 0;
     std::uint64_t multi_mutation_recompute_ratio_bp = 0;
     // Issue #259: type metadata propagation observability.

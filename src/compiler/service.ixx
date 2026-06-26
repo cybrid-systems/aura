@@ -4612,6 +4612,24 @@ public:
         } else {
             s.schema_cache_hit_rate_bp = 0;
         }
+        // Issue #409: fine-grained constraint
+        // dependency tracking observability. Mirror
+        // the 2 lifetime counters and compute the
+        // derived ratio (basis points: processed /
+        // total * 10000).
+        s.delta_constraints_processed_total =
+            metrics_.delta_constraints_processed_total.load(
+                std::memory_order_relaxed);
+        s.delta_constraints_total =
+            metrics_.delta_constraints_total.load(
+                std::memory_order_relaxed);
+        if (s.delta_constraints_total > 0) {
+            s.delta_solve_constraints_ratio_bp =
+                (s.delta_constraints_processed_total * 10000u) /
+                s.delta_constraints_total;
+        } else {
+            s.delta_solve_constraints_ratio_bp = 0;
+        }
         const std::uint64_t narrow_total =
             s.narrowing_applied_total + s.narrowing_skipped_total;
         if (narrow_total > 0) {
