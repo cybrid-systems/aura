@@ -1031,6 +1031,11 @@ aura_issue_test_link_llvm_jit(test_issue_508)
 # tests/test_issue_326.cpp for per-scenario docs.
 aura_add_issue_test(test_issue_326)
 aura_issue_test_link_llvm_jit(test_issue_326)
+# Issue #331: targeted dirty bitmask + query:pattern
+# integration under mutate. 8 scenarios extending the
+# basic dirty-API coverage from test_issue_138.
+aura_add_issue_test(test_issue_331)
+aura_issue_test_link_llvm_jit(test_issue_331)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
