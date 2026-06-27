@@ -1042,6 +1042,13 @@ aura_issue_test_link_llvm_jit(test_issue_331)
 # multiple concurrent readers.
 aura_add_issue_test(test_issue_330)
 aura_issue_test_link_llvm_jit(test_issue_330)
+# Issue #327: incremental compilation e2e + epoch gate.
+# 7 scenarios extending #326 + #331 with the
+# (compile:relower-strategy) axis — pipeline decides
+# 'none / 'incremental / 'full / 'unknown based on
+# dirty-block count.
+aura_add_issue_test(test_issue_327)
+aura_issue_test_link_llvm_jit(test_issue_327)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
