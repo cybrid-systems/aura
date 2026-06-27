@@ -790,6 +790,19 @@ set_property(TARGET issue_212_bench PROPERTY CXX_MODULE_STD ON)
 target_sources(issue_212_bench PRIVATE src/core/contract_handler.cpp)
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 
+# Issue #508 quantitative benchmark: CastOp reduction ratio
+# on a synthetic gradual workload. Validates the AC ">=40%
+# coercion reduction in gradual workloads" without needing
+# a full benchmark suite. Returns 0 iff the AC is met.
+add_executable(issue_508_bench tests/bench/issue_508_bench.cpp)
+set_property(TARGET issue_508_bench PROPERTY CXX_MODULE_STD ON)
+target_include_directories(issue_508_bench PRIVATE src)
+target_compile_options(issue_508_bench PRIVATE -Wall
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter)
+target_link_libraries(issue_508_bench PRIVATE stdc++ aura_test_objects aura-reflect)
+add_test(NAME issue_508_bench COMMAND ./issue_508_bench)
+
 # Issue #217 Cycle 14 P4: benchmark suite for the C++26 P2996
 # reflection + auto_serialize/auto_deserialize path. Measures
 # throughput across 4 dimensions (FlatAST SoA, NodeView
@@ -1010,6 +1023,8 @@ aura_add_issue_test(test_issue_338)
 aura_issue_test_link_llvm_jit(test_issue_338)
 aura_add_issue_test(test_issue_433)
 aura_issue_test_link_llvm_jit(test_issue_433)
+aura_add_issue_test(test_issue_508)
+aura_issue_test_link_llvm_jit(test_issue_508)
 aura_add_issue_test(test_issue_434)
 aura_issue_test_link_llvm_jit(test_issue_434)
 aura_add_issue_test(test_issue_390)
