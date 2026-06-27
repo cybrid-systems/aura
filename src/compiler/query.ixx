@@ -161,6 +161,31 @@ walk_ancestors(C& ast, Id start, V&& vis) {
     return count;
 }
 
+// ── count_nodes_with_tag — tag-based DFS counter ────────────────
+//
+// Phase A.2 helper. DFS from root, count nodes whose tag
+// equals `tag`. Thin wrapper over count_nodes_with_predicate
+// for the common case of "count all Calls" / "count all
+// Variables" / etc. — needed by (compile:*) stats primitives.
+//
+// Zero overhead: at -O3, the wrapper inlines into a single
+// recursive DFS with a tag compare per node. Same codegen
+// as a hand-written `count_nodes_with_predicate` with a
+// tag-equality lambda.
+//
+// Precondition: same as count_nodes_with_predicate — root
+// must be a valid node id.
+export template <typename Id, typename C, typename Tag>
+    requires aura::core::ASTContainer<C, Id>
+[[nodiscard]] constexpr std::size_t
+count_nodes_with_tag(C& ast, Id root, Tag tag) {
+    // The tag type is whatever ast.tag() returns (NodeTag for
+    // FlatAST). We capture it by value in the lambda so the
+    // recursive call passes it through without re-loading.
+    return aura::compiler::count_nodes_with_predicate<Id>(
+        ast, root, [&ast, tag](Id id) { return ast.tag(id) == tag; });
+}
+
 // ── ASTIndex — zero-copy filter views on FlatAST SoA ───────────
 export struct ASTIndex {
     const aura::ast::FlatAST& ast;

@@ -456,6 +456,37 @@ bool test_walk_ancestors_concept_constraint() {
     return true;
 }
 
+// ── AC14: count_nodes_with_tag (Phase A.2 helper) ─────────
+//
+// Verify the tag-based counter on the same depth-3 let chain
+// used in AC #9.
+bool test_count_nodes_with_tag() {
+    std::println("\n--- AC14: count_nodes_with_tag ---");
+    using namespace aura::ast;
+    FlatAST flat;
+    StringPool pool;
+    auto root = add_let_chain(flat, pool, /*depth*/ 3);
+
+    // Depth-3 chain: 3 Let nodes + 4 LiteralInt nodes = 7 total.
+    auto lets = aura::compiler::count_nodes_with_tag<std::uint32_t>(
+        flat, root, NodeTag::Let);
+    CHECK_EQ(lets, 3u, "Let count = 3");
+
+    auto lits = aura::compiler::count_nodes_with_tag<std::uint32_t>(
+        flat, root, NodeTag::LiteralInt);
+    CHECK_EQ(lits, 4u, "LiteralInt count = 4");
+
+    // No Variable nodes in a let chain.
+    auto vars = aura::compiler::count_nodes_with_tag<std::uint32_t>(
+        flat, root, NodeTag::Variable);
+    CHECK_EQ(vars, 0u, "Variable count = 0 (none in chain)");
+
+    // Total = 7 = 3 + 4.
+    auto lets_lits = lets + lits;
+    CHECK_EQ(lets_lits, 7u, "Let + LiteralInt = 7 (full chain)");
+    return true;
+}
+
 int main() {
     std::println("=== Issue #501 Concepts extension (Phase C6) ===\n");
     test_node_handle();
@@ -471,6 +502,7 @@ int main() {
     test_phase_d_concept_constraints();
     test_walk_ancestors();
     test_walk_ancestors_concept_constraint();
+    test_count_nodes_with_tag();
 
     std::println("\n========================================");
     std::println("Total: {} passed, {} failed", g_passed, g_failed);
