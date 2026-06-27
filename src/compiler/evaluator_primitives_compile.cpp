@@ -15,6 +15,7 @@ import aura.core.mutators;  // Phase 4 follow-up #4: (compile:mutator-dispatch-s
 import aura.compiler.value;
 import aura.compiler.service;
 import aura.compiler.type_checker;
+import aura.compiler.query;
 
 namespace aura::compiler::primitives_detail {
 
@@ -2520,14 +2521,31 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 // report the chain length only (the conservative
                 // ancestor-only count, which is what the per-symbol
                 // set needs to beat to justify the new path).
+                //
+                // Phase A1 migration: now uses
+                // aura::compiler::walk_ancestors<Id, C, V> from
+                // aura.compiler.query. The walk starts from
+                // parent_of(def_node) to match the original semantics
+                // (count ancestors of def_node, excluding def_node
+                // itself). The size()-bounded safety cap is preserved
+                // inside the visitor via early-return.
                 std::int64_t chain_len = 0;
-                auto cur = def_node;
-                std::size_t safety = 0;
-                while (cur != aura::ast::NULL_NODE &&
-                       cur < ev.workspace_flat_->size() &&
-                       safety++ < ev.workspace_flat_->size()) {
-                    ++chain_len;
-                    cur = ev.workspace_flat_->parent_of(cur);
+                auto start = ev.workspace_flat_->parent_of(def_node);
+                const auto max_count =
+                    static_cast<std::size_t>(ev.workspace_flat_->size());
+                if (start != aura::ast::NULL_NODE) {
+                    chain_len = static_cast<std::int64_t>(
+                        aura::compiler::walk_ancestors<std::uint32_t>(
+                            *ev.workspace_flat_, start,
+                            [&chain_len, max_count](aura::ast::NodeId)
+                                -> bool {
+                                if (static_cast<std::size_t>(chain_len)
+                                    >= max_count) {
+                                    return false;  // safety cap
+                                }
+                                ++chain_len;
+                                return true;
+                            }));
                 }
                 ancestor_affected = chain_len;
             }
