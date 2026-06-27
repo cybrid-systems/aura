@@ -3347,7 +3347,16 @@ public:
     // Issue #188: mark a node dirty for one or more specific reasons.
     // The `kGeneralDirty` bit is set automatically so existing
     // is_dirty() callers still see "this node needs work".
-    void mark_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) {
+    //
+    // Issue #302: pre-Contract added so a NodeId out-of-bounds for
+    // the current tag_ column is caught at the boundary instead of
+    // silently growing dirty_ to ~4G (which would happen for
+    // NULL_NODE = 0xFFFFFFFF on a 32-bit NodeId). Note: NULL_NODE
+    // is 0 by default for small ASTs (it can be redefined), so the
+    // contract catches genuine OOB like passing a stale NodeId from
+    // a released child.
+    void mark_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty)
+        pre(id < tag_.size()) {
         if (id >= dirty_.size())
             dirty_.resize(id + 1, 0);
         dirty_[id] |= reasons;
