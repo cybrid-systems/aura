@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -696,71 +697,202 @@ export std::vector<CoercionMarker> mark_coercions(aura::core::TypeRegistry& reg,
 //   1. Source and target types are identical (no-op cast)
 //   2. Nested casts: (cast (cast x T1) T2) → (cast x T2)
 //   3. Chain of identity casts: (cast (cast x T) T) → x
+//   4. Safe Dynamic passthrough: (cast (Dynamic) Dynamic) → Local
+//      (no runtime check needed — Dynamic tag at runtime == 3, the
+//      CastOp default case is just `locals[ops[0]] = val`)
+//   5. (cast <ground-typed> Dynamic) where source already carries
+//      the ground type_id → Local, since the CastOp default path
+//      is a passthrough anyway.
 //
 // Operates on IRModule after lowering + TypeSpecializationWrap.
-// CastOp semantics in IR: operands = {result_slot, source_slot, type_tag, 0}
-// The type_tag field encodes the target runtime type (1=Int, 2=Bool, 3=String, 4=FLOAT, 0=Any).
+// CastOp semantics in IR: operands = {result_slot, source_slot, type_tag, blame}
+// The type_tag field encodes the target runtime type
+// (0=Int, 1=String, 2=Bool, 3=Dynamic, 4=Float; default ≥3 is Dynamic passthrough).
+//
+// Issue #508: extended with keep_for_debug (disable pass for blame
+// tracking during diagnosis), elapsed_us (per-call timing), and
+// Rule 4/5 (safe Dynamic passthrough using TypeRegistry when
+// available, falling back to the type_tag field on the instruction).
 export class DeadCoercionEliminationPass {
 public:
     explicit DeadCoercionEliminationPass(const aura::core::TypeRegistry* reg = nullptr)
         : type_reg_(reg) {}
 
+    // Issue #508: when true, the pass is a no-op (no elision,
+    // no metrics increment, no timing). Used for blame-mode
+    // debugging where the user wants to see every CastOp in
+    // the IR. Default: false.
+    void set_keep_for_debug(bool b) noexcept { keep_for_debug_ = b; }
+    [[nodiscard]] bool keep_for_debug() const noexcept { return keep_for_debug_; }
+
     void run(aura::ir::IRModule& module) {
         eliminated_ = 0;
+        kept_for_debug_ = 0;
+        elapsed_us_ = 0;
+        if (keep_for_debug_) {
+            // Count CastOps we would have eliminated, but leave
+            // them in place. This lets the user observe how many
+            // elisions the pass WOULD have made in blame mode.
+            for (auto& func : module.functions) {
+                for (auto& block : func.blocks) {
+                    for (auto& instr : block.instructions) {
+                        if (instr.opcode == aura::ir::IROpcode::CastOp)
+                            ++kept_for_debug_;
+                    }
+                }
+            }
+            return;
+        }
+        auto t0 = std::chrono::steady_clock::now();
         for (auto& func : module.functions) {
             for (auto& block : func.blocks) {
                 bool changed;
                 do {
                     changed = false;
+                    // Build slot → instruction index map once per
+                    // do-while iteration. ops[1] is a SLOT NUMBER
+                    // (assigned by alloc_local), not an index into
+                    // block.instructions. The legacy code indexed
+                    // block.instructions[ops[1]] directly which
+                    // works only when slots happen to be
+                    // 0,1,2,... (true for the test_ir synthetic
+                    // IR, false in real IR from lowering). The
+                    // map is O(N) to build and O(1) to query.
+                    std::unordered_map<std::uint32_t, std::size_t> slot_to_idx;
+                    slot_to_idx.reserve(block.instructions.size() * 2);
+                    for (std::size_t i = 0; i < block.instructions.size(); ++i) {
+                        auto& ii = block.instructions[i];
+                        if (auto* info = aura::ir::lookup_opcode(ii.opcode)) {
+                            if (info->has_result_slot) {
+                                slot_to_idx[ii.operands[0]] = i;
+                            }
+                        }
+                    }
                     for (std::size_t i = 0; i < block.instructions.size(); ++i) {
                         auto& instr = block.instructions[i];
                         if (instr.opcode != aura::ir::IROpcode::CastOp)
                             continue;
                         auto& ops = instr.operands;
+                        auto target_tag = ops[2];
+
+                        // Helper: find the source instruction
+                        // for slot `s` (the value being cast).
+                        // Returns nullptr if the slot isn't
+                        // defined in this block.
+                        auto find_source = [&](std::uint32_t s)
+                            -> const aura::ir::IRInstruction* {
+                            auto it = slot_to_idx.find(s);
+                            if (it == slot_to_idx.end()) return nullptr;
+                            return &block.instructions[it->second];
+                        };
 
                         // Rule 1: identity cast — source type == target type
                         // Check via type_id propagation (from FlatAST)
                         if (instr.type_id != 0) {
-                            auto src_type = (ops[1] < block.instructions.size())
-                                                ? block.instructions[ops[1]].type_id
-                                                : 0u;
-                            if (src_type != 0 && src_type == instr.type_id) {
-                                // target == source type: replace with Local
-                                block.instructions[i] = aura::ir::IRInstruction{
-                                    .opcode = aura::ir::IROpcode::Local,
-                                    .operands = {ops[0], ops[1], 0, 0},
-                                    .type_id = instr.type_id,
-                                };
+                            if (auto* src = find_source(ops[1])) {
+                                if (src->type_id != 0 && src->type_id == instr.type_id) {
+                                    // target == source type: replace with Local
+                                    block.instructions[i] = aura::ir::IRInstruction{
+                                        .opcode = aura::ir::IROpcode::Local,
+                                        .operands = {ops[0], ops[1], 0, 0},
+                                        .type_id = instr.type_id,
+                                    };
+                                    ++eliminated_;
+                                    changed = true;
+                                    continue;
+                                }
+                            }
+                        }
+
+                        // Rule 2: nested cast — (cast (cast x T1) T2)
+                        if (auto* src = find_source(ops[1])) {
+                            if (src->opcode == aura::ir::IROpcode::CastOp) {
+                                // Skip the intermediate cast: ops[1] = src->ops[1]
+                                ops[1] = src->operands[1];
                                 ++eliminated_;
                                 changed = true;
                                 continue;
                             }
                         }
 
-                        // Rule 2: nested cast — (cast (cast x T1) T2)
-                        if (ops[1] < block.instructions.size()) {
-                            auto& src_instr = block.instructions[ops[1]];
-                            if (src_instr.opcode == aura::ir::IROpcode::CastOp) {
-                                // Skip the intermediate cast: ops[0] = ops'[1]
-                                ops[1] = src_instr.operands[1];
-                                ++eliminated_;
-                                changed = true;
-                                continue;
+                        // Issue #508 Rule 3: safe Dynamic passthrough.
+                        // When the target type_tag is Dynamic (≥3,
+                        // the default case in the IR interpreter
+                        // is `locals[ops[0]] = val`), the CastOp
+                        // does no work at runtime — it's a pure
+                        // type assertion that any value is
+                        // "Dynamic", which is always true.
+                        //
+                        // We require source info to be safe —
+                        // we can't elide a CastOp on a slot we
+                        // don't know the type of, because the
+                        // lowering pass may have inserted it
+                        // for a reason (e.g. a function-call
+                        // arg with no type info yet).
+                        if (target_tag >= 3) {
+                            if (auto* src = find_source(ops[1])) {
+                                auto src_tid = src->type_id;
+                                bool src_is_ground_known = false;
+                                if (src_tid != 0) {
+                                    if (type_reg_) {
+                                        auto src_ty = aura::core::TypeId{src_tid, 1};
+                                        src_is_ground_known =
+                                            (src_ty != type_reg_->dynamic_type());
+                                    } else {
+                                        // No registry: any non-zero
+                                        // type_id is ground (the
+                                        // TypeChecker only sets
+                                        // non-zero for concrete
+                                        // types).
+                                        src_is_ground_known = true;
+                                    }
+                                }
+                                if (src_is_ground_known) {
+                                    // Copy source's type_id onto
+                                    // the new Local so chained
+                                    // Dynamic passthroughs see
+                                    // a non-zero type_id on the
+                                    // source and can be elided
+                                    // too (Rule 3 → Rule 1
+                                    // transitively).
+                                    block.instructions[i] = aura::ir::IRInstruction{
+                                        .opcode = aura::ir::IROpcode::Local,
+                                        .operands = {ops[0], ops[1], 0, 0},
+                                        .type_id = src_tid,
+                                    };
+                                    ++eliminated_;
+                                    changed = true;
+                                    continue;
+                                }
                             }
                         }
                     }
                 } while (changed);
             }
         }
+        auto t1 = std::chrono::steady_clock::now();
+        elapsed_us_ = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
     }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "dead-coercion"; }
     std::size_t eliminated_count() const { return eliminated_; }
+    // Issue #508: number of CastOps that were NOT elided because
+    // keep_for_debug was set. Useful for "what would the pass
+    // have done?" observability in blame mode.
+    std::size_t kept_for_debug_count() const { return kept_for_debug_; }
+    // Issue #508: per-call elapsed time in microseconds. Reset on
+    // every run(). Exposed via (compile:dead-coercion-elapsed)
+    // primitive for cumulative timing across the pipeline.
+    std::uint64_t elapsed_us() const { return elapsed_us_; }
 
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
     std::size_t eliminated_ = 0;
+    std::size_t kept_for_debug_ = 0;
+    std::uint64_t elapsed_us_ = 0;
+    bool keep_for_debug_ = false;
 };
 
 // Issue #160: Dead Code Elimination (DCE) Pass.
