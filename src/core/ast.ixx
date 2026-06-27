@@ -3845,9 +3845,59 @@ public:
         //     against.
         std::uint64_t mutation_id_at_capture = 0;
         std::uint32_t workspace_id = 0;
+        // Issue #303: fiber_id for cross-fiber provenance
+        // tracking. Default 0 means "not in a fiber context"
+        // (single-threaded / synchronous caller). Callers in a
+        // fiber / agent loop should set this via
+        // make_safe_ref(id, fiber_id) or capture_for_fiber()
+        // to make ref-stealing bugs visible: a ref that ends up
+        // on a different fiber than where it was captured is a
+        // candidate stale usage (the lifetime of `fiber_id`
+        // is per-mutation-context, not per-evaluator).
+        std::uint32_t fiber_id = 0;
+        // Issue #303: last_validated_generation. Updated by
+        // validate_with_provenance() to record the generation
+        // at which the ref was last checked. Lets us answer
+        // "how stale is this ref since last validation" via
+        // (query:ref-provenance). Defaults to 0 to match
+        // pre-#303 behavior.
+        std::uint16_t last_validated_generation = 0;
 
         // Default-constructed refs are always invalid (id=NULL).
         bool is_valid_in(const FlatAST& ast) const noexcept { return ast.is_valid(*this); }
+
+        // Issue #303: validate with provenance update. Refreshes
+        // last_validated_generation to the current FlatAST
+        // generation_ and returns the validation result. The
+        // side effect of updating the field is the audit trail:
+        // subsequent code can compare ref.last_validated_generation
+        // against ast.generation_() to detect "ref hasn't been
+        // re-checked in a while" (proxy for staleness without
+        // requiring a full re-validation).
+        bool validate_with_provenance(const FlatAST& ast) noexcept {
+            bool ok = ast.is_valid(*this);
+            if (ok) {
+                last_validated_generation = ast.generation_;
+            }
+            return ok;
+        }
+
+        // Issue #303: get provenance snapshot. Returns a tuple
+        // describing where the ref came from. Pure read — does
+        // not validate the ref.
+        struct Provenance {
+            NodeId captured_id;
+            std::uint16_t captured_gen;
+            std::uint64_t mutation_id_at_capture;
+            std::uint32_t workspace_id;
+            std::uint32_t fiber_id;
+            std::uint16_t last_validated_generation;
+        };
+        [[nodiscard]] Provenance get_provenance() const noexcept {
+            return Provenance{id, gen, mutation_id_at_capture,
+                              workspace_id, fiber_id,
+                              last_validated_generation};
+        }
     };
 
     // Issue #291: serialize a StableNodeRef to a compact
@@ -3938,6 +3988,29 @@ public:
     // workspace.
     [[nodiscard]] StableNodeRef make_ref_in_layer(NodeId id, std::uint32_t workspace_id) const noexcept {
         return StableNodeRef{id, generation_, next_mutation_id_, workspace_id};
+    }
+
+    // Issue #303: make_safe_ref records full provenance
+    // (workspace_id, fiber_id, mutation_id_at_capture,
+    // current generation). Prefer this over make_ref when
+    // the ref will be stored across mutation boundaries or
+    // used from a fiber / agent loop. Existing callers of
+    // make_ref() continue to work unchanged (fiber_id
+    // defaults to 0 = "not in a fiber").
+    [[nodiscard]] StableNodeRef make_safe_ref(NodeId id,
+                                              std::uint32_t workspace_id = 0,
+                                              std::uint32_t fiber_id = 0) const noexcept {
+        return StableNodeRef{id, generation_, next_mutation_id_,
+                             workspace_id, fiber_id, generation_};
+    }
+
+    // Issue #303: capture_for_fiber is a shorthand for
+    // make_safe_ref with workspace_id=0 and fiber_id set.
+    // The returned ref has last_validated_generation =
+    // current generation_ (i.e., freshly captured).
+    [[nodiscard]] StableNodeRef capture_for_fiber(NodeId id,
+                                                   std::uint32_t fiber_id) const noexcept {
+        return make_safe_ref(id, 0, fiber_id);
     }
 
     // Issue #191: validation + safe get that take a StableNodeRef.
