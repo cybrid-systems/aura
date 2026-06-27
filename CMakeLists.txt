@@ -1096,6 +1096,12 @@ aura_issue_test_link_llvm_jit(test_issue_321)
 # mutation_log_ preservation across checkpoint/restore.
 aura_add_issue_test(test_issue_333)
 aura_issue_test_link_llvm_jit(test_issue_333)
+# Issue #323: AOT/Bridge hot-update + stale detection.
+# 6 scenarios: mangle uniqueness, version suffix,
+# __top__ preservation, special-char escaping,
+# hot_swap_count observability, multi-threaded stress.
+aura_add_issue_test(test_issue_323)
+aura_issue_test_link_llvm_jit(test_issue_323)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
