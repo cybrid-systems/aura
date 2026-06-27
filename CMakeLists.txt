@@ -1069,6 +1069,12 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #329: white-box StableNodeRef / generation_ stress
+# + dangling-rate gate. Extends #345 with NodeId sampling
+# via query:children + mutation invalidation tracking.
+# 5 scenarios covering capture, mutate, validate, threshold.
+aura_add_issue_test(test_issue_329)
+aura_issue_test_link_llvm_jit(test_issue_329)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
