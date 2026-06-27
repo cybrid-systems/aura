@@ -1049,6 +1049,12 @@ aura_issue_test_link_llvm_jit(test_issue_330)
 # dirty-block count.
 aura_add_issue_test(test_issue_327)
 aura_issue_test_link_llvm_jit(test_issue_327)
+# Issue #322: dual-path SoA/EnvId invariants + arena
+# compaction tests. 8 scenarios covering lookup
+# consistency under mutations, compaction safety,
+# observability primitives.
+aura_add_issue_test(test_issue_322)
+aura_issue_test_link_llvm_jit(test_issue_322)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
