@@ -1075,6 +1075,10 @@ aura_issue_test_link_llvm_jit(test_issue_345)
 # 5 scenarios covering capture, mutate, validate, threshold.
 aura_add_issue_test(test_issue_329)
 aura_issue_test_link_llvm_jit(test_issue_329)
+# Issue #353: follow-up to #241 — panic-checkpoint test gap.
+# 6 ACs covering the 3-case matrix + nested + multi-fiber.
+aura_add_issue_test(test_issue_353)
+aura_issue_test_link_llvm_jit(test_issue_353)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
