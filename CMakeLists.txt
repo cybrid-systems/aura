@@ -1059,6 +1059,13 @@ aura_add_issue_test(test_issue_501_phase2)
 # qualifies as std::ranges::range) and the new
 # walk_children<> helper in aura.compiler.query.
 aura_add_issue_test(test_issue_501_phase3)
+# Issue #501 Phase 4: apply Mutator strategy classes to
+# mutate:* primitives (mutate:insert-child + mutate:remove-node
+# migrated) + (compile:mutator-dispatch-stats) observability
+# (follow-up #4). Tests cover C++-level dispatch counters;
+# Aura-level end-to-end behavior is verified by test_issue_213
+# .. test_issue_223.
+aura_add_issue_test(test_issue_501_phase4)
 # Issue #411 fu1 follow-up #1: per-DefUseIndex caller tracking.
 # Pure-header test (no LLVM/JIT needed) — registers without
 # aura_issue_test_link_llvm_jit.
