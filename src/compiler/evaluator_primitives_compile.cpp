@@ -60,6 +60,36 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(cnt));
     });
 
+    // (compile:dead-coercion-elapsed) — Issue #508:
+    // cumulative microseconds spent in
+    // DeadCoercionEliminationPass::run() across all calls.
+    // Companion to (compile:dead-coercion-stats): the
+    // count tells you "how much was eliminated"; the
+    // elapsed time tells you "how expensive the pass
+    // was". In typical workloads this should be
+    // sub-millisecond even on large IR modules; spikes
+    // point at pathological coercion chains.
+    add("compile:dead-coercion-elapsed", [&ev](const auto&) -> EvalValue {
+        std::uint64_t us = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            us = m->dead_coercion_elapsed_us_total.load(std::memory_order_relaxed);
+        }
+        return make_int(static_cast<std::int64_t>(us));
+    });
+
+    // (compile:dead-coercion-kept-for-debug) — Issue #508:
+    // total CastOps that would have been eliminated when
+    // keep_for_debug was set (blame-mode observability).
+    add("compile:dead-coercion-kept-for-debug", [&ev](const auto&) -> EvalValue {
+        std::uint64_t cnt = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            cnt = m->dead_coercion_kept_for_debug_total.load(std::memory_order_relaxed);
+        }
+        return make_int(static_cast<std::int64_t>(cnt));
+    });
+
     // (compile:ir-soa-stats) — Issue #254: observability for
     // the IR SoA dual-emit path. Hash with the 2 counters
     // (instructions-emitted, functions-emitted). Returns a

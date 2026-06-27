@@ -71,6 +71,13 @@ struct CompilerSnapshot {
     // to count remaining CastOps); the follow-up
     // will add it.
 std::uint64_t dead_coercion_eliminated_total = 0;
+    // Issue #508: cumulative microseconds spent in the
+    // DeadCoercionEliminationPass across all pipeline runs.
+    std::uint64_t dead_coercion_elapsed_us_total = 0;
+    // Issue #508: total CastOps NOT elided because
+    // keep_for_debug was true. Lets users see what the pass
+    // WOULD have eliminated.
+    std::uint64_t dead_coercion_kept_for_debug_total = 0;
     // Issue #487: dirty propagation + IR re-lower
     // observability. Mirrors the 2 lifetime
     // counters in CompilerMetrics. The derived

@@ -1467,6 +1467,18 @@ public:
             metrics_.dead_coercion_eliminated_total.fetch_add(
                 dce.eliminated_count(), std::memory_order_relaxed);
         }
+        // Issue #508: accumulate the per-call elapsed time and
+        // the kept_for_debug count into lifetime totals. These
+        // are observable via (compile:dead-coercion-elapsed)
+        // and the new kept_for_debug snapshot field.
+        if (dce.elapsed_us() > 0) {
+            metrics_.dead_coercion_elapsed_us_total.fetch_add(dce.elapsed_us(),
+                                                              std::memory_order_relaxed);
+        }
+        if (dce.kept_for_debug_count() > 0) {
+            metrics_.dead_coercion_kept_for_debug_total.fetch_add(
+                dce.kept_for_debug_count(), std::memory_order_relaxed);
+        }
 
         if (ar.has_error()) {
             for (auto& d : ar.result().diagnostics) {
@@ -4515,6 +4527,11 @@ public:
         // DeadCoercionEliminationPass).
         s.dead_coercion_eliminated_total =
             metrics_.dead_coercion_eliminated_total.load(std::memory_order_relaxed);
+        // Issue #508: elapsed_us + kept_for_debug exposure.
+        s.dead_coercion_elapsed_us_total =
+            metrics_.dead_coercion_elapsed_us_total.load(std::memory_order_relaxed);
+        s.dead_coercion_kept_for_debug_total =
+            metrics_.dead_coercion_kept_for_debug_total.load(std::memory_order_relaxed);
         // Issue #487: dirty propagation + IR re-lower
         // observability. Mirror the 2 lifetime
         // counters and compute the derived trigger
