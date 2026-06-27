@@ -1167,8 +1167,11 @@ void register_mutate_primitives(
         // Phase 2.5.0: route via ev.canonical_pool() (== workspace_pool, explicit).
         auto sym = ev.canonical_pool()->intern(name);
 
-        // ── 安全点：保存当前状态作为 panic checkpoint ────────
-        bool had_checkpoint = ev.save_panic_checkpoint();
+        // Issue #352: panic-checkpoint lifecycle now owned by
+        // MutationBoundaryGuard (see #241 / #459). The Guard's
+        // ctor calls save_panic_checkpoint() and the dtor calls
+        // commit/restore based on ok + panic_auto_rollback_.
+        // No manual save/commit/restore needed here.
 
         // ── 依赖图查询：通过 ev.dep_caller_fn_ 获取调用者节点 ────
         auto dep_callers =
@@ -1340,16 +1343,19 @@ void register_mutate_primitives(
                     }
                 }
 
-                // ── Auto-rollback: if typecheck/ownership failed, restore checkpoint ──
+                // Issue #352: auto-rollback now owned by the Guard.
+                // On mutation failure, set ok = false; the Guard's
+                // dtor will call restore_panic_checkpoint() iff
+                // panic_auto_rollback_ is true. On success, leave
+                // ok = true; the Guard's dtor commits. The return
+                // value is still derived from last_mutate_error_ —
+                // we report the failure reason to the caller, but
+                // the state machine (rollback vs commit) is the
+                // Guard's responsibility, not this primitive's.
                 if (!ev.last_mutate_error_.empty()) {
-                    if (ev.panic_auto_rollback_ && had_checkpoint) {
-                        ev.restore_panic_checkpoint();
-                        ok = false;
-                        return mev("mutation-failed",
-                                   "mutation rejected — auto-rolled back: " + ev.last_mutate_error_);
-                    }
-                } else if (had_checkpoint) {
-                    ev.commit_panic_checkpoint();
+                    ok = false;
+                    return mev("mutation-failed",
+                               "mutation rejected: " + ev.last_mutate_error_);
                 }
 
                 return make_bool(true);
