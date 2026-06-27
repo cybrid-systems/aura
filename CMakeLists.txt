@@ -1108,6 +1108,11 @@ aura_issue_test_link_llvm_jit(test_issue_323)
 # mixing, result identity.
 aura_add_issue_test(test_issue_328)
 aura_issue_test_link_llvm_jit(test_issue_328)
+# Issue #377: differential testing IR vs tree-walker.
+# 5 scenarios covering arithmetic, comparison, define+rebind,
+# eval stability, quoted dispatch. Consistency-based oracle.
+aura_add_issue_test(test_issue_377)
+aura_issue_test_link_llvm_jit(test_issue_377)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
