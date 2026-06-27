@@ -625,7 +625,16 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 ++str;
             if (b & 0x40)
                 ++def;
-            if (b & 0x80)
+            // Issue #277 follow-up: ppa-hint aggregate counts nodes
+            // that have ANY bit set in the orthogonal ppa_dirty_ column,
+            // not the dirty_ mirror (kPpaHintDirty = 0x80). The mirror
+            // gets wiped by type-checker cleanup (clear_dirty(id))
+            // in infer_flat_partial, which would under-count ppa-hint
+            // for already-re-inferred nodes. Counting directly from
+            // ppa_dirty_ gives the right value regardless of cleanup
+            // state. The timing/power/area/backend-hint fields below
+            // already use this pattern.
+            if (pb != 0)
                 ++ppa;
             if (pb & 0x01)
                 ++timing;
