@@ -1124,6 +1124,12 @@ aura_issue_test_link_llvm_jit(test_issue_357)
 # changes (pass_manager, evaluator.ixx, evaluator_primitives_compile).
 aura_add_issue_test(test_issue_388)
 aura_issue_test_link_llvm_jit(test_issue_388)
+# Issue #301: C++26 std::meta migration audit + foundation.
+# 4 scenarios: call-site audit, auto_serialize validation
+# on StableNodeRef-like POD, serialize perf baseline,
+# <meta> header availability check.
+aura_add_issue_test(test_issue_301)
+aura_issue_test_link_llvm_jit(test_issue_301)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
