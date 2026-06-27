@@ -236,8 +236,7 @@ def run_session(n_cycles):
                     new_val = rng.randint(1, 1000)
                     resp = send(
                         proc,
-                        f'(mutate:replace-value (define {fn} {new_val}) '
-                        f'(define {fn} {new_val}))',
+                        f"(mutate:replace-value (define {fn} {new_val}) (define {fn} {new_val}))",
                     )
                     if resp is None or resp.get("status") not in ("ok", "closure"):
                         stats["error"] += 1
