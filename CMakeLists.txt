@@ -1135,6 +1135,11 @@ aura_issue_test_link_llvm_jit(test_issue_301)
 # audit, stale-ref detection, arena dtor tracking.
 aura_add_issue_test(test_issue_302)
 aura_issue_test_link_llvm_jit(test_issue_302)
+# Issue #303: SafeStableNodeRef wrappers + provenance tracking.
+# 5 scenarios: backward-compat, Provenance accessor, validate
+# side-effect, cross-fiber detection, factory equivalence.
+aura_add_issue_test(test_issue_303)
+aura_issue_test_link_llvm_jit(test_issue_303)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
