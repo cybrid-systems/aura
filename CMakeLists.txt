@@ -1062,6 +1062,13 @@ aura_issue_test_link_llvm_jit(test_issue_322)
 # TLS + WorkerContext plumbing).
 aura_add_issue_test(test_issue_324)
 aura_issue_test_link_llvm_jit(test_issue_324)
+# Issue #345: stress testing for StructuralMutationGuard +
+# generation_ stability. 5 scenarios covering long-iteration
+# loop (configurable via AURA_345_ITERATIONS), concurrent
+# readers + mutators, generation wrap-around, perf bench,
+# rollback consistency.
+aura_add_issue_test(test_issue_345)
+aura_issue_test_link_llvm_jit(test_issue_345)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
