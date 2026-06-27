@@ -1079,6 +1079,12 @@ aura_issue_test_link_llvm_jit(test_issue_329)
 # 6 ACs covering the 3-case matrix + nested + multi-fiber.
 aura_add_issue_test(test_issue_353)
 aura_issue_test_link_llvm_jit(test_issue_353)
+# Issue #364: nested hygienic macros + mutation interactions.
+# Extends #326 (basic hygiene + EDSL integration) with
+# nested + mutate:rebind + snapshot/rollback + 100-cycle
+# stress + macro-defining-macro scenarios.
+aura_add_issue_test(test_issue_364)
+aura_issue_test_link_llvm_jit(test_issue_364)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
