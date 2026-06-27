@@ -228,6 +228,22 @@ concept StableNodeRefLike = requires(const R& r, const C& ast) {
     { r.id() } -> std::convertible_to<std::uint32_t>;
 };
 
+// ── NullIdCheck ────────────────────────────────────────────
+//
+// Default null-sentinel check for a NodeHandle Id.
+// Returns true if `id` is the "null" / "no node" sentinel.
+// Default: Id{} (zero-initialized uint32_t = 0).
+// Specialize for types where null is not zero (e.g.,
+// FlatAST::NodeId = ~0u).
+//
+// Used by walk_ancestors<Id, C, V> in aura.compiler.query to
+// terminate the parent-chain walk without visiting the
+// null sentinel node itself.
+export template <typename Id>
+struct NullIdCheck {
+    static constexpr bool is_null(Id id) noexcept { return id == Id{}; }
+};
+
 // ═══════════════════════════════════════════════════════════
 // Phase C1 — Concepts application map
 // ═══════════════════════════════════════════════════════════
