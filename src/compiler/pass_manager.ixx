@@ -1736,6 +1736,9 @@ public:
     bool has_error() const { return false; }
     std::string_view name() const { return "inline"; }
     std::size_t inlined_count() const { return inlined_count_; }
+    // Issue #388: macro-hygiene cross-marker skipped counter
+    // (callable from Aura via the stats hash).
+    std::size_t macro_hygiene_skipped_count() const { return macro_hygiene_skipped_; }
     // Issue #197: branch-aware inliner counter. Tracked
     // separately from inlined_count_ (which counts the
     // pre-#197 constant-substitution path) so callers can
@@ -1747,6 +1750,8 @@ public:
     // sums (process-wide).
     static std::size_t total_inlined() { return total_inlined_; }
     static std::size_t total_inlined_branch_aware() { return total_inlined_branch_aware_; }
+    // Issue #388: macro-hygiene cross-marker skipped total.
+    static std::size_t total_macro_hygiene_skipped() { return macro_hygiene_skipped_; }
     std::size_t run_inlined() const { return run_inlined_; }
     std::size_t run_inlined_branch_aware() const { return run_inlined_branch_aware_; }
 
@@ -1873,6 +1878,20 @@ private:
             const auto* callee = func_index_[callee_fid];
             if (!callee)
                 continue;
+            // Issue #388: caller-side cross-marker hygiene check.
+            // If respect_macro_hygiene_ is on (the default) and
+            // EITHER the call site OR the callee is macro-
+            // introduced, skip inlining. The callee.marker
+            // check is already done in is_trivial_inlinable /
+            // is_inlinable_branch_aware (callee side). The
+            // call-site check is the new piece: don't bring
+            // user code into a macro-introduced caller context.
+            if (respect_macro_hygiene_ &&
+                instr.source_marker == 1 /*MacroIntroduced*/ &&
+                callee->marker != 1) {
+                ++macro_hygiene_skipped_;
+                continue;
+            }
             // Check trivial-inlinable (pre-#197 fast path:
             // single-block + constant return + no params)
             if (is_trivial_inlinable(*callee)) {
@@ -2421,6 +2440,11 @@ private:
     std::size_t inlined_count_ = 0;
     // Issue #197: branch-aware inliner counter.
     std::size_t inlined_branch_aware_count_ = 0;
+    // Issue #388: cross-marker macro-hygiene skipped count.
+    // Bumped when either callee.marker or call_instr.source_marker
+    // is MacroIntroduced AND respect_macro_hygiene_ is true.
+    // Lets dashboards see how often the macro-hygiene guard
+    // fires (a high number means the workspace is macro-heavy).
     // Issue #197: per-run totals (reset on each run()).
     std::size_t run_inlined_ = 0;
     std::size_t run_inlined_branch_aware_ = 0;
@@ -2430,6 +2454,8 @@ private:
     // counts are reset.
     static inline std::size_t total_inlined_ = 0;
     static inline std::size_t total_inlined_branch_aware_ = 0;
+    // Issue #388: macro-hygiene cross-marker skipped total.
+    static inline std::size_t macro_hygiene_skipped_ = 0;
     // Issue #246: macro-hygiene policy toggle. Default true
     // (skip inlining macro-introduced callees). See
     // set_respect_macro_hygiene() for the opt-in.

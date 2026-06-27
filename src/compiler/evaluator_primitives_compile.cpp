@@ -15,6 +15,7 @@ import aura.core.mutators;  // Phase 4 follow-up #4: (compile:mutator-dispatch-s
 import aura.compiler.value;
 import aura.compiler.service;
 import aura.compiler.type_checker;
+import aura.compiler.pass_manager;
 import aura.compiler.query;
 
 namespace aura::compiler::primitives_detail {
@@ -2208,6 +2209,26 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
     // The counters are static and process-wide, so the
     // primitive surfaces the cumulative inlining work
     // done by all InlinePass runs since process start.
+    // Issue #388: (*allow-macro-inline* #t/#f) — runtime toggle
+    // for the InlinePass::respect_macro_hygiene_ flag. Lets an
+    // Aura workspace opt in to (or out of) inlining macro-
+    // introduced code without recompiling. The static flag is
+    // process-wide; toggling it affects all subsequent inlining
+    // in this process.
+    //
+    // Args: 1 (optional bool — defaults to true). Returns the
+    // post-toggle flag value (1 if macro-introduced code is
+    // now inlinable, 0 if not).
+    add("*allow-macro-inline*", [&ev](const auto& a) -> EvalValue {
+        bool enable = true;
+        if (a.size() >= 1 && types::is_bool(a[0])) {
+            enable = static_cast<bool>(types::as_bool(a[0]));
+        }
+        aura::compiler::InlinePass::set_respect_macro_hygiene(!enable);
+        bool now_respects = aura::compiler::InlinePass::get_respect_macro_hygiene();
+        return make_int(static_cast<std::int64_t>(now_respects ? 0 : 1));
+    });
+
     add("compile:inline-pass-stats", [&ev](const auto&) -> EvalValue {
         std::int64_t inlined = 0;
         std::int64_t branch_aware = 0;
@@ -2215,6 +2236,11 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t packed = ev.get_inline_stats_fn_();
             inlined = static_cast<std::int64_t>(packed & 0xFFFFFFFF);
             branch_aware = static_cast<std::int64_t>(packed >> 32);
+        }
+        std::int64_t macro_skipped = 0;
+        if (ev.get_macro_hygiene_skipped_fn_) {
+            macro_skipped = static_cast<std::int64_t>(
+                ev.get_macro_hygiene_skipped_fn_());
         }
         std::int64_t total = inlined + branch_aware;
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
@@ -2259,6 +2285,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"inlined", make_int(inlined)},
             {"branch-aware", make_int(branch_aware)},
+            {"macro-hygiene-skipped", make_int(macro_skipped)},
             {"total", make_int(total)},
         };
         return build_hash(kv);
