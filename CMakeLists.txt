@@ -1085,6 +1085,12 @@ aura_issue_test_link_llvm_jit(test_issue_353)
 # stress + macro-defining-macro scenarios.
 aura_add_issue_test(test_issue_364)
 aura_issue_test_link_llvm_jit(test_issue_364)
+# Issue #321: P0 multi-fiber mutation boundary + yield stress.
+# Extends #332 (4 threads) with 8 fibers, defuse_version_
+# monotonicity, starvation detection, MutationBoundaryGuard
+# depth observability.
+aura_add_issue_test(test_issue_321)
+aura_issue_test_link_llvm_jit(test_issue_321)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
