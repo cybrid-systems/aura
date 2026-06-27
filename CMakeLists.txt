@@ -1025,6 +1025,50 @@ aura_add_issue_test(test_issue_433)
 aura_issue_test_link_llvm_jit(test_issue_433)
 aura_add_issue_test(test_issue_508)
 aura_issue_test_link_llvm_jit(test_issue_508)
+# Issue #332: Concurrent EDSL query-during-mutate stress.
+# 4 std::thread workers (2 query + 2 mutate) sharing one
+# CompilerService + a Serializing mutex at the eval()
+# boundary (CompilerService internal state isn't yet
+# lock-free). Each worker calls Fiber::yield(YieldReason
+# ::MutationBoundary) after every op to exercise the
+# yield-reason API even though we don't drive Fibers
+# from a Scheduler. StableNodeRef + defuse_version_
+# observability per AC #2.
+# Pairs with tests/run_concurrent_edsl_tsan.sh for TSan.
+add_executable(test_edsl_concurrent_query_mutate
+               tests/test_edsl_concurrent_query_mutate.cpp)
+set_property(TARGET test_edsl_concurrent_query_mutate
+             PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_edsl_concurrent_query_mutate PRIVATE src)
+# Mirror test_concurrent's source list: Fiber + JIT runtime
+# symbols are needed for the Fiber API and the CompilerService
+# link. Without these we get "undefined reference to
+# aura_set_current_fiber_id_fn" and similar at link time.
+target_sources(test_edsl_concurrent_query_mutate PRIVATE
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/exec/execution_adapter.cpp
+    src/exec/combinators.cpp
+    src/compiler/messaging_bridge_impl.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/aura_jit.cpp
+    src/core/contract_handler.cpp
+    src/core/contract_stub.cpp
+    src/compiler/fiber_bridge.cpp
+)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_edsl_concurrent_query_mutate PRIVATE src src/compiler)
+target_compile_definitions(test_edsl_concurrent_query_mutate PRIVATE AURA_HAVE_LLVM=1)
+target_include_directories(test_edsl_concurrent_query_mutate PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_libraries(test_edsl_concurrent_query_mutate PRIVATE ${llvm_libs} aura_test_objects)
+aura_test_compile_options(test_edsl_concurrent_query_mutate)
+target_link_libraries(test_edsl_concurrent_query_mutate PRIVATE pthread)
+add_test(NAME test_edsl_concurrent_query_mutate_verification
+         COMMAND ./test_edsl_concurrent_query_mutate)
 aura_add_issue_test(test_issue_434)
 aura_issue_test_link_llvm_jit(test_issue_434)
 aura_add_issue_test(test_issue_390)
