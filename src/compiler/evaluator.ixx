@@ -1051,6 +1051,14 @@ public:
     void set_get_inline_stats_fn(std::function<GetInlineStatsFn> fn) {
         get_inline_stats_fn_ = std::move(fn);
     }
+    // Issue #388: separate getter for macro-hygiene skipped
+    // count (the packed uint64 from get_inline_stats_fn_ is
+    // already used for inlined + branch-aware counts).
+    using GetMacroHygieneSkippedFn = std::uint64_t();
+    std::function<GetMacroHygieneSkippedFn> get_macro_hygiene_skipped_fn_ = nullptr;
+    void set_get_macro_hygiene_skipped_fn(std::function<GetMacroHygieneSkippedFn> fn) {
+        get_macro_hygiene_skipped_fn_ = std::move(fn);
+    }
 
     // Mutation typecheck error state (P2 #34)
     const std::string& last_mutate_error() const { return last_mutate_error_; }

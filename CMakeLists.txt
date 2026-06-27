@@ -1119,6 +1119,11 @@ aura_issue_test_link_llvm_jit(test_issue_377)
 # unit-level matrix.
 aura_add_issue_test(test_issue_357)
 aura_issue_test_link_llvm_jit(test_issue_357)
+# Issue #388: caller-side marker check + Aura opt-in +
+# end-to-end test (follow-up #246). 5 scenarios + 3 source
+# changes (pass_manager, evaluator.ixx, evaluator_primitives_compile).
+aura_add_issue_test(test_issue_388)
+aura_issue_test_link_llvm_jit(test_issue_388)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()

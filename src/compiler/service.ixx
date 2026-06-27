@@ -571,6 +571,13 @@ public:
                 aura::compiler::InlinePass::total_inlined_branch_aware());
             return (branch_aware << 32) | (inlined & 0xFFFFFFFF);
         });
+        // Issue #388: macro-hygiene skipped total (separate
+        // getter so the packed uint64 layout stays unchanged).
+        evaluator_.set_get_macro_hygiene_skipped_fn(
+            []() -> std::uint64_t {
+                return static_cast<std::uint64_t>(
+                    aura::compiler::InlinePass::total_macro_hygiene_skipped());
+            });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send = [](const std::string& target,
