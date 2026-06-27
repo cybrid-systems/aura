@@ -218,10 +218,74 @@ static_assert(aura::core::ASTContainer<FlatAST>,
 //   // Or with a NoOpMutator default:
 //   NoOpMutator noop;
 //   auto result2 = apply_mutation(flat, target2, noop);
+
+// ── Dispatch stats (EDSL observability, follow-up #4) ──────────────────
+//
+// Process-global counters for the strategy dispatch layer.
+// Read by the (compile:mutator-dispatch-stats) Aura primitive
+// so the AI agent can see which strategies get the most
+// traffic (and which ones always roll back — a signal that
+// the strategy isn't a good fit for the workload).
+//
+// All counters are std::atomic<std::uint64_t> with relaxed
+// ordering — observability never needs ordering against the
+// mutation itself, and relaxed atomic increments are
+// essentially free.
+//
+// Counters:
+//   - apply_mutation_total: direct apply_mutation<> calls.
+//   - apply_by_kind_total: apply_by_kind() dispatch calls.
+//   - apply_by_name_total: apply_by_name() dispatch calls.
+//   - failure_total: dispatched calls that returned AuraError.
+//   - per-kind success counts (one per StrategyKind).
+export struct MutatorDispatchStats {
+    std::atomic<std::uint64_t> apply_mutation_total{0};
+    std::atomic<std::uint64_t> apply_by_kind_total{0};
+    std::atomic<std::uint64_t> apply_by_name_total{0};
+    std::atomic<std::uint64_t> failure_total{0};
+
+    // Per-kind success counters. Index = static_cast<uint8_t>(StrategyKind).
+    std::atomic<std::uint64_t> kind_success[4] = {
+        std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0},
+        std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0}};
+
+    // Per-kind failure counters. Same indexing.
+    std::atomic<std::uint64_t> kind_failure[4] = {
+        std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0},
+        std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0}};
+
+    void reset() noexcept {
+        apply_mutation_total.store(0, std::memory_order_relaxed);
+        apply_by_kind_total.store(0, std::memory_order_relaxed);
+        apply_by_name_total.store(0, std::memory_order_relaxed);
+        failure_total.store(0, std::memory_order_relaxed);
+        for (auto& c : kind_success) c.store(0, std::memory_order_relaxed);
+        for (auto& c : kind_failure) c.store(0, std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] std::uint64_t total() const noexcept {
+        return apply_mutation_total.load(std::memory_order_relaxed) +
+               apply_by_kind_total.load(std::memory_order_relaxed) +
+               apply_by_name_total.load(std::memory_order_relaxed);
+    }
+};
+
+// Process-global stats accessor. Singleton initialized on
+// first call (thread-safe per C++11 magic statics).
+export [[nodiscard]] MutatorDispatchStats& dispatch_stats() noexcept {
+    static MutatorDispatchStats s;
+    return s;
+}
+
 export template <aura::core::Mutator<FlatAST> M>
 [[nodiscard]] AuraResult<NodeId>
 apply_mutation(FlatAST& flat, NodeId target, M&& mut) {
-    return std::forward<M>(mut).apply(flat, target);
+    dispatch_stats().apply_mutation_total.fetch_add(1, std::memory_order_relaxed);
+    auto r = std::forward<M>(mut).apply(flat, target);
+    if (!r) {
+        dispatch_stats().failure_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return r;
 }
 
 // ── StrategyKind (tag enum for runtime dispatch) ────────────
@@ -254,6 +318,13 @@ kind_name(StrategyKind k) noexcept {
         case StrategyKind::RemoveChild:  return "remove-child";
     }
     return "unknown";
+}
+
+// Helper: index for a StrategyKind into the per-kind counter
+// arrays. Defined here (after StrategyKind) so the dispatch
+// templates can use it.
+export [[nodiscard]] inline std::size_t kind_index(StrategyKind k) noexcept {
+    return static_cast<std::size_t>(k);
 }
 
 // ── StrategyParams — uniform parameter bag ─────────────────
@@ -290,30 +361,38 @@ export struct StrategyParams {
 export [[nodiscard]] AuraResult<NodeId>
 apply_by_kind(FlatAST& flat, NodeId target,
               StrategyKind kind, const StrategyParams& params) {
-    switch (kind) {
-        case StrategyKind::NoOp:
-            return apply_mutation(flat, target, NoOpMutator{});
-
-        case StrategyKind::ReplaceChild:
-            return apply_mutation(flat, target,
-                ReplaceChildMutator{params.index, params.new_child});
-
-        case StrategyKind::InsertChild:
-            return apply_mutation(flat, target,
-                InsertChildMutator{params.index, params.new_child});
-
-        case StrategyKind::RemoveChild:
-            return apply_mutation(flat, target,
-                RemoveChildMutator{params.index});
-    }
-    // Unreachable: switch is exhaustive over StrategyKind.
-    // Defensive: return InternalInvariantViolation if a
-    // future refactor adds a kind without updating this
-    // switch (and -Werror=switch is off).
-    return std::unexpected(make_unexpected(
+    dispatch_stats().apply_by_kind_total.fetch_add(1, std::memory_order_relaxed);
+    AuraResult<NodeId> result = std::unexpected(make_unexpected(
         AuraErrorKind::InternalInvariantViolation,
         std::format("apply_by_kind: unhandled StrategyKind value {}",
                     static_cast<std::uint32_t>(kind))));
+    bool ok = false;
+    switch (kind) {
+        case StrategyKind::NoOp:
+            result = apply_mutation(flat, target, NoOpMutator{});
+            ok = true; break;
+        case StrategyKind::ReplaceChild:
+            result = apply_mutation(flat, target,
+                ReplaceChildMutator{params.index, params.new_child});
+            ok = true; break;
+        case StrategyKind::InsertChild:
+            result = apply_mutation(flat, target,
+                InsertChildMutator{params.index, params.new_child});
+            ok = true; break;
+        case StrategyKind::RemoveChild:
+            result = apply_mutation(flat, target,
+                RemoveChildMutator{params.index});
+            ok = true; break;
+    }
+    if (ok) {
+        const auto idx = kind_index(kind);
+        if (result) {
+            dispatch_stats().kind_success[idx].fetch_add(1, std::memory_order_relaxed);
+        } else {
+            dispatch_stats().kind_failure[idx].fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    return result;
 }
 
 // ── apply_by_name — string-tagged dispatch ─────────────────
@@ -336,13 +415,19 @@ kind_from_name(std::string_view name) noexcept {
 export [[nodiscard]] AuraResult<NodeId>
 apply_by_name(FlatAST& flat, NodeId target,
               std::string_view name, const StrategyParams& params) {
+    dispatch_stats().apply_by_name_total.fetch_add(1, std::memory_order_relaxed);
     auto kind = kind_from_name(name);
     if (!kind) {
+        dispatch_stats().failure_total.fetch_add(1, std::memory_order_relaxed);
         return std::unexpected(make_unexpected(
             AuraErrorKind::MutationInvalidField,
             std::format("apply_by_name: unknown strategy name '{}'", name)));
     }
     return apply_by_kind(flat, target, *kind, params);
 }
+
+// (MutatorDispatchStats + dispatch_stats() + kind_index() are
+// defined earlier in the module so apply_mutation / apply_by_kind
+// can use them.)
 
 } // namespace aura::ast::mutators
