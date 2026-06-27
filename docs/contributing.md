@@ -254,3 +254,34 @@ cmake --preset tsan   && cmake --build --preset tsan
 - **ASan 内存增长 ~2x、速度 ~2x slow**。CI 上默认只跑 `asan-build` + `asan-verify` 两个 job，PR 不跑。
 - **ASan 与 LLVM JIT** 一起开可能 false positive 报告 `use-after-scope` 在 ORC 内部分配器。`--sanitizer=asan` 默认不启用 `AURA_HAVE_LLVM=1`，需要完整覆盖时手动 `cmake -DAURA_HAVE_LLVM=1 -B build_asan`。
 - 跑 TSan 必须设置 `TSAN_OPTIONS=halt_on_error=1`，否则报错只 warn 不退出。
+
+## §X Coercion elision guidelines (Issue #508)
+
+`DeadCoercionEliminationPass`（`pass_manager.ixx`）在 lowering 之后、IR 解释器/JIT 之前运行。它替换掉多余的 `CastOp`，是 gradual typing + typed mutation 零开销路径的关键。
+
+**三条规则**：
+
+1. **identity cast**（source.type_id == target.type_id）→ 替换为 `Local`。
+2. **nested cast**（`(cast (cast x T1) T2)`）→ 跳过中间 cast，直接 `(cast x T2)`，然后规则 1 继续消除。
+3. **safe Dynamic passthrough**（target.type_tag ≥ 3，源 slot 有 ground type_id）→ 替换为 `Local`。
+   IR 解释器对 `type_tag ≥ 3` 的 default case 就是 `locals[ops[0]] = val`，纯 passthrough。条件是源 slot 必须是 ground-typed（type_id ≠ 0）—— 没 type 信息的 source 不能 elide，因为 lowering 可能为某种语义边界专门插了 CastOp。
+
+**保守原则**：
+
+- **没 type info 不动**：源 slot `type_id == 0` 时，规则 3 不触发。这避免了 elide 掉跨模块边界 / FFI 入口处的 CastOp。
+- **类型不匹配不动**：规则 1 要求 source 和 target type_id 都非零且相等。
+- **配置开关**：`DeadCoercionEliminationPass::set_keep_for_debug(true)` 让 pass 变成 no-op，但 `kept_for_debug_count()` 告诉你"假如没开 debug 会 elide 多少"。用于 blame 模式调试。
+
+**观测**：
+
+- `(compile:dead-coercion-stats)` — lifetime 已消除 CastOp 计数（自程序启动累计）。
+- `(compile:dead-coercion-elapsed)` — lifetime 在 pass 里花掉的微秒数。
+- `(compile:dead-coercion-kept-for-debug)` — lifetime 在 keep_for_debug 模式下"本会消除"的 CastOp 计数。
+- `CompilerService::snapshot().dead_coercion_*` 同样暴露这三个字段。
+
+**添加新规则时的检查清单**：
+
+- [ ] 在 `tests/test_issue_508.cpp` 加一个 AC（identity / nested / Dynamic passthrough / keep_for_debug / 时间 / 端到端 gradual）。
+- [ ] 若规则依赖 type_reg 信息，在 `tests/test_ir.cpp` 对应位置补一个 `(reg2)` 重载测试。
+- [ ] 更新 `docs/contributing.md` 本节，描述新规则的语义边界。
+- [ ] 跑 `./build.py check`（test_ir + test_issue_433 + test_issue_508 全绿）。
