@@ -1102,6 +1102,12 @@ aura_issue_test_link_llvm_jit(test_issue_333)
 # hot_swap_count observability, multi-threaded stress.
 aura_add_issue_test(test_issue_323)
 aura_issue_test_link_llvm_jit(test_issue_323)
+# Issue #328: self-evolution mutation loop + fuzz enhancement.
+# 5 scenarios covering fuzz-driven query:pattern + mutate
+# cycles, marker state differential, MBG depth, macro
+# mixing, result identity.
+aura_add_issue_test(test_issue_328)
+aura_issue_test_link_llvm_jit(test_issue_328)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
