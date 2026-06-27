@@ -122,6 +122,17 @@ struct CompilerMetrics {
     // — the metric lived only on the per-call pass
     // instance.
     std::atomic<std::uint64_t> dead_coercion_eliminated_total{0};
+    // Issue #508: lifetime microseconds spent in
+    // DeadCoercionEliminationPass::run() across all calls.
+    // Mirrors the per-call elapsed_us() on the pass, summed
+    // here. Read via (compile:dead-coercion-elapsed).
+    std::atomic<std::uint64_t> dead_coercion_elapsed_us_total{0};
+    // Issue #508: count of CastOps that would have been
+    // eliminated when keep_for_debug was set (so the pass
+    // counted but didn't act). Useful for "blame mode"
+    // observability — lets the user see what the pass
+    // would have done.
+    std::atomic<std::uint64_t> dead_coercion_kept_for_debug_total{0};
     // Issue #487: dirty propagation + IR re-lower
     // observability. 2 lifetime counters:
     //   - should_relower_total: count of times
