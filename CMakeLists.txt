@@ -1130,6 +1130,11 @@ aura_issue_test_link_llvm_jit(test_issue_388)
 # <meta> header availability check.
 aura_add_issue_test(test_issue_301)
 aura_issue_test_link_llvm_jit(test_issue_301)
+# Issue #302: Contracts + runtime asserts for memory-safety.
+# 4 scenarios covering normal-usage smoke, contract-coverage
+# audit, stale-ref detection, arena dtor tracking.
+aura_add_issue_test(test_issue_302)
+aura_issue_test_link_llvm_jit(test_issue_302)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
