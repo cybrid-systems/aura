@@ -1036,6 +1036,12 @@ aura_issue_test_link_llvm_jit(test_issue_326)
 # basic dirty-API coverage from test_issue_138.
 aura_add_issue_test(test_issue_331)
 aura_issue_test_link_llvm_jit(test_issue_331)
+# Issue #330: dedicated unit tests for StructuralMutationGuard
+# + ReaderLockGuard. 11 scenarios covering ctor/dtor, move
+# semantics, exception unwind, generation monotonicity,
+# multiple concurrent readers.
+aura_add_issue_test(test_issue_330)
+aura_issue_test_link_llvm_jit(test_issue_330)
 # Issue #332: Concurrent EDSL query-during-mutate stress.
 # 4 std::thread workers (2 query + 2 mutate) sharing one
 # CompilerService + a Serializing mutex at the eval()
