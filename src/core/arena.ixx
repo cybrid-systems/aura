@@ -29,6 +29,15 @@ export struct ArenaStats {
     std::size_t compaction_count = 0;       // number of compact() calls
     std::size_t last_compaction_saved = 0;  // bytes reclaimed by last compact
     std::size_t total_compaction_saved = 0; // lifetime bytes reclaimed
+    // Issue #324: yield-check observability. Bumped whenever
+    // compact() detects an active fiber context (g_current_fiber
+    // != nullptr) — the compaction itself does NOT yield (that's
+    // a separate P1 follow-up requiring WorkerContext-aware
+    // integration). The counter exposes how often compact() was
+    // called in a context where yielding would have been
+    // appropriate, so AI agents can monitor long-running
+    // compaction in fiber-heavy workloads.
+    std::size_t compaction_yield_checks = 0;
     // Issue #300 (P1): live-object defragmentation observability.
     // Hooks for the full live-object-moving defrag path (separate
     // follow-up commits B/C):
