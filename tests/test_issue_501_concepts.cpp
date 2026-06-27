@@ -34,6 +34,7 @@ import aura.core;
 import aura.core.concepts;
 import aura.core.ast;
 import aura.core.mutators;
+import aura.compiler.query;
 
 static int g_passed = 0;
 static int g_failed = 0;
@@ -41,6 +42,12 @@ static int g_failed = 0;
 #define CHECK(cond, msg) do { \
     if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
     else      { ++g_failed; std::println("  FAIL: {}", msg); } \
+} while (0)
+
+#define CHECK_EQ(a, b, msg) do { \
+    auto _a = (a); auto _b = (b); \
+    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} == {})", msg, _a, _b); } \
+    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
 } while (0)
 
 // ── AC1: NodeHandle accepts integrals, rejects non-integral ───
@@ -241,6 +248,135 @@ bool test_arena_constraint_predicates() {
     return true;
 }
 
+// ── AC9: count_nodes_with_predicate (Phase D helper) ─────────
+//
+// Runtime test: build a small nested AST, verify the helper
+// counts correctly for various predicates.
+static aura::ast::NodeId add_let_chain(aura::ast::FlatAST& flat,
+                                       aura::ast::StringPool& pool,
+                                       int depth) {
+    // Build (let (a_0 1) (let (a_1 2) ... (let (a_n n) body)))
+    // The root of the outermost let is returned.
+    aura::ast::NodeId innermost_body = flat.add_literal(depth);
+    for (int i = depth - 1; i >= 0; --i) {
+        char name[16];
+        std::snprintf(name, sizeof(name), "a_%d", i);
+        auto name_sym = pool.intern(name);
+        auto val = flat.add_literal(static_cast<std::int64_t>(i));
+        innermost_body = flat.add_let(name_sym, val, innermost_body);
+    }
+    flat.root = innermost_body;
+    return innermost_body;
+}
+
+bool test_count_nodes_with_predicate() {
+    std::println("\n--- AC9: count_nodes_with_predicate ---");
+    using namespace aura::ast;
+    FlatAST flat;
+    StringPool pool;
+
+    // depth=3 -> 3 let nodes + 4 literal nodes = 7 nodes total
+    auto root = add_let_chain(flat, pool, /*depth*/ 3);
+
+    // All nodes: 7
+    auto total = aura::compiler::count_nodes_with_predicate<std::uint32_t>(
+        flat, root, [](NodeId) { return true; });
+    CHECK_EQ(total, 7u, "all nodes count = 7 (3 lets + 4 literals)");
+
+    // Only Let nodes: 3
+    auto lets_only = aura::compiler::count_nodes_with_predicate<std::uint32_t>(
+        flat, root, [&](NodeId id) { return flat.tag(id) == NodeTag::Let; });
+    CHECK_EQ(lets_only, 3u, "let nodes count = 3");
+
+    // Only Literal nodes: 4
+    auto lits_only = aura::compiler::count_nodes_with_predicate<std::uint32_t>(
+        flat, root, [&](NodeId id) { return flat.tag(id) == NodeTag::LiteralInt; });
+    CHECK_EQ(lits_only, 4u, "literal nodes count = 4");
+
+    // No nodes match (pred always false): 0
+    auto none = aura::compiler::count_nodes_with_predicate<std::uint32_t>(
+        flat, root, [](NodeId) { return false; });
+    CHECK_EQ(none, 0u, "no-match pred returns 0");
+
+    // Only root matches: 1
+    auto root_only = aura::compiler::count_nodes_with_predicate<std::uint32_t>(
+        flat, root, [&](NodeId id) { return id == root; });
+    CHECK_EQ(root_only, 1u, "root-only pred returns 1");
+    return true;
+}
+
+// ── AC10: find_first_node_with (Phase D helper) ─────────────
+//
+// Runtime test: verify find returns the first matching node
+// in pre-order DFS, or std::nullopt if no match.
+bool test_find_first_node_with() {
+    std::println("\n--- AC10: find_first_node_with ---");
+    using namespace aura::ast;
+    FlatAST flat;
+    StringPool pool;
+    auto root = add_let_chain(flat, pool, /*depth*/ 3);
+
+    // Find a Let node — first one is root itself.
+    auto first_let = aura::compiler::find_first_node_with<std::uint32_t>(
+        flat, root, [&](NodeId id) { return flat.tag(id) == NodeTag::Let; });
+    CHECK(first_let.has_value(), "found a Let node");
+    CHECK_EQ(*first_let, root, "first Let is the root");
+
+    // Find a Literal node — first one is the innermost literal (depth=3)
+    // because DFS is pre-order from root (let) into body (let) ... into
+    // innermost let which has body = literal(3).
+    auto first_lit = aura::compiler::find_first_node_with<std::uint32_t>(
+        flat, root, [&](NodeId id) { return flat.tag(id) == NodeTag::LiteralInt; });
+    CHECK(first_lit.has_value(), "found a literal node");
+
+    // No match returns std::nullopt.
+    auto no_match = aura::compiler::find_first_node_with<std::uint32_t>(
+        flat, root, [](NodeId) { return false; });
+    CHECK(!no_match.has_value(), "no-match returns nullopt");
+    return true;
+}
+
+// ── AC11: helper concept compile-time guards ────────────────
+//
+// The Phase D helpers are constrained by ASTContainer +
+// AuraInvocable. Verify the constraints fire correctly.
+
+// A typed invocable predicate for static_assert contexts.
+struct TestPred {
+    bool operator()(aura::ast::NodeId) const { return true; }
+};
+
+bool test_phase_d_concept_constraints() {
+    std::println("\n--- AC11: Phase D helper concept constraints ---");
+    using aura::ast::NodeId;
+    using aura::ast::FlatAST;
+
+    // Positive: helpers accept FlatAST.
+    static_assert(
+        requires(FlatAST& f, NodeId id, TestPred pred) {
+            aura::compiler::count_nodes_with_predicate<std::uint32_t>(
+                f, id, pred);
+        }, "count_nodes_with_predicate accepts FlatAST + invocable pred");
+
+    static_assert(
+        requires(FlatAST& f, NodeId id, TestPred pred) {
+            aura::compiler::find_first_node_with<std::uint32_t>(
+                f, id, pred);
+        }, "find_first_node_with accepts FlatAST + invocable pred");
+
+    // (ASTContainer rejection for non-AST types is covered
+    //  by AC5 of test_issue_501.cpp — the concept itself is
+    //  already verified to reject non-ASTContainer. The
+    //  Phase D helpers propagate that constraint.)
+
+    // (Predicate-shape rejection is covered by AC3 of this
+    //  file — the AuraInvocable concept is the constraint
+    //  source, no need to retest here.)
+
+    CHECK(true, "static_asserts: Phase D helper constraints correct");
+    return true;
+}
+
 int main() {
     std::println("=== Issue #501 Concepts extension (Phase C6) ===\n");
     test_node_handle();
@@ -251,6 +387,9 @@ int main() {
     test_stable_node_ref_like();
     test_composition();
     test_arena_constraint_predicates();
+    test_count_nodes_with_predicate();
+    test_find_first_node_with();
+    test_phase_d_concept_constraints();
 
     std::println("\n========================================");
     std::println("Total: {} passed, {} failed", g_passed, g_failed);

@@ -50,6 +50,68 @@ walk_children(C& ast, Id root, Visitor&& vis) {
     return count;
 }
 
+// ── count_nodes_with_predicate — recursive DFS counter ────────────
+//
+// Phase D helper. Walks the subtree rooted at `root`, invoking
+// `pred(node_id)` for each node (including root). Returns the
+// count of nodes for which pred returns a truthy value.
+//
+// Precondition: `root` must be a valid node id. If you have a
+// possibly-null root, check `root != NULL_NODE` (or the
+// appropriate sentinel for your Id type) before calling —
+// the helper does NOT handle null roots gracefully (passing a
+// null root would crash on `ast.children(root)` since
+// ASTContainer doesn't require an `is_valid` accessor).
+//
+// Zero overhead:
+//   - Recursive DFS, no allocations.
+//   - Pred invoked via template-inlined operator().
+//   - Compiles to the same code as a hand-written recursive
+//     counter at -O3.
+//
+// Used by (future) compile:* stats primitives that need to
+// count nodes matching some criteria.
+export template <typename Id, typename C, typename P>
+    requires aura::core::ASTContainer<C, Id>
+             && aura::core::AuraInvocable<P&, Id>
+[[nodiscard]] constexpr std::size_t
+count_nodes_with_predicate(C& ast, Id root, P&& pred) {
+    std::size_t count = 0;
+    if (static_cast<bool>(pred(root))) ++count;
+    for (auto child : ast.children(root)) {
+        count += count_nodes_with_predicate(ast, static_cast<Id>(child), pred);
+    }
+    return count;
+}
+
+// ── find_first_node_with — recursive DFS first-match finder ──────
+//
+// Phase D helper. Walks the subtree rooted at `root` in pre-order
+// DFS (root first, then children left-to-right). Returns the
+// first node id for which `pred(node_id)` is truthy, or
+// std::nullopt if no node matches.
+//
+// Precondition: same as count_nodes_with_predicate — `root`
+// must be a valid node id.
+//
+// Zero overhead: same as count_nodes_with_predicate. The
+// std::optional<Id> return is a small wrapper (1 byte tag +
+// Id payload) and short-circuits as soon as a match is found
+// (no full traversal).
+export template <typename Id, typename C, typename P>
+    requires aura::core::ASTContainer<C, Id>
+             && aura::core::AuraInvocable<P&, Id>
+[[nodiscard]] constexpr std::optional<Id>
+find_first_node_with(C& ast, Id root, P&& pred) {
+    if (static_cast<bool>(pred(root))) return root;
+    for (auto child : ast.children(root)) {
+        if (auto found = find_first_node_with(ast, static_cast<Id>(child), pred)) {
+            return found;
+        }
+    }
+    return std::nullopt;
+}
+
 // ── ASTIndex — zero-copy filter views on FlatAST SoA ───────────
 export struct ASTIndex {
     const aura::ast::FlatAST& ast;
