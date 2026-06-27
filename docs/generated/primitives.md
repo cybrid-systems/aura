@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**490** registrations scanned from `src/**/*.cpp`.
+**494** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 ## Workspace load / eval (4)
@@ -164,7 +164,7 @@ Runtime canonical list: `(api-reference)`.
 - `synthesize:optimize` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (48)
+## Compile: (51)
 
 - `compile:and-or-precision-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:ast-ops-stats` — `src/compiler/evaluator_primitives_compile.cpp`
@@ -176,6 +176,8 @@ Runtime canonical list: `(api-reference)`.
 - `compile:clear-macro-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:constraint-dep-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:constraint-solver-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dead-coercion-elapsed` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dead-coercion-kept-for-debug` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:dead-coercion-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:dep-edges` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
@@ -198,6 +200,7 @@ Runtime canonical list: `(api-reference)`.
 - `compile:match-narrowing-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:multi-mutation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:mutation-log-invalidation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mutator-dispatch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:narrowing-blame-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:occurrence-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
@@ -228,8 +231,9 @@ Runtime canonical list: `(api-reference)`.
 - `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (249)
+## Core builtins (250)
 
+- `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` — `src/compiler/evaluator_primitives_math.cpp`
 - `acos` — `src/compiler/evaluator_primitives_math.cpp`
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
