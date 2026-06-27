@@ -215,7 +215,12 @@ public:
     // a type-erased destructor thunk so reset() and ~ASTArena can
     // destroy the object properly even though placement-new was used
     // on raw bytes.
+    //
+    // Phase C3: `requires std::constructible_from<T, Args...>` locks
+    // the contract — T must be constructible from the supplied args
+    // (otherwise placement-new is undefined). Zero runtime cost.
     template <typename T, typename... Args>
+        requires std::constructible_from<T, Args...>
     [[nodiscard]] T* create(Args&&... args) post(r : r != nullptr) {
         void* raw = allocate_raw(sizeof(T), alignof(T));
         ++stats_.allocation_count;
@@ -228,7 +233,15 @@ public:
     // entry so the bulk-dtor pass at reset/~ASTArena doesn't double-
     // destroy. If `ptr` wasn't tracked (caller's responsibility) the
     // dtor still runs as a best-effort fallback.
-    template <typename T> void destroy(T* ptr) {
+    //
+    // Phase C3: `requires std::is_nothrow_destructible_v<T>` — the
+    // arena invokes destructors during reset() which propagates
+    // through fiber / COW chains. A throwing destructor would
+    // abort the process; constraining to nothrow-destructible makes
+    // that contract explicit at compile time. Zero runtime cost.
+    template <typename T>
+        requires std::is_nothrow_destructible_v<T>
+    void destroy(T* ptr) {
         if (!ptr)
             return;
         for (auto it = dtors_.begin(); it != dtors_.end(); ++it) {

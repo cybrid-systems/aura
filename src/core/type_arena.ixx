@@ -63,7 +63,13 @@ public:
     // Allocate storage and construct a T by copying `init`.
     // The returned pointer is stable across subsequent allocations
     // and is invalidated only by reset() (or arena destruction).
-    template <typename T> [[nodiscard]] T* allocate(const T& init) post(r : r != nullptr) {
+    //
+    // Phase C3: `requires std::constructible_from<T, const T&>` —
+    // the copy-init path requires T to be copy-constructible
+    // (otherwise std::construct_at is ill-formed). Zero runtime cost.
+    template <typename T>
+        requires std::constructible_from<T, const T&>
+    [[nodiscard]] T* allocate(const T& init) post(r : r != nullptr) {
         // Round slot size up to T's alignment so the next bump_slot
         // call also lands on a properly aligned address.
         constexpr std::size_t slot = align_up(sizeof(T), alignof(T));
@@ -73,7 +79,10 @@ public:
 
     // In-place construction (avoids an extra copy when the caller
     // already has all the field values).
+    //
+    // Phase C3: `requires std::constructible_from<T, Args...>`.
     template <typename T, typename... Args>
+        requires std::constructible_from<T, Args...>
     [[nodiscard]] T* construct(Args&&... args) post(r : r != nullptr) {
         constexpr std::size_t slot = align_up(sizeof(T), alignof(T));
         void* raw = bump_slot(slot);
@@ -83,7 +92,11 @@ public:
     // Explicitly destroy a single object (rarely needed — reset()
     // bulk-frees). Caller is responsible for not using the pointer
     // afterwards.
-    template <typename T> void destroy(T* ptr) noexcept {
+    //
+    // Phase C3: `requires std::is_nothrow_destructible_v<T>`.
+    template <typename T>
+        requires std::is_nothrow_destructible_v<T>
+    void destroy(T* ptr) noexcept {
         if (ptr)
             std::destroy_at(ptr);
     }
