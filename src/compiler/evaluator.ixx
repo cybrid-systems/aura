@@ -1449,7 +1449,14 @@ public:
     // `start`. Stops when `f` returns false (early exit) or the
     // chain ends (parent_id == NULL_ENV_ID). Pure index walk —
     // no pointer chase, no cache-unfriendly hop.
-    template <typename F> void walk_env_frames(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
+    //
+    // Phase C4: `requires aura::core::AuraInvocable<F, EnvId,
+    // const EnvFrame&>` — the visitor must return something
+    // convertible to bool (true = continue walk, false = stop).
+    // Zero runtime cost; compiles to the same code as before.
+    template <typename F>
+        requires aura::core::AuraInvocable<F, EnvId, const EnvFrame&>
+    void walk_env_frames(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
         EnvId cur = start;
         while (cur != NULL_ENV_ID) {
             const EnvFrame& fr = env_frames_[cur];
