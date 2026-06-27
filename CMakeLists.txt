@@ -1066,6 +1066,12 @@ aura_add_issue_test(test_issue_501_phase3)
 # Aura-level end-to-end behavior is verified by test_issue_213
 # .. test_issue_223.
 aura_add_issue_test(test_issue_501_phase4)
+# Issue #501 Concepts extension (Phase C1-C6): validation
+# test for the 9 concepts in aura.core.concepts. All checks
+# are static_assert — pure compile-time. If the build
+# succeeds, all 9 concepts correctly accept the documented
+# good shapes and reject the documented bad shapes.
+aura_add_issue_test(test_issue_501_concepts)
 # Issue #411 fu1 follow-up #1: per-DefUseIndex caller tracking.
 # Pure-header test (no LLVM/JIT needed) — registers without
 # aura_issue_test_link_llvm_jit.
