@@ -9,6 +9,7 @@ module;
 export module aura.core.mutation;
 import std;
 import aura.core.error;
+import aura.core.concepts;
 
 namespace aura::ast {
 
@@ -16,6 +17,30 @@ namespace aura::ast {
 export using NodeId = std::uint32_t;
 export constexpr NodeId NULL_NODE = ~0u;
 export using SymId = std::uint32_t;
+
+// ── NullIdCheck specialization for NodeId ─────────────────
+//
+// NodeId's null sentinel is NULL_NODE (~0u), NOT the default
+// Id{} (= 0). Specialize so walk_ancestors / count_nodes_with_predicate
+// (in aura.compiler.query) can correctly detect the null sentinel
+// when terminating a parent-chain walk.
+//
+// Note: explicit specialization of class templates must be in
+// the same namespace as the primary template (aura::core). So
+// we close aura::ast here, specialize in aura::core, then reopen
+// aura::ast for the rest of the module.
+} // namespace aura::ast
+
+namespace aura::core {
+template <>
+struct NullIdCheck<aura::ast::NodeId> {
+    static constexpr bool is_null(aura::ast::NodeId id) noexcept {
+        return id == aura::ast::NULL_NODE;
+    }
+};
+} // namespace aura::core
+
+namespace aura::ast {
 
 // ── MutationRecord — typed mutation audit log ─────────────────
 export enum class MutationStatus : std::uint8_t {

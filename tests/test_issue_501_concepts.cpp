@@ -377,6 +377,85 @@ bool test_phase_d_concept_constraints() {
     return true;
 }
 
+// ── AC12: walk_ancestors (Phase D.5 helper) ───────────────
+//
+// Build a 3-deep let chain. Verify walk_ancestors:
+//   - visits all ancestors from start to root (in order)
+//   - returns the visit count
+//   - terminates on self-loop (parent_of(root) = NULL_NODE)
+//   - early-stops when visitor returns false
+bool test_walk_ancestors() {
+    std::println("\n--- AC12: walk_ancestors ---");
+    using namespace aura::ast;
+    FlatAST flat;
+    StringPool pool;
+    auto root = add_let_chain(flat, pool, /*depth*/ 3);
+    // root is the outermost let. Its chain up is itself, then
+    // parent (NULL_NODE — root of flat).
+    auto innermost_body = flat.children(root)[1];  // body of outermost let
+
+    // Walk from innermost body up — should hit itself, then root,
+    // then NULL_NODE (which terminates via self-loop).
+    std::vector<NodeId> seen;
+    auto vis = [&](NodeId id) -> bool {
+        seen.push_back(id);
+        return true;
+    };
+    auto count = aura::compiler::walk_ancestors<std::uint32_t>(
+        flat, innermost_body, vis);
+    CHECK_EQ(seen.size(), 2u,
+             "walk_ancestors visited 2 nodes (innermost body + root)");
+    CHECK_EQ(count, 2u, "walk_ancestors returned count = 2");
+    CHECK_EQ(seen[0], innermost_body, "first visited is innermost body");
+    CHECK_EQ(seen[1], root, "second visited is outermost root");
+
+    // Early-stop when visitor returns false.
+    seen.clear();
+    auto stop_at_first = [&](NodeId) -> bool {
+        seen.push_back(innermost_body);  // any sentinel, just record
+        return false;  // stop immediately
+    };
+    auto early_count = aura::compiler::walk_ancestors<std::uint32_t>(
+        flat, root, stop_at_first);
+    CHECK_EQ(early_count, 0u,
+             "early-stop returns 0 (visitor returned false before ++count)");
+    CHECK_EQ(seen.size(), 1u, "early-stop visitor called exactly once");
+
+    // Walk from the root node itself — should visit just root,
+    // then terminate (parent_of(root) = NULL_NODE = self-loop).
+    seen.clear();
+    auto root_count = aura::compiler::walk_ancestors<std::uint32_t>(
+        flat, root, [&](NodeId id) -> bool { seen.push_back(id); return true; });
+    CHECK_EQ(root_count, 1u, "walk_ancestors from root visits 1 node");
+    CHECK_EQ(seen.size(), 1u, "1 entry in seen");
+    CHECK_EQ(seen[0], root, "seen[0] is the root");
+    return true;
+}
+
+// ── AC13: walk_ancestors concept constraint guard ─────────
+//
+// walk_ancestors requires ASTContainer + parent_of +
+// AuraInvocable. Static_assert the positive case (FlatAST
+// has all three). Negative cases covered by AC5 + AC11.
+bool test_walk_ancestors_concept_constraint() {
+    std::println("\n--- AC13: walk_ancestors concept constraint ---");
+    using aura::ast::NodeId;
+    using aura::ast::FlatAST;
+
+    struct TestPred {
+        bool operator()(NodeId) const { return true; }
+    };
+
+    static_assert(
+        requires(FlatAST& f, NodeId id, TestPred pred) {
+            aura::compiler::walk_ancestors<std::uint32_t>(
+                f, id, pred);
+        }, "walk_ancestors accepts FlatAST + invocable + parent_of");
+
+    CHECK(true, "static_assert: walk_ancestors accepts FlatAST + invocable");
+    return true;
+}
+
 int main() {
     std::println("=== Issue #501 Concepts extension (Phase C6) ===\n");
     test_node_handle();
@@ -390,6 +469,8 @@ int main() {
     test_count_nodes_with_predicate();
     test_find_first_node_with();
     test_phase_d_concept_constraints();
+    test_walk_ancestors();
+    test_walk_ancestors_concept_constraint();
 
     std::println("\n========================================");
     std::println("Total: {} passed, {} failed", g_passed, g_failed);

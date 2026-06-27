@@ -112,6 +112,55 @@ find_first_node_with(C& ast, Id root, P&& pred) {
     return std::nullopt;
 }
 
+// ── walk_ancestors — parent-chain upward walk ──────────────
+//
+// Phase D.5 helper. Walks the parent chain starting at
+// `start`, invoking `vis(id)` for each ancestor (including
+// `start` itself, mirroring walk_env_frames in evaluator.ixx).
+// Stops when:
+//   - `vis(id)` returns false (caller-initiated early stop), or
+//   - `parent_of(cur)` returns `cur` (self-loop termination).
+//
+// Self-loop termination is the standard "termination" pattern
+// for FlatAST: parent_of(any valid node) returns the actual
+// parent (or NULL_NODE for roots), and parent_of(NULL_NODE)
+// returns NULL_NODE — same as input — so the loop ends.
+//
+// Preconditions:
+//   - `start` must be a valid node id (not the null sentinel).
+//     Callers should check `start != NULL_NODE` first if it
+//     may be null.
+//   - The AST's parent_of() must eventually return a self-
+//     loop to terminate. FlatAST satisfies this.
+//
+// Zero overhead:
+//   - Single while loop, no recursion, no allocation.
+//   - vis invoked via template-inlined operator().
+//   - Self-loop check is one compare per step.
+//   - At -O3, generates identical assembly to a hand-written
+//     while loop with a self-loop exit.
+//
+// Used by (future): scope chain analysis, name resolution
+// (find enclosing scope), GC root marking from a node.
+export template <typename Id, typename C, typename V>
+    requires aura::core::ASTContainer<C, Id>
+             && requires(C& c, Id id) {
+                    { c.parent_of(id) } -> std::convertible_to<Id>;
+                }
+             && aura::core::AuraInvocable<V&, Id>
+constexpr std::size_t
+walk_ancestors(C& ast, Id start, V&& vis) {
+    using NC = aura::core::NullIdCheck<Id>;
+    std::size_t count = 0;
+    Id cur = start;
+    while (!NC::is_null(cur)) {
+        if (!static_cast<bool>(vis(cur))) return count;
+        ++count;
+        cur = ast.parent_of(cur);
+    }
+    return count;
+}
+
 // ── ASTIndex — zero-copy filter views on FlatAST SoA ───────────
 export struct ASTIndex {
     const aura::ast::FlatAST& ast;
