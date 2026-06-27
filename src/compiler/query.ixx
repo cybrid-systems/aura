@@ -18,173 +18,23 @@ import aura.diag;
 
 namespace aura::compiler {
 
-// ── Generic AST traversal helper (ASTContainer-constrained) ──────────
+// ── Generic AST traversal helpers (re-exports) ─────────────
 //
-// Walks every child of `root` in `ast` and invokes `vis(child_id)`
-// for each one. Constrained by aura::core::ASTContainer so it works
-// for any AST that exposes get/children/tag — not just FlatAST.
-// This is the first place in the query module that uses the
-// core concept (Phase 3 follow-up #1, applied here).
+// The actual helper definitions live in aura.core.ast
+// (moved there in the Phase A hoisting commit to break the
+// ast.ixx ↔ query.ixx import cycle). This module re-exports
+// them under aura::compiler for backward compat with all
+// existing call sites in compiler/.
 //
-// Two-parameter form: walk_children<Id, C, Visitor>(ast, root, vis)
-// where Id is the node handle type, C is the AST container type
-// (constrained via ASTContainer<C, Id>), and Visitor is the
-// per-child callable. The visitor receives each child Id by value.
-//
-// Why a free template instead of a method on ASTIndex?
-//   - Demonstrates that the ASTContainer concept actually compiles
-//     against a real query-layer consumer.
-//   - Lets future AST types (e.g., a cursor AST or a serialized
-//     read-only AST) plug into the same traversal logic without
-//     inheriting from FlatAST.
-export template <typename Id, typename C, typename Visitor>
-    requires aura::core::ASTContainer<C, Id>
-             && std::invocable<Visitor&, Id>
-constexpr std::size_t
-walk_children(C& ast, Id root, Visitor&& vis) {
-    std::size_t count = 0;
-    for (auto child : ast.children(root)) {
-        vis(static_cast<Id>(child));
-        ++count;
-    }
-    return count;
-}
-
-// ── count_nodes_with_predicate — recursive DFS counter ────────────
-//
-// Phase D helper. Walks the subtree rooted at `root`, invoking
-// `pred(node_id)` for each node (including root). Returns the
-// count of nodes for which pred returns a truthy value.
-//
-// Precondition: `root` must be a valid node id. If you have a
-// possibly-null root, check `root != NULL_NODE` (or the
-// appropriate sentinel for your Id type) before calling —
-// the helper does NOT handle null roots gracefully (passing a
-// null root would crash on `ast.children(root)` since
-// ASTContainer doesn't require an `is_valid` accessor).
-//
-// Zero overhead:
-//   - Recursive DFS, no allocations.
-//   - Pred invoked via template-inlined operator().
-//   - Compiles to the same code as a hand-written recursive
-//     counter at -O3.
-//
-// Used by (future) compile:* stats primitives that need to
-// count nodes matching some criteria.
-export template <typename Id, typename C, typename P>
-    requires aura::core::ASTContainer<C, Id>
-             && aura::core::AuraInvocable<P&, Id>
-[[nodiscard]] constexpr std::size_t
-count_nodes_with_predicate(C& ast, Id root, P&& pred) {
-    std::size_t count = 0;
-    if (static_cast<bool>(pred(root))) ++count;
-    for (auto child : ast.children(root)) {
-        count += count_nodes_with_predicate(ast, static_cast<Id>(child), pred);
-    }
-    return count;
-}
-
-// ── find_first_node_with — recursive DFS first-match finder ──────
-//
-// Phase D helper. Walks the subtree rooted at `root` in pre-order
-// DFS (root first, then children left-to-right). Returns the
-// first node id for which `pred(node_id)` is truthy, or
-// std::nullopt if no node matches.
-//
-// Precondition: same as count_nodes_with_predicate — `root`
-// must be a valid node id.
-//
-// Zero overhead: same as count_nodes_with_predicate. The
-// std::optional<Id> return is a small wrapper (1 byte tag +
-// Id payload) and short-circuits as soon as a match is found
-// (no full traversal).
-export template <typename Id, typename C, typename P>
-    requires aura::core::ASTContainer<C, Id>
-             && aura::core::AuraInvocable<P&, Id>
-[[nodiscard]] constexpr std::optional<Id>
-find_first_node_with(C& ast, Id root, P&& pred) {
-    if (static_cast<bool>(pred(root))) return root;
-    for (auto child : ast.children(root)) {
-        if (auto found = find_first_node_with(ast, static_cast<Id>(child), pred)) {
-            return found;
-        }
-    }
-    return std::nullopt;
-}
-
-// ── walk_ancestors — parent-chain upward walk ──────────────
-//
-// Phase D.5 helper. Walks the parent chain starting at
-// `start`, invoking `vis(id)` for each ancestor (including
-// `start` itself, mirroring walk_env_frames in evaluator.ixx).
-// Stops when:
-//   - `vis(id)` returns false (caller-initiated early stop), or
-//   - `parent_of(cur)` returns `cur` (self-loop termination).
-//
-// Self-loop termination is the standard "termination" pattern
-// for FlatAST: parent_of(any valid node) returns the actual
-// parent (or NULL_NODE for roots), and parent_of(NULL_NODE)
-// returns NULL_NODE — same as input — so the loop ends.
-//
-// Preconditions:
-//   - `start` must be a valid node id (not the null sentinel).
-//     Callers should check `start != NULL_NODE` first if it
-//     may be null.
-//   - The AST's parent_of() must eventually return a self-
-//     loop to terminate. FlatAST satisfies this.
-//
-// Zero overhead:
-//   - Single while loop, no recursion, no allocation.
-//   - vis invoked via template-inlined operator().
-//   - Self-loop check is one compare per step.
-//   - At -O3, generates identical assembly to a hand-written
-//     while loop with a self-loop exit.
-//
-// Used by (future): scope chain analysis, name resolution
-// (find enclosing scope), GC root marking from a node.
-export template <typename Id, typename C, typename V>
-    requires aura::core::ASTContainer<C, Id>
-             && requires(C& c, Id id) {
-                    { c.parent_of(id) } -> std::convertible_to<Id>;
-                }
-             && aura::core::AuraInvocable<V&, Id>
-constexpr std::size_t
-walk_ancestors(C& ast, Id start, V&& vis) {
-    using NC = aura::core::NullIdCheck<Id>;
-    std::size_t count = 0;
-    Id cur = start;
-    while (!NC::is_null(cur)) {
-        if (!static_cast<bool>(vis(cur))) return count;
-        ++count;
-        cur = ast.parent_of(cur);
-    }
-    return count;
-}
-
-// ── count_nodes_with_tag — tag-based DFS counter ────────────────
-//
-// Phase A.2 helper. DFS from root, count nodes whose tag
-// equals `tag`. Thin wrapper over count_nodes_with_predicate
-// for the common case of "count all Calls" / "count all
-// Variables" / etc. — needed by (compile:*) stats primitives.
-//
-// Zero overhead: at -O3, the wrapper inlines into a single
-// recursive DFS with a tag compare per node. Same codegen
-// as a hand-written `count_nodes_with_predicate` with a
-// tag-equality lambda.
-//
-// Precondition: same as count_nodes_with_predicate — root
-// must be a valid node id.
-export template <typename Id, typename C, typename Tag>
-    requires aura::core::ASTContainer<C, Id>
-[[nodiscard]] constexpr std::size_t
-count_nodes_with_tag(C& ast, Id root, Tag tag) {
-    // The tag type is whatever ast.tag() returns (NodeTag for
-    // FlatAST). We capture it by value in the lambda so the
-    // recursive call passes it through without re-loading.
-    return aura::compiler::count_nodes_with_predicate<Id>(
-        ast, root, [&ast, tag](Id id) { return ast.tag(id) == tag; });
-}
+// Adding new helpers here: define the export in
+// aura.core.ast first, then add the `export using` line
+// below so compiler/ callers see them without an extra
+// import.
+export using ::aura::ast::walk_children;
+export using ::aura::ast::count_nodes_with_predicate;
+export using ::aura::ast::find_first_node_with;
+export using ::aura::ast::walk_ancestors;
+export using ::aura::ast::count_nodes_with_tag;
 
 // ── ASTIndex — zero-copy filter views on FlatAST SoA ───────────
 export struct ASTIndex {
