@@ -1069,6 +1069,18 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #552: StableNodeRef + generation_ + COW/Fiber/
+# Provenance Safety for Reliable Long-Running AI
+# Multi-Round Query → Mutate → Eval Loops (P0). 9
+# scenarios validating: 5 EDSL stability counters + new
+# (query:edsl-stability-stats) primitive + cross_cow
+# under mutate:* + validate loop + 500-iter heavy EDSL
+# cycle + query:*-stable primitive integration + 8-thread
+# concurrent + (gc-heap) + regression. Non-duplicative
+# refinement of #549 (Task6 review) focused on Task1 EDSL
+# primitives (mutate:* + query:*-stable).
+aura_add_issue_test(test_stable_ref_provenance_fiber_cow_task1)
+aura_issue_test_link_llvm_jit(test_stable_ref_provenance_fiber_cow_task1)
 # Issue #551: Post-Mutation Reflection/auto_validate +
 # Guard Impact Snapshot + Schema Validation Hook for
 # Code-as-Data Closed Loop (P0). 9 scenarios validating:

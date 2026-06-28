@@ -609,6 +609,58 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             snapshots + pass + fail + dirty));
     });
 
+    // Issue #552: query:edsl-stability-stats. Returns
+    // the sum of 5 EDSL long-running stability counters
+    // from across the workspace + Evaluator:
+    //   - cross_cow_invalidations_        (Evaluator, #549)
+    //     # of StableNodeRef rejections crossing a COW
+    //     snapshot boundary
+    //   - fiber_stale_ref_count_          (Evaluator, #549)
+    //     # of stale-ref detections from a different
+    //     fiber's workspace
+    //   - generation_wrap_count_          (FlatAST, #457)
+    //     # of uint16_t generation wraps — increases
+    //     after ~65k structural mutates
+    //   - mutation_log_rollback_count_    (Evaluator, #549)
+    //     # of times the log was actually rolled back
+    //     (stricter than failed-boundary count)
+    //   - provenance_mismatch_           (Evaluator, #549)
+    //     # of stable-ref checks where the captured
+    //     provenance (origin layer) didn't match the
+    //     current workspace layer
+    //
+    // P0: returns an integer = sum of the 5 counters.
+    // Follow-up: returns a 5-tuple
+    // (cross-cow fiber-stale wrap rollback provenance)
+    // so the AI Agent can react to each category
+    // independently. cross-cow > 0 is expected under load
+    // (every structural mutate bumps generation_);
+    // fiber-stale > 0 indicates a worker-migration bug;
+    // wrap > 0 indicates the long-running session crossed
+    // the uint16_t generation boundary (~65k mutates);
+    // rollback > 0 indicates panic or fail-fast path;
+    // provenance-mismatch > 0 indicates a stale layer in
+    // the StableNodeRef handle.
+    //
+    // Non-duplicative with #549 (query:self-evolution-
+    // stability-stats) — the latter focuses on Task 6 review
+    // observability; this primitive focuses on Task 1 EDSL
+    // primitive safety under long-running AI multi-round
+    // query → mutate → eval loops.
+    add("query:edsl-stability-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        auto* ws = ev->workspace_flat();
+        const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
+        const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
+        const std::uint64_t wraps = ws ? ws->generation_wrap_count() : 0;
+        const std::uint64_t rollback = ev->get_mutation_log_rollback_count();
+        const std::uint64_t provenance = ev->get_provenance_mismatch();
+        return make_int(static_cast<std::int64_t>(
+            cross_cow + fiber_stale + wraps + rollback + provenance));
+    });
+
     // Issue #447: (query:tag-arity-count tag-int arity-int)
     // — count of nodes matching (tag, arity) using the
     // pre-built index. Bumps the hits or misses counter
