@@ -1069,6 +1069,14 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #565: Stdlib Infrastructure improvements (P1,
+# parallel-safe). 5 scenarios validating: stdlib-organization
+# spec doc + lib/std/INDEX.aura (5 discovery functions) +
+# stdlib module consistency (.aura + .aura-type) + (export)
+# coverage + consistency check. Non-duplicative with
+# #558-#564.
+aura_add_issue_test(test_stdlib_infrastructure)
+aura_issue_test_link_llvm_jit(test_stdlib_infrastructure)
 # Issue #564: Core Builtins Selective Review (P3, long-term).
 # 5 scenarios validating: lib/std/core.aura (new, 10 stdlib
 # wrappers) + decision doc with STAY+DEMOTE tables + reusable
