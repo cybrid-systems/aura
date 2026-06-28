@@ -2,15 +2,15 @@
 
 # Primitives (generated)
 
-**515** registrations scanned from `src/**/*.cpp`.
+**517** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 135 primitives (26%)
+- **mutation-safety**: 137 primitives (26%)
 - **core**: 165 primitives (32%)
 - **internal-observable**: 68 primitives (13%)
-- **convenience**: 147 primitives (29%)
+- **convenience**: 147 primitives (28%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
 
@@ -188,7 +188,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `synthesize:optimize` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (55)
+## Compile: (57)
 
 - `compile:and-or-precision-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:ast-ops-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -212,6 +212,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:hw-bitvec-register` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:hw-bitvec-signed?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:hw-bitvec-width` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-coercion-lossy?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-coercion-warning` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:incremental-typecheck-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:inline-pass-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:invalidations-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -621,7 +623,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (135)
+### Mutation safety (must remain primitive) (137)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -671,6 +673,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:hw-bitvec-register` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:hw-bitvec-signed?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:hw-bitvec-width` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-coercion-lossy?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-coercion-warning` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:incremental-typecheck-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:inline-pass-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:invalidations-stats` — `src/compiler/evaluator_primitives_compile.cpp`

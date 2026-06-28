@@ -1648,6 +1648,16 @@ aura_issue_test_link_llvm_jit(test_issue_478)
 # hw module pattern (AC4 — covers AC1+AC2+AC3 together).
 aura_add_issue_test(test_issue_308)
 aura_issue_test_link_llvm_jit(test_issue_308)
+# Issue #309: hardware lossy-coercion diagnostics + 2 new
+# Aura primitives (compile:hw-coercion-lossy? +
+# -warning). Extends the #308 BitVector foundation with
+# narrowing-detection (from_w > to_w) + human-readable
+# warning string. 5-AC test covers BlameInfo intact (AC1,
+# re-validates #342), lossy? primitive (AC2), Gradual
+# Guarantee for hw mixed (AC3, re-validates existing),
+# diagnostic format (AC4 — Wn + signedness + bit count).
+aura_add_issue_test(test_issue_309)
+aura_issue_test_link_llvm_jit(test_issue_309)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
