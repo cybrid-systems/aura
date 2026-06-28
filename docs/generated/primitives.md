@@ -5,14 +5,913 @@
 **507** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
+**Classification (Issue #559)**:
+
+- **mutation-safety**: 131 primitives (26%)
+- **core**: 164 primitives (32%)
+- **internal-observable**: 65 primitives (13%)
+- **convenience**: 147 primitives (29%)
+
+Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
+
 ## Workspace load / eval (4)
 
+- `current-source` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `eval-current` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
+
+## Query: (65)
+
+- `query:atomic-batch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:build-index` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:calls` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:children` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:children-stable` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:closure-env-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:compiler-cache-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:compiler-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:def-use` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:dirty-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-subtree` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-concurrency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:edsl-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:effects` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:envframe-dualpath-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:epoch-delta-since-last-query` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:epoch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:fiber-migration-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:filter` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:find` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:gc-safepoint-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:incremental-effectiveness` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:ir-marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:jit-fallback-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-introduced` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:marker-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:module-exports` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-coordination-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutation-log-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:narrowings-at-mutation` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:node` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:node-type` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:orchestration-metrics` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:panic-checkpoint-lifecycle-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:parent` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:parent-stable` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:pattern` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:pattern-hygiene-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:pattern-index-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:primitive-error-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `query:provenance-of` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:provenance-of*` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:query-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:reaches` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
+- `query:reflect-postmutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:root` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:schema` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:schema-of-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:self-evolution-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:siblings` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:stable-ref-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:stale-ref-policy` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `query:stale-ref-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `query:tag-arity-count` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-mutation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:typed-mutation-stats-task1` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:verification-loop-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:verify-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:verify-tool-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:where` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+
+## Mutate: (25)
+
+- `mutate:atomic-batch` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:check-stable-ref` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:extract-function` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:inline-call` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:insert-child` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:move-node` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:query-and-replace` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:rebind` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:record-patch` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:refactor/extract` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:remove-node` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:rename-symbol` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-pattern` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-subtree` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-type` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-value` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:request-gc-safepoint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:set-body` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:set-stale-ref-policy` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:splice` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:sv-add-coverpoint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:sv-weaken-property` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:tweak-literal` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:validate-against-schema` *[mutation-safety]* — `src/compiler/evaluator_primitives_query.cpp`
+- `mutate:wrap` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
+
+## Ast: (25)
+
+- `ast:compact-nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:defs` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:diff` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `ast:list-snapshots` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:node-lifecycle-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:post-restore-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:recycle-nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-deserialize` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-get` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-mutation-id` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-serialize` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-valid?` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-workspace-id` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:stable-ref` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:stable-refs-valid?` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:summary` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-ownership` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-post-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:version` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+
+## Workspace: (20)
+
+- `workspace:can-write?` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:conflicts-with` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:cow-refused-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:create` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:current` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:delete` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:discard` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:list` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:lock` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-limit` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-used` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge-3way` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:mutation-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:resolve-stable-ref` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-latest` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-memory-limit` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:switch` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:sync-from` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:unlock` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+
+## Fiber: (3)
+
+- `fiber:join` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:spawn` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:yield` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+
+## Session: (1)
+
+- `session:create` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+
+## Synthesize: (5)
+
+- `synthesize:define` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:fill` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:list-templates` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:optimize` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:register-template` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+
+## Compile: (51)
+
+- `compile:and-or-precision-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:ast-ops-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:cache-size` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-macro-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:constraint-dep-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:constraint-solver-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dead-coercion-elapsed` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dead-coercion-kept-for-debug` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dead-coercion-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dep-edges` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dirty-impact-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:epoch` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:func-block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:incremental-typecheck-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:inline-pass-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:invalidations-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:ir-soa-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:is-instruction-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:let-poly-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:linear-elide-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:macro-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:macro-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:macro-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-narrowing-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:match-narrowing-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:multi-mutation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mutation-log-invalidation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mutator-dispatch-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:narrowing-blame-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:narrowing-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:occurrence-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:occurrence-typing-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-defuse-index-add` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-defuse-index-callers` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-defuse-index-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-symbol-dirty-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-symbol-reinfer-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:relower-strategy` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:schema-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:status` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:type-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:type-dep-graph-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:type-propagation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:verify-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+
+## C FFI (10)
+
+- `c-alloc` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-free` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-func` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-load` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-opaque` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-opaque->int` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-opaque?` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-struct-ref` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-struct-set!` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-struct-size` *[convenience]* — `src/compiler/ffi_primitives_impl.cpp`
+
+## Core builtins (250)
+
+- `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `acos` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `api-reference` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `append` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `apply` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `apply-fix` *[core]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
+- `arena-offset` *[convenience]* — `src/compiler/evaluator_primitives_misc.cpp`
+- `asin` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `assert` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `atan` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `auto-evolve-cycle-count` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-loop` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-once` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-running?` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-stop` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-tick` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-total-fixed` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-rollback-on-panic` *[convenience]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `boolean?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `broadcast` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `caaar` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `caadr` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `caar` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cadar` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `caddr` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cadr` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `capability-stack` *[convenience]* — `src/compiler/evaluator_primitives_policy.cpp`
+- `capability?` *[core]* — `src/compiler/evaluator_primitives_policy.cpp`
+- `car` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdaar` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdadr` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdar` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cddar` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdddr` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cddr` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdr` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `ceil` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `char->integer` *[convenience]* — `src/compiler/evaluator_primitives_char.cpp`
+- `char-alphabetic?` *[convenience]* — `src/compiler/evaluator_primitives_core.cpp`
+- `char-downcase` *[convenience]* — `src/compiler/evaluator_primitives_core.cpp`
+- `char-numeric?` *[convenience]* — `src/compiler/evaluator_primitives_core.cpp`
+- `char-upcase` *[convenience]* — `src/compiler/evaluator_primitives_core.cpp`
+- `char-whitespace?` *[convenience]* — `src/compiler/evaluator_primitives_core.cpp`
+- `char<?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `char=?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `char?` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `check` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `check-capability` *[convenience]* — `src/compiler/evaluator_primitives_policy.cpp`
+- `check-module-signature` *[convenience]* — `src/compiler/evaluator_primitives_types.cpp`
+- `check-preconditions` *[convenience]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
+- `check-success` *[convenience]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `check=` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `command-line` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
+- `command-output` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
+- `cons` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cos` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `coverage-report` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `current-time` *[convenience]* — `src/compiler/evaluator_primitives_misc.cpp`
+- `declare-type` *[convenience]* — `src/compiler/evaluator_primitives_types.cpp`
+- `define-linear` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `define-strategy` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `diagnose` *[core]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
+- `directory-list` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
+- `display` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `drop` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `eof-object?` *[convenience]* — `src/compiler/evaluator_primitives_char.cpp`
+- `equal?` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `error` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `error?` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `eval` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `eval-expr` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `evolve-strategy` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `exp` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `file-copy` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
+- `file-delete` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
+- `file-exists?` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
+- `file-size` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
+- `filter` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `float?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `floor` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `foldl` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `format` *[convenience]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `gc` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-arena-info` *[convenience]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `gc-arena-stats` *[convenience]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `gc-freeze` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-heap` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-module` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-module-count` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-stats` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-temp` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `gcd` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `generate-type-sigs` *[convenience]* — `src/compiler/evaluator_primitives_types.cpp`
+- `gensym` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `get-inferred-type` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `get-memory-policy` *[convenience]* — `src/compiler/evaluator_primitives_policy.cpp`
+- `getenv` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
+- `git-branch-current` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `git-commit` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `git-diff` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `git-log` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `git-rev-parse` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `git-stage` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `git-status` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `hash` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash->alist` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash-has-key?` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash-keys` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash-length` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash-ref` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash-remove!` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash-set!` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash-values` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash?` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `http-get` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `http-post` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `import` *[core]* — `src/compiler/evaluator_primitives_module.cpp`
+- `inexact->exact` *[convenience]* — `src/compiler/evaluator_primitives_math.cpp`
+- `integer->char` *[convenience]* — `src/compiler/evaluator_primitives_char.cpp`
+- `integer?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `intend` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `intend-analytics` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `intend-history` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `json-encode` *[convenience]* — `src/compiler/evaluator_primitives_json.cpp`
+- `json-get-string` *[convenience]* — `src/compiler/evaluator_primitives_json.cpp`
+- `json-parse` *[convenience]* — `src/compiler/evaluator_primitives_json.cpp`
+- `keyword->string` *[convenience]* — `src/compiler/evaluator_primitives_reflect.cpp`
+- `keyword?` *[core]* — `src/compiler/evaluator_primitives_reflect.cpp`
+- `lcm` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `length` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `list` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `list->string` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
+- `list->vector` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `list-ref` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `list?` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `load` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `load-module` *[convenience]* — `src/compiler/evaluator_primitives_module.cpp`
+- `log` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `log10` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `m4-borrow` *[convenience]* — `src/compiler/evaluator_primitives_math.cpp`
+- `m4-move` *[convenience]* — `src/compiler/evaluator_primitives_math.cpp`
+- `m4-return!` *[convenience]* — `src/compiler/evaluator_primitives_math.cpp`
+- `mailbox-count` *[convenience]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `make-vector` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `map` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `max` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `member` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `memory-pressure` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `min` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `mod` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `module-get` *[convenience]* — `src/compiler/evaluator_primitives_module.cpp`
+- `module-keys` *[convenience]* — `src/compiler/evaluator_primitives_module.cpp`
+- `module?` *[core]* — `src/compiler/evaluator_primitives_module.cpp`
+- `modulo` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `mutation-count` *[convenience]* — `src/compiler/evaluator_primitives_mutation.cpp`
+- `mutation-history` *[convenience]* — `src/compiler/evaluator_primitives_mutation.cpp`
+- `my-id` *[convenience]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `newline` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `null?` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `number->string` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `number?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `pair?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `panic-auto-rollback?` *[mutation-safety]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-checkpoint` *[mutation-safety]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-safe-source` *[mutation-safety]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `pow` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `procedure?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `query-annotate-functions` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `query-expected-type` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `query-type-of` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `quotient` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `raise` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `read` *[core]* — `src/compiler/evaluator_primitives_file.cpp`
+- `read-file` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
+- `read-line` *[convenience]* — `src/compiler/evaluator_primitives_char.cpp`
+- `recv` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `reflect-members` *[convenience]* — `src/compiler/evaluator_primitives_reflect.cpp`
+- `reflect-module-exports` *[convenience]* — `src/compiler/evaluator_primitives_reflect.cpp`
+- `reflect-type` *[convenience]* — `src/compiler/evaluator_primitives_reflect.cpp`
+- `regex-find` *[convenience]* — `src/compiler/evaluator_primitives_math.cpp`
+- `regex-match?` *[convenience]* — `src/compiler/evaluator_primitives_math.cpp`
+- `regex-replace` *[convenience]* — `src/compiler/evaluator_primitives_math.cpp`
+- `regex-split` *[convenience]* — `src/compiler/evaluator_primitives_math.cpp`
+- `register-predicate!` *[convenience]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `register-strategy!` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `remainder` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `reply` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `reverse` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `rollback` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
+- `rollback-since` *[convenience]* — `src/compiler/evaluator_primitives_mutation.cpp`
+- `round` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `run-tests` *[convenience]* — `src/compiler/evaluator_primitives_test.cpp`
+- `send` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `session-active?` *[convenience]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `set-car!` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `set-cdr!` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `set-memory-policy` *[convenience]* — `src/compiler/evaluator_primitives_policy.cpp`
+- `shell` *[core]* — `src/compiler/evaluator_primitives_file.cpp`
+- `sin` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `sqrt` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `strategy-field` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `strategy-inspect` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `strategy-set-field!` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `string->list` *[convenience]* — `src/compiler/evaluator_primitives_char.cpp`
+- `string->number` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-append` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-copy` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-fill!` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-index` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-join` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-length` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-ref` *[convenience]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string<?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string=?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `string?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `substring` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `suggest-annotation-at` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `symbol-append` *[convenience]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `symbol?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `syntax-marker` *[convenience]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax-marker-counts` *[convenience]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `take` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
+- `tan` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `tcp-close` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `tcp-connect` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `tcp-recv` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `tcp-send` *[convenience]* — `src/compiler/evaluator_primitives_io.cpp`
+- `type-of` *[convenience]* — `src/compiler/evaluator_primitives_reflect.cpp`
+- `type-registry-compact` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `type-registry-stats` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `type?` *[core]* — `src/compiler/evaluator_primitives_reflect.cpp`
+- `typecheck-current` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `typecheck-incremental` *[convenience]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `typecheck-status` *[convenience]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `use` *[core]* — `src/compiler/evaluator_primitives_module.cpp`
+- `vector` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector->list` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-length` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-ref` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-set!` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector?` *[convenience]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `void` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `void?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
+- `while` *[core]* — `src/compiler/evaluator_primitives_control.cpp`
+- `with-capability` *[convenience]* — `src/compiler/evaluator_primitives_policy.cpp`
+- `workspace-state` *[mutation-safety]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `write` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `write-file` *[convenience]* — `src/compiler/evaluator_primitives_file.cpp`
+
+## _Agent: (2)
+
+- `_agent:list` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `_agent:spawn` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+
+## Arena: (10)
+
+- `arena:compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:compact-all` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag-requested?` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag-stats` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:estimate` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:request-defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:set-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:shrink-to-fit` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:stats-json` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+
+## Atomic-Batch: (1)
+
+- `atomic-batch:stats` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+
+## Channel: (5)
+
+- `channel:close` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:create` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:recv` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:send` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:try-recv` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+
+## Closure: (1)
+
+- `closure:stats` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+
+## Concurrency: (3)
+
+- `concurrency:stats` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `concurrency:version-current?` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `concurrency:version-snapshot` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+
+## Dirty: (4)
+
+- `dirty:counts` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:ppa-reasons` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:reasons` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:summary` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+
+## Eval: (1)
+
+- `eval:async` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+
+## Hot-Swap: (1)
+
+- `hot-swap:fn` *[core]* — `src/compiler/evaluator_primitives_types.cpp`
+
+## Ir-Cache-V2: (2)
+
+- `ir-cache-v2:dependents` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `ir-cache-v2:dirty?` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+
+## Jit: (5)
+
+- `jit:deopt-fn?` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:exception-depth` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:exception-fibers` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:exception-fibers-clear` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:intrinsic-count` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+
+## Mutation-Log: (2)
+
+- `mutation-log:diff` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
+- `mutation-log:summary` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
+
+## Orch: (2)
+
+- `orch:metrics` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `orch:reset-metrics` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+
+## Scheduler: (1)
+
+- `scheduler:pin` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+
+## String-Pool: (2)
+
+- `string-pool:compact` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `string-pool:stats` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
+
+## Thread_Pool: (1)
+
+- `thread_pool:enqueue` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+
+## Verify: (4)
+
+- `verify:assertion-failed` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-assert-failure` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-coverage-feedback` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:report-coverage` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+
+## Ws: (1)
+
+- `ws:try-mutation` *[core]* — `src/compiler/evaluator_primitives_workspace.cpp`
+
+## By category (Issue #559)
+
+### Mutation safety (must remain primitive) (131)
+
+- `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
+- `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:defs` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:diff` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `ast:list-snapshots` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:node-lifecycle-stats` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:nodes` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:post-restore-stats` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:recycle-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-deserialize` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-get` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-mutation-id` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-serialize` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-valid?` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-workspace-id` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:restore` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:stable-ref` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:stable-refs-valid?` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:summary` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-post-restore` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:version` — `src/compiler/evaluator_primitives_ast.cpp`
+- `compile:and-or-precision-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:ast-ops-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:cache-size` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-instruction-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-macro-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:constraint-dep-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:constraint-solver-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dead-coercion-elapsed` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dead-coercion-kept-for-debug` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dead-coercion-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dep-edges` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:dirty-impact-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:epoch` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:incremental-typecheck-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:inline-pass-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:invalidations-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:ir-soa-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:is-instruction-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:let-poly-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:linear-elide-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:macro-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:macro-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:macro-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-instruction-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-narrowing-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:match-narrowing-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:multi-mutation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mutation-log-invalidation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mutator-dispatch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:narrowing-blame-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:occurrence-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:occurrence-typing-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-defuse-index-add` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-defuse-index-callers` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-defuse-index-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-symbol-reinfer-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:schema-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:status` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:type-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:type-dep-graph-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:type-propagation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:verify-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `current-source` — `src/compiler/evaluator_primitives_eval.cpp`
 - `eval-current` — `src/compiler/evaluator_primitives_eval.cpp`
 - `eval-current-output` — `src/compiler/evaluator_primitives_eval.cpp`
+- `mutate:atomic-batch` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:check-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:inline-call` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:insert-child` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:move-node` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:query-and-replace` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:rebind` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:record-patch` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:refactor/extract` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:remove-node` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:rename-symbol` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-pattern` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-subtree` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-type` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:replace-value` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:request-gc-safepoint` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:set-body` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:set-stale-ref-policy` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:splice` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:sv-add-coverpoint` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:sv-weaken-property` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:tweak-literal` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
+- `mutate:wrap` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `panic-auto-rollback?` — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-checkpoint` — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-restore` — `src/compiler/evaluator_primitives_observability.cpp`
+- `panic-safe-source` — `src/compiler/evaluator_primitives_observability.cpp`
 - `set-code` — `src/compiler/evaluator_primitives_eval.cpp`
+- `workspace-state` — `src/compiler/evaluator_primitives_agent.cpp`
+- `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:cow-refused-count` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:create` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:current` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:delete` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:discard` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:list` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:lock` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-used` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge-3way` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:mutation-count` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:resolve-stable-ref` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-latest` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:switch` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-## Query: (65)
+### Core builtins (must remain primitive) (164)
+
+- `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
+- `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `_agent:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `abs` — `src/compiler/evaluator_primitives_math.cpp`
+- `acos` — `src/compiler/evaluator_primitives_math.cpp`
+- `append` — `src/compiler/evaluator_primitives_list.cpp`
+- `apply` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `apply-fix` — `src/compiler/evaluator_primitives_diagnostic.cpp`
+- `arena:compact` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:compact-all` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag-requested?` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:defrag-stats` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:estimate` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:request-defrag` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:set-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:shrink-to-fit` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:stats-json` — `src/compiler/evaluator_primitives_memory.cpp`
+- `asin` — `src/compiler/evaluator_primitives_math.cpp`
+- `assert` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `atan` — `src/compiler/evaluator_primitives_math.cpp`
+- `atomic-batch:stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `boolean?` — `src/compiler/evaluator_primitives_core.cpp`
+- `broadcast` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `caaar` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caadr` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caar` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cadar` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caddr` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cadr` — `src/compiler/evaluator_primitives_pair.cpp`
+- `capability?` — `src/compiler/evaluator_primitives_policy.cpp`
+- `car` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdaar` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdadr` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdar` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cddar` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdddr` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cddr` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdr` — `src/compiler/evaluator_primitives_pair.cpp`
+- `ceil` — `src/compiler/evaluator_primitives_math.cpp`
+- `channel:close` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:create` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:recv` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:send` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `channel:try-recv` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `char<?` — `src/compiler/evaluator_primitives_core.cpp`
+- `char=?` — `src/compiler/evaluator_primitives_core.cpp`
+- `char?` — `src/compiler/evaluator_primitives_char.cpp`
+- `check` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `check=` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `closure:stats` — `src/compiler/evaluator_primitives_observability.cpp`
+- `concurrency:stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `concurrency:version-current?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `concurrency:version-snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
+- `cons` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cos` — `src/compiler/evaluator_primitives_math.cpp`
+- `define-linear` — `src/compiler/evaluator_primitives_math.cpp`
+- `define-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
+- `diagnose` — `src/compiler/evaluator_primitives_diagnostic.cpp`
+- `dirty:counts` — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:ppa-reasons` — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:summary` — `src/compiler/evaluator_primitives_memory.cpp`
+- `display` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `drop` — `src/compiler/evaluator_primitives_list.cpp`
+- `equal?` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `error` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `error?` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `eval` — `src/compiler/evaluator_primitives_eval.cpp`
+- `eval-expr` — `src/compiler/evaluator_primitives_eval.cpp`
+- `eval:async` — `src/compiler/evaluator_primitives_eval.cpp`
+- `exp` — `src/compiler/evaluator_primitives_math.cpp`
+- `fiber:join` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:yield` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `filter` — `src/compiler/evaluator_primitives_list.cpp`
+- `float?` — `src/compiler/evaluator_primitives_core.cpp`
+- `floor` — `src/compiler/evaluator_primitives_math.cpp`
+- `foldl` — `src/compiler/evaluator_primitives_list.cpp`
+- `gc` — `src/compiler/evaluator_primitives_memory.cpp`
+- `gcd` — `src/compiler/evaluator_primitives_math.cpp`
+- `gensym` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `getenv` — `src/compiler/evaluator_primitives_io.cpp`
+- `hash` — `src/compiler/evaluator_primitives_vector.cpp`
+- `hash?` — `src/compiler/evaluator_primitives_vector.cpp`
+- `hot-swap:fn` — `src/compiler/evaluator_primitives_types.cpp`
+- `import` — `src/compiler/evaluator_primitives_module.cpp`
+- `integer?` — `src/compiler/evaluator_primitives_core.cpp`
+- `intend` — `src/compiler/evaluator_primitives_agent.cpp`
+- `ir-cache-v2:dependents` — `src/compiler/evaluator_primitives_eval.cpp`
+- `ir-cache-v2:dirty?` — `src/compiler/evaluator_primitives_eval.cpp`
+- `jit:deopt-fn?` — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:exception-depth` — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:exception-fibers` — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:exception-fibers-clear` — `src/compiler/evaluator_primitives_observability.cpp`
+- `jit:intrinsic-count` — `src/compiler/evaluator_primitives_observability.cpp`
+- `keyword?` — `src/compiler/evaluator_primitives_reflect.cpp`
+- `lcm` — `src/compiler/evaluator_primitives_math.cpp`
+- `length` — `src/compiler/evaluator_primitives_list.cpp`
+- `list` — `src/compiler/evaluator_primitives_list.cpp`
+- `list->string` — `src/compiler/evaluator_primitives_char.cpp`
+- `list->vector` — `src/compiler/evaluator_primitives_vector.cpp`
+- `list-ref` — `src/compiler/evaluator_primitives_list.cpp`
+- `list?` — `src/compiler/evaluator_primitives_list.cpp`
+- `load` — `src/compiler/evaluator_primitives_eval.cpp`
+- `log` — `src/compiler/evaluator_primitives_math.cpp`
+- `log10` — `src/compiler/evaluator_primitives_math.cpp`
+- `make-vector` — `src/compiler/evaluator_primitives_vector.cpp`
+- `map` — `src/compiler/evaluator_primitives_list.cpp`
+- `max` — `src/compiler/evaluator_primitives_math.cpp`
+- `member` — `src/compiler/evaluator_primitives_list.cpp`
+- `min` — `src/compiler/evaluator_primitives_math.cpp`
+- `mod` — `src/compiler/evaluator_primitives_math.cpp`
+- `module?` — `src/compiler/evaluator_primitives_module.cpp`
+- `modulo` — `src/compiler/evaluator_primitives_math.cpp`
+- `mutation-log:diff` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `mutation-log:summary` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `newline` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `null?` — `src/compiler/evaluator_primitives_list.cpp`
+- `number?` — `src/compiler/evaluator_primitives_core.cpp`
+- `orch:metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `orch:reset-metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `pair?` — `src/compiler/evaluator_primitives_pair.cpp`
+- `pow` — `src/compiler/evaluator_primitives_math.cpp`
+- `procedure?` — `src/compiler/evaluator_primitives_core.cpp`
+- `quotient` — `src/compiler/evaluator_primitives_math.cpp`
+- `raise` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `read` — `src/compiler/evaluator_primitives_file.cpp`
+- `recv` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `remainder` — `src/compiler/evaluator_primitives_math.cpp`
+- `reply` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `reverse` — `src/compiler/evaluator_primitives_list.cpp`
+- `rollback` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `round` — `src/compiler/evaluator_primitives_math.cpp`
+- `scheduler:pin` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `send` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `session:create` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `shell` — `src/compiler/evaluator_primitives_file.cpp`
+- `sin` — `src/compiler/evaluator_primitives_math.cpp`
+- `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
+- `string<?` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string=?` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string?` — `src/compiler/evaluator_primitives_pair.cpp`
+- `substring` — `src/compiler/evaluator_primitives_pair.cpp`
+- `symbol?` — `src/compiler/evaluator_primitives_core.cpp`
+- `synthesize:define` — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:fill` — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:list-templates` — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:optimize` — `src/compiler/evaluator_primitives_agent.cpp`
+- `synthesize:register-template` — `src/compiler/evaluator_primitives_agent.cpp`
+- `take` — `src/compiler/evaluator_primitives_list.cpp`
+- `tan` — `src/compiler/evaluator_primitives_math.cpp`
+- `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
+- `use` — `src/compiler/evaluator_primitives_module.cpp`
+- `verify:assertion-failed` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-assert-failure` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-coverage-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:report-coverage` — `src/compiler/evaluator_primitives_compile.cpp`
+- `void` — `src/compiler/evaluator_primitives_core.cpp`
+- `void?` — `src/compiler/evaluator_primitives_core.cpp`
+- `while` — `src/compiler/evaluator_primitives_control.cpp`
+- `write` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
+
+### Internal observable (stats/counters) (65)
 
 - `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -80,159 +979,17 @@ Runtime canonical list: `(api-reference)`.
 - `query:verify-tool-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
-## Mutate: (25)
+### Convenience (candidates for stdlib migration) (147)
 
-- `mutate:atomic-batch` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:check-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:inline-call` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:insert-child` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:move-node` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:query-and-replace` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rebind` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:record-patch` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:refactor/extract` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:remove-node` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rename-symbol` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-pattern` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-subtree` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-type` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-value` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:request-gc-safepoint` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-body` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-stale-ref-policy` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:splice` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:sv-add-coverpoint` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:sv-weaken-property` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:tweak-literal` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
-- `mutate:wrap` — `src/compiler/evaluator_primitives_mutate.cpp`
-
-## Ast: (25)
-
-- `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:defs` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:diff` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `ast:list-snapshots` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:node-lifecycle-stats` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:nodes` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:post-restore-stats` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:recycle-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-deserialize` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-get` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-mutation-id` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-serialize` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-valid?` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-workspace-id` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:restore` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:snapshot` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:stable-ref` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:stable-refs-valid?` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:summary` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-post-restore` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:version` — `src/compiler/evaluator_primitives_ast.cpp`
-
-## Workspace: (20)
-
-- `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:cow-refused-count` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:create` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:current` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:delete` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:discard` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:list` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:lock` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:memory-used` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:merge` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:merge-3way` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:mutation-count` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:resolve-stable-ref` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:rollback-latest` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:set-memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:switch` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
-
-## Fiber: (3)
-
-- `fiber:join` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `fiber:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `fiber:yield` — `src/compiler/evaluator_primitives_messaging.cpp`
-
-## Session: (1)
-
-- `session:create` — `src/compiler/evaluator_primitives_messaging.cpp`
-
-## Synthesize: (5)
-
-- `synthesize:define` — `src/compiler/evaluator_primitives_agent.cpp`
-- `synthesize:fill` — `src/compiler/evaluator_primitives_agent.cpp`
-- `synthesize:list-templates` — `src/compiler/evaluator_primitives_agent.cpp`
-- `synthesize:optimize` — `src/compiler/evaluator_primitives_agent.cpp`
-- `synthesize:register-template` — `src/compiler/evaluator_primitives_agent.cpp`
-
-## Compile: (51)
-
-- `compile:and-or-precision-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:ast-ops-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:cache-size` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-instruction-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-macro-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:constraint-dep-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:constraint-solver-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dead-coercion-elapsed` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dead-coercion-kept-for-debug` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dead-coercion-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dep-edges` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:dirty-impact-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:epoch` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:incremental-typecheck-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:inline-pass-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:invalidations-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:ir-soa-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:is-instruction-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:let-poly-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:linear-elide-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-instruction-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-narrowing-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:match-narrowing-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:multi-mutation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mutation-log-invalidation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mutator-dispatch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:narrowing-blame-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:occurrence-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:occurrence-typing-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-add` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-callers` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-symbol-reinfer-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:schema-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:status` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:type-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:type-dep-graph-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:type-propagation-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:verify-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-
-## C FFI (10)
-
+- `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
+- `auto-evolve-cycle-count` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-loop` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-once` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-running?` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-stop` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-tick` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-evolve-total-fixed` — `src/compiler/evaluator_primitives_agent.cpp`
+- `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_observability.cpp`
 - `c-alloc` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-func` — `src/compiler/ffi_primitives_impl.cpp`
@@ -243,93 +1000,30 @@ Runtime canonical list: `(api-reference)`.
 - `c-struct-ref` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
-
-## Core builtins (250)
-
-- `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
-- `abs` — `src/compiler/evaluator_primitives_math.cpp`
-- `acos` — `src/compiler/evaluator_primitives_math.cpp`
-- `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
-- `append` — `src/compiler/evaluator_primitives_list.cpp`
-- `apply` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `apply-fix` — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
-- `asin` — `src/compiler/evaluator_primitives_math.cpp`
-- `assert` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `atan` — `src/compiler/evaluator_primitives_math.cpp`
-- `auto-evolve-cycle-count` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-loop` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-once` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-running?` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-stop` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-tick` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-total-fixed` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_observability.cpp`
-- `boolean?` — `src/compiler/evaluator_primitives_core.cpp`
-- `broadcast` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `caaar` — `src/compiler/evaluator_primitives_pair.cpp`
-- `caadr` — `src/compiler/evaluator_primitives_pair.cpp`
-- `caar` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cadar` — `src/compiler/evaluator_primitives_pair.cpp`
-- `caddr` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cadr` — `src/compiler/evaluator_primitives_pair.cpp`
 - `capability-stack` — `src/compiler/evaluator_primitives_policy.cpp`
-- `capability?` — `src/compiler/evaluator_primitives_policy.cpp`
-- `car` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdaar` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdadr` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdar` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cddar` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdddr` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cddr` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdr` — `src/compiler/evaluator_primitives_pair.cpp`
-- `ceil` — `src/compiler/evaluator_primitives_math.cpp`
 - `char->integer` — `src/compiler/evaluator_primitives_char.cpp`
 - `char-alphabetic?` — `src/compiler/evaluator_primitives_core.cpp`
 - `char-downcase` — `src/compiler/evaluator_primitives_core.cpp`
 - `char-numeric?` — `src/compiler/evaluator_primitives_core.cpp`
 - `char-upcase` — `src/compiler/evaluator_primitives_core.cpp`
 - `char-whitespace?` — `src/compiler/evaluator_primitives_core.cpp`
-- `char<?` — `src/compiler/evaluator_primitives_core.cpp`
-- `char=?` — `src/compiler/evaluator_primitives_core.cpp`
-- `char?` — `src/compiler/evaluator_primitives_char.cpp`
-- `check` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check-capability` — `src/compiler/evaluator_primitives_policy.cpp`
 - `check-module-signature` — `src/compiler/evaluator_primitives_types.cpp`
 - `check-preconditions` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `check-success` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `check=` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `command-line` — `src/compiler/evaluator_primitives_file.cpp`
 - `command-output` — `src/compiler/evaluator_primitives_file.cpp`
-- `cons` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cos` — `src/compiler/evaluator_primitives_math.cpp`
 - `coverage-report` — `src/compiler/evaluator_primitives_memory.cpp`
 - `current-time` — `src/compiler/evaluator_primitives_misc.cpp`
 - `declare-type` — `src/compiler/evaluator_primitives_types.cpp`
-- `define-linear` — `src/compiler/evaluator_primitives_math.cpp`
-- `define-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
-- `diagnose` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `directory-list` — `src/compiler/evaluator_primitives_file.cpp`
-- `display` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `drop` — `src/compiler/evaluator_primitives_list.cpp`
 - `eof-object?` — `src/compiler/evaluator_primitives_char.cpp`
-- `equal?` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `error` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `error?` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `eval` — `src/compiler/evaluator_primitives_eval.cpp`
-- `eval-expr` — `src/compiler/evaluator_primitives_eval.cpp`
 - `evolve-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
-- `exp` — `src/compiler/evaluator_primitives_math.cpp`
 - `file-copy` — `src/compiler/evaluator_primitives_file.cpp`
 - `file-delete` — `src/compiler/evaluator_primitives_file.cpp`
 - `file-exists?` — `src/compiler/evaluator_primitives_file.cpp`
 - `file-size` — `src/compiler/evaluator_primitives_file.cpp`
-- `filter` — `src/compiler/evaluator_primitives_list.cpp`
-- `float?` — `src/compiler/evaluator_primitives_core.cpp`
-- `floor` — `src/compiler/evaluator_primitives_math.cpp`
-- `foldl` — `src/compiler/evaluator_primitives_list.cpp`
 - `format` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `gc` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-arena-info` — `src/compiler/evaluator_primitives_observability.cpp`
 - `gc-arena-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `gc-freeze` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -338,12 +1032,9 @@ Runtime canonical list: `(api-reference)`.
 - `gc-module-count` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-temp` — `src/compiler/evaluator_primitives_memory.cpp`
-- `gcd` — `src/compiler/evaluator_primitives_math.cpp`
 - `generate-type-sigs` — `src/compiler/evaluator_primitives_types.cpp`
-- `gensym` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `get-inferred-type` — `src/compiler/evaluator_primitives_eval.cpp`
 - `get-memory-policy` — `src/compiler/evaluator_primitives_policy.cpp`
-- `getenv` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-branch-current` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-commit` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-diff` — `src/compiler/evaluator_primitives_io.cpp`
@@ -351,7 +1042,6 @@ Runtime canonical list: `(api-reference)`.
 - `git-rev-parse` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-stage` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-status` — `src/compiler/evaluator_primitives_io.cpp`
-- `hash` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash->alist` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-has-key?` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-keys` — `src/compiler/evaluator_primitives_vector.cpp`
@@ -360,70 +1050,33 @@ Runtime canonical list: `(api-reference)`.
 - `hash-remove!` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-set!` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-values` — `src/compiler/evaluator_primitives_vector.cpp`
-- `hash?` — `src/compiler/evaluator_primitives_vector.cpp`
 - `http-get` — `src/compiler/evaluator_primitives_io.cpp`
 - `http-post` — `src/compiler/evaluator_primitives_io.cpp`
-- `import` — `src/compiler/evaluator_primitives_module.cpp`
 - `inexact->exact` — `src/compiler/evaluator_primitives_math.cpp`
 - `integer->char` — `src/compiler/evaluator_primitives_char.cpp`
-- `integer?` — `src/compiler/evaluator_primitives_core.cpp`
-- `intend` — `src/compiler/evaluator_primitives_agent.cpp`
 - `intend-analytics` — `src/compiler/evaluator_primitives_agent.cpp`
 - `intend-history` — `src/compiler/evaluator_primitives_agent.cpp`
 - `json-encode` — `src/compiler/evaluator_primitives_json.cpp`
 - `json-get-string` — `src/compiler/evaluator_primitives_json.cpp`
 - `json-parse` — `src/compiler/evaluator_primitives_json.cpp`
 - `keyword->string` — `src/compiler/evaluator_primitives_reflect.cpp`
-- `keyword?` — `src/compiler/evaluator_primitives_reflect.cpp`
-- `lcm` — `src/compiler/evaluator_primitives_math.cpp`
-- `length` — `src/compiler/evaluator_primitives_list.cpp`
-- `list` — `src/compiler/evaluator_primitives_list.cpp`
-- `list->string` — `src/compiler/evaluator_primitives_char.cpp`
-- `list->vector` — `src/compiler/evaluator_primitives_vector.cpp`
-- `list-ref` — `src/compiler/evaluator_primitives_list.cpp`
-- `list?` — `src/compiler/evaluator_primitives_list.cpp`
-- `load` — `src/compiler/evaluator_primitives_eval.cpp`
 - `load-module` — `src/compiler/evaluator_primitives_module.cpp`
-- `log` — `src/compiler/evaluator_primitives_math.cpp`
-- `log10` — `src/compiler/evaluator_primitives_math.cpp`
 - `m4-borrow` — `src/compiler/evaluator_primitives_math.cpp`
 - `m4-move` — `src/compiler/evaluator_primitives_math.cpp`
 - `m4-return!` — `src/compiler/evaluator_primitives_math.cpp`
 - `mailbox-count` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `make-vector` — `src/compiler/evaluator_primitives_vector.cpp`
-- `map` — `src/compiler/evaluator_primitives_list.cpp`
-- `max` — `src/compiler/evaluator_primitives_math.cpp`
-- `member` — `src/compiler/evaluator_primitives_list.cpp`
 - `memory-pressure` — `src/compiler/evaluator_primitives_memory.cpp`
-- `min` — `src/compiler/evaluator_primitives_math.cpp`
-- `mod` — `src/compiler/evaluator_primitives_math.cpp`
 - `module-get` — `src/compiler/evaluator_primitives_module.cpp`
 - `module-keys` — `src/compiler/evaluator_primitives_module.cpp`
-- `module?` — `src/compiler/evaluator_primitives_module.cpp`
-- `modulo` — `src/compiler/evaluator_primitives_math.cpp`
 - `mutation-count` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `mutation-history` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `my-id` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `newline` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `null?` — `src/compiler/evaluator_primitives_list.cpp`
 - `number->string` — `src/compiler/evaluator_primitives_pair.cpp`
-- `number?` — `src/compiler/evaluator_primitives_core.cpp`
-- `pair?` — `src/compiler/evaluator_primitives_pair.cpp`
-- `panic-auto-rollback?` — `src/compiler/evaluator_primitives_observability.cpp`
-- `panic-checkpoint` — `src/compiler/evaluator_primitives_observability.cpp`
-- `panic-restore` — `src/compiler/evaluator_primitives_observability.cpp`
-- `panic-safe-source` — `src/compiler/evaluator_primitives_observability.cpp`
-- `pow` — `src/compiler/evaluator_primitives_math.cpp`
-- `procedure?` — `src/compiler/evaluator_primitives_core.cpp`
 - `query-annotate-functions` — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-expected-type` — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-type-of` — `src/compiler/evaluator_primitives_eval.cpp`
-- `quotient` — `src/compiler/evaluator_primitives_math.cpp`
-- `raise` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `read` — `src/compiler/evaluator_primitives_file.cpp`
 - `read-file` — `src/compiler/evaluator_primitives_file.cpp`
 - `read-line` — `src/compiler/evaluator_primitives_char.cpp`
-- `recv` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `reflect-members` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `reflect-module-exports` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `reflect-type` — `src/compiler/evaluator_primitives_reflect.cpp`
@@ -433,21 +1086,12 @@ Runtime canonical list: `(api-reference)`.
 - `regex-split` — `src/compiler/evaluator_primitives_math.cpp`
 - `register-predicate!` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `register-strategy!` — `src/compiler/evaluator_primitives_agent.cpp`
-- `remainder` — `src/compiler/evaluator_primitives_math.cpp`
-- `reply` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `reverse` — `src/compiler/evaluator_primitives_list.cpp`
-- `rollback` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `rollback-since` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `round` — `src/compiler/evaluator_primitives_math.cpp`
 - `run-tests` — `src/compiler/evaluator_primitives_test.cpp`
-- `send` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `session-active?` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `set-car!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-cdr!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-memory-policy` — `src/compiler/evaluator_primitives_policy.cpp`
-- `shell` — `src/compiler/evaluator_primitives_file.cpp`
-- `sin` — `src/compiler/evaluator_primitives_math.cpp`
-- `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
 - `strategy-field` — `src/compiler/evaluator_primitives_agent.cpp`
 - `strategy-inspect` — `src/compiler/evaluator_primitives_agent.cpp`
 - `strategy-set-field!` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -459,18 +1103,13 @@ Runtime canonical list: `(api-reference)`.
 - `string-index` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-join` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-length` — `src/compiler/evaluator_primitives_pair.cpp`
+- `string-pool:compact` — `src/compiler/evaluator_primitives_memory.cpp`
+- `string-pool:stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `string-ref` — `src/compiler/evaluator_primitives_pair.cpp`
-- `string<?` — `src/compiler/evaluator_primitives_pair.cpp`
-- `string=?` — `src/compiler/evaluator_primitives_pair.cpp`
-- `string?` — `src/compiler/evaluator_primitives_pair.cpp`
-- `substring` — `src/compiler/evaluator_primitives_pair.cpp`
 - `suggest-annotation-at` — `src/compiler/evaluator_primitives_eval.cpp`
 - `symbol-append` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `symbol?` — `src/compiler/evaluator_primitives_core.cpp`
 - `syntax-marker` — `src/compiler/evaluator_primitives_compile.cpp`
 - `syntax-marker-counts` — `src/compiler/evaluator_primitives_compile.cpp`
-- `take` — `src/compiler/evaluator_primitives_list.cpp`
-- `tan` — `src/compiler/evaluator_primitives_math.cpp`
 - `tcp-close` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-connect` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-recv` — `src/compiler/evaluator_primitives_io.cpp`
@@ -478,123 +1117,14 @@ Runtime canonical list: `(api-reference)`.
 - `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `type-registry-stats` — `src/compiler/evaluator_primitives_memory.cpp`
-- `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `typecheck-current` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-status` — `src/compiler/evaluator_primitives_observability.cpp`
-- `use` — `src/compiler/evaluator_primitives_module.cpp`
 - `vector` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-length` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-ref` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-set!` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector?` — `src/compiler/evaluator_primitives_vector.cpp`
-- `void` — `src/compiler/evaluator_primitives_core.cpp`
-- `void?` — `src/compiler/evaluator_primitives_core.cpp`
-- `while` — `src/compiler/evaluator_primitives_control.cpp`
 - `with-capability` — `src/compiler/evaluator_primitives_policy.cpp`
-- `workspace-state` — `src/compiler/evaluator_primitives_agent.cpp`
-- `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` — `src/compiler/evaluator_primitives_file.cpp`
-
-## _Agent: (2)
-
-- `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `_agent:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
-
-## Arena: (10)
-
-- `arena:compact` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:compact-all` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:defrag` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:defrag-requested?` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:defrag-stats` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:estimate` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:request-defrag` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:set-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:shrink-to-fit` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arena:stats-json` — `src/compiler/evaluator_primitives_memory.cpp`
-
-## Atomic-Batch: (1)
-
-- `atomic-batch:stats` — `src/compiler/evaluator_primitives_observability.cpp`
-
-## Channel: (5)
-
-- `channel:close` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `channel:create` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `channel:recv` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `channel:send` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `channel:try-recv` — `src/compiler/evaluator_primitives_messaging.cpp`
-
-## Closure: (1)
-
-- `closure:stats` — `src/compiler/evaluator_primitives_observability.cpp`
-
-## Concurrency: (3)
-
-- `concurrency:stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `concurrency:version-current?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `concurrency:version-snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
-
-## Dirty: (4)
-
-- `dirty:counts` — `src/compiler/evaluator_primitives_memory.cpp`
-- `dirty:ppa-reasons` — `src/compiler/evaluator_primitives_memory.cpp`
-- `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
-- `dirty:summary` — `src/compiler/evaluator_primitives_memory.cpp`
-
-## Eval: (1)
-
-- `eval:async` — `src/compiler/evaluator_primitives_eval.cpp`
-
-## Hot-Swap: (1)
-
-- `hot-swap:fn` — `src/compiler/evaluator_primitives_types.cpp`
-
-## Ir-Cache-V2: (2)
-
-- `ir-cache-v2:dependents` — `src/compiler/evaluator_primitives_eval.cpp`
-- `ir-cache-v2:dirty?` — `src/compiler/evaluator_primitives_eval.cpp`
-
-## Jit: (5)
-
-- `jit:deopt-fn?` — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:exception-depth` — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:exception-fibers` — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:exception-fibers-clear` — `src/compiler/evaluator_primitives_observability.cpp`
-- `jit:intrinsic-count` — `src/compiler/evaluator_primitives_observability.cpp`
-
-## Mutation-Log: (2)
-
-- `mutation-log:diff` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `mutation-log:summary` — `src/compiler/evaluator_primitives_mutation.cpp`
-
-## Orch: (2)
-
-- `orch:metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `orch:reset-metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
-
-## Scheduler: (1)
-
-- `scheduler:pin` — `src/compiler/evaluator_primitives_messaging.cpp`
-
-## String-Pool: (2)
-
-- `string-pool:compact` — `src/compiler/evaluator_primitives_memory.cpp`
-- `string-pool:stats` — `src/compiler/evaluator_primitives_memory.cpp`
-
-## Thread_Pool: (1)
-
-- `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
-
-## Verify: (4)
-
-- `verify:assertion-failed` — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:parse-assert-failure` — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:parse-coverage-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
-- `verify:report-coverage` — `src/compiler/evaluator_primitives_compile.cpp`
-
-## Ws: (1)
-
-- `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
