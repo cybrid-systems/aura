@@ -115,6 +115,36 @@ Aura 层 helper：`lib/std/query.aura`（3 个）、`lib/std/refactor.aura`、`l
 
 `lib/std/*.aura` — 每个文件 `(export …)` + 文件头注释即 API。加载：`(require "std/list" all:)`。
 
+## Primitive vs Stdlib 边界
+
+Primitive 是 C++ `evaluator_primitives_*.cpp` 里注册到 `Primitives` 表的 entry，runtime 在 `eval_flat` / IR / JIT 里直接调用。Stdlib 是 `lib/std/*.aura` 里 `(export …)` 的 Aura 函数，runtime 通过 `eval` + `apply` 路径调用。
+
+**默认下沉决策：stdlib。** 只有满足 [决策框架](design/primitive-vs-stdlib-decision-framework.md) 的 7 条红线 (engine-boot / 内部状态访问 / 性能热路径 / FFI / 类型系统 / 观测性 / 诊断恢复) 才下沉为 primitive。绝大多数用户级 API 都应该是 stdlib。
+
+注册点（与注册函数）：
+
+| 簇 / 前缀 | 源文件 | 注册函数 |
+|-----------|--------|----------|
+| 类型谓词 / `not` | `evaluator_primitives_core.cpp` | `register_type_and_char_primitives` |
+| pair / string | `evaluator_primitives_pair.cpp` | `register_pair_and_string_primitives` |
+| list / apply | `evaluator_primitives_list.cpp` | `register_list_primitives` |
+| JSON | `evaluator_primitives_json.cpp` | `register_json_primitives` |
+| vector / hash | `evaluator_primitives_vector.cpp` | `register_vector_and_hash_primitives` |
+| math / regex | `evaluator_primitives_math.cpp` | `register_math_regex_and_arithmetic_primitives` |
+| reflect / keyword | `evaluator_primitives_reflect.cpp` | `register_reflect_and_type_primitives` |
+| `query:module-*` | `evaluator_primitives_query.cpp` | `register_query_primitives` |
+| `query:*` workspace | `evaluator_primitives_query_workspace.cpp` | `register_workspace_query_primitives` |
+| `query:*` def-use | `evaluator_primitives_query_defuse.cpp` | `register_defuse_query_primitives` |
+| `mutate:*` | `evaluator_primitives_mutate.cpp` | `register_mutate_primitives` |
+| `workspace:*` | `evaluator_primitives_workspace.cpp` | `register_workspace_primitives` |
+| `ast:*` | `evaluator_primitives_ast.cpp` | `register_ast_primitives` |
+| `compile:*` / JIT 观测 | `evaluator_primitives_compile.cpp` / `observability.cpp` | 各 `register_*` |
+| messaging / fiber | `evaluator_primitives_messaging.cpp` | `register_messaging_primitives` |
+| git / network | `evaluator_primitives_io.cpp` | `register_git/network_primitives` |
+| agent / synthesize | `evaluator_primitives_agent.cpp` | `register_auto_evolve/synthesize/strategy` |
+
+完整列表 `docs/generated/primitives.md`（`./build.py docs` 生成）。修改后必须 regenerate + commit，否则 `./build.py gate` 挂。
+
 ## 贡献运行时
 
 读 [contributing.md](contributing.md)（FlatAST 不变式、锁、defuse）。历史设计文档在 `git tag docs-archive-pre-2026-06`。

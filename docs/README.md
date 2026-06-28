@@ -9,6 +9,7 @@
 | macOS 开发 | [../README.md — Platform Notes](../README.md#platform-notes) |
 | 快速上手 | [tutorial.md](tutorial.md) |
 | 有哪些原语 | `(api-reference)` 或 [generated/primitives.md](generated/primitives.md) |
+| 新 primitive vs stdlib? | [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md) |
 | 模块 / 管线 | [architecture.md](architecture.md) |
 | 改 evaluator | [contributing.md](contributing.md) |
 | Agent JSON 协议 | [wire-formats.md](wire-formats.md) |
