@@ -1055,6 +1055,15 @@ private:
     mutable std::atomic<std::uint64_t> tag_arity_index_hits_{0};
     mutable std::atomic<std::uint64_t> tag_arity_index_misses_{0};
     mutable std::atomic<std::uint64_t> tag_arity_index_rebuilds_{0};
+    // Issue #554: rebuild timing + delta update counters.
+    //   - tag_arity_index_rebuild_time_us_  (# lifetime
+    //     microseconds spent in rebuild_tag_arity_index)
+    //   - tag_arity_index_delta_hits_       (# of times
+    //     the incremental delta path was taken vs full
+    //     rebuild — the AI Agent reads this to measure
+    //     the incremental-savings optimization)
+    mutable std::atomic<std::uint64_t> tag_arity_index_rebuild_time_us_{0};
+    mutable std::atomic<std::uint64_t> tag_arity_index_delta_hits_{0};
     // Issue #547: dirty flag + mark counter for the
     // tag_arity_index. mark_dirty_upward + structural mutate
     // paths set this flag; rebuild_tag_arity_index() clears
@@ -1279,6 +1288,12 @@ public:
     // into mark_dirty_upward to maintain incrementally.
     void rebuild_tag_arity_index() noexcept {
         tag_arity_index_.clear();
+        // Issue #554: time the rebuild so (query:pattern-
+        // index-stats) can report the lifetime
+        // microseconds spent. The AI Agent reads this to
+        // compute avg_rebuild_us = time_us / rebuilds and
+        // detect latency spikes.
+        auto t0 = std::chrono::steady_clock::now();
         const std::size_t n = size();
         for (NodeId id = 0; id < n; ++id) {
             const auto tag = static_cast<std::uint32_t>(tag_[id]);
@@ -1304,6 +1319,16 @@ public:
         }
         tag_arity_index_rebuilds_.fetch_add(1,
                                             std::memory_order_relaxed);
+        // Issue #554: record elapsed microseconds for the
+        // (query:pattern-index-stats) primitive's AI Agent
+        // observability. Stats-only (relaxed-ordering).
+        auto t1 = std::chrono::steady_clock::now();
+        const auto us =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                t1 - t0).count();
+        tag_arity_index_rebuild_time_us_.fetch_add(
+            static_cast<std::uint64_t>(us),
+            std::memory_order_relaxed);
         // Issue #547: clear the dirty flag — the index is
         // now in sync with the AST.
         tag_arity_index_dirty_.store(false,
@@ -1343,6 +1368,18 @@ public:
     }
     [[nodiscard]] std::uint64_t tag_arity_index_rebuilds() const noexcept {
         return tag_arity_index_rebuilds_.load(std::memory_order_relaxed);
+    }
+    // Issue #554: rebuild timing + delta update counters.
+    [[nodiscard]] std::uint64_t tag_arity_index_rebuild_time_us() const noexcept {
+        return tag_arity_index_rebuild_time_us_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t tag_arity_index_delta_hits() const noexcept {
+        return tag_arity_index_delta_hits_.load(std::memory_order_relaxed);
+    }
+    // Issue #554: bump helper for delta hits — call from
+    // the (follow-up) incremental delta-rebuild path.
+    void bump_tag_arity_index_delta_hits() const noexcept {
+        tag_arity_index_delta_hits_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
         return tag_arity_index_.size();
