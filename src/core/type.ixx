@@ -136,6 +136,19 @@ export struct CapabilityType {
     bool is_unrestricted = false;     // true = 允许所有 effect
 };
 
+// Issue #308: hardware BitVector type metadata. Stored as a
+// side-table on TypeRegistry::Entry (via the `hw_bitvec`
+// optional). Width is the number of bits (e.g. 8, 16, 32, 64);
+// signed is false for unsigned (uint8_t, uint16_t, ...), true
+// for two's-complement signed (int8_t, int16_t, ...). The
+// (compile:hw-bitvec-compatible? a b) primitive checks that two
+// BitVec types have matching width + signedness; a mismatch is
+// the canonical hardware bug caught at type-check time.
+export struct BitVecType {
+    std::uint32_t width = 0;  // bit width (0 = not a hw bitvec)
+    bool is_signed = false;   // false = unsigned, true = signed
+};
+
 // ── TypeRegistry ──────────────────────────────────────────────
 export class TypeRegistry {
 public:
@@ -169,6 +182,10 @@ public:
     const RecordType* record_of(TypeId id) const;
     const EffectType* effect_of(TypeId id) const;
     const CapabilityType* capability_of(TypeId id) const;
+    // Issue #308: hardware BitVector type accessors. The
+    // (compile:hw-bitvec-*) Aura primitives use these.
+    void register_hw_bitvec(TypeId type_id, std::uint32_t width, bool is_signed);
+    const BitVecType* hw_bitvec_of(TypeId id) const;
     bool is_var(TypeId id) const;
     // Issue #99: was `const`, now non-const because polymorphic
     // subtyping needs to allocate a fresh type variable (alpha-rename)
@@ -313,6 +330,10 @@ private:
         std::optional<CapabilityType> capability;
         std::optional<VariantType> variant;
         std::optional<RecordType> record;
+        // Issue #308: hardware BitVector metadata. Empty
+        // for non-hw types; populated by
+        // TypeRegistry::register_hw_bitvec.
+        std::optional<BitVecType> hw_bitvec;
     };
     std::vector<Entry*> entries_; // index → stable pointer into arena_
     TypeEntryArena arena_;        // bump-allocates Entry objects
