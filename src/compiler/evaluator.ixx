@@ -2036,8 +2036,21 @@ private:
     //     either deferred or skipped)
     // Both stats-only (relaxed-ordering). Exposed via
     // the (query:fiber-migration-stats) primitive.
-    std::atomic<std::uint64_t> mutation_steal_attempts_{0};
-    std::atomic<std::uint64_t> boundary_violation_count_{0};
+    mutable std::atomic<std::uint64_t> mutation_steal_attempts_{0};
+    mutable std::atomic<std::uint64_t> boundary_violation_count_{0};
+    // Issue #556: EDSL concurrency safety observability counters.
+    // Exposed via (query:edsl-concurrency-stats) primitive.
+    // Stats-only (relaxed-ordering).
+    //   - unsafe_boundary_attempts_  (# of attempts at an
+    //     unsafe boundary (steal during active outermost
+    //     Guard, fiber yield during mutate, etc.) — should
+    //     be 0 in production with proper locking)
+    //   - lock_contention_us_         (lifetime microseconds
+    //     spent waiting on workspace_mtx_ + Guard locks —
+    //     the AI Agent reads this to compute contention_ratio
+    //     and decide when to enable lockless fast paths)
+    mutable std::atomic<std::uint64_t> unsafe_boundary_attempts_{0};
+    mutable std::atomic<std::uint64_t> lock_contention_us_{0};
     // Issue #439: GC safepoint + MutationBoundary
     // coordination observability. Bumped in
     // Fiber::check_gc_safepoint / request_gc_safepoint /
@@ -2545,6 +2558,19 @@ public:
     }
     void bump_boundary_violation_count() noexcept {
         boundary_violation_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #556: EDSL concurrency safety accessors + bump helpers.
+    [[nodiscard]] std::uint64_t get_unsafe_boundary_attempts() const noexcept {
+        return unsafe_boundary_attempts_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_lock_contention_us() const noexcept {
+        return lock_contention_us_.load(std::memory_order_relaxed);
+    }
+    void bump_unsafe_boundary_attempts() const noexcept {
+        unsafe_boundary_attempts_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_lock_contention_us(std::uint64_t delta_us) const noexcept {
+        lock_contention_us_.fetch_add(delta_us, std::memory_order_relaxed);
     }
     // Issue #439: GC safepoint observability accessors +
     // bump helpers. Public so the

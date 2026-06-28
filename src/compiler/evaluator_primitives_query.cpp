@@ -770,6 +770,46 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             narrowing + cross_delta + passes_skipped + touched_size));
     });
 
+    // Issue #556: query:edsl-concurrency-stats. Returns
+    // the sum of 4 EDSL concurrency safety observability
+    // counters from across the Evaluator:
+    //   - mutation_steal_attempts_        (Evaluator, #438)
+    //     # of steal attempts the scheduler logged
+    //   - boundary_violation_count_       (Evaluator, #438)
+    //     # of unsafe boundary attempts deferred/skipped
+    //   - unsafe_boundary_attempts_       (Evaluator, #556)
+    //     # of unsafe boundary attempts (a stricter
+    //     subset of boundary_violation — cases where
+    //     the boundary actually completed despite the
+    //     violation)
+    //   - lock_contention_us_              (Evaluator, #556)
+    //     # lifetime microseconds spent waiting on
+    //     workspace_mtx_ + Guard locks
+    //
+    // P0: returns an integer = sum of the 4 counters.
+    // Follow-up: returns a 4-tuple
+    // (steal-attempts boundary-violations unsafe-attempts
+    // lock-contention-us) so the AI Agent can compute
+    // contention_ratio = lock_contention_us / wall_time
+    // and react to unsafe_boundary_attempts > 0 as a hard
+    // alert (concurrency bug).
+    //
+    // Non-duplicative with #438 (query:fiber-migration-stats)
+    // — the latter sums 2 counters (steal + violation);
+    // this primitive adds the 2 Task1 EDSL concurrency
+    // counters (#556) to the matrix.
+    add("query:edsl-concurrency-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t steals = ev->get_mutation_steal_attempts();
+        const std::uint64_t violations = ev->get_boundary_violation_count();
+        const std::uint64_t unsafe_attempts = ev->get_unsafe_boundary_attempts();
+        const std::uint64_t contention_us = ev->get_lock_contention_us();
+        return make_int(static_cast<std::int64_t>(
+            steals + violations + unsafe_attempts + contention_us));
+    });
+
     // Issue #447: (query:tag-arity-count tag-int arity-int)
     // — count of nodes matching (tag, arity) using the
     // pre-built index. Bumps the hits or misses counter
