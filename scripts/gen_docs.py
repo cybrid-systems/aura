@@ -32,10 +32,125 @@ EXPORT_START_RE = re.compile(r"^\(export\b", re.MULTILINE)
 class Primitive:
     name: str
     file: str
+    category: str = "core"  # Issue #559: classification tag
+
+
+# Issue #559: 4-category classification (matches the issue's
+# suggested taxonomy). Default-mapped from primitive name
+# prefix; overrideable via docs/primitive_categories.yaml.
+CATEGORY_PREFIX_MAP: dict[str, str] = {
+    # mutation-safety: directly participate in mutate / guard /
+    # workspace safety protocols. Must remain a primitive
+    # per the decision framework red-line #2.
+    "mutate:": "mutation-safety",
+    "panic-": "mutation-safety",
+    "panic:": "mutation-safety",
+    "compile:": "mutation-safety",
+    "workspace-": "mutation-safety",
+    "set-code": "mutation-safety",
+    "eval-current": "mutation-safety",
+    "eval-with-recovery": "mutation-safety",
+    "current-source": "mutation-safety",
+    "api-reference": "mutation-safety",
+    "workspace:": "mutation-safety",
+    "ast:": "mutation-safety",
+    # core: engine-boot dependencies + arithmetic + type
+    # predicates + pair/string constructors. Red-line #1 + #3.
+    "make-": "core",
+    "cons": "core",
+    "car": "core",
+    "cdr": "core",
+    "list": "core",
+    "+": "core",
+    "-": "core",
+    "*": "core",
+    "/": "core",
+    "<": "core",
+    "=": "core",
+    "integer?": "core",
+    "string?": "core",
+    "pair?": "core",
+    "list?": "core",
+    "bool?": "core",
+    "not": "core",
+    "define": "core",
+    "lambda": "core",
+    "apply": "core",
+    "eval": "core",
+    "error?": "core",
+    "nil": "core",
+    # internal-observable: stats / counters / observability.
+    # Decision framework §1 red-line #6 (observability is
+    # required). Most can stay primitive (JSON protocol
+    # contract) but could migrate to a sidecar observability
+    # service in the future.
+    "query:": "internal-observable",
+    "snapshot": "internal-observable",
+    "metrics": "internal-observable",
+    # convenience: high-level wrappers that build on core
+    # primitives. Per the decision framework, MOST of these
+    # should migrate to stdlib (Issue 1's framework applies).
+    "string-": "convenience",
+    "vector": "convenience",
+    "hash-": "convenience",
+    "format": "convenience",
+    "json": "convenience",
+    "path": "convenience",
+    "orchestrator": "convenience",
+}
+
+
+def _load_category_overrides() -> dict[str, str]:
+    """Load docs/primitive_categories.yaml if present.
+
+    YAML format (one line per primitive):
+      primitive-name: category
+    Comments start with '#'. Categories must be one of:
+    core, mutation-safety, internal-observable, convenience.
+    """
+    yaml_path = ROOT / "docs" / "primitive_categories.yaml"
+    if not yaml_path.exists():
+        return {}
+    overrides: dict[str, str] = {}
+    for line in yaml_path.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if ":" not in s:
+            continue
+        name, _, cat = s.partition(":")
+        name = name.strip()
+        cat = cat.strip()
+        if name and cat in {"core", "mutation-safety", "internal-observable", "convenience"}:
+            overrides[name] = cat
+    return overrides
+
+
+def classify_primitive(name: str, overrides: dict[str, str]) -> str:
+    """Map a primitive name to its category.
+
+    Order of precedence:
+      1. Explicit override (docs/primitive_categories.yaml)
+      2. Prefix heuristic (CATEGORY_PREFIX_MAP)
+      3. Default to 'core' (engine-boot guarantee)
+    """
+    if name in overrides:
+        return overrides[name]
+    for prefix, cat in CATEGORY_PREFIX_MAP.items():
+        if name == prefix or name.startswith(prefix):
+            return cat
+    # Workspace boot dependencies default to core.
+    if name in {"set-code", "current-source", "eval-current", "api-reference"}:
+        return "mutation-safety"
+    # Most high-level utilities default to convenience.
+    if "-" in name and ":" not in name:
+        return "convenience"
+    return "core"
 
 
 def scan_primitives() -> list[Primitive]:
     found: dict[str, Primitive] = {}
+    overrides = _load_category_overrides()
 
     registrar_files = {"ffi_primitives_impl.cpp"}
     for path in sorted(SRC.rglob("*.cpp")):
@@ -45,11 +160,13 @@ def scan_primitives() -> list[Primitive]:
         if use_registrar_add:
             for m in FFI_ADD_RE.finditer(text):
                 name = m.group(1)
-                found.setdefault(name, Primitive(name, rel))
+                if name not in found:
+                    found[name] = Primitive(name, rel, classify_primitive(name, overrides))
         else:
             for m in PRIMITIVE_RE.finditer(text):
                 name = m.group(1)
-                found.setdefault(name, Primitive(name, rel))
+                if name not in found:
+                    found[name] = Primitive(name, rel, classify_primitive(name, overrides))
 
     return sorted(found.values(), key=lambda p: p.name)
 
@@ -96,7 +213,19 @@ def _group_order(key: str) -> int:
 
 
 def render_primitives(primitives: list[Primitive]) -> str:
-    groups = group_primitives(primitives)
+    # Issue #559: 4-category grouping (decision-framework
+    # taxonomy). Display category buckets in a stable order.
+    CATEGORY_ORDER = ["mutation-safety", "core", "internal-observable", "convenience"]
+    CATEGORY_TITLE = {
+        "mutation-safety": "Mutation safety (must remain primitive)",
+        "core": "Core builtins (must remain primitive)",
+        "internal-observable": "Internal observable (stats/counters)",
+        "convenience": "Convenience (candidates for stdlib migration)",
+    }
+    by_cat: dict[str, list[Primitive]] = {c: [] for c in CATEGORY_ORDER}
+    for p in primitives:
+        cat = p.category if p.category in by_cat else "core"
+        by_cat[cat].append(p)
     lines = [
         GENERATED_BANNER,
         "# Primitives (generated)",
@@ -104,7 +233,26 @@ def render_primitives(primitives: list[Primitive]) -> str:
         f"**{len(primitives)}** registrations scanned from `src/**/*.cpp`.",
         "Runtime canonical list: `(api-reference)`.",
         "",
+        "**Classification (Issue #559)**:",
+        "",
     ]
+    for cat in CATEGORY_ORDER:
+        n = len(by_cat[cat])
+        total = len(primitives)
+        pct = (100.0 * n / total) if total else 0.0
+        lines.append(f"- **{cat}**: {n} primitives ({pct:.0f}%)")
+    lines.append("")
+    lines.append(
+        "Categories follow the taxonomy in "
+        "[design/primitive-vs-stdlib-decision-framework.md]"
+        "(design/primitive-vs-stdlib-decision-framework.md). "
+        "Override per-primitive classifications via "
+        "`docs/primitive_categories.yaml`."
+    )
+    lines.append("")
+    # Legacy group-by-prefix rendering (kept for backward
+    # compat with the existing primitives.md layout).
+    groups = group_primitives(primitives)
     for group, items in groups.items():
         title = {
             "workspace-exec": "Workspace load / eval",
@@ -112,6 +260,20 @@ def render_primitives(primitives: list[Primitive]) -> str:
             "core": "Core builtins",
         }.get(group, group.rstrip(":").title() + (":" if group.endswith(":") else ""))
         lines.append(f"## {title} ({len(items)})")
+        lines.append("")
+        # Within each prefix group, also tag each primitive
+        # with its category for easy scanning.
+        for p in items:
+            lines.append(f"- `{p.name}` *[{p.category}]* — `{p.file}`")
+        lines.append("")
+    # New: 4-category section (Issue #559 primary deliverable).
+    lines.append("## By category (Issue #559)")
+    lines.append("")
+    for cat in CATEGORY_ORDER:
+        items = by_cat[cat]
+        if not items:
+            continue
+        lines.append(f"### {CATEGORY_TITLE[cat]} ({len(items)})")
         lines.append("")
         for p in items:
             lines.append(f"- `{p.name}` — `{p.file}`")

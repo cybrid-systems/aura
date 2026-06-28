@@ -1,0 +1,112 @@
+# Primitive category overrides (Issue #559)
+#
+# Format: `<primitive-name>: <category>` (one per line)
+# Categories: core | mutation-safety | internal-observable | convenience
+#
+# The default classification in scripts/gen_docs.py maps primitive
+# name prefixes to categories (e.g. "mutate:*" → mutation-safety,
+# "query:*" → internal-observable). This file provides OVERRIDES
+# for primitives that don't fit the prefix heuristic cleanly.
+#
+# To reclassify a primitive:
+#   1. Add a line `<primitive-name>: <category>` to this file
+#   2. Run `./build.py docs` to regenerate `docs/generated/primitives.md`
+#   3. Commit both files together
+#
+# Reference: docs/design/primitive-vs-stdlib-decision-framework.md
+# (red lines 1-7 must remain primitive; green lights 1-6 promote to stdlib)
+
+# ── mutation-safety: must remain primitive per decision framework ──
+# These participate in the Guard / Mutate / Workspace safety
+# protocol. Cannot migrate to stdlib without losing safety
+# guarantees (red-line #2).
+
+# ── core: must remain primitive (engine-boot + arithmetic + types) ──
+# Red-line #1 (engine-boot) + #3 (perf hot path).
+
+# ── internal-observable: stats / counters / observability ──
+# Red-line #6 (observability is in the JSON protocol contract).
+
+# ── convenience: high-level wrappers (stdlib candidates) ──
+# Decision framework green-light #2 (user convenience) applies.
+# Migration to stdlib is encouraged as future work.
+
+# ── overrides (primitive names that the heuristic gets wrong) ──
+
+# FFI / host-bridge primitives (red-line #4 — must remain primitive)
+ffi-open: mutation-safety
+ffi-close: mutation-safety
+ffi-call: mutation-safety
+ffi-malloc: mutation-safety
+ffi-free: mutation-safety
+
+# JIT / compile primitives are mutation-safety (red-line #5)
+compile-current-output: mutation-safety
+compile-ir-current: mutation-safety
+compile-print-current-ir: mutation-safety
+compile-binary-validate: mutation-safety
+compile-binary-load: mutation-safety
+
+# String utilities → convenience (stdlib candidates)
+string-split: convenience
+string-join: convenience
+string-upcase: convenience
+string-downcase: convenience
+string-trim: convenience
+string-replace: convenience
+
+# JSON utilities → convenience (stdlib candidates)
+json-parse: convenience
+json-stringify: convenience
+json-get: convenience
+json-set: convenience
+
+# Math utilities → convenience (stdlib candidates)
+math-sqrt: convenience
+math-pow: convenience
+math-sin: convenience
+math-cos: convenience
+math-floor: convenience
+math-ceil: convenience
+math-round: convenience
+
+# Vector / list utilities → convenience (stdlib candidates)
+vector-new: convenience
+vector-push: convenience
+vector-pop: convenience
+vector-ref: convenience
+vector-set: convenience
+vector-length: convenience
+vector-map: convenience
+vector-filter: convenience
+vector-reduce: convenience
+
+# Orchestrator / agent primitives (high-level, stdlib candidates)
+orchestrator-spawn: convenience
+orchestrator-join: convenience
+orchestrator-cancel: convenience
+agent-self-edit: convenience
+agent-query: convenience
+agent-evolve: convenience
+
+# Path / FS utilities → convenience (could be stdlib with FFI)
+path-join: convenience
+path-split: convenience
+path-dirname: convenience
+path-basename: convenience
+path-exists: convenience
+fs-read: convenience
+fs-write: convenience
+fs-list: convenience
+
+# Time utilities → convenience
+time-now: convenience
+time-format: convenience
+time-parse: convenience
+
+# Internal-observable (already correct but pinned here for clarity)
+snapshot: internal-observable
+metrics-reset: internal-observable
+metrics-dump: internal-observable
+
+# ── end of overrides ──
