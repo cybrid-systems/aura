@@ -1932,6 +1932,27 @@ private:
     std::atomic<std::uint64_t> panic_checkpoint_restore_count_{0};
     std::atomic<std::uint64_t> panic_checkpoint_commit_count_{0};
     std::atomic<std::uint64_t> rollback_success_on_panic_{0};
+    // Issue #549: self-evolution-stability counters. Bumped
+    // by validate_stable_ref + exit_mutation_boundary(false)
+    // + fiber yield hooks. Stats-only (relaxed-ordering).
+    // Exposed via the new
+    // (query:self-evolution-stability-stats) primitive.
+    //   - cross_cow_invalidations_  (# of StableNodeRef
+    //     rejections caused by crossing a COW snapshot
+    //     boundary — i.e. captured gen != current gen)
+    //   - fiber_stale_ref_count_  (# of stale-ref detections
+    //     where the captured gen is from a different fiber's
+    //     workspace — surfaced via validate_stable_ref)
+    //   - mutation_log_rollback_count_  (# of times
+    //     exit_mutation_boundary(false) actually rolled back
+    //     the log — i.e. there were mutations to undo)
+    //   - provenance_mismatch_  (# of stable-ref checks
+    //     where the captured provenance (origin layer)
+    //     didn't match the current workspace layer)
+    mutable std::atomic<std::uint64_t> cross_cow_invalidations_{0};
+    mutable std::atomic<std::uint64_t> fiber_stale_ref_count_{0};
+    mutable std::atomic<std::uint64_t> mutation_log_rollback_count_{0};
+    mutable std::atomic<std::uint64_t> provenance_mismatch_{0};
     // Issue #391: automatic staleness check observability.
     //   stale_ref_blocked_count_  (Strict policy blocked
     //     a mutate because a captured stable-ref was stale)
@@ -2311,6 +2332,35 @@ public:
     void bump_rollback_success_on_panic() noexcept {
         rollback_success_on_panic_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #549: self-evolution-stability accessors + bump
+    // helpers. Public so the
+    // (query:self-evolution-stability-stats) primitive can
+    // read them, and validate_stable_ref + exit_mutation_boundary
+    // + fiber yield hooks can bump them.
+    [[nodiscard]] std::uint64_t get_cross_cow_invalidations() const noexcept {
+        return cross_cow_invalidations_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_fiber_stale_ref_count() const noexcept {
+        return fiber_stale_ref_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_mutation_log_rollback_count() const noexcept {
+        return mutation_log_rollback_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_provenance_mismatch() const noexcept {
+        return provenance_mismatch_.load(std::memory_order_relaxed);
+    }
+    void bump_cross_cow_invalidations() const noexcept {
+        cross_cow_invalidations_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_fiber_stale_ref_count() const noexcept {
+        fiber_stale_ref_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_mutation_log_rollback_count() noexcept {
+        mutation_log_rollback_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_provenance_mismatch() const noexcept {
+        provenance_mismatch_.fetch_add(1, std::memory_order_relaxed);
+    }
     // Issue #391: stale-ref policy + observability
     // accessors + bump helpers. Public so the
     // (mutate:set-stale-ref-policy) / (query:stale-ref-policy)
@@ -2508,7 +2558,25 @@ public:
             return {false, true};
         }
         if (flat.generation() != captured_gen) {
-            // Gen mismatch → invalid + stale.
+            // Issue #549: classify the gen-mismatch as either
+            // a cross-COW-snapshot invalidation (most common
+            // case under mutate load — a structural mutate
+            // bumped generation_), or a fiber-stale-ref (when
+            // the captured gen is from a different fiber's
+            // workspace, surfaced via the captured-vs-current
+            // delta). We use the delta between captured_gen and
+            // the current generation_ as a heuristic: small
+            // delta = cross-COW (likely same fiber, just
+            // mutated); large delta = fiber-stale (captured
+            // from a different workspace's history).
+            const auto delta = (captured_gen > flat.generation())
+                ? static_cast<std::uint32_t>(captured_gen - flat.generation())
+                : static_cast<std::uint32_t>(flat.generation() - captured_gen);
+            if (delta <= 8) {
+                bump_cross_cow_invalidations();
+            } else {
+                bump_fiber_stale_ref_count();
+            }
             return {false, true};
         }
         return {true, false};
@@ -2791,6 +2859,15 @@ public:
             BoundaryRollbackStats stats;
             stats.field_records_rolled =
                 workspace_flat_->rollback_to_size(cp.mutation_log_size);
+            // Issue #549: bump mutation_log_rollback_count_ so
+            // (query:self-evolution-stability-stats) can report
+            // the lifetime # of times the log was actually
+            // rolled back (a stricter subset of the lifetime #
+            // of failed boundaries; bumps only when there were
+            // mutations to undo).
+            if (stats.field_records_rolled > 0) {
+                bump_mutation_log_rollback_count();
+            }
             // Issue #221: restore the per-node children_ from the
             // pre-mutation snapshot. The checkpoint's children_snapshot
             // holds shared_ptrs to the pre-mutation PCs (PCV COW),
