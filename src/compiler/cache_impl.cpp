@@ -158,7 +158,7 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     // ── Write header via std::meta reflection (auto_serialize<CacheHeader>) ─
     CacheHeader header = {};
     std::memcpy(header.magic, "AURACACHE", 8);
-    header.version = 4;
+    header.version = 5;
     header.num_nodes = static_cast<std::uint32_t>(n);
     header.num_strings = static_cast<std::uint32_t>(stbl.strings.size());
     header.content_hash = static_cast<std::uint64_t>(root);
@@ -442,7 +442,9 @@ MappedCache open_cache(const std::string& path) {
 
     // Version 4+ uses reflection-based IR format (size-prefixed blob)
     // Version 3 used a hand-written format — safe to skip (rebuilt on miss)
-    if (hdr->ir_offset > 0 && hdr->num_functions > 0 && hdr->version >= 4) {
+    // Version 5+ IR blobs include IRInstruction::source_marker (#455).
+    // v4 blobs were serialized with a smaller mirror layout — skip them.
+    if (hdr->ir_offset > 0 && hdr->num_functions > 0 && hdr->version >= 5) {
         auto* ir_data = static_cast<const char*>(data) + hdr->ir_offset;
 
         // Read size prefix
