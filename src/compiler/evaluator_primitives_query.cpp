@@ -629,6 +629,47 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             runs + total + unknown + int_width));
     });
 
+    // Issue #306: query:linear-ownership-stats. Returns the
+    // sum of 4 hardware resource linear-ownership observability
+    // counters (EDA track — wire/reg/mem/port borrow + double-
+    // drive detection):
+    //   - hw_resource_wire_borrows_    (# of Wire resource
+    //     borrows issued by the lowerer)
+    //   - hw_resource_reg_writes_      (# of Reg resource
+    //     writes issued by the lowerer)
+    //   - hw_resource_mem_access_     (# of Mem resource
+    //     accesses issued by the lowerer)
+    //   - hw_resource_double_drive_   (# of double-drive
+    //     violations caught at compile time — should be 0
+    //     in correct hardware code; > 0 = EDA bug)
+    //
+    // P0: returns an integer = sum of the 4 counters.
+    // Follow-up: returns a 4-tuple
+    // (wire-borrows reg-writes mem-access double-drive) so
+    // the AI Agent can react to double-drive > 0 as a hard
+    // alert (hardware simulation safety).
+    //
+    // Non-duplicative with #556 (query:edsl-concurrency-stats)
+    // — the latter is general EDSL concurrency; this primitive
+    // is the EDA-specific hardware-resource linear-ownership
+    // observability.
+    add("query:linear-ownership-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t wire_borrows =
+            m->hw_resource_wire_borrows_.load(std::memory_order_relaxed);
+        const std::uint64_t reg_writes =
+            m->hw_resource_reg_writes_.load(std::memory_order_relaxed);
+        const std::uint64_t mem_access =
+            m->hw_resource_mem_access_.load(std::memory_order_relaxed);
+        const std::uint64_t double_drive =
+            m->hw_resource_double_drive_.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(
+            wire_borrows + reg_writes + mem_access + double_drive));
+    });
+
     // Issue #551: query:reflect-postmutate-stats. Returns
     // the sum of the 4 reflect post-mutate observability
     // counters:

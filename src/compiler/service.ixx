@@ -416,6 +416,44 @@ public:
     void bump_type_propagation_int_width() noexcept {
         metrics_.type_propagation_int_width_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #306: hardware resource linear-ownership
+    // accessors (EDA track — wire/reg/mem/port borrow +
+    // double-drive detection). Read directly from the shared
+    // CompilerMetrics struct (also bumped by the follow-up
+    // OwnershipEnv wire-up in lowering_linear_types). Exposed
+    // via (query:linear-ownership-stats) primitive.
+    [[nodiscard]] std::uint64_t get_hw_resource_wire_borrows() const noexcept {
+        return metrics_.hw_resource_wire_borrows_.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_hw_resource_reg_writes() const noexcept {
+        return metrics_.hw_resource_reg_writes_.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_hw_resource_mem_access() const noexcept {
+        return metrics_.hw_resource_mem_access_.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_hw_resource_double_drive() const noexcept {
+        return metrics_.hw_resource_double_drive_.load(
+            std::memory_order_relaxed);
+    }
+    // Bump helpers (for the follow-up OwnershipEnv + linear
+    // lowering wire-up in the EDA backend). Public so the
+    // test file can verify the counter wiring is reachable
+    // from C++.
+    void bump_hw_resource_wire_borrows() noexcept {
+        metrics_.hw_resource_wire_borrows_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_hw_resource_reg_writes() noexcept {
+        metrics_.hw_resource_reg_writes_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_hw_resource_mem_access() noexcept {
+        metrics_.hw_resource_mem_access_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_hw_resource_double_drive() noexcept {
+        metrics_.hw_resource_double_drive_.fetch_add(1, std::memory_order_relaxed);
+    }
     // Bump helpers (for follow-up IRClosure::invalidate_if_stale +
     // GCEnvWalkFn integration). Public so the test file can
     // verify the counter wiring is reachable from C++.
