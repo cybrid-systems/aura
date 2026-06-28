@@ -1069,6 +1069,13 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #564: Core Builtins Selective Review (P3, long-term).
+# 5 scenarios validating: lib/std/core.aura (new, 10 stdlib
+# wrappers) + decision doc with STAY+DEMOTE tables + reusable
+# review process + regression on engine core primitives.
+# Non-duplicative with #558-#563.
+aura_add_issue_test(test_core_builtins_review)
+aura_issue_test_link_llvm_jit(test_core_builtins_review)
 # Issue #563: New/enhanced std/ast + std/workspace high-level
 # modules (P2). 5 scenarios validating: lib/std/ast.aura
 # (new, 6 stdlib functions) + lib/std/workspace.aura enhanced

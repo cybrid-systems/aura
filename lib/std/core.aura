@@ -1,0 +1,100 @@
+; lib/std/core.aura — Core builtin high-level helpers (Issue #564)
+;
+; Import with: (import "std/core")
+; Or:        (require "std/core" all:)
+;
+; Wraps 8+ core builtin primitives into Agent-friendly
+; helpers. The underlying primitives STAY in the engine
+; (red-line #1: engine-boot + #3: perf hot path) — the
+; stdlib layer is a higher-level facade.
+;
+; Decisions per docs/design/core-builtins-checklist.md.
+; All helpers are pure stdlib (no engine state mutation).
+
+(export core:any core:all core:zip-with
+        core:group-by core:chunk core:running-sum
+        core:safe-div core:format-currency
+        core:clamp core:lerp)
+
+; ── (core:any pred lst) ──
+; Returns #t if (pred x) is true for ANY x in lst.
+; Built on (foldl + boolean short-circuit).
+(define (core:any pred lst)
+  (cond
+    ((null? lst) #f)
+    ((pred (car lst)) #t)
+    (else (core:any pred (cdr lst)))))
+
+; ── (core:all pred lst) ──
+; Returns #t if (pred x) is true for ALL x in lst.
+(define (core:all pred lst)
+  (cond
+    ((null? lst) #t)
+    ((pred (car lst)) (core:all pred (cdr lst)))
+    (else #f)))
+
+; ── (core:zip-with f a b) ──
+; Apply f element-wise to two lists; stops at the shorter.
+(define (core:zip-with f a b)
+  (cond
+    ((or (null? a) (null? b)) (list))
+    (else (cons (f (car a) (car b))
+                (core:zip-with f (cdr a) (cdr b))))))
+
+; ── (core:group-by keyfn lst) ──
+; Group consecutive elements by keyfn; returns association
+; list of (key . (group-of-elements)).
+(define (core:group-by keyfn lst)
+  (let loop ((rest lst) (acc (list)))
+    (cond
+      ((null? rest) (reverse acc))
+      (else
+        (let* ((k (keyfn (car rest)))
+               (matching (filter (lambda (x) (equal? (keyfn x) k)) rest))
+               (other (filter (lambda (x) (not (equal? (keyfn x) k))) rest)))
+          (loop other (cons (list k matching) acc))))))
+
+; ── (core:chunk n lst) ──
+; Split lst into chunks of size n. Last chunk may be shorter.
+(define (core:chunk n lst)
+  (cond
+    ((or (null? lst) (<= n 0)) (list))
+    (else
+      (let take-n ((i 0) (src lst) (acc (list)))
+        (cond
+          ((or (null? src) (= i n)) (cons (reverse acc) (core:chunk n src)))
+          (else (take-n (+ i 1) (cdr src) (cons (car src) acc)))))))
+
+; ── (core:running-sum lst) ──
+; Return the running (cumulative) sum of lst.
+(define (core:running-sum lst)
+  (let loop ((rest lst) (acc 0) (out (list)))
+    (cond
+      ((null? rest) (reverse out))
+      (else
+        (let ((new-acc (+ acc (car rest))))
+          (loop (cdr rest) new-acc (cons new-acc out)))))))
+
+; ── (core:safe-div a b) ──
+; Division that returns 0 when b is 0 (instead of erroring).
+(define (core:safe-div a b)
+  (if (= b 0) 0 (/ a b)))
+
+; ── (core:format-currency n symbol) ──
+; Format a number as a currency string (e.g. "$42").
+; Pure stdlib string concatenation.
+(define (core:format-currency n symbol)
+  (string-append symbol (number->string n)))
+
+; ── (core:clamp x lo hi) ──
+; Clamp x to the range [lo, hi].
+(define (core:clamp x lo hi)
+  (cond
+    ((< x lo) lo)
+    ((> x hi) hi)
+    (else x)))
+
+; ── (core:lerp a b t) ──
+; Linear interpolation between a (t=0) and b (t=1).
+(define (core:lerp a b t)
+  (+ a (* t (- b a))))
