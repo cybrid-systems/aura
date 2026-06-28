@@ -1069,6 +1069,16 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #553: End-to-End Atomic Batch Mutate + Full
+# mutation_log_ Rollback + MutationBoundaryGuard + Fiber
+# Safety for Reliable AI Multi-Step Self-Evolution (P0).
+# 9 scenarios validating: new (query:mutation-log-stats)
+# primitive + atomic_batch happy/rollback paths +
+# 50-iter stress + 8-thread concurrent + (gc-heap) +
+# regression. Non-duplicative refinement of #529 focused
+# on Task1 EDSL primitives + Guard/fiber paths.
+aura_add_issue_test(test_atomic_batch_rollback_fiber_task1)
+aura_issue_test_link_llvm_jit(test_atomic_batch_rollback_fiber_task1)
 # Issue #552: StableNodeRef + generation_ + COW/Fiber/
 # Provenance Safety for Reliable Long-Running AI
 # Multi-Round Query → Mutate → Eval Loops (P0). 9

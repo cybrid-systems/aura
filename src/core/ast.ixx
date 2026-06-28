@@ -4214,6 +4214,9 @@ public:
     // saved by suppressing per-op bumps. Updated on each
     // commit. Exposed via observability snapshot.
     std::uint64_t atomic_batch_bumps_saved() const noexcept { return atomic_batch_bumps_saved_; }
+    [[nodiscard]] std::uint64_t atomic_batch_commits() const noexcept {
+        return atomic_batch_commits_.load(std::memory_order_relaxed);
+    }
 
     // True iff an atomic batch is active. Used by
     // mark_dirty_upward to skip dirty propagation during

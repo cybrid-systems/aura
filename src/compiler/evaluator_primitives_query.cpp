@@ -661,6 +661,57 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             cross_cow + fiber_stale + wraps + rollback + provenance));
     });
 
+    // Issue #553: query:mutation-log-stats. Returns the
+    // sum of 4 atomic-batch + mutation-log observability
+    // counters from across the workspace + Evaluator:
+    //   - atomic_batch_steal_violation_  (Evaluator, #459)
+    //     # of steal attempts during an active outermost
+    //     atomic batch — must be 0 in production
+    //   - atomic_batch_commits_           (FlatAST, #192)
+    //     # of commit_atomic_batch calls — each is one
+    //     multi-mutate transaction successfully batched
+    //   - atomic_batch_bumps_saved_       (FlatAST, #192)
+    //     # of generation bumps SUPPRESSED by the
+    //     batch (kGenerationSuppressed flag) — measures
+    //     the "single bump per commit" optimization win
+    //   - atomic_batch_rollbacks_         (Evaluator, #192)
+    //     # of rollback_atomic_batch calls — strict
+    //     subset of fail-fast paths that actually rolled
+    //     back (vs succeed-but-with-partial-warning)
+    //
+    // P0: returns an integer = sum of the 4 counters.
+    // Follow-up: returns a 4-tuple
+    // (steal-violations commits bumps-saved rollbacks) so
+    // the AI Agent can compute bumps_saved / commits
+    // (= avg # of mutations per batch) and react to
+    // steal-violations > 0 as a hard alert (the batch
+    // is supposed to be steal-safe).
+    //
+    // Non-duplicative with #459 (query:atomic-batch-stats)
+    // — the latter is a 1-counter P0 ship; this primitive
+    // exposes the full 4-counter matrix needed for
+    // production observability of the atomic batch +
+    // rollback + fiber safety closed loop.
+    add("query:mutation-log-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        auto* ws = ev->workspace_flat();
+        const std::uint64_t steal_violations =
+            ev->get_atomic_batch_steal_violation();
+        const std::uint64_t batch_count = ev->atomic_batch_count();
+        const std::uint64_t bumps_saved_total =
+            ev->atomic_batch_bumps_saved_total();
+        const std::uint64_t rollbacks = ev->atomic_batch_rollbacks();
+        const std::uint64_t ws_commits =
+            ws ? ws->atomic_batch_commits() : 0;
+        const std::uint64_t ws_bumps_saved =
+            ws ? ws->atomic_batch_bumps_saved() : 0;
+        return make_int(static_cast<std::int64_t>(
+            steal_violations + batch_count + bumps_saved_total +
+            rollbacks + ws_commits + ws_bumps_saved));
+    });
+
     // Issue #447: (query:tag-arity-count tag-int arity-int)
     // — count of nodes matching (tag, arity) using the
     // pre-built index. Bumps the hits or misses counter
