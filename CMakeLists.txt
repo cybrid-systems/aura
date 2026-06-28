@@ -1069,6 +1069,17 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #542: Multi-Fiber MutationBoundary + Work-Stealing
+# Safety + Starvation Prevention Stress Tests (P0). New
+# stress binary complementing #321/#345 with: 8-50
+# std::threads concurrent mutate + version-stamp
+# monotonicity, GC safepoint coordination under mutation
+# pressure, scheduler+fiber yield-reason observability,
+# long-running fuzz, regression check. Deliberately
+# avoids eval-in-fiber (workspace-lock deadlock pattern
+# observed in first iteration).
+aura_add_issue_test(test_fiber_mutation_steal_safety)
+aura_issue_test_link_llvm_jit(test_fiber_mutation_steal_safety)
 # Issue #329: white-box StableNodeRef / generation_ stress
 # + dangling-rate gate. Extends #345 with NodeId sampling
 # via query:children + mutation invalidation tracking.
