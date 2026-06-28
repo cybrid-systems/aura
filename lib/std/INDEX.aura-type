@@ -1,0 +1,5 @@
+stdlib:list: Any -> Any
+stdlib:help: Any -> Any
+stdlib:examples: Any -> Any
+stdlib:by-prefix: Any -> Any
+stdlib:by-tag: Any -> Any

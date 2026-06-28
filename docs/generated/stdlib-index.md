@@ -2,18 +2,21 @@
 
 # Standard library index (generated)
 
-**52** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**57** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
+| `std/INDEX` | `stdlib:list` `stdlib:help` `stdlib:examples` `stdlib:by-prefix` `stdlib:by-tag` | lib/std/INDEX.aura — Stdlib discoverability index (Issue #565) |
 | `std/adaptive` | `string-index` `string-contains?` `string-trim` `measure-distance` `structured-diagnosis` `pid:analyze` `get-api-ref` `get-full-api-ref` | lib/std/adaptive.aura -- adaptive intend decision module |
 | `std/agent` | `auto-grow` `safe-eval` `llm-ask` `extract-code` | agent.aura — Self-growing AI agent library |
 | `std/algorithm` | `sort-stable` `sort-by` `binary-search` `merge-sorted` `merge` `sorted?` `unique` `min-by` … (+3) | Aura standard algorithm library |
 | `std/ant` | `pheromone:init` `pheromone:update` `pheromone:rank` `pheromone:score` `pheromone:export` `colony:search` | lib/std/ant.aura -- ant colony pheromone system + colony:search |
 | `std/ast-viz` | `ast:to-dot` `ast:to-dot-node` `mutation:trace` `mutation:trace-node` | — |
+| `std/ast` | `ast:summary-formatted` `ast:diff-formatted` `ast:validate-summary` `ast:version-summary` `ast:ref-stats` `ast:memory-pressure` | lib/std/ast.aura — High-level AST helpers (Issue #563) |
 | `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` | — |
 | `std/capability` | `capability-stack` `capability?` `check-capability` | std/capability.aura — Capability 标准库 |
 | `std/combinators` | `compose` `curry` `rcurry` `partial2` `const` `identity` `flip` `complement` … (+1) | combinators.aura — Functional programming utilities |
+| `std/core` | `core:any` `core:all` `core:zip-with` `core:group-by` `core:chunk` `core:running-sum` `core:safe-div` `core:format-currency` … (+2) | lib/std/core.aura — Core builtin high-level helpers (Issue #564) |
 | `std/csv` | `csv-parse` `csv->rows` `csv->table` `csv-select` `csv-filter` `csv-header` `column-names` | csv.aura — CSV parsing and generation |
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |
 | `std/datetime` | `;` `Core` `timestamp` `timestamp->year` `timestamp->month` `timestamp->day` `timestamp->hour` `timestamp->minute` … (+17) | datetime.aura — Date and time utilities |
@@ -38,7 +41,7 @@
 | `std/process` | `sh` `sh-ok?` `which` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
-| `std/query` | `query:filter` `query:uncalled` `query:callers-of` `query:defines-by-marker` `query:calls-by-marker` `query:node-marker` `query:defines` `query:calls` … (+1) | — |
+| `std/query` | `query:list-categories` `query:help` `query:nodes-with-marker` `query:find-by-name` `query:subtree` | lib/std/query.aura — query: namespace high-level Agent API |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (pair-based, immutable) |
 | `std/random` | `make-random` `random-next` `random-integer` `random-float` `random-range` `random-vector` `shuffle` `random-seed` | random.aura — Simple pseudo-random number generator |
 | `std/refactor` | `refactor:rename-var` `refactor:extract-function` `refactor:inline-function` | — |
@@ -49,12 +52,14 @@
 | `std/set` | `set` `set-add` `set-remove` `set-member?` `set-empty?` `set-union` `set-intersect` `set-difference` … (+5) | set.aura — Set data structure (built on hash tables) |
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` | socket.aura — TCP socket library |
 | `std/stack` | `make-stack` `stack-push` `stack-pop` `stack-top` `stack-empty?` `stack-length` `stack->list` `list->stack` | stack.aura — LIFO stack (pair-based) |
+| `std/stats` | `get` `list` `contains?` `count` `prefix` `filter` | Aura standard observability / stats module |
 | `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+10) | Aura standard string library |
 | `std/struct` | — | Aura struct library — define-struct as a macro |
 | `std/synthesize-v2` | `synthesize:test-driven` `synthesize:debug` `synthesize:project` `synthesize:compose` `synthesize:run-tests` `synthesize:eval-test` | lib/std/synthesize-v2.aura -- Synthesize Pipeline v2 |
+| `std/synthesize` | `synthesize:list-templates` `synthesize:list-help` | lib/std/synthesize.aura — synthesize: namespace stdlib wrappers |
 | `std/test` | — | Aura Testing Framework |
 | `std/uuid` | `uuid` `uuid-compact` `uuid-nil` | lib/std/uuid.aura — UUID v4 generation |
 | `std/validate` | `json-type` `err` `check` `validate` `valid?` `error-count` | Aura JSON Schema Validator — 纯函数式 |
 | `std/vector-math` | `vec:map` `vec:zip` `vec:fold` `vec:sum` `vec:prod` `vec:mean` `vec:dot` `vec:norm` … (+26) | lib/std/vector-math.aura — Numerical vector operations |
 | `std/verify` | `verify-output` | verify.aura — Output-verified code checking |
-| `std/workspace` | `ws:merge-symbols` `ws:diff` | lib/std/workspace.aura — Workspace utilities |
+| `std/workspace` | `ws:merge-symbols` `ws:diff` `ws:snapshot-current` `ws:list-snapshots` `ws:rollback-latest` `ws:memory-pressure` `ws:current-stats` | lib/std/workspace.aura — Workspace utilities (Issue #563) |
