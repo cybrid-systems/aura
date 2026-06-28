@@ -12,6 +12,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.core.mutators;  // Phase 4 follow-up #4: (compile:mutator-dispatch-stats)
+import aura.core.type;
 import aura.compiler.value;
 import aura.compiler.service;
 import aura.compiler.type_checker;
@@ -3264,6 +3265,151 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                                    e_fail, e_anam, e_aknd, e_amut, e_total};
         for (auto eid : entries) cons(eid);
         return result;
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // Issue #308: hardware BitVector type primitives.
+    //
+    // Three primitives expose the BitVecType side-table that
+    // TypeRegistry::register_hw_bitvec populates:
+    //
+    //   (compile:hw-bitvec-register <type-name> <width> <signed?>)
+    //     Marks `type-name` as a hardware BitVector with the
+    //     given width (bit count, e.g. 8/16/32/64) and
+    //     signedness (true = two's-complement signed).
+    //     Idempotent for the same (width, signed) pair.
+    //     Returns 1 on success, 0 if the type doesn't exist.
+    //
+    //   (compile:hw-bitvec-width <type-name>)
+    //     Returns the BitVector width (e.g. 8 for uint8_t)
+    //     or 0 if the type is not registered as a hw bitvec.
+    //
+    //   (compile:hw-bitvec-signed? <type-name>)
+    //     Returns 1 if the type is a signed hw bitvec,
+    //     0 if unsigned, 0 if not a hw bitvec.
+    //
+    //   (compile:hw-bitvec-compatible? <a-name> <b-name>)
+    //     Returns 1 if both types are hw bitvecs with the
+    //     SAME width AND signedness (i.e. they're the same
+    //     hardware type). Returns 0 on any mismatch (different
+    //     width, different signedness, or one/both not
+    //     registered). The canonical hardware bug caught
+    //     here is `assigning uint8_t to uint16_t` — caught
+    //     at type-check time via this primitive.
+    //
+    // Why these primitives:
+    //   - BitVector types are a side-table populated via
+    //     (compile:hw-bitvec-register), not via the type
+    //     constructor. The primitives let the user register
+    //     a type as a hw bitvec without modifying the parser
+    //     or typesystem.md (which is the follow-up).
+    //   - The (compile:hw-bitvec-compatible?) primitive IS
+    //     the AC2 "BitVector width mismatch caught at type
+    //     check time" — the user code calls it at the
+    //     binding/check point and reports the diagnostic.
+    //   - Future #308 follow-ups: native BitVector type in
+    //     the parser (e.g. (BitVec 8) form), automatic
+    //     width-mismatch diagnostic in InferenceEngine's
+    //     subtyping path, Clock/Reset domain tracking.
+    add("compile:hw-bitvec-register", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
+            return ev.make_merr("bad-arg",
+                "usage: (compile:hw-bitvec-register type-name width signed?)");
+        }
+        auto sidx = as_string_idx(a[0]);
+        std::string name;
+        if (sidx < ev.string_heap_.size())
+            name = ev.string_heap_[sidx];
+        else
+            return ev.make_merr("bad-arg", "type name string index out of range");
+        if (!ev.type_registry_)
+            ev.type_registry_ = new aura::core::TypeRegistry();
+        auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
+        auto tid = reg.lookup_type(name);
+        // Auto-register the type as INT if it doesn't exist.
+        // The hardware BitVector is an integer-like type
+        // (uint8_t / int16_t / etc.), so INT is a sensible
+        // default tag. Pre-existing types (registered with
+        // other tags via declare-type) are kept.
+        if (!tid.valid()) {
+            tid = reg.register_type(aura::core::TypeTag::INT, name);
+        }
+        const auto width = static_cast<std::uint32_t>(as_int(a[1]));
+        const bool is_signed = as_int(a[2]) != 0;
+        reg.register_hw_bitvec(tid, width, is_signed);
+        return make_int(1);
+    });
+
+    add("compile:hw-bitvec-width", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return ev.make_merr("bad-arg",
+                "usage: (compile:hw-bitvec-width type-name)");
+        auto sidx = as_string_idx(a[0]);
+        std::string name;
+        if (sidx < ev.string_heap_.size())
+            name = ev.string_heap_[sidx];
+        else
+            return make_int(0);
+        if (!ev.type_registry_)
+            return make_int(0);
+        auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
+        auto tid = reg.lookup_type(name);
+        if (!tid.valid())
+            return make_int(0);
+        auto* bv = reg.hw_bitvec_of(tid);
+        if (!bv)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(bv->width));
+    });
+
+    add("compile:hw-bitvec-signed?", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return ev.make_merr("bad-arg",
+                "usage: (compile:hw-bitvec-signed? type-name)");
+        auto sidx = as_string_idx(a[0]);
+        std::string name;
+        if (sidx < ev.string_heap_.size())
+            name = ev.string_heap_[sidx];
+        else
+            return make_int(0);
+        if (!ev.type_registry_)
+            return make_int(0);
+        auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
+        auto tid = reg.lookup_type(name);
+        if (!tid.valid())
+            return make_int(0);
+        auto* bv = reg.hw_bitvec_of(tid);
+        if (!bv)
+            return make_int(0);
+        return make_int(bv->is_signed ? 1 : 0);
+    });
+
+    add("compile:hw-bitvec-compatible?", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+            return ev.make_merr("bad-arg",
+                "usage: (compile:hw-bitvec-compatible? type-a-name type-b-name)");
+        auto asx = as_string_idx(a[0]);
+        auto bsx = as_string_idx(a[1]);
+        std::string an, bn;
+        if (asx < ev.string_heap_.size()) an = ev.string_heap_[asx];
+        if (bsx < ev.string_heap_.size()) bn = ev.string_heap_[bsx];
+        if (!ev.type_registry_)
+            return make_int(0);
+        auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
+        auto ta = reg.lookup_type(an);
+        auto tb = reg.lookup_type(bn);
+        if (!ta.valid() || !tb.valid())
+            return make_int(0);
+        auto* ba = reg.hw_bitvec_of(ta);
+        auto* bb = reg.hw_bitvec_of(tb);
+        if (!ba || !bb)
+            return make_int(0);  // one or both not registered as hw bitvecs
+        // Compatible iff SAME width AND SAME signedness.
+        // The canonical hardware bug: uint8_t vs uint16_t
+        // (different widths), uint8_t vs int8_t (different
+        // signedness), or any other mismatch.
+        const bool ok = (ba->width == bb->width) && (ba->is_signed == bb->is_signed);
+        return make_int(ok ? 1 : 0);
     });
 
 } // register_compile_primitives

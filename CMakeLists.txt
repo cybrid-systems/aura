@@ -1638,6 +1638,16 @@ aura_add_issue_test(test_issue_451)
 aura_issue_test_link_llvm_jit(test_issue_451)
 aura_add_issue_test(test_issue_478)
 aura_issue_test_link_llvm_jit(test_issue_478)
+# Issue #308: hardware BitVector type + 4 Aura primitives
+# (compile:hw-bitvec-register / -width / -signed? /
+# -compatible?) + C++ TypeRegistry::register_hw_bitvec +
+# hw_bitvec_of side-table. 5-AC test validates hw enum
+# exhaustiveness (AC1, re-validates #260), BitVector
+# width-mismatch diagnostic (AC2, the new primitive path),
+# nested match exhaustiveness (AC3, re-validates #260), the
+# hw module pattern (AC4 — covers AC1+AC2+AC3 together).
+aura_add_issue_test(test_issue_308)
+aura_issue_test_link_llvm_jit(test_issue_308)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

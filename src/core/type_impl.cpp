@@ -371,6 +371,26 @@ const EffectType* TypeRegistry::effect_of(TypeId id) const {
     return nullptr;
 }
 
+// Issue #308: hardware BitVector type side-table. Sets
+// the width + signed flag on the entry for `type_id`. If
+// the entry already had hw_bitvec set, this overwrites
+// (the latest registration wins — the Aura primitive is
+// idempotent for a fixed width/signed pair, and the
+// second call with a different pair is a user bug caught
+// by the compatibility-check primitive). Returns silently
+// if type_id is invalid or out of range.
+void TypeRegistry::register_hw_bitvec(TypeId type_id, std::uint32_t width, bool is_signed) {
+    if (type_id.valid() && type_id.index < entries_.size()) {
+        entries_[type_id.index]->hw_bitvec = BitVecType{width, is_signed};
+    }
+}
+
+const BitVecType* TypeRegistry::hw_bitvec_of(TypeId id) const {
+    if (id.index < entries_.size() && entries_[id.index]->hw_bitvec)
+        return &*entries_[id.index]->hw_bitvec;
+    return nullptr;
+}
+
 TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
     // Issue #385: bump the register counter for
     // observability. Every call bumps it.
