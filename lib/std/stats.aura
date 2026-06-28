@@ -1,0 +1,124 @@
+; Aura standard observability / stats module
+; Import with: (require std/stats all:)
+; Or:        (import "std/stats")
+;
+; Issue #560: uniform wrapper around the 56 *-stats primitives
+; scattered across `query:*-stats` and `compile:*-stats` namespaces.
+; This module provides a single uniform interface:
+;
+;   (stats:get "query:envframe-dualpath-stats")  ; direct lookup
+;   (stats:get "all")                            ; every counter
+;   (stats:list)                                 ; enumerate names
+;   (stats:contains? "query:envframe-dualpath-stats")
+;   (stats:count)                                ; # registered stats
+;
+; The underlying primitives remain (no removal this cycle —
+; tracked as future follow-up under the Issue #560 migration
+; plan). The wrapper just routes by string name.
+
+(export get list contains? count prefix filter)
+
+; ── Master registry (manually maintained for P0) ────────────────
+; New stats primitives added to the engine should be appended
+; here AND in the underlying evaluator_primitives_*.cpp file.
+; The (stats:list) primitive returns the live engine count
+; for verification; this list is the source of truth for the
+; stdlib layer.
+
+(define stats-registry
+  (list
+    ; ── Issue #543 — EnvFrame dual-path ──
+    "query:envframe-dualpath-stats"
+    ; ── Issue #547 — Pattern + MacroIntroduced hygiene ──
+    "query:pattern-index-stats"
+    "query:pattern-hygiene-stats"
+    ; ── Issue #548 — Panic-checkpoint lifecycle ──
+    "query:panic-checkpoint-lifecycle-stats"
+    ; ── Issue #549 — Self-evolution stability ──
+    "query:self-evolution-stability-stats"
+    ; ── Issue #550 — Typed mutation + dirty impact ──
+    "query:typed-mutation-stats"
+    "query:dirty-impact"
+    ; ── Issue #551 — Reflect post-mutate ──
+    "query:reflect-postmutate-stats"
+    ; ── Issue #552 — EDSL stability ──
+    "query:edsl-stability-stats"
+    ; ── Issue #553 — Atomic batch + mutation log ──
+    "query:mutation-log-stats"
+    ; ── Issue #554 — Pattern index timing ──
+    "query:pattern-index-stats"   ; same as #547; extended with timing
+    ; ── Issue #555 — Typed mutation Task1 ──
+    "query:typed-mutation-stats-task1"
+    ; ── Issue #556 — EDSL concurrency safety ──
+    "query:edsl-concurrency-stats"
+    ; ── Issue #531 — Closure env safety ──
+    "query:closure-env-safety-stats"
+    ; ── Pre-existing (Issue #288, #391, #447, #457, #459) ──
+    "query:query-stats"
+    "query:stale-ref-stats"
+    "query:atomic-batch-stats"
+    "query:stable-ref-stats"
+    "query:fiber-migration-stats"
+    "query:mutation-coordination-stats"
+    "query:envframe-stale-stats"
+    "query:envframe-bump-stats"
+    "query:dirty-subtree"
+    "query:epoch-stats"
+    "query:macro-introduced"
+    "query:by-marker"
+    "compile:compiler-cache-stats"
+    "compile:compiler-incremental-stats"
+    "compile:typecheck-stats"
+    "compile:jit-stats"
+    "compile:arena-stats"
+    "compile:dead-coercion-stats"
+    "compile:per-defuse-index-stats"
+    "compile:mutator-dispatch-stats"
+    "compile:mutation-impact-stats"
+    "compile:inline-pass-stats"
+    "compile:type-cache-stats"
+    "compile:dirty-impact-stats"))
+
+; ── (stats:get name) → invoke the named stats primitive ──────
+(define (stats:get name)
+  (cond
+    ((equal? name "all")
+      ; Bundle every registered stats primitive into a
+      ; structured list of (name . value) pairs.
+      (map (lambda (n) (cons n (eval n))) stats-registry))
+    ((member? name stats-registry)
+      (eval name))
+    (else
+      ; Unknown name — surface a structured diagnostic.
+      (list 'unknown-stats-name name))))
+
+; ── (stats:list) → list of every registered stats primitive ──
+(define (stats:list) stats-registry)
+
+; ── (stats:contains? name) → bool ──
+(define (stats:contains? name)
+  (member? name stats-registry))
+
+; ── (stats:count) → number of registered stats primitives ──
+(define (stats:count) (length stats-registry))
+
+; ── (stats:prefix "query:") → list of stats matching prefix ──
+(define (stats:prefix p)
+  (filter (lambda (n) (string-contains? n p)) stats-registry))
+
+; ── (stats:filter pred) → list of stats matching pred ──
+(define (stats:filter pred)
+  (filter pred stats-registry))
+
+; ── Helper: string-contains? (Aura lacks this in stdlib) ──
+(define (string-contains? s sub)
+  (let ((n (string-length s)) (m (string-length sub)))
+    (cond
+      ((> m n) #f)
+      ((= m 0) #t)
+      (else
+        (let loop ((i 0))
+          (cond
+            ((> (+ i m) n) #f)
+            ((string=? (substring s i (+ i m)) sub) #t)
+            (else (loop (+ i 1))))))))

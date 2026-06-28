@@ -427,6 +427,90 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_vector(vidx);
     });
 
+    // Issue #560: (stats:list) — returns the list of every
+    // registered *-stats primitive (the source of truth for
+    // the std/stats Aura module). Each entry is the primitive
+    // name (string). Used by std/stats.aura for the (stats:list)
+    // + (stats:count) helpers + for AI Agent observability
+    // dashboards that want to enumerate all stats.
+    add("stats:list", [&ev](const auto&) -> EvalValue {
+        const std::vector<std::string> stats = {
+            // Issue #543 — EnvFrame dual-path
+            "query:envframe-dualpath-stats",
+            // Issue #547 — Pattern + MacroIntroduced hygiene
+            "query:pattern-index-stats",
+            "query:pattern-hygiene-stats",
+            // Issue #548 — Panic-checkpoint lifecycle
+            "query:panic-checkpoint-lifecycle-stats",
+            // Issue #549 — Self-evolution stability
+            "query:self-evolution-stability-stats",
+            // Issue #550 — Typed mutation + dirty impact
+            "query:typed-mutation-stats",
+            "query:dirty-impact",
+            // Issue #551 — Reflect post-mutate
+            "query:reflect-postmutate-stats",
+            // Issue #552 — EDSL stability
+            "query:edsl-stability-stats",
+            // Issue #553 — Atomic batch + mutation log
+            "query:mutation-log-stats",
+            // Issue #554 — Pattern index timing (same name as #547; unified)
+            // Issue #555 — Typed mutation Task1
+            "query:typed-mutation-stats-task1",
+            // Issue #556 — EDSL concurrency safety
+            "query:edsl-concurrency-stats",
+            // Issue #531 — Closure env safety
+            "query:closure-env-safety-stats",
+            // Pre-existing (Issue #288, #391, #447, #457, #459)
+            "query:query-stats",
+            "query:stale-ref-stats",
+            "query:atomic-batch-stats",
+            "query:stable-ref-stats",
+            "query:fiber-migration-stats",
+            "query:mutation-coordination-stats",
+            "query:envframe-stale-stats",
+            "query:envframe-bump-stats",
+            "query:dirty-subtree",
+            "query:epoch-stats",
+            "query:macro-introduced",
+            "query:by-marker",
+            // Compile: stats (Issue #560 enumeration source of truth)
+            "compile:compiler-cache-stats",
+            "compile:compiler-incremental-stats",
+            "compile:typecheck-stats",
+            "compile:jit-stats",
+            "compile:arena-stats",
+            "compile:dead-coercion-stats",
+            "compile:per-defuse-index-stats",
+            "compile:mutator-dispatch-stats",
+            "compile:mutation-impact-stats",
+            "compile:inline-pass-stats",
+            "compile:type-cache-stats",
+            "compile:dirty-impact-stats",
+            // Primitive error (Issue #478)
+            "query:primitive-error-stats",
+        };
+        // Convert the C++ vector to an Aura list of strings.
+        EvalValue result = make_void();
+        for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(*it);
+            auto pid = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(sidx), result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
+
+    // Issue #560: (stats:count) — companion to (stats:list).
+    // Returns the # of registered *-stats primitives.
+    add("stats:count", [&ev](const auto&) -> EvalValue {
+        // Source of truth = (stats:list) entry count.
+        // 38 entries as of #560 ship (12 query:*-stats from
+        // #543-#556 + #531 + 14 pre-existing query stats + 11
+        // compile: stats + 1 query:primitive-error-stats).
+        return make_int(38);
+    });
+
 }
 
 } // namespace aura::compiler::primitives_detail

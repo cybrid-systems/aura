@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**507** registrations scanned from `src/**/*.cpp`.
+**509** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 131 primitives (26%)
-- **core**: 164 primitives (32%)
+- **core**: 166 primitives (33%)
 - **internal-observable**: 65 primitives (13%)
 - **convenience**: 147 primitives (29%)
 
@@ -588,6 +588,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 - `scheduler:pin` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
+## Stats: (2)
+
+- `stats:count` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+- `stats:list` *[core]* — `src/compiler/evaluator_primitives_observability.cpp`
+
 ## String-Pool: (2)
 
 - `string-pool:compact` *[convenience]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -744,7 +749,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (164)
+### Core builtins (must remain primitive) (166)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -886,6 +891,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `shell` — `src/compiler/evaluator_primitives_file.cpp`
 - `sin` — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
+- `stats:count` — `src/compiler/evaluator_primitives_observability.cpp`
+- `stats:list` — `src/compiler/evaluator_primitives_observability.cpp`
 - `string<?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string=?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `string?` — `src/compiler/evaluator_primitives_pair.cpp`

@@ -1,0 +1,6 @@
+stats:get: Any -> Any
+stats:list: Any -> Any
+stats:contains?: Any -> Any
+stats:count: Any -> Any
+stats:prefix: Any -> Any
+stats:filter: Any -> Any
