@@ -1069,6 +1069,17 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #548: MutationBoundaryGuard Panic Checkpoint +
+# Nested Mutation + Fiber Resume + Auto-Rollback Lifecycle
+# stress tests (P0). 11 scenarios complementing #546 with:
+# 4 panic-checkpoint lifecycle counters + new
+# (query:panic-checkpoint-lifecycle-stats) primitive +
+# per-fiber depth probe + 500-iter nested mutate + random
+# panic fuzz + (gc-heap) under panic + 8-thread concurrent
+# nested mutate + regression. Non-duplicative with #546
+# (single-threaded Guard) + #542 (multi-fiber yield).
+aura_add_issue_test(test_mutation_boundary_panic_rollback_fiber)
+aura_issue_test_link_llvm_jit(test_mutation_boundary_panic_rollback_fiber)
 # Issue #547: query:pattern + MacroIntroduced Hygiene Filter
 # + Incremental tag_arity_index + DefUseIndex integration
 # for large-scale self-evolving SV/RTL verification loops

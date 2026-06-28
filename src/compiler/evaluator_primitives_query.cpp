@@ -458,6 +458,39 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             skips + violations));
     });
 
+    // Issue #548: query:panic-checkpoint-lifecycle-stats.
+    // Returns the sum of the 4 panic-checkpoint lifecycle
+    // observability counters:
+    //   - panic_checkpoint_save_count_  (lifetime # of
+    //     save_panic_checkpoint() calls that succeeded)
+    //   - panic_checkpoint_restore_count_  (lifetime # of
+    //     restore_panic_checkpoint() calls, both successful
+    //     and failed)
+    //   - panic_checkpoint_commit_count_  (lifetime # of
+    //     commit_panic_checkpoint() calls — typically once
+    //     per successful Guard dtor)
+    //   - rollback_success_on_panic_  (lifetime # of
+    //     restore_panic_checkpoint() calls that actually
+    //     succeeded — a stricter subset of restore_count)
+    //
+    // P0: returns an integer = sum of all 4 counters.
+    // Follow-up: returns a 4-tuple
+    // (save restore commit rollback-success) so the AI
+    // Agent can compute the rollback-success rate
+    // (= rollback_success / restore) and the save/commit
+    // ratio (= save / commit, ideally 1.0).
+    add("query:panic-checkpoint-lifecycle-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t save = ev->get_panic_checkpoint_save_count();
+        const std::uint64_t restore = ev->get_panic_checkpoint_restore_count();
+        const std::uint64_t commit = ev->get_panic_checkpoint_commit_count();
+        const std::uint64_t rollback_success = ev->get_rollback_success_on_panic();
+        return make_int(static_cast<std::int64_t>(
+            save + restore + commit + rollback_success));
+    });
+
     // Issue #447: (query:tag-arity-count tag-int arity-int)
     // — count of nodes matching (tag, arity) using the
     // pre-built index. Bumps the hits or misses counter

@@ -197,6 +197,10 @@ bool Evaluator::save_panic_checkpoint() {
     panic_safe_pairs_size_ = pairs_.size();
     panic_safe_string_heap_size_ = string_heap_.size();
     panic_safe_env_frames_size_ = env_frames_.size();
+    // Issue #548: bump panic_checkpoint_save_count_ so
+    // (query:panic-checkpoint-lifecycle-stats) can report
+    // the lifetime save count.
+    bump_panic_checkpoint_save_count();
     return true;
 }
 
@@ -210,6 +214,14 @@ bool Evaluator::restore_panic_checkpoint() {
     string_heap_.push_back(panic_safe_source_);
     auto result = (*set_fn)({make_string(idx)});
     bool ok = types::is_bool(result) && types::as_bool(result);
+    // Issue #548: bump the lifecycle counters regardless of
+    // success — restore attempts (failed or succeeded) count
+    // toward the lifetime restore counter. Successful restores
+    // additionally bump rollback_success_on_panic_.
+    bump_panic_checkpoint_restore_count();
+    if (ok) {
+        bump_rollback_success_on_panic();
+    }
     if (ok) {
         // Issue #242: truncate the 3 append-only arenas back to
         // their checkpoint sizes. We do NOT truncate env_frames_

@@ -1088,6 +1088,10 @@ public:
         panic_safe_pairs_size_ = 0;
         panic_safe_string_heap_size_ = 0;
         panic_safe_env_frames_size_ = 0;
+        // Issue #548: bump panic_checkpoint_commit_count_
+        // so (query:panic-checkpoint-lifecycle-stats) can
+        // report the lifetime commit count.
+        bump_panic_checkpoint_commit_count();
     }
 
     // Check if a safe checkpoint exists.
@@ -1918,6 +1922,16 @@ private:
     std::atomic<std::uint64_t> panic_checkpoint_transfer_count_{0};
     std::atomic<std::uint64_t> panic_checkpoint_lost_on_steal_{0};
     std::atomic<std::uint64_t> gc_blocked_by_pending_panic_{0};
+    // Issue #548: panic-checkpoint lifecycle counters
+    // (save / restore / commit / rollback-success). Bumped
+    // by save_panic_checkpoint(), restore_panic_checkpoint(),
+    // commit_panic_checkpoint(), and the Guard dtor's
+    // rollback path. Stats-only (relaxed-ordering). Exposed
+    // via (query:panic-checkpoint-lifecycle-stats) primitive.
+    std::atomic<std::uint64_t> panic_checkpoint_save_count_{0};
+    std::atomic<std::uint64_t> panic_checkpoint_restore_count_{0};
+    std::atomic<std::uint64_t> panic_checkpoint_commit_count_{0};
+    std::atomic<std::uint64_t> rollback_success_on_panic_{0};
     // Issue #391: automatic staleness check observability.
     //   stale_ref_blocked_count_  (Strict policy blocked
     //     a mutate because a captured stable-ref was stale)
@@ -2265,6 +2279,37 @@ public:
     }
     void bump_gc_blocked_by_pending_panic() noexcept {
         gc_blocked_by_pending_panic_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #548: panic-checkpoint lifecycle counters
+    // + bump helpers. Public so the
+    // (query:panic-checkpoint-lifecycle-stats) primitive
+    // can read them, and save_panic_checkpoint /
+    // restore_panic_checkpoint / commit_panic_checkpoint
+    // (the follow-up wires these to the actual save/restore
+    // call sites).
+    [[nodiscard]] std::uint64_t get_panic_checkpoint_save_count() const noexcept {
+        return panic_checkpoint_save_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_panic_checkpoint_restore_count() const noexcept {
+        return panic_checkpoint_restore_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_panic_checkpoint_commit_count() const noexcept {
+        return panic_checkpoint_commit_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_rollback_success_on_panic() const noexcept {
+        return rollback_success_on_panic_.load(std::memory_order_relaxed);
+    }
+    void bump_panic_checkpoint_save_count() noexcept {
+        panic_checkpoint_save_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_panic_checkpoint_restore_count() noexcept {
+        panic_checkpoint_restore_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_panic_checkpoint_commit_count() noexcept {
+        panic_checkpoint_commit_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_rollback_success_on_panic() noexcept {
+        rollback_success_on_panic_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #391: stale-ref policy + observability
     // accessors + bump helpers. Public so the
