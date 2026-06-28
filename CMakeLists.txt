@@ -803,6 +803,23 @@ target_compile_options(issue_508_bench PRIVATE -Wall
 target_link_libraries(issue_508_bench PRIVATE stdc++ aura_test_objects aura-reflect)
 add_test(NAME issue_508_bench COMMAND ./issue_508_bench)
 
+# Issue #307: quantitative benchmark for fine-grained
+# incremental type checking + IR re-lower pipeline at EDA
+# scale. Builds a 10k-node hardware-like AST, runs full
+# infer_flat, applies a 1% mutation, runs infer_flat_partial,
+# and validates AC1 (partial/full <10%), AC2 (correctness
+# after chained mutations), AC4 (cache hit rate >80%), and
+# AC5 (no perf regression on full recompile). AC3 (this
+# benchmark file) is the deliverable.
+add_executable(issue_307_bench tests/bench/issue_307_bench.cpp)
+set_property(TARGET issue_307_bench PROPERTY CXX_MODULE_STD ON)
+target_include_directories(issue_307_bench PRIVATE src)
+target_compile_options(issue_307_bench PRIVATE -Wall
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter)
+target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-reflect)
+add_test(NAME issue_307_bench COMMAND ./issue_307_bench)
+
 # Issue #217 Cycle 14 P4: benchmark suite for the C++26 P2996
 # reflection + auto_serialize/auto_deserialize path. Measures
 # throughput across 4 dimensions (FlatAST SoA, NodeView
