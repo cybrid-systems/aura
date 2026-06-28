@@ -797,6 +797,9 @@ public:
     // writes to the same metrics struct (via IRContext).
     // Both paths use the same single source of truth.
     void set_compiler_metrics(void* m) { compiler_metrics_ = m; }
+    [[nodiscard]] void* compiler_metrics() const noexcept {
+        return compiler_metrics_;
+    }
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
     // Issue #426: public getter for compiler_service_ (as
     // void*). The (query:compiler-cache-stats) primitive

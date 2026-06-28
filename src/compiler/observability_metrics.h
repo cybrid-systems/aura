@@ -542,6 +542,29 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> per_defuse_index_used_total{0};
     std::atomic<std::uint64_t> per_defuse_index_visited_total{0};
     std::atomic<std::uint64_t> per_defuse_index_walk_fallback_total{0};
+    // Issue #531: closure / EnvFrame / bridge_epoch /
+    // linear_ownership_state safety observability counters.
+    // Exposed via (query:closure-env-safety-stats) primitive.
+    // Stats-only (relaxed-ordering).
+    //   - closure_stale_refresh_count_  (# of stale
+    //     IRClosure refreshes triggered by invalidate_if_stale
+    //     — the AI Agent reads this to measure the
+    //     closure-refresh frequency post-mutate)
+    //   - bridge_epoch_hit_count_       (# of bridge_epoch
+    //     match checks that succeeded — the closure was
+    //     fresh, no refresh needed)
+    //   - linear_check_pass_count_      (# of linear
+    //     ownership_state runtime checks that passed — a
+    //     pass means the Linear* op proceeded with its
+    //     fast path; failure triggers deopt)
+    //   - gc_envframe_stale_skipped_    (# of GCEnvWalkFn
+    //     visits that skipped a stale EnvFrame — production
+    //     expects this to be 0; > 0 means a COW/compaction
+    //     or version mismatch was caught at GC time)
+    std::atomic<std::uint64_t> closure_stale_refresh_count_{0};
+    std::atomic<std::uint64_t> bridge_epoch_hit_count_{0};
+    std::atomic<std::uint64_t> linear_check_pass_count_{0};
+    std::atomic<std::uint64_t> gc_envframe_stale_skipped_{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/observability_metrics.h"
 #include "serve/fiber.h"
 
 module aura.compiler.evaluator;
@@ -808,6 +809,60 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t contention_us = ev->get_lock_contention_us();
         return make_int(static_cast<std::int64_t>(
             steals + violations + unsafe_attempts + contention_us));
+    });
+
+    // Issue #531: query:closure-env-safety-stats. Returns
+    // the sum of 4 closure / EnvFrame / bridge_epoch /
+    // linear_ownership_state observability counters from
+    // the shared CompilerMetrics struct:
+    //   - closure_stale_refresh_count_  (# of stale
+    //     IRClosure refreshes triggered by
+    //     invalidate_function — the closure-refresh
+    //     frequency post-mutate)
+    //   - bridge_epoch_hit_count_       (# of bridge_epoch
+    //     match checks that succeeded — closure was fresh,
+    //     no refresh needed)
+    //   - linear_check_pass_count_      (# of linear
+    //     ownership_state runtime checks that passed —
+    //     Linear* op proceeded with fast path)
+    //   - gc_envframe_stale_skipped_    (# of GCEnvWalkFn
+    //     visits that skipped a stale EnvFrame — > 0
+    //     means a COW/compaction or version mismatch was
+    //     caught at GC time)
+    //
+    // P0: returns an integer = sum of the 4 counters.
+    // Follow-up: returns a 4-tuple
+    // (stale-refresh bridge-hit linear-pass gc-skipped) so
+    // the AI Agent can compute refresh_rate =
+    // stale_refresh / (stale_refresh + bridge_hit) and
+    // react to gc_envframe_stale_skipped > 0 as a hard
+    // alert (silent EnvFrame mismatch).
+    add("query:closure-env-safety-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        // Read from the shared CompilerMetrics struct via
+        // the Evaluator's void pointer (set by CompilerService
+        // via set_compiler_metrics(&metrics_)). Cast back to
+        // CompilerMetrics* to access the 4 new counters.
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(
+                ev->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t stale_refresh =
+            m->closure_stale_refresh_count_.load(
+                std::memory_order_relaxed);
+        const std::uint64_t bridge_hit =
+            m->bridge_epoch_hit_count_.load(
+                std::memory_order_relaxed);
+        const std::uint64_t linear_pass =
+            m->linear_check_pass_count_.load(
+                std::memory_order_relaxed);
+        const std::uint64_t gc_skipped =
+            m->gc_envframe_stale_skipped_.load(
+                std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(
+            stale_refresh + bridge_hit + linear_pass + gc_skipped));
     });
 
     // Issue #447: (query:tag-arity-count tag-int arity-int)
