@@ -1069,6 +1069,14 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #562: Audit + demote query: namespace primitives
+# (P1). 8 scenarios validating: lib/std/query.aura (high-
+# level Agent API with 5 stdlib functions) + 12 demotion
+# candidates identified in decision doc (Tier 1 + Tier 2) +
+# stdlib wrapper safety + regression for core primitives.
+# Non-duplicative with #558 + #559 + #560 + #561.
+aura_add_issue_test(test_query_namespace_audit)
+aura_issue_test_link_llvm_jit(test_query_namespace_audit)
 # Issue #561: Review and demote synthesize: namespace
 # primitives (P1). 9 scenarios validating: (query:templates)
 # engine-level accessor (replaces demoted primitive) +

@@ -1,9 +1,5 @@
-query:filter: Any Any -> Any
-query:uncalled:  -> Any
-query:callers-of: Any -> Any
-query:defines-by-marker: Any -> Any
-query:calls-by-marker: Any -> Any
-query:node-marker: Any -> Any
-query:defines:  -> Any
-query:calls:  -> Any
-query:ref-counts: Any -> Any
+query:list-categories: Any -> Any
+query:help: Any -> Any
+query:nodes-with-marker: Any -> Any
+query:find-by-name: Any -> Any
+query:subtree: Any -> Any
