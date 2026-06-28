@@ -1069,6 +1069,16 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #546: Arena/pmr::vector + MutationBoundaryGuard
+# Panic Checkpoint Lifecycle + Auto-Rollback in Nested
+# Mutation + Fiber Resume scenarios (P0). 10 scenarios
+# validating the panic-checkpoint + nested Guard matrix
+# + auto-rollback + (gc-heap) integration + 1000+ nested
+# mutate fuzz + 8-thread concurrent nested mutate +
+# regression. Non-duplicative with #534 (impl) and #529
+# (atomic batch + rollback).
+aura_add_issue_test(test_arena_panic_checkpoint_nested_fiber)
+aura_issue_test_link_llvm_jit(test_arena_panic_checkpoint_nested_fiber)
 # Issue #545: Scheduler/Worker Work-Stealing + GC Safepoint
 # + MutationBoundary Coordination + Eventfd Wakeup stress
 # tests (P0). 8 scenarios complementing #542 with: 16+
