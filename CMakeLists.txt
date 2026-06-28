@@ -1069,6 +1069,17 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #551: Post-Mutation Reflection/auto_validate +
+# Guard Impact Snapshot + Schema Validation Hook for
+# Code-as-Data Closed Loop (P0). 9 scenarios validating:
+# 4 new reflect/snapshot counters + new
+# (query:reflect-postmutate-stats) primitive +
+# impact_snapshot_count under mutate load + 200-iter
+# cycle + schema_validation setters + 8-thread concurrent
+# + (gc-heap) integration + regression. Non-duplicative
+# with #535/#525/#504/#502/#514 (prior reflect/Guard work).
+aura_add_issue_test(test_reflect_postmutate_guard_snapshot)
+aura_issue_test_link_llvm_jit(test_reflect_postmutate_guard_snapshot)
 # Issue #550: Dirty/Epoch Propagation + Incremental
 # solve_delta + Occurrence Re-Narrowing + Pass Short-Circuit
 # for reliable typed self-mod (P0). 9 scenarios validating:
