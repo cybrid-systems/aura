@@ -354,6 +354,45 @@ export enum class IncrementalTypecheckMode : std::uint8_t {
 
 export class CompilerService {
 public:
+    // Issue #531: closure / EnvFrame / bridge_epoch /
+    // linear_ownership_state observability accessors.
+    // Read directly from the shared CompilerMetrics struct
+    // (also bumped by invalidate_function for stale_refresh,
+    // and by the follow-up apply_closure for bridge_epoch
+    // hit + linear_check_pass). Exposed via
+    // (query:closure-env-safety-stats) primitive.
+    [[nodiscard]] std::uint64_t get_closure_stale_refresh_count() const noexcept {
+        return metrics_.closure_stale_refresh_count_.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_bridge_epoch_hit_count() const noexcept {
+        return metrics_.bridge_epoch_hit_count_.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_linear_check_pass_count() const noexcept {
+        return metrics_.linear_check_pass_count_.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_gc_envframe_stale_skipped() const noexcept {
+        return metrics_.gc_envframe_stale_skipped_.load(
+            std::memory_order_relaxed);
+    }
+    // Bump helpers (for follow-up IRClosure::invalidate_if_stale +
+    // GCEnvWalkFn integration). Public so the test file can
+    // verify the counter wiring is reachable from C++.
+    void bump_bridge_epoch_hit_count() noexcept {
+        metrics_.bridge_epoch_hit_count_.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    void bump_linear_check_pass_count() noexcept {
+        metrics_.linear_check_pass_count_.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    void bump_gc_envframe_stale_skipped() noexcept {
+        metrics_.gc_envframe_stale_skipped_.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+
     CompilerService()
         : user_bindings_{"#t", "#f", "nil"}
         , session_id_("default") {
@@ -6180,6 +6219,14 @@ private:
         // protected by mutate_mtx_ which the cache checkers don't
         // hold).
         mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #531: bump closure_stale_refresh_count_ on
+        // every invalidate_function — measures the closure
+        // refresh frequency post-mutate. Stats-only
+        // (relaxed-ordering); the follow-up wires the actual
+        // IRClosure::invalidate_if_stale walk + the
+        // bridge_epoch_hit_count_ bump in apply_closure.
+        metrics_.closure_stale_refresh_count_.fetch_add(
+            1, std::memory_order_relaxed);
 
         // Issue #59 Iter 3: acquire the Mutation Lock in exclusive mode.
         // A mutate:* that triggers this must drain any in-flight compile

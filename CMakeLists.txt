@@ -1069,6 +1069,17 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #531: Live IRClosure/EnvFrame/bridge_epoch +
+# linear_ownership_state safety post-invalidate_function +
+# GC synergy (Memory-Safety Core, Prompt6 review). 10
+# scenarios validating: 4 new closure-env-safety counters
+# on CompilerMetrics + 4 CompilerService accessors + bump
+# helpers + new (query:closure-env-safety-stats) primitive
+# + recursive closure + invalidate cycle + 100-iter cycle +
+# (gc-heap) integration + regression. Non-duplicative
+# production memory-safety surface.
+aura_add_issue_test(test_compiler_closure_env_safety_post_invalidate)
+aura_issue_test_link_llvm_jit(test_compiler_closure_env_safety_post_invalidate)
 # Issue #556: Concurrency Safety of workspace_mtx_ +
 # Fiber Yield + Per-Fiber MutationBoundaryGuard Stack
 # in Multi-Agent EDSL Orchestration (P0). 9 scenarios
