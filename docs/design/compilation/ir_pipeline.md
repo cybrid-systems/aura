@@ -103,3 +103,16 @@
 - **Cycle 4**: split `mutation_epoch_` into separate `bridge_epoch_` and
   `cache_epoch_` if bridge and cache invalidation need different policies
   (currently they share `mutation_epoch_` per #223 Cycle 1).
+
+## TypeId / TypeScheme Propagation (Issue #305)
+
+Issue #305 added observability for the TypePropagationPass which propagates inferred TypeId / TypeScheme through the IR (Local, Add, Sub, Mul, Div, And, Or, Not, Car, Cdr). This is the EDA hardware optimization / synthesis track — bit-width inference for Verilog codegen and resource allocation.
+
+Four new counters on CompilerMetrics:
+- type_propagation_runs — # of TypePropagationPass invocations
+- type_propagation_total — # of instructions whose type_id was propagated
+- type_propagation_unknown — # of instructions with type_id == 0 the pass could NOT propagate
+- type_propagation_int_width — # of integers whose inferred bit-width (8/16/32/64) was used by a downstream pass
+
+Exposed via the `(query:type-propagation-stats)` primitive.
+

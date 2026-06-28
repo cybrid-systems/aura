@@ -377,6 +377,45 @@ public:
         return metrics_.gc_envframe_stale_skipped_.load(
             std::memory_order_relaxed);
     }
+    // Issue #305: TypeId/TypeScheme propagation observability
+    // accessors (EDA hardware optimization / synthesis track).
+    // Read directly from the shared CompilerMetrics struct
+    // (also bumped by the follow-up TypePropagationPass wire-up
+    // and the bit-width-inference pass in the EDA backend).
+    // Exposed via (compile:type-propagation-stats) primitive.
+    [[nodiscard]] std::uint64_t get_type_propagation_runs() const noexcept {
+        return metrics_.type_propagation_runs_.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_type_propagation_total() const noexcept {
+        return metrics_.type_propagation_total_.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_type_propagation_unknown() const noexcept {
+        return metrics_.type_propagation_unknown_.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_type_propagation_int_width() const noexcept {
+        return metrics_.type_propagation_int_width_.load(
+            std::memory_order_relaxed);
+    }
+    // Bump helpers (for the follow-up TypePropagationPass +
+    // bit-width-inference wire-up in the EDA backend).
+    // Public so the test file can verify the counter wiring
+    // is reachable from C++.
+    void bump_type_propagation_runs() noexcept {
+        metrics_.type_propagation_runs_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_type_propagation_total(std::uint64_t delta) noexcept {
+        metrics_.type_propagation_total_.fetch_add(
+            delta, std::memory_order_relaxed);
+    }
+    void bump_type_propagation_unknown() noexcept {
+        metrics_.type_propagation_unknown_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_type_propagation_int_width() noexcept {
+        metrics_.type_propagation_int_width_.fetch_add(1, std::memory_order_relaxed);
+    }
     // Bump helpers (for follow-up IRClosure::invalidate_if_stale +
     // GCEnvWalkFn integration). Public so the test file can
     // verify the counter wiring is reachable from C++.

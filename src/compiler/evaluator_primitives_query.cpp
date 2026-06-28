@@ -588,6 +588,47 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             ev->get_touched_roots_size()));
     });
 
+    // Issue #305: query:type-propagation-stats. Returns the
+    // sum of 4 TypeId/TypeScheme propagation observability
+    // counters from the shared CompilerMetrics struct (EDA
+    // hardware optimization / synthesis track):
+    //   - type_propagation_runs_        (# of TypePropagationPass
+    //     invocations)
+    //   - type_propagation_total_        (# of instructions whose
+    //     type_id was propagated)
+    //   - type_propagation_unknown_      (# of instructions whose
+    //     type_id == 0 (unknown) the pass could NOT propagate)
+    //   - type_propagation_int_width_    (# of integers whose
+    //     inferred bit-width (8/16/32/64) was used by a
+    //     downstream pass — the EDA backend key metric)
+    //
+    // P0: returns an integer = sum of the 4 counters.
+    // Follow-up: returns a 4-tuple
+    // (runs total unknown int-width) so the AI Agent can
+    // compute propagation_rate = total / (total + unknown)
+    // and react to low bit-width usage as a hint that the
+    // EDA backend needs more type info.
+    //
+    // Non-duplicative with #550 (query:typed-mutation-stats)
+    // — the latter is general; this primitive is the EDA-
+    // specific TypePropagation + bit-width observability.
+    add("query:type-propagation-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t runs = m->type_propagation_runs_.load(
+            std::memory_order_relaxed);
+        const std::uint64_t total = m->type_propagation_total_.load(
+            std::memory_order_relaxed);
+        const std::uint64_t unknown = m->type_propagation_unknown_.load(
+            std::memory_order_relaxed);
+        const std::uint64_t int_width = m->type_propagation_int_width_.load(
+            std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(
+            runs + total + unknown + int_width));
+    });
+
     // Issue #551: query:reflect-postmutate-stats. Returns
     // the sum of the 4 reflect post-mutate observability
     // counters:
