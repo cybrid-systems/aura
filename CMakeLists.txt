@@ -1069,6 +1069,17 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #547: query:pattern + MacroIntroduced Hygiene Filter
+# + Incremental tag_arity_index + DefUseIndex integration
+# for large-scale self-evolving SV/RTL verification loops
+# (P0). 9 scenarios validating: tag_arity_index dirty hook
+# + mark_dirty_upward integration + rebuild clears flag +
+# 2 new query:pattern-index-stats / hygiene-stats primitives
+# + :respect-hygiene keyword + 200-iter mutate stress +
+# regression. Non-duplicative with #541 (query hygiene)
+# + #528/#524 (marker propagation) + #514 (meta).
+aura_add_issue_test(test_query_pattern_hygiene_index_sv)
+aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_index_sv)
 # Issue #546: Arena/pmr::vector + MutationBoundaryGuard
 # Panic Checkpoint Lifecycle + Auto-Rollback in Nested
 # Mutation + Fiber Resume scenarios (P0). 10 scenarios

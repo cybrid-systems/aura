@@ -992,6 +992,22 @@ void register_workspace_query_primitives(
                 };
                 if (kw == ":include-macro-introduced") {
                     consume_bool(include_macro_introduced);
+                } else if (kw == ":respect-hygiene") {
+                    // Issue #547: discoverable alias for
+                    // :include-macro-introduced. Same semantics
+                    // (skip MacroIntroduced by default for
+                    // hygiene safety); the keyword reads more
+                    // naturally for the EDSL self-evolution
+                    // use case.
+                    bool v = false;
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            v = as_bool(a[ai + 1]);
+                        else
+                            v = (as_int(a[ai + 1]) != 0);
+                        ++ai;
+                    }
+                    include_macro_introduced = v;
                 } else if (kw == ":nested-arity") {
                     consume_bool(nested_arity);
                 } else if (kw == ":strict-arity") {
