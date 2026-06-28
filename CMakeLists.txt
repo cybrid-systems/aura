@@ -1069,6 +1069,15 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #543: SoA EnvFrame/EnvId dual-path consistency
+# + version stamping + stale detection + GCEnvWalkFn
+# comprehensive tests (P0). 11 scenarios validating the
+# 4 observability counters + (query:envframe-dualpath-
+# stats) primitive + dual-path length consistency +
+# multi-thread rebind + GC walk under (gc-heap) +
+# regression. Non-duplicative with #242/#286/#322.
+aura_add_issue_test(test_soa_envframe_dualpath_consistency)
+aura_issue_test_link_llvm_jit(test_soa_envframe_dualpath_consistency)
 # Issue #542: Multi-Fiber MutationBoundary + Work-Stealing
 # Safety + Starvation Prevention Stress Tests (P0). New
 # stress binary complementing #321/#345 with: 8-50
