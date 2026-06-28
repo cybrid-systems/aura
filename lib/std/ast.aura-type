@@ -1,0 +1,6 @@
+ast:summary-formatted: Any -> Any
+ast:diff-formatted: Any Any -> Any
+ast:validate-summary: Any -> Any
+ast:version-summary: Any -> Any
+ast:ref-stats: Any -> Any
+ast:memory-pressure: Any -> Any

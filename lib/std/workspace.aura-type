@@ -1,2 +1,7 @@
 ws:merge-symbols: Any -> Any
 ws:diff: Any -> Any
+ws:snapshot-current: Any -> Any
+ws:list-snapshots: Any -> Any
+ws:rollback-latest: Any -> Any
+ws:memory-pressure: Any -> Any
+ws:current-stats: Any -> Any

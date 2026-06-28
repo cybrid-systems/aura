@@ -1,0 +1,87 @@
+; lib/std/ast.aura — High-level AST helpers (Issue #563)
+;
+; Import with: (import "std/ast")
+; Or:        (require "std/ast" all:)
+;
+; High-level wrappers around the 23 (ast:*) primitives. The
+; engine primitives need workspace access (red-line #2 of
+; the decision framework) so they STAY in the engine; this
+; stdlib adds Agent-friendly composite patterns on top.
+;
+; Conventions used here (per #558 decision framework §3 green
+; lights):
+;   - Pure functions: (ast:summary) (ast:diff-formatted)
+;     (ast:validate-summary) (ast:version-summary)
+;   - Safe input checks on all wrappers (defensive)
+;   - Engine primitive names match exactly (verified via
+;     docs/design/ast-workspace-decision.md Tier table)
+
+(export ast:summary-formatted ast:diff-formatted
+        ast:validate-summary ast:version-summary
+        ast:ref-stats ast:memory-pressure)
+
+; ── (ast:summary-formatted) ──
+; Wrap (ast:summary) with a formatted multi-line string for
+; AI Agent context windows. Pure stdlib (string formatting).
+(define (ast:summary-formatted)
+  (let ((raw (ast:summary)))
+    (if (string? raw)
+      (string-append "AST summary:\n" raw)
+      "AST summary: <unavailable>")))
+
+; ── (ast:diff-formatted a b) ──
+; Compute (ast:diff a b) and format the result for display.
+; Returns "no diff" if both args equal; "diff:" + summary otherwise.
+(define (ast:diff-formatted a b)
+  (let ((result (ast:diff a b)))
+    (cond
+      ((null? result)  "diff: <none>")
+      ((string? result) (string-append "diff: " result))
+      (else
+        (let ((count (length result)))
+          (string-append "diff: "
+            (if (number? count) (number->string count) "<many>")
+            " entries"))))))
+
+; ── (ast:validate-summary) ──
+; Run (ast:validate-nodes) + (ast:validate-ownership) +
+; (ast:validate-post-restore) and aggregate results into a
+; summary (alists of (check-name . status)).
+(define (ast:validate-summary)
+  (let ((v-nodes (ast:validate-nodes))
+        (v-owner (ast:validate-ownership))
+        (v-post  (ast:validate-post-restore)))
+    (list
+      (list "validate-nodes" v-nodes)
+      (list "validate-ownership" v-owner)
+      (list "validate-post-restore" v-post))))
+
+; ── (ast:version-summary) ──
+; Combine (ast:version) + (ast:generation) + (ast:generation-stats)
+; into a single alist summary.
+(define (ast:version-summary)
+  (list
+    (list "version"      (ast:version))
+    (list "generation"   (ast:generation))
+    (list "gen-stats"    (ast:generation-stats))))
+
+; ── (ast:ref-stats) ──
+; Combine ref-related stats into a single alist.
+(define (ast:ref-stats)
+  (list
+    (list "snapshot"    (ast:snapshot 0))
+    (list "stable-ref"   (ast:stable-ref 0))
+    (list "defs"         (ast:defs))
+    (list "nodes"        (ast:nodes))))
+
+; ── (ast:memory-pressure) ──
+; Return one of "low" / "medium" / "high" based on
+; (ast:recycle-nodes) + (ast:node-lifecycle-stats) ratios.
+; Pure stdlib (no engine state mutation).
+(define (ast:memory-pressure)
+  (let ((stats (ast:node-lifecycle-stats)))
+    (cond
+      ((null? stats) "low")
+      ((> (length stats) 1000) "high")
+      ((> (length stats) 500)  "medium")
+      (else "low"))))
