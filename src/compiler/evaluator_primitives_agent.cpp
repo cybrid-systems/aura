@@ -251,8 +251,19 @@ void register_synthesize_primitives(PrimRegistrar add, Evaluator& ev,
         return make_bool(true);
     });
 
-    // (synthesize:list-templates) → list of names
-    add("synthesize:list-templates", [&ev](const auto&) -> EvalValue {
+    // Issue #561: (synthesize:list-templates) demoted to
+    // stdlib (lib/std/synthesize.aura (synthesize:list-templates)
+    // wraps the new (query:templates) primitive below).
+    // The C++ primitive was a pure read of g_template_patterns
+    // — no state mutation, no LLM call — so it's a textbook
+    // stdlib candidate per the decision framework.
+
+    // (query:templates) — Issue #561 engine-level accessor.
+    // Returns the list of registered synthesize template names.
+    // Exposed so std/stats.aura / std/synthesize.aura can
+    // enumerate without touching the static g_template_patterns
+    // map directly.
+    add("query:templates", [&ev](const auto&) -> EvalValue {
         EvalValue list = make_void();
         for (auto it = g_template_patterns.rbegin(); it != g_template_patterns.rend(); ++it) {
             auto idx = ev.string_heap_.size();

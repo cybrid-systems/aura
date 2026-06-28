@@ -1069,6 +1069,15 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #561: Review and demote synthesize: namespace
+# primitives (P1). 9 scenarios validating: (query:templates)
+# engine-level accessor (replaces demoted primitive) +
+# 3 remaining synthesize:* primitives still registerable +
+# stdlib wrapper file + decision doc + lint hint removal +
+# regression. Non-duplicative with #558 (decision framework)
+# + #559 (classification) + #560 (stats unification).
+aura_add_issue_test(test_synthesize_namespace_demotion)
+aura_issue_test_link_llvm_jit(test_synthesize_namespace_demotion)
 # Issue #560: Unify *-stats primitives via std/stats.aura +
 # (stats:list) + (stats:count) meta-primitives (P1). 10
 # scenarios validating: (stats:list) returns 39+ entries,
