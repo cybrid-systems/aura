@@ -488,6 +488,46 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             steals + gc_blocks + wait_ns));
     });
 
+    // Issue #543: query:envframe-dualpath-stats.
+    // Returns observability counters for the SoA
+    // EnvFrame/EnvId dual-path (bindings_ vs
+    // bindings_symid_) + version stamping + stale
+    // detection + GCEnvWalkFn integration layer:
+    //   - envframe_desync_detected_  (# of frames
+    //     where the dual-path length/order check found
+    //     a mismatch — should be 0 in production)
+    //   - envframe_stale_refresh_count_  (# of frames
+    //     whose version_ was bumped by
+    //     materialize_call_env because it was older
+    //     than the current defuse_version_)
+    //   - envframe_version_mismatch_in_walk_  (# of
+    //     frames skipped during walk_env_frames /
+    //     lookup_by_symid_chain because their version_
+    //     was older than the snapshot)
+    //   - envframe_gc_walk_safe_skips_  (# of frames
+    //     skipped during walk_env_frame_roots for the
+    //     same reason — important for tuning the GC's
+    //     epoch snapshot strategy)
+    //
+    // P0: returns an integer = sum of all 4 counters.
+    // Follow-up: returns a 4-tuple
+    // (desync stale-refresh version-mismatch gc-skips)
+    // so the AI Agent can react to each category
+    // independently (a desync > 0 should be a hard
+    // alert; a version-mismatch > 0 is expected under
+    // concurrent mutation).
+    add("query:envframe-dualpath-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t desync = ev->get_envframe_desync_detected();
+        const std::uint64_t stale = ev->get_envframe_stale_refresh_count();
+        const std::uint64_t mismatch = ev->get_envframe_version_mismatch_in_walk();
+        const std::uint64_t gc_skips = ev->get_envframe_gc_walk_safe_skips();
+        return make_int(static_cast<std::int64_t>(
+            desync + stale + mismatch + gc_skips));
+    });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
