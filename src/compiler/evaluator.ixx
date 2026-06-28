@@ -2020,6 +2020,13 @@ private:
     std::atomic<std::uint64_t> mutation_steal_violation_count_{0};
     std::atomic<std::uint64_t> gc_blocked_by_mutation_boundary_{0};
     std::atomic<std::uint64_t> safepoint_mutation_wait_total_ns_{0};
+    // Issue #543: dual-path / version / stale observability.
+    // See the public-section comment above for the bump
+    // semantics. All relaxed-ordering (stats-only).
+    mutable std::atomic<std::uint64_t> envframe_desync_detected_{0};
+    mutable std::atomic<std::uint64_t> envframe_stale_refresh_count_{0};
+    mutable std::atomic<std::uint64_t> envframe_version_mismatch_in_walk_{0};
+    mutable std::atomic<std::uint64_t> envframe_gc_walk_safe_skips_{0};
     // Issue #458: query hygiene metrics. Bumped by query:pattern
     // (and friends) when they skip a MacroIntroduced node during
     // traversal. Stats-only (relaxed-ordering). Exposed via
@@ -3034,6 +3041,40 @@ public:
     }
     void bump_safepoint_mutation_wait_ns(std::uint64_t delta_ns) noexcept {
         safepoint_mutation_wait_total_ns_.fetch_add(delta_ns, std::memory_order_relaxed);
+    }
+    // Issue #543: SoA EnvFrame/EnvId dual-path + version
+    // stamping + stale detection observability. Bumped by
+    //   - materialize_call_env (stale_refresh_count_)
+    //   - lookup_by_symid_chain / walk_env_frames
+    //     (version_mismatch_in_walk_)
+    //   - walk_env_frame_roots (gc_walk_safe_skips_)
+    //   - dual-path length/order desync detection
+    //     (desync_detected_)
+    // All stats-only (relaxed-ordering). Exposed via the
+    // (query:envframe-dualpath-stats) primitive.
+    [[nodiscard]] std::uint64_t get_envframe_desync_detected() const noexcept {
+        return envframe_desync_detected_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_envframe_stale_refresh_count() const noexcept {
+        return envframe_stale_refresh_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_envframe_version_mismatch_in_walk() const noexcept {
+        return envframe_version_mismatch_in_walk_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_envframe_gc_walk_safe_skips() const noexcept {
+        return envframe_gc_walk_safe_skips_.load(std::memory_order_relaxed);
+    }
+    void bump_envframe_desync_detected() const noexcept {
+        envframe_desync_detected_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_envframe_stale_refresh_count() const noexcept {
+        envframe_stale_refresh_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_envframe_version_mismatch_in_walk() const noexcept {
+        envframe_version_mismatch_in_walk_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_envframe_gc_walk_safe_skips() const noexcept {
+        envframe_gc_walk_safe_skips_.fetch_add(1, std::memory_order_relaxed);
     }
 
 

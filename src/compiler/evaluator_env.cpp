@@ -493,6 +493,12 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         // field, the shared lock is sufficient (no other
         // reader depends on version_ being immutable).
         const_cast<EnvFrame&>(fr).version_ = defuse_version_.load(std::memory_order_acquire);
+        // Issue #543: bump the envframe_stale_refresh_count_
+        // observability counter so the (query:envframe-
+        // dualpath-stats) primitive can report stale-refresh
+        // events for production monitoring. Stats-only
+        // (relaxed-ordering); doesn't affect control flow.
+        bump_envframe_stale_refresh_count();
         // Logging is best-effort — a fiber thread might not
         // have a tty. We use std::println(std::cerr, ...) so
         // the warning is always emitted (not just in debug).
@@ -555,8 +561,15 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(EnvId start,
     walk_env_frames(start, [&](EnvId, const EnvFrame& fr) {
         // Issue #264: skip frames stamped before the current
         // mutation epoch (stale under concurrent mutate/compact).
-        if (fr.version_ < version_snap)
+        if (fr.version_ < version_snap) {
+            // Issue #543: bump the envframe_version_mismatch_in_walk_
+            // counter so (query:envframe-dualpath-stats) can
+            // report walk-time version mismatches for production
+            // monitoring. Stats-only (relaxed-ordering); doesn't
+            // affect control flow.
+            bump_envframe_version_mismatch_in_walk();
             return true;
+        }
         auto v = fr.lookup_local_by_symid(s);
         if (v.has_value()) {
             auto val = *v;
@@ -583,7 +596,29 @@ void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
     // (mark vectors also de-dup via the set() semantic).
     // For now, just always set — the GC's mark_env_frame_roots
     // is idempotent (set() is a no-op if already set).
+    const auto version_snap = defuse_version_.load(std::memory_order_acquire);
     for (const auto& fr : env_frames_) {
+        // Issue #543: skip frames stamped before the current
+        // mutation epoch (stale under concurrent mutate/compact).
+        // Bumping gc_walk_safe_skips_ lets
+        // (query:envframe-dualpath-stats) report how many
+        // frames the GC walk safely skipped. Stats-only
+        // (relaxed-ordering); doesn't affect control flow.
+        if (fr.version_ < version_snap) {
+            bump_envframe_gc_walk_safe_skips();
+            continue;
+        }
+        // Dual-path length/order consistency check (#543).
+        // The two storage arrays should hold the same number
+        // of entries (one per binding). A mismatch indicates
+        // either a desync in the bind path or a future bug
+        // where one array is updated without the other. Bump
+        // the desync counter (warning only — the GC walk
+        // still walks both arrays below, so this is purely
+        // observability). Stats-only (relaxed-ordering).
+        if (fr.bindings_.size() != fr.bindings_symid_.size()) {
+            bump_envframe_desync_detected();
+        }
         // Walk the name-keyed bindings. bindings_symid_ is
         // populated when pool_ is set; bindings_ is always
         // populated. We walk BOTH to be safe (they should
