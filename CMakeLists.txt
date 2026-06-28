@@ -1069,6 +1069,14 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #304: Aura -> Agentic EDA Roadmap (roadmap/vision,
+# NOT a shipping task). 4 scenarios verifying the canonical
+# roadmap doc (docs/ROADMAP-HARDWARE.md) is present + has
+# all 3 phase sections + Issue #304 reference + decision
+# doc cross-references + Status table. Future child issues
+# will be filed per Phase 0/1/2 milestone.
+aura_add_issue_test(test_hardware_roadmap_acknowledged)
+aura_issue_test_link_llvm_jit(test_hardware_roadmap_acknowledged)
 # Issue #566: First batch of primitives demotion + full
 # validation (P2, capstone of the primitives-demotion epic).
 # 6 scenarios validating: primitive count, stdlib module
