@@ -722,6 +722,54 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             rollbacks + ws_commits + ws_bumps_saved));
     });
 
+    // Issue #555: query:typed-mutation-stats-task1. Returns
+    // the sum of 4 Task1 typed self-mod observability
+    // counters + the 4 existing #550 counters (so the AI
+    // Agent can compute propagation_ratio +
+    // selective_recheck_rate + conflict_rate in one read):
+    //   - dirty_propagation_count_       (Evaluator, #555)
+    //     # of mark_dirty_upward walks — dirty propagation
+    //     throughput
+    //   - selective_recheck_count_       (Evaluator, #555)
+    //     # of selective OccurrenceInfoFlat re-narrows
+    //     (vs full re-solve)
+    //   - touched_roots_conflict_count_  (Evaluator, #555)
+    //     # of CONFLICT detections between delta batches
+    //   - guard_dirty_epoch_count_       (Evaluator, #555)
+    //     # of Guard dtor success paths that propagated
+    //     dirty to the type cache generation
+    //   - narrowing_refresh_count_       (Evaluator, #550)
+    //   - cross_delta_conflicts_caught_  (Evaluator, #550)
+    //   - passes_skipped_type_dirty_     (Evaluator, #550)
+    //   - touched_roots_size_            (Evaluator, #550)
+    //
+    // P0: returns an integer = sum of the 8 counters.
+    // Follow-up: returns an 8-tuple so the AI Agent can
+    // react to each category independently (e.g.,
+    // touched_roots_conflict > 0 = hard alert;
+    // propagation_ratio close to 1.0 = expected;
+    // selective_recheck_rate high = win).
+    //
+    // Non-duplicative with #550 (query:typed-mutation-stats)
+    // — the latter is Task 6 review; this primitive is
+    // Task 1 EDSL mutate + Guard + dirty propagation focus.
+    add("query:typed-mutation-stats-task1", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t dirty_prop = ev->get_dirty_propagation_count();
+        const std::uint64_t selective = ev->get_selective_recheck_count();
+        const std::uint64_t conflicts = ev->get_touched_roots_conflict_count();
+        const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
+        const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
+        const std::uint64_t cross_delta = ev->get_cross_delta_conflicts_caught();
+        const std::uint64_t passes_skipped = ev->get_passes_skipped_type_dirty();
+        const std::uint64_t touched_size = ev->get_touched_roots_size();
+        return make_int(static_cast<std::int64_t>(
+            dirty_prop + selective + conflicts + guard_epoch +
+            narrowing + cross_delta + passes_skipped + touched_size));
+    });
+
     // Issue #447: (query:tag-arity-count tag-int arity-int)
     // — count of nodes matching (tag, arity) using the
     // pre-built index. Bumps the hits or misses counter

@@ -1996,6 +1996,25 @@ private:
     mutable std::atomic<std::uint64_t> schema_validation_pass_count_{0};
     mutable std::atomic<std::uint64_t> schema_validation_fail_count_{0};
     mutable std::atomic<std::uint64_t> dirty_nodes_in_snapshot_{0};
+    // Issue #555: Task1 typed self-mod observability counters.
+    // Exposed via (query:typed-mutation-stats-task1) primitive.
+    // Stats-only (relaxed-ordering).
+    //   - dirty_propagation_count_  (# of times mark_dirty_upward
+    //     walked an upward dirty chain — measures the dirty
+    //     propagation throughput)
+    //   - selective_recheck_count_  (# of selective re-narrows
+    //     triggered by the Guard dtor (vs full re-solve))
+    //   - touched_roots_conflict_count_  (# of times
+    //     touched_roots_ detected a CONFLICT between two
+    //     delta batches that would have been missed by
+    //     per-delta solving)
+    //   - guard_dirty_epoch_count_  (# of Guard dtor success
+    //     paths that propagated dirty to the type cache
+    //     generation — measures the Guard + type integration)
+    mutable std::atomic<std::uint64_t> dirty_propagation_count_{0};
+    mutable std::atomic<std::uint64_t> selective_recheck_count_{0};
+    mutable std::atomic<std::uint64_t> touched_roots_conflict_count_{0};
+    mutable std::atomic<std::uint64_t> guard_dirty_epoch_count_{0};
     // Issue #391: automatic staleness check observability.
     //   stale_ref_blocked_count_  (Strict policy blocked
     //     a mutate because a captured stable-ref was stale)
@@ -2460,6 +2479,31 @@ public:
     }
     void set_dirty_nodes_in_snapshot(std::uint64_t v) const noexcept {
         dirty_nodes_in_snapshot_.store(v, std::memory_order_relaxed);
+    }
+    // Issue #555: Task1 typed self-mod accessors + bump helpers.
+    [[nodiscard]] std::uint64_t get_dirty_propagation_count() const noexcept {
+        return dirty_propagation_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_selective_recheck_count() const noexcept {
+        return selective_recheck_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_touched_roots_conflict_count() const noexcept {
+        return touched_roots_conflict_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_guard_dirty_epoch_count() const noexcept {
+        return guard_dirty_epoch_count_.load(std::memory_order_relaxed);
+    }
+    void bump_dirty_propagation_count() const noexcept {
+        dirty_propagation_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_selective_recheck_count() const noexcept {
+        selective_recheck_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_touched_roots_conflict_count() const noexcept {
+        touched_roots_conflict_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_guard_dirty_epoch_count() const noexcept {
+        guard_dirty_epoch_count_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #391: stale-ref policy + observability
     // accessors + bump helpers. Public so the
@@ -3016,6 +3060,19 @@ public:
         // (dirty_nodes_in_snapshot_, marker delta, epoch
         // change, affected roots via StableNodeRef).
         bump_impact_snapshot_count();
+        // Issue #555: bump guard_dirty_epoch_count_ on
+        // every successful Guard exit — measures the
+        // Guard + type cache integration. Pairs with
+        // dirty_propagation_count_ (bumped in
+        // mark_dirty_upward) so the AI Agent can compute
+        // propagation_ratio = dirty_propagation / guard_dirty_epoch
+        // (close to 1.0 = every Guard exit propagates).
+        bump_guard_dirty_epoch_count();
+        // Issue #555: bump selective_recheck_count_ on
+        // every successful Guard exit — mirrors the
+        // OccurrenceInfoFlat selective re-narrow the
+        // follow-up wires. Stats-only (relaxed-ordering).
+        bump_selective_recheck_count();
         // Issue #456: record mutation-impact summary on
         // success only. Walk the workspace mutation log
         // from `mutation_log_size` (pre-mutation) to
