@@ -1069,6 +1069,19 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #556: Concurrency Safety of workspace_mtx_ +
+# Fiber Yield + Per-Fiber MutationBoundaryGuard Stack
+# in Multi-Agent EDSL Orchestration (P0). 9 scenarios
+# validating: 2 new Task1 EDSL concurrency counters
+# (unsafe_boundary_attempts + lock_contention_us) + new
+# (query:edsl-concurrency-stats) primitive + 8-thread ×
+# 100 concurrent mutate+query + Scheduler + 8 fibers ×
+# 50 yields + 1000-iter stress + (gc-heap) + bump helper
+# test + regression. Non-duplicative refinement of
+# #546/#332 focused on Task1 EDSL locking + Guard/fiber
+# paths.
+aura_add_issue_test(test_edsl_concurrent_fiber_boundary_task1)
+aura_issue_test_link_llvm_jit(test_edsl_concurrent_fiber_boundary_task1)
 # Issue #555: MutationBoundaryGuard + mark_dirty_upward +
 # defuse_version_ + Incremental Type/Occurrence Narrowing
 # Post-Mutate for Reliable Typed AI Self-Mod (P0). 9
