@@ -1,0 +1,10 @@
+core:any: Any Any -> Any
+core:all: Any Any -> Any
+core:zip-with: Any Any Any -> Any
+core:group-by: Any Any -> Any
+core:chunk: Any Any -> Any
+core:running-sum: Any -> Any
+core:safe-div: Any Any -> Any
+core:format-currency: Any Any -> Any
+core:clamp: Any Any Any -> Any
+core:lerp: Any Any Any -> Any
