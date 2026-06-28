@@ -1953,6 +1953,30 @@ private:
     mutable std::atomic<std::uint64_t> fiber_stale_ref_count_{0};
     mutable std::atomic<std::uint64_t> mutation_log_rollback_count_{0};
     mutable std::atomic<std::uint64_t> provenance_mismatch_{0};
+    // Issue #550: incremental typed self-mod dirty + narrowing
+    // observability counters. Exposed via
+    // (query:typed-mutation-stats) + (query:dirty-impact)
+    // primitives. Stats-only (relaxed-ordering). Currently
+    // exposed as reachable + initialized to 0; the actual
+    // wiring into TypeChecker / OccurrenceInfoFlat is the
+    // follow-up.
+    //   - narrowing_refresh_count_  (# of OccurrenceInfoFlat
+    //     entries refreshed after a dirty propagation — the
+    //     selective-recheck the review called out)
+    //   - cross_delta_conflicts_caught_  (# of times
+    //     touched_roots_ detected a CONFLICT between two
+    //     delta batches that would have been missed by
+    //     per-delta solving alone)
+    //   - passes_skipped_type_dirty_  (# of clean Pass
+    //     blocks skipped by the DirtyAwarePass short-circuit
+    //     when type dirty is non-empty — the measurable
+    //     latency win)
+    //   - touched_roots_size_  (current size of the
+    //     touched_roots_ set — a snapshot, not a counter)
+    mutable std::atomic<std::uint64_t> narrowing_refresh_count_{0};
+    mutable std::atomic<std::uint64_t> cross_delta_conflicts_caught_{0};
+    mutable std::atomic<std::uint64_t> passes_skipped_type_dirty_{0};
+    mutable std::atomic<std::uint64_t> touched_roots_size_{0};
     // Issue #391: automatic staleness check observability.
     //   stale_ref_blocked_count_  (Strict policy blocked
     //     a mutate because a captured stable-ref was stale)
@@ -2360,6 +2384,35 @@ public:
     }
     void bump_provenance_mismatch() const noexcept {
         provenance_mismatch_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #550: incremental typed self-mod accessors +
+    // bump helpers. Public so the (query:typed-mutation-
+    // stats) + (query:dirty-impact) primitives can read
+    // them, and the follow-up TypeChecker / OccurrenceInfo
+    // wiring can bump them.
+    [[nodiscard]] std::uint64_t get_narrowing_refresh_count() const noexcept {
+        return narrowing_refresh_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_cross_delta_conflicts_caught() const noexcept {
+        return cross_delta_conflicts_caught_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_passes_skipped_type_dirty() const noexcept {
+        return passes_skipped_type_dirty_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_touched_roots_size() const noexcept {
+        return touched_roots_size_.load(std::memory_order_relaxed);
+    }
+    void bump_narrowing_refresh_count() const noexcept {
+        narrowing_refresh_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_cross_delta_conflicts_caught() const noexcept {
+        cross_delta_conflicts_caught_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_passes_skipped_type_dirty() const noexcept {
+        passes_skipped_type_dirty_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void set_touched_roots_size(std::uint64_t v) const noexcept {
+        touched_roots_size_.store(v, std::memory_order_relaxed);
     }
     // Issue #391: stale-ref policy + observability
     // accessors + bump helpers. Public so the
@@ -2901,6 +2954,13 @@ public:
         // We bump it even on rollback so dashboards can see
         // "the boundary attempted to mutate, then rolled back".
         total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #550: bump narrowing_refresh_count_ on
+        // every successful exit_mutation_boundary — the
+        // OccurrenceInfoFlat re-narrow the dirty propagation
+        // triggered. Stats-only (relaxed-ordering); doesn't
+        // affect control flow. The follow-up wires this to
+        // the actual TypeChecker / OccurrenceInfoFlat path.
+        bump_narrowing_refresh_count();
         // Issue #456: record mutation-impact summary on
         // success only. Walk the workspace mutation log
         // from `mutation_log_size` (pre-mutation) to
