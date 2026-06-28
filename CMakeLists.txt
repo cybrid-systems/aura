@@ -1069,6 +1069,18 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #555: MutationBoundaryGuard + mark_dirty_upward +
+# defuse_version_ + Incremental Type/Occurrence Narrowing
+# Post-Mutate for Reliable Typed AI Self-Mod (P0). 9
+# scenarios validating: 4 new Task1 typed-mod counters +
+# new (query:typed-mutation-stats-task1) primitive +
+# guard_dirty_epoch under mutate + 200-iter cycle +
+# dirty_propagation under mark_dirty_upward + 8-thread
+# concurrent + (gc-heap) + regression. Non-duplicative
+# refinement of #550 (Task6 review) focused on Task1
+# EDSL mutate + Guard + dirty propagation paths.
+aura_add_issue_test(test_incremental_typed_selfmod_dirty_narrowing_task1)
+aura_issue_test_link_llvm_jit(test_incremental_typed_selfmod_dirty_narrowing_task1)
 # Issue #554: query:pattern + tag_arity_index Incremental
 # Maintenance + Full Hygiene (MacroIntroduced) Integration
 # for Large-AST AI Multi-Round Self-Evolution (P0). 9
