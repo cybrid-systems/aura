@@ -89,12 +89,14 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             {"rule:define",
              {"missing-require", "add-require", "std/rule",
               "Add (require \"std/rule\" all:) to use rule:define"}},
-            {"synthesize:fill",
-             {"missing-require", "add-require", "std/pipeline",
-              "Add (require \"std/pipeline\" all:) to use synthesize"}},
-            {"synthesize:pipeline",
-             {"missing-require", "add-require", "std/pipeline",
-              "Add (require \"std/pipeline\" all:) to use synthesize"}},
+            // Issue #561: synthesize:fill + synthesize:pipeline
+            // lint hint references removed — these were dead
+            // hints pointing to a non-existent std/pipeline module.
+            // Decision documented in
+            // docs/design/synthesize-namespace-decision.md
+            // (synthesize:fill is a real primitive in agent.cpp
+            // that wraps LLM calls; synthesize:pipeline is a
+            // docs/AI-strategy concept, not an actual primitive).
             {"define-type",
              {"missing-require", "add-require", "std/data",
               "Add (require \"std/data\" all:) to use define-type"}},

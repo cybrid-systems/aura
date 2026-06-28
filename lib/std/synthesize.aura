@@ -1,0 +1,40 @@
+; lib/std/synthesize.aura — synthesize: namespace stdlib wrappers
+;
+; Import with: (import "std/synthesize")
+; Or:        (require "std/synthesize" all:)
+;
+; Issue #561: Demote synthesize:list-templates to stdlib.
+; Underlying primitive (synthesize:list-templates) was
+; removed from C++ in favor of (query:templates) engine-level
+; accessor. This module provides the stdlib wrapper.
+;
+; The 3 remaining C++ synthesize:* primitives
+; (synthesize:register-template, synthesize:fill,
+; synthesize:optimize) remain in the engine — they all touch
+; private engine state (g_template_patterns map + LLM HTTP
+; + genetic strategy state). See
+; docs/design/synthesize-namespace-decision.md for the full
+; decision rationale.
+
+(export synthesize:list-templates synthesize:list-help)
+
+; ── (synthesize:list-templates) — list all registered templates
+;     Wraps (query:templates) which is the engine-level accessor.
+(define (synthesize:list-templates)
+  (query:templates))
+
+; ── (synthesize:list-help) — docs/discovery for the namespace
+;     Returns an alist describing the 4 remaining engine primitives
+;     (synthesize:register-template + synthesize:fill +
+;     synthesize:optimize + the demoted synthesize:list-templates
+;     which is now a stdlib wrapper).
+(define (synthesize:list-help)
+  (list
+    (list "synthesize:register-template"
+          "Register a code-generation template. Low-level engine hook.")
+    (list "synthesize:fill"
+          "Fill a template with arg values. Low-level engine hook + LLM call.")
+    (list "synthesize:optimize"
+          "Optimize via genetic strategy. Low-level engine hook.")
+    (list "synthesize:list-templates"
+          "List registered templates. Stdlib wrapper around (query:templates).")))
