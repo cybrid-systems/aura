@@ -1069,6 +1069,15 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #544: AOT mangle versioning + reload_aot_module
+# stale detection + atomic func_table swap + multi-agent
+# hot-update end-to-end tests (P0). 9 scenarios validating
+# the C-linkage versioning surface + mangle matrix +
+# hot-swap counter + multi-agent isolation + 8-thread
+# stress + fallback counter + regression. Non-duplicative
+# with #532 (impl) and #323 (4-thread hot-swap).
+aura_add_issue_test(test_aot_hotupdate_versioning)
+aura_issue_test_link_llvm_jit(test_aot_hotupdate_versioning)
 # Issue #543: SoA EnvFrame/EnvId dual-path consistency
 # + version stamping + stale detection + GCEnvWalkFn
 # comprehensive tests (P0). 11 scenarios validating the
