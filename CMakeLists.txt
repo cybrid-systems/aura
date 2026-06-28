@@ -1069,6 +1069,18 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #554: query:pattern + tag_arity_index Incremental
+# Maintenance + Full Hygiene (MacroIntroduced) Integration
+# for Large-AST AI Multi-Round Self-Evolution (P0). 9
+# scenarios validating: 2 new rebuild-timing + delta-hits
+# counters + extended (query:pattern-index-stats) primitive
+# (4 -> 6 counters) + rebuild records time + dirty_marks
+# under mutate + :respect-hygiene regression + large AST +
+# 200-iter cycle + 8-thread concurrent + regression.
+# Non-duplicative refinement of #528 + #547 focused on
+# Task 1 EDSL primitives.
+aura_add_issue_test(test_query_pattern_hygiene_index_task1)
+aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_index_task1)
 # Issue #553: End-to-End Atomic Batch Mutate + Full
 # mutation_log_ Rollback + MutationBoundaryGuard + Fiber
 # Safety for Reliable AI Multi-Step Self-Evolution (P0).

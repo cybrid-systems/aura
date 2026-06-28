@@ -429,8 +429,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t misses = ws->tag_arity_index_misses();
         const std::uint64_t rebuilds = ws->tag_arity_index_rebuilds();
         const std::uint64_t dirty_marks = ws->tag_arity_index_dirty_marks();
+        // Issue #554: include rebuild_time_us + delta_hits
+        // so (query:pattern-index-stats) returns the full
+        // 6-counter matrix. The AI Agent can compute
+        // avg_rebuild_us = rebuild_time_us / rebuilds and
+        // delta_hit_rate = delta_hits / (delta_hits + rebuilds).
+        const std::uint64_t rebuild_time_us =
+            ws->tag_arity_index_rebuild_time_us();
+        const std::uint64_t delta_hits =
+            ws->tag_arity_index_delta_hits();
         return make_int(static_cast<std::int64_t>(
-            hits + misses + rebuilds + dirty_marks));
+            hits + misses + rebuilds + dirty_marks +
+            rebuild_time_us + delta_hits));
     });
 
     // Issue #547: query:pattern-hygiene-stats. Returns
