@@ -1069,6 +1069,16 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #545: Scheduler/Worker Work-Stealing + GC Safepoint
+# + MutationBoundary Coordination + Eventfd Wakeup stress
+# tests (P0). 8 scenarios complementing #542 with: 16+
+# workers + 50+ fibers, GC safepoint request/wait/resume
+# round-trip, eventfd wakeup validation, affinity +
+# load-aware distribution, 10k+ iter combined stress,
+# steal_deferred_mutation_boundary_count validation.
+# Non-duplicative with #534 (impl) and #542 (8-fiber).
+aura_add_issue_test(test_scheduler_gc_safepoint_mutation_coordination)
+aura_issue_test_link_llvm_jit(test_scheduler_gc_safepoint_mutation_coordination)
 # Issue #544: AOT mangle versioning + reload_aot_module
 # stale detection + atomic func_table swap + multi-agent
 # hot-update end-to-end tests (P0). 9 scenarios validating
