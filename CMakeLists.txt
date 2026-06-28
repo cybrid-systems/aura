@@ -1069,6 +1069,16 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #560: Unify *-stats primitives via std/stats.aura +
+# (stats:list) + (stats:count) meta-primitives (P1). 10
+# scenarios validating: (stats:list) returns 39+ entries,
+# (stats:count) returns integer, std/stats wrappers route
+# correctly to existing primitives, prefix filter works,
+# (stats:get "all") bundles every counter, regression
+# covers #543-#531 + define/eval. Non-duplicative with
+# #543-#556 + #531.
+aura_add_issue_test(test_stats_module_unification)
+aura_issue_test_link_llvm_jit(test_stats_module_unification)
 # Issue #531: Live IRClosure/EnvFrame/bridge_epoch +
 # linear_ownership_state safety post-invalidate_function +
 # GC synergy (Memory-Safety Core, Prompt6 review). 10
