@@ -1069,6 +1069,16 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #305: Propagate rich TypeId/TypeScheme from TypeChecker
+# to IR for hardware optimization & synthesis (P0 EDA track).
+# 9 scenarios validating: 4 new type_propagation counters +
+# (query:type-propagation-stats) primitive + TypePropagationPass
+# existence + bump helpers + 100-iter cycle + 8-thread
+# concurrent + (gc-heap) integration + design doc bit-width
+# mention + regression. Non-duplicative with #550
+# (query:typed-mutation-stats).
+aura_add_issue_test(test_type_propagation_ir_eda)
+aura_issue_test_link_llvm_jit(test_type_propagation_ir_eda)
 # Issue #304: Aura -> Agentic EDA Roadmap (roadmap/vision,
 # NOT a shipping task). 4 scenarios verifying the canonical
 # roadmap doc (docs/ROADMAP-HARDWARE.md) is present + has

@@ -565,6 +565,24 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> bridge_epoch_hit_count_{0};
     std::atomic<std::uint64_t> linear_check_pass_count_{0};
     std::atomic<std::uint64_t> gc_envframe_stale_skipped_{0};
+    // Issue #305: TypeId/TypeScheme propagation observability
+    // counters (EDA hardware optimization / synthesis track).
+    // Exposed via (compile:type-propagation-stats) primitive.
+    // Stats-only (relaxed-ordering).
+    //   - type_propagation_runs_       (# of TypePropagationPass
+    //     invocations — measures how often the pass is on the
+    //     optimization pipeline hot path)
+    //   - type_propagation_total_       (# of instructions whose
+    //     type_id was propagated by the pass — cumulative)
+    //   - type_propagation_unknown_     (# of instructions whose
+    //     type_id == 0 (unknown) the pass could NOT propagate)
+    //   - type_propagation_int_width_   (# of integers whose
+    //     inferred bit-width (8/16/32/64) was used by a downstream
+    //     pass — the EDA backend key metric for resource alloc)
+    std::atomic<std::uint64_t> type_propagation_runs_{0};
+    std::atomic<std::uint64_t> type_propagation_total_{0};
+    std::atomic<std::uint64_t> type_propagation_unknown_{0};
+    std::atomic<std::uint64_t> type_propagation_int_width_{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
