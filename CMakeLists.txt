@@ -1069,6 +1069,14 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #566: First batch of primitives demotion + full
+# validation (P2, capstone of the primitives-demotion epic).
+# 6 scenarios validating: primitive count, stdlib module
+# consistency (7 modules), INDEX reachability, surface item
+# reduction (>=20), decision doc presence, discoverability
+# regression. Non-duplicative with #558-#565.
+aura_add_issue_test(test_primitives_demotion_batch1)
+aura_issue_test_link_llvm_jit(test_primitives_demotion_batch1)
 # Issue #565: Stdlib Infrastructure improvements (P1,
 # parallel-safe). 5 scenarios validating: stdlib-organization
 # spec doc + lib/std/INDEX.aura (5 discovery functions) +
