@@ -1977,6 +1977,25 @@ private:
     mutable std::atomic<std::uint64_t> cross_delta_conflicts_caught_{0};
     mutable std::atomic<std::uint64_t> passes_skipped_type_dirty_{0};
     mutable std::atomic<std::uint64_t> touched_roots_size_{0};
+    // Issue #551: reflect post-mutate observability counters.
+    // Exposed via (query:reflect-postmutate-stats) primitive.
+    // Stats-only (relaxed-ordering).
+    //   - impact_snapshot_count_  (# of post-mutate impact
+    //     snapshots produced by the Guard dtor success path
+    //     — the data the AI loop reads for adaptive strategy)
+    //   - schema_validation_pass_count_  (# of auto_validate
+    //     calls that passed — the post-mutate structural
+    //     integrity check)
+    //   - schema_validation_fail_count_  (# of auto_validate
+    //     calls that caught an inconsistency — production
+    //     critical to detect silent corruption)
+    //   - dirty_nodes_in_snapshot_  (# of dirty nodes captured
+    //     in the latest impact snapshot — a per-snapshot stat
+    //     that the AI loop reads to scope re-queries)
+    mutable std::atomic<std::uint64_t> impact_snapshot_count_{0};
+    mutable std::atomic<std::uint64_t> schema_validation_pass_count_{0};
+    mutable std::atomic<std::uint64_t> schema_validation_fail_count_{0};
+    mutable std::atomic<std::uint64_t> dirty_nodes_in_snapshot_{0};
     // Issue #391: automatic staleness check observability.
     //   stale_ref_blocked_count_  (Strict policy blocked
     //     a mutate because a captured stable-ref was stale)
@@ -2413,6 +2432,34 @@ public:
     }
     void set_touched_roots_size(std::uint64_t v) const noexcept {
         touched_roots_size_.store(v, std::memory_order_relaxed);
+    }
+    // Issue #551: reflect post-mutate accessors + bump helpers.
+    // Public so (query:reflect-postmutate-stats) can read
+    // them, and the Guard dtor / auto_validate hook can
+    // bump them.
+    [[nodiscard]] std::uint64_t get_impact_snapshot_count() const noexcept {
+        return impact_snapshot_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_schema_validation_pass_count() const noexcept {
+        return schema_validation_pass_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_schema_validation_fail_count() const noexcept {
+        return schema_validation_fail_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_dirty_nodes_in_snapshot() const noexcept {
+        return dirty_nodes_in_snapshot_.load(std::memory_order_relaxed);
+    }
+    void bump_impact_snapshot_count() const noexcept {
+        impact_snapshot_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_schema_validation_pass_count() const noexcept {
+        schema_validation_pass_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_schema_validation_fail_count() const noexcept {
+        schema_validation_fail_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void set_dirty_nodes_in_snapshot(std::uint64_t v) const noexcept {
+        dirty_nodes_in_snapshot_.store(v, std::memory_order_relaxed);
     }
     // Issue #391: stale-ref policy + observability
     // accessors + bump helpers. Public so the
@@ -2961,6 +3008,14 @@ public:
         // affect control flow. The follow-up wires this to
         // the actual TypeChecker / OccurrenceInfoFlat path.
         bump_narrowing_refresh_count();
+        // Issue #551: bump impact_snapshot_count_ on every
+        // successful Guard exit — mirrors the post-mutate
+        // impact snapshot the AI loop reads for adaptive
+        // strategy. Stats-only (relaxed-ordering); the
+        // follow-up wires the actual snapshot collection
+        // (dirty_nodes_in_snapshot_, marker delta, epoch
+        // change, affected roots via StableNodeRef).
+        bump_impact_snapshot_count();
         // Issue #456: record mutation-impact summary on
         // success only. Walk the workspace mutation log
         // from `mutation_log_size` (pre-mutation) to
