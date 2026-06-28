@@ -583,6 +583,26 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> type_propagation_total_{0};
     std::atomic<std::uint64_t> type_propagation_unknown_{0};
     std::atomic<std::uint64_t> type_propagation_int_width_{0};
+    // Issue #306: hardware resource linear-ownership
+    // observability counters (EDA track — wire/reg/mem/port
+    // borrow + double-drive detection). Exposed via the
+    // (query:linear-ownership-stats) primitive. Stats-only
+    // (relaxed-ordering). Production expectation: 0 double-
+    // drive + 0 port-conflict + low borrow rate. > 0 on
+    // either error category = diagnostic alert.
+    //   - hw_resource_wire_borrows_      (# of Wire resource
+    //     borrows issued by the lowerer)
+    //   - hw_resource_reg_writes_       (# of Reg resource
+    //     writes issued by the lowerer)
+    //   - hw_resource_mem_access_      (# of Mem resource
+    //     accesses issued by the lowerer)
+    //   - hw_resource_double_drive_    (# of double-drive
+    //     violations caught at compile time — should be 0
+    //     in correct hardware code; > 0 = EDA bug)
+    std::atomic<std::uint64_t> hw_resource_wire_borrows_{0};
+    std::atomic<std::uint64_t> hw_resource_reg_writes_{0};
+    std::atomic<std::uint64_t> hw_resource_mem_access_{0};
+    std::atomic<std::uint64_t> hw_resource_double_drive_{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

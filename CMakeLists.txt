@@ -1069,6 +1069,16 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #306: EDA — Extend Linear Ownership (OwnershipEnv +
+# lowering_linear_types) to hardware resources (wires, regs,
+# memories, ports) (P0 EDA track). 8 scenarios validating:
+# 4 new hw_resource_* counters (wire/reg/mem/double-drive)
+# + (query:linear-ownership-stats) primitive + OwnershipEnv
+# 4 OwnershipState enum verification + bump helpers +
+# 100-iter cycle + 8-thread concurrent + (gc-heap) integration
+# + regression for #556 + #555 + #549.
+aura_add_issue_test(test_hardware_resource_linear_ownership)
+aura_issue_test_link_llvm_jit(test_hardware_resource_linear_ownership)
 # Issue #305: Propagate rich TypeId/TypeScheme from TypeChecker
 # to IR for hardware optimization & synthesis (P0 EDA track).
 # 9 scenarios validating: 4 new type_propagation counters +
