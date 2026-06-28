@@ -1069,6 +1069,17 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #549: StableNodeRef + generation_ + mutation_log
+# provenance + COW/Fiber safety for long-running
+# self-evolution loops (P0). 9 scenarios validating: 4
+# new self-evolution-stability counters + new
+# (query:self-evolution-stability-stats) primitive +
+# validate_stable_ref classification + 200-iter long-
+# running mutate + COW loop + 8-thread concurrent +
+# (gc-heap) integration + regression. Non-duplicative
+# with #540/#527/#497/#457 (prior stable-ref work).
+aura_add_issue_test(test_stable_ref_provenance_fiber_cow)
+aura_issue_test_link_llvm_jit(test_stable_ref_provenance_fiber_cow)
 # Issue #548: MutationBoundaryGuard Panic Checkpoint +
 # Nested Mutation + Fiber Resume + Auto-Rollback Lifecycle
 # stress tests (P0). 11 scenarios complementing #546 with:

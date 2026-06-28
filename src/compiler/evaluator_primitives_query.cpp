@@ -491,6 +491,46 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             save + restore + commit + rollback_success));
     });
 
+    // Issue #549: query:self-evolution-stability-stats.
+    // Returns the sum of the 4 self-evolution observability
+    // counters:
+    //   - cross_cow_invalidations_  (# of StableNodeRef
+    //     rejections caused by crossing a COW snapshot
+    //     boundary — bumped by validate_stable_ref when
+    //     captured_gen != current generation_ with small
+    //     delta, suggesting same fiber post-mutate)
+    //   - fiber_stale_ref_count_  (# of stale-ref detections
+    //     where the captured gen is from a different fiber's
+    //     workspace — large delta)
+    //   - mutation_log_rollback_count_  (# of times
+    //     exit_mutation_boundary(false) actually rolled back
+    //     the log — a stricter subset of failed boundaries)
+    //   - provenance_mismatch_  (# of stable-ref checks
+    //     where the captured provenance (origin layer)
+    //     didn't match the current workspace layer)
+    //
+    // P0: returns an integer = sum of all 4 counters.
+    // Follow-up: returns a 4-tuple
+    // (cross-cow fiber-stale rollback provenance-mismatch)
+    // so the AI Agent can react to each category
+    // independently. cross-cow > 0 is expected under load
+    // (every structural mutate bumps generation_); fiber-stale
+    // > 0 indicates a worker-migration bug; rollback > 0
+    // indicates panic or fail-fast path was hit;
+    // provenance-mismatch > 0 indicates a stale layer in the
+    // StableNodeRef handle.
+    add("query:self-evolution-stability-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
+        const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
+        const std::uint64_t rollback = ev->get_mutation_log_rollback_count();
+        const std::uint64_t provenance = ev->get_provenance_mismatch();
+        return make_int(static_cast<std::int64_t>(
+            cross_cow + fiber_stale + rollback + provenance));
+    });
+
     // Issue #447: (query:tag-arity-count tag-int arity-int)
     // — count of nodes matching (tag, arity) using the
     // pre-built index. Bumps the hits or misses counter
