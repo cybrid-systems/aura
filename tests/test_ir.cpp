@@ -3092,8 +3092,8 @@ int main() {
             // IRInstruction fields: opcode, operands, source_ast_node_id, type_id
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 300, 0, 0}, 0, 1},   // slot0 = 300, type_id=1 (Int)
-                {aura::ir::IROpcode::CastOp,   {1, 0, 3, 0}, 0, 3},    // cast String, type_id=3
-                {aura::ir::IROpcode::CastOp,   {2, 1, 1, 0}, 0, 1},    // cast back Int, type_id=1
+                {aura::ir::IROpcode::CastOp,   {1, 0, 1, 0}, 0, 3},    // cast String (type_tag=1), type_id=3
+                {aura::ir::IROpcode::CastOp,   {2, 1, 0, 0}, 0, 1},    // cast back Int (type_tag=0), type_id=1
                 {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
             };
             aura::compiler::DeadCoercionEliminationPass dce;
@@ -3152,9 +3152,9 @@ int main() {
             // Chain: Int → Int → Int → String, should collapse to single cast
             block.instructions = {
                 {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},   // slot0 = 42, type_id=1 (Int)
-                {aura::ir::IROpcode::CastOp,   {1, 0, 1, 0}, 0, 1},    // identity Int→Int (redundant)
-                {aura::ir::IROpcode::CastOp,   {2, 1, 1, 0}, 0, 1},    // identity Int→Int (redundant)
-                {aura::ir::IROpcode::CastOp,   {3, 2, 3, 0}, 0, 3},    // real cast Int→String
+                {aura::ir::IROpcode::CastOp,   {1, 0, 0, 0}, 0, 1},    // identity Int→Int (type_tag=0, redundant)
+                {aura::ir::IROpcode::CastOp,   {2, 1, 0, 0}, 0, 1},    // identity Int→Int (redundant)
+                {aura::ir::IROpcode::CastOp,   {3, 2, 1, 0}, 0, 3},    // real cast Int→String (type_tag=1)
                 {aura::ir::IROpcode::Return,   {3, 0, 0, 0}, 0, 0},
             };
             aura::compiler::DeadCoercionEliminationPass dce;
