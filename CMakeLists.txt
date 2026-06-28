@@ -1069,6 +1069,16 @@ aura_issue_test_link_llvm_jit(test_issue_324)
 # rollback consistency.
 aura_add_issue_test(test_issue_345)
 aura_issue_test_link_llvm_jit(test_issue_345)
+# Issue #550: Dirty/Epoch Propagation + Incremental
+# solve_delta + Occurrence Re-Narrowing + Pass Short-Circuit
+# for reliable typed self-mod (P0). 9 scenarios validating:
+# 4 new dirty/narrowing counters + 2 new query primitives
+# (typed-mutation-stats + dirty-impact) + narrowing refresh
+# under mutate load + 200-iter typed mutate cycle + 8-thread
+# concurrent typed mutate + (gc-heap) + regression.
+# Non-duplicative with #536/#537/#526/#509/#518 (impl).
+aura_add_issue_test(test_incremental_typed_selfmod_dirty_narrowing)
+aura_issue_test_link_llvm_jit(test_incremental_typed_selfmod_dirty_narrowing)
 # Issue #549: StableNodeRef + generation_ + mutation_log
 # provenance + COW/Fiber safety for long-running
 # self-evolution loops (P0). 9 scenarios validating: 4

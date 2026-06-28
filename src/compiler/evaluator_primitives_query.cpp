@@ -531,6 +531,52 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             cross_cow + fiber_stale + rollback + provenance));
     });
 
+    // Issue #550: query:typed-mutation-stats. Returns the
+    // sum of the 4 incremental typed self-mod observability
+    // counters:
+    //   - narrowing_refresh_count_  (# of OccurrenceInfoFlat
+    //     entries refreshed after dirty propagation)
+    //   - cross_delta_conflicts_caught_  (# of times
+    //     touched_roots_ detected a CONFLICT between two
+    //     delta batches)
+    //   - passes_skipped_type_dirty_  (# of clean Pass
+    //     blocks skipped by the DirtyAwarePass short-circuit)
+    //   - touched_roots_size_  (current touched_roots_ set
+    //     size — a snapshot, not a counter)
+    //
+    // P0: returns an integer = sum of the 4 counters.
+    // Follow-up: returns a 4-tuple
+    // (narrowing-refresh cross-delta-conflicts passes-skipped
+    // touched-roots-size) so the AI Agent can react to each
+    // category independently (narrowing-refresh > 0 expected
+    // under typed mutate; cross-delta-conflicts > 0 indicates
+    // a CONFLICT that needs human review).
+    add("query:typed-mutation-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
+        const std::uint64_t conflicts = ev->get_cross_delta_conflicts_caught();
+        const std::uint64_t passes_skipped = ev->get_passes_skipped_type_dirty();
+        const std::uint64_t touched_size = ev->get_touched_roots_size();
+        return make_int(static_cast<std::int64_t>(
+            narrowing + conflicts + passes_skipped + touched_size));
+    });
+
+    // Issue #550: query:dirty-impact. Returns the touched
+    // roots set size as an integer (a snapshot, not a
+    // counter). Production use: the AI Agent reads this to
+    // decide whether to schedule a full re-solve (size is
+    // large or growth is monotonic) or trust the incremental
+    // path (size is bounded).
+    add("query:dirty-impact", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        return make_int(static_cast<std::int64_t>(
+            ev->get_touched_roots_size()));
+    });
+
     // Issue #447: (query:tag-arity-count tag-int arity-int)
     // — count of nodes matching (tag, arity) using the
     // pre-built index. Bumps the hits or misses counter
