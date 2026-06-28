@@ -1055,6 +1055,18 @@ private:
     mutable std::atomic<std::uint64_t> tag_arity_index_hits_{0};
     mutable std::atomic<std::uint64_t> tag_arity_index_misses_{0};
     mutable std::atomic<std::uint64_t> tag_arity_index_rebuilds_{0};
+    // Issue #547: dirty flag + mark counter for the
+    // tag_arity_index. mark_dirty_upward + structural mutate
+    // paths set this flag; rebuild_tag_arity_index() clears
+    // it. The flag is the "lazy invalidation" hook that
+    // lets callers decide whether to incrementally patch
+    // (rebuild_tag_arity_index_delta(affected)) or full
+    // rebuild (rebuild_tag_arity_index()) on the next query.
+    // Bump counter (tag_arity_index_dirty_marks_) is stats-
+    // only and exposed via the new (query:pattern-index-
+    // stats) primitive.
+    mutable std::atomic<bool> tag_arity_index_dirty_{false};
+    mutable std::atomic<std::uint64_t> tag_arity_index_dirty_marks_{0};
     // Module-level eval result cache (int64_t = EvalValue serialization).
     // Used by Evaluator::eval_flat for incremental evaluation (Issue #32b).
     // Indexed by NodeId. Zero = not cached. Stored at module level (not arena)
@@ -1292,6 +1304,10 @@ public:
         }
         tag_arity_index_rebuilds_.fetch_add(1,
                                             std::memory_order_relaxed);
+        // Issue #547: clear the dirty flag — the index is
+        // now in sync with the AST.
+        tag_arity_index_dirty_.store(false,
+                                      std::memory_order_release);
     }
     // Issue #447: find all NodeIds matching (tag,
     // arity_min, arity_max). Returns a copy of the
@@ -1330,6 +1346,25 @@ public:
     }
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
         return tag_arity_index_.size();
+    }
+    // Issue #547: dirty-flag hook. mark_tag_arity_index_dirty()
+    // is called from mutate:* paths (and the follow-up will
+    // wire mark_dirty_upward). tag_arity_index_dirty() lets
+    // callers short-circuit queries when the index is stale
+    // (rebuild before serving the query). Stats counter
+    // tag_arity_index_dirty_marks() exposes the lifetime
+    // # of dirty marks for (query:pattern-index-stats).
+    void mark_tag_arity_index_dirty() const noexcept {
+        tag_arity_index_dirty_.store(true,
+                                      std::memory_order_release);
+        tag_arity_index_dirty_marks_.fetch_add(1,
+                                                std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool tag_arity_index_dirty() const noexcept {
+        return tag_arity_index_dirty_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t tag_arity_index_dirty_marks() const noexcept {
+        return tag_arity_index_dirty_marks_.load(std::memory_order_relaxed);
     }
     // Issue #437: apply verify-dirty bits to a node.
     void apply_verify_dirty_bits(NodeId id, std::uint8_t verify_reasons) {
@@ -3524,6 +3559,11 @@ public:
                 queue.push_back(p);
         }
         mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+        // Issue #547: mark the tag_arity_index dirty so the
+        // next (query:pattern) call knows to rebuild (or
+        // patch) the index. mark_tag_arity_index_dirty()
+        // bumps the dirty_marks counter (stats).
+        mark_tag_arity_index_dirty();
         // Issue #412: bump the type cache generation. Every
         // mark_dirty_upward() call invalidates ALL cached
         // type_id_ entries (they were computed against an

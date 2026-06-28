@@ -404,6 +404,60 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             hits + misses + rebuilds));
     });
 
+    // Issue #547: query:pattern-index-stats. Returns
+    // the sum of the 4 tag_arity_index observability
+    // counters:
+    //   - hits (lifetime # of find_by_tag_arity hits)
+    //   - misses (lifetime # of find_by_tag_arity misses)
+    //   - rebuilds (lifetime # of full rebuilds)
+    //   - dirty_marks (lifetime # of mark_dirty_upward()
+    //     calls that flipped the dirty flag — each mark
+    //     tells callers the index is potentially stale)
+    //
+    // P0: returns an integer = sum of all 4 counters.
+    // Follow-up: returns a 4-tuple (hits misses rebuilds
+    // dirty_marks) so the AI Agent can compute the
+    // dirty_marks/rebuilds ratio (= how often we forced
+    // a full rebuild vs incremental).
+    add("query:pattern-index-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        auto* ws = ev->workspace_flat();
+        if (!ws) return make_int(0);
+        const std::uint64_t hits = ws->tag_arity_index_hits();
+        const std::uint64_t misses = ws->tag_arity_index_misses();
+        const std::uint64_t rebuilds = ws->tag_arity_index_rebuilds();
+        const std::uint64_t dirty_marks = ws->tag_arity_index_dirty_marks();
+        return make_int(static_cast<std::int64_t>(
+            hits + misses + rebuilds + dirty_marks));
+    });
+
+    // Issue #547: query:pattern-hygiene-stats. Returns
+    // the sum of the 2 query:pattern hygiene observability
+    // counters:
+    //   - macro_introduced_skipped_in_query_  (# of nodes
+    //     the matcher skipped because their
+    //     SyntaxMarker was MacroIntroduced and
+    //     :respect-hygiene was the default #f)
+    //   - hygiene_violation_count_  (# of explicit
+    //     hygiene violations bumped by the matcher / query
+    //     layer when a MacroIntroduced node was returned to
+    //     a caller that didn't expect it)
+    //
+    // P0: returns an integer = sum of both counters.
+    // Follow-up: returns a 2-tuple (skips violations) so
+    // the AI Agent can react to each category independently.
+    add("query:pattern-hygiene-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t skips = ev->get_macro_introduced_skipped_in_query();
+        const std::uint64_t violations = ev->get_hygiene_violation_count();
+        return make_int(static_cast<std::int64_t>(
+            skips + violations));
+    });
+
     // Issue #447: (query:tag-arity-count tag-int arity-int)
     // — count of nodes matching (tag, arity) using the
     // pre-built index. Bumps the hits or misses counter
