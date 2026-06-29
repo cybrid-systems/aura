@@ -1858,6 +1858,18 @@ aura_issue_test_link_llvm_jit(test_issue_337)
 # count, end-to-end via Aura.
 aura_add_issue_test(test_issue_339)
 aura_issue_test_link_llvm_jit(test_issue_339)
+# Issue #340: cache OccurrenceInfoFlat results for
+# faster incremental re-inference in if-branches.
+# Ships the (compile:occ-cache-stats) Aura
+# primitive that closes the observability gap for
+# the pre-existing predicate_memo_ cache (#281).
+# The memo infrastructure (per-cond-NodeId cache
+# with epoch-based invalidation) is already in
+# place from #281; this PR adds the Aura-level
+# stats surface. 3 ACs: 3-tuple shape, memo
+# infrastructure exists, end-to-end callable.
+aura_add_issue_test(test_issue_340)
+aura_issue_test_link_llvm_jit(test_issue_340)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

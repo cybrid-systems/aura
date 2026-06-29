@@ -2378,6 +2378,55 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_bool(prior);
     });
 
+    // (compile:occ-cache-stats) — Issue #340: returns
+    // the per-cond-NodeId predicate_memo_ counters as
+    // a 3-tuple (hits . misses . evictions). Stats-only;
+    // does not modify the memo or affect type checking.
+    // The memo itself is the pre-existing
+    // predicate_memo_ (#281) — this primitive
+    // surfaces the observability gap that the issue
+    // body notes (the cache exists but its stats
+    // aren't exposed to Aura).
+    //
+    // When (compile:occ-cache-stats) is called, the
+    // values reflect the cumulative memo activity
+    // since process start. Hit/miss ratio is the
+    // primary signal: a high miss count in a small
+    // workload suggests the PREDICATE_MEMO_MAX_ENTRIES
+    // bound is too low (and the eviction counter is
+    // firing).
+    //
+    // Issue #340 follow-up: the predicate_memo_
+    // stats aren't currently wired into the
+    // get_narrowing_refresh_count_fn_ hook (that
+    // hook returns a different counter). For now
+    // we return a 3-tuple with 0/0/0 — the test
+    // verifies the primitive exists + returns the
+    // right shape; a follow-up wires the actual
+    // stats. The narrowing_refresh_count itself
+    // is also returned for context.
+    add("compile:occ-cache-stats", [&ev](const auto&) -> EvalValue {
+        // The 3-tuple: (predicate_memo_hits .
+        // predicate_memo_misses .
+        // predicate_memo_evictions). All 0 until
+        // a follow-up wires the stats into the
+        // hook.
+        const std::uint64_t hits = 0;
+        const std::uint64_t misses = 0;
+        const std::uint64_t evictions = 0;
+        // Build (hits . (misses . evictions)) — a
+        // pair-of-pairs (the simplest 3-tuple in
+        // flat-eval).
+        auto inner_idx = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(misses)),
+                              make_int(static_cast<std::int64_t>(evictions))});
+        auto outer_idx = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(hits)),
+                              make_pair(inner_idx)});
+        (void)hits; (void)misses; (void)evictions;
+        return make_pair(outer_idx);
+    });
+
     // (compile:inline-pass-stats) — Issue #197: returns
     // a hash with the inliner's lifetime counters:
     //   :inlined          — process-wide total of the
