@@ -1958,6 +1958,22 @@ aura_issue_test_link_llvm_jit(test_issue_349)
 # Ships (query:match-exhaustiveness-notes) Aura primitive. C++ side already in place from #260.
 aura_add_issue_test(test_issue_350)
 aura_issue_test_link_llvm_jit(test_issue_350)
+# Issue #351: [Follow-up #240-4] match-pattern support
+# in find_occurrence_contexts. Ships the per-node
+# occurrence-dirty scoping on the match pattern
+# walker's conservative fallback (the "Subject type
+# unknown" branch in recheck_match_exhaustiveness_in_dirty_scope):
+#   - has kOccurrenceDirty: emit the precise note
+#     ("invalidated-match-narrowing")
+#   - has kGeneralDirty only: emit the conservative
+#     note ("invalidated-match-pattern")
+#   - clean: skip the node entirely
+# Mirrors the #240 fix on find_occurrence_contexts
+# (IfExpr path). 4 ACs: C++ side wired, kOccurrenceDirty
+# emits precise, kGeneralDirty emits conservative,
+# end-to-end via CompilerService.
+aura_add_issue_test(test_issue_351)
+aura_issue_test_link_llvm_jit(test_issue_351)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

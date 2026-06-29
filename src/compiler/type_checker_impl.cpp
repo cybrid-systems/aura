@@ -4738,15 +4738,50 @@ namespace {
                 continue;
             }
             // Subject type unknown — conservative fallback (#147).
+            // Issue #351: per-node occurrence-dirty scoping
+            // (mirrors the #240 fix on find_occurrence_contexts
+            // for IfExpr). Three outcomes:
+            //   - has kOccurrenceDirty: emit the PRECISE note
+            //     ("invalidated-match-narrowing") — the
+            //     mutation actually touched the narrowing
+            //   - has kGeneralDirty only: emit the CONSERVATIVE
+            //     note ("invalidated-match-pattern") — the
+            //     conservative fallback (#147)
+            //   - clean: skip the node entirely (post-#240
+            //     same as the IfExpr path)
             if (!had_subject_type) {
                 const auto* mi = flat.get_match_info(id);
                 if (!mi)
                     continue;
+                // Issue #240 / #351: per-node occurrence-dirty
+                // filter. The kOccurrenceDirty bit (#188) is
+                // set when the mutation actually affects
+                // narrowing (e.g. the subject type changed).
+                // For match patterns, the precise path
+                // corresponds to "the subject type / constructor
+                // signature changed", the conservative path
+                // to "something in the dirty scope changed".
+                const std::uint8_t kOccurrenceBit =
+                    static_cast<std::uint8_t>(
+                        aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
+                const bool has_occ_bit =
+                    flat.is_dirty_for(id, kOccurrenceBit);
+                // Skip clean match nodes (same as #240 IfExpr
+                // path). This is the high-value case: a
+                // narrow mutation in a deep workspace no
+                // longer fires the conservative note for
+                // unrelated match patterns.
+                if (!has_occ_bit && !flat.is_dirty(id))
+                    continue;
                 OwnershipNote note;
                 note.node = id;
-                note.kind = "invalidated-match-pattern";
-                note.message = "match pattern in dirty scope may be invalidated "
-                               "by mutation (used " +
+                note.kind = has_occ_bit
+                    ? "invalidated-match-narrowing"
+                    : "invalidated-match-pattern";
+                note.message = std::string("match pattern in dirty scope ") +
+                               (has_occ_bit ? "narrowing"
+                                             : "may be invalidated") +
+                               " by mutation (used " +
                                std::to_string(mi->used_constructors.size()) +
                                " constructors, has_wildcard=" +
                                (mi->has_wildcard ? "true" : "false") + ")";
