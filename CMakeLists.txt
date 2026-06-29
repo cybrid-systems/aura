@@ -1939,6 +1939,21 @@ aura_issue_test_link_llvm_jit(test_issue_347)
 # other node types), end-to-end via CompilerService.
 aura_add_issue_test(test_issue_348)
 aura_issue_test_link_llvm_jit(test_issue_348)
+# Issue #349: [Follow-up #240-2] blame tracking
+# in structural mutation primitives. Ships:
+#   - (query:last-mutation-blame) Aura primitive
+#     returning a 2-tuple (operator_name . summary)
+#     for the most-recent mutation
+#   - The C++ side blame plumbing (from #260) is
+#     already in place: post_mutation_invariant_check
+#     populates source_mutation_id + blame on
+#     every emitted note from the MutationRecord.
+#     The new primitive surfaces this to Aura.
+# 4 ACs: primitive returns value, pair car is
+# operator_name, post-mutation invariant populates
+# blame, end-to-end blame tracks the latest.
+aura_add_issue_test(test_issue_349)
+aura_issue_test_link_llvm_jit(test_issue_349)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
