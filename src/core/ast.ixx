@@ -131,6 +131,15 @@ export enum class NodeTag : std::uint32_t {
     Borrow = 0x18,
     MutBorrow = 0x19,
     Drop = 0x1A,
+    // Issue #310: minimal SV structural tags. The Interface
+    // declares a port bundle (SystemVerilog `interface` form);
+    // the Modport declares a directional view over an
+    // interface's signals (`modport` form). These tags are
+    // the AST-level foundation — no builder, query, or emit
+    // is added in this issue. Follow-up issues will wire the
+    // constructors + side-table population + lowering hooks.
+    Interface = 0x1B,
+    Modport = 0x1C,
 };
 
 
@@ -333,7 +342,7 @@ export struct NodeMeta {
 // Tag-to-metadata mapping, indexed by `tag - 1`.
 // Tags must be sequential starting from 1 (LiteralInt = 0x01).
 // Gap at 0x0C is filled with a sentinel.
-export constexpr std::array<NodeMeta, 26> kNodeMeta = {{
+export constexpr std::array<NodeMeta, 28> kNodeMeta = {{
     {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true, false, false},       // 0x01
     {NodeTag::Variable, "Variable", 0, false, true, false, false, false},           // 0x02
     {NodeTag::Call, "Call", 1, true, false, false, false, false},                   // 0x03
@@ -361,6 +370,14 @@ export constexpr std::array<NodeMeta, 26> kNodeMeta = {{
     {NodeTag::Borrow, "Borrow", 1, false, false, false, false, false},                // 0x18
     {NodeTag::MutBorrow, "MutBorrow", 1, false, false, false, false, false},          // 0x19
     {NodeTag::Drop, "Drop", 1, false, false, false, false, false},                    // 0x1A
+    // Issue #310: SV structural tags. Same shape as
+    // DefineModule/Export (0 fixed children, var_children,
+    // no per-node flags) — the structural payload (interface
+    // name + port list / modport name + port directions)
+    // will be populated via side-tables when the builder
+    // methods land in a follow-up.
+    {NodeTag::Interface, "Interface", 0, true, false, false, false, false},         // 0x1B
+    {NodeTag::Modport, "Modport", 0, true, false, false, false, false},              // 0x1C
 }};
 
 
