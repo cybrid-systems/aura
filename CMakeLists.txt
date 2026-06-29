@@ -1730,6 +1730,18 @@ aura_issue_test_link_llvm_jit(test_issue_316)
 # 3 ACs + a perf-bound check.
 aura_add_issue_test(test_issue_317)
 aura_issue_test_link_llvm_jit(test_issue_317)
+# Issue #318: (verify:coverage-holes) +
+# (verify:suggest-constraint-refine). Two Aura primitives
+# that close the verification → AST loop by returning
+# NodeIds of nodes marked kCoverageFeedbackDirty. The
+# AI agent / editor tool can pipe the list into
+# (mutate:query-and-replace ...) + (ast:snapshot /
+# ast:rollback) for safe refinement. Composes with
+# (verify:parse-coverage-feedback) from #469 and
+# (mark_dirty_verification) from #313.
+# 3 ACs + perf-bound (<50ms on 200-node workspace).
+aura_add_issue_test(test_issue_318)
+aura_issue_test_link_llvm_jit(test_issue_318)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
