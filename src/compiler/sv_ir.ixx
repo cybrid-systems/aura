@@ -29,6 +29,10 @@ module;
 
 export module aura.compiler.sv_ir;
 import std;
+import aura.core.mutation;  // Issue #315: SymId for the structured
+                            // SVInterfaceIR / SVModportIR shapes.
+import aura.core.ast;       // Issue #315: FlatAST + StringPool for
+                            // the AST → IR mapping helper.
 
 namespace aura::compiler::sv_ir {
 
@@ -241,5 +245,68 @@ export std::string emit_wire(const WireIR& w);
 
 // Format as a debug string: "<kind> <name> [W-1:0]".
 export std::string debug_wire(const WireIR& w);
+
+// ── SVInterfaceIR / SVModportIR (SymId-based structured IR) ───
+//
+// Issue #315 — parallel API to InterfaceIR / ModportIR (above).
+// Both representations exist:
+//   - InterfaceIR / ModportIR use std::string for names
+//     (issue #435 — the list-emit-friendly variant)
+//   - SVInterfaceIR / SVModportIR use SymId for names
+//     (issue #315 — the AST-mapping-friendly variant)
+//
+// The SymId-based layer is canonical for the lowering pass
+// + AST mutation pipeline because SymId is stable across
+// editing sessions (interned once, reused forever) and
+// directly comparable. The std::string layer stays for the
+// emit path where human-readable text is the form.
+export struct SVModportIR {
+    aura::ast::SymId name = aura::ast::SymId{};     // INVALID_SYM = uninitialized
+    std::vector<aura::ast::SymId> port_names;        // ports referenced by this modport
+};
+
+export struct SVInterfaceIR {
+    aura::ast::SymId name = aura::ast::SymId{};
+    std::vector<SVModportIR> modports;               // nested modport declarations
+};
+
+// Constructors.
+export SVModportIR make_sv_modport(aura::ast::SymId name,
+                                   std::vector<aura::ast::SymId> port_names) noexcept;
+
+export SVInterfaceIR make_sv_interface(aura::ast::SymId name,
+                                       std::vector<SVModportIR> modports) noexcept;
+
+// Convenience overload that takes 2 modports as separate args
+// (avoids the {a, b} initializer-list dance in callers — the
+// vector-only form is the canonical one for variadic use).
+export SVInterfaceIR make_sv_interface(aura::ast::SymId name,
+                                       SVModportIR mp0,
+                                       SVModportIR mp1) noexcept;
+
+// Issue #315: AST → IR mapping. Walks the body of an
+// Interface AST node + collects the nested Modport nodes.
+// Not a full lowering pass — surface-only conversion.
+//
+// Returns std::nullopt if the node isn't an Interface, or
+// if any body item has an unexpected tag (the surface-only
+// walker only handles Modport children; signals + nested
+// modules are skipped silently — a follow-up issue can
+// extend the walker to handle them). The expectation is
+// that callers either pre-validate the AST with a query:
+// (query:by-tag :interface) or accept that some signals
+// aren't reflected in the IR (for tests that build the
+// AST directly).
+export std::optional<SVInterfaceIR>
+map_interface_node_to_ir(const aura::ast::FlatAST& flat,
+                         const aura::ast::StringPool& pool,
+                         aura::ast::NodeId id);
+
+// Debug helpers (SymId-aware — resolve via the pool).
+export std::string debug_sv_modport(const SVModportIR& m,
+                                     const aura::ast::StringPool& pool);
+
+export std::string debug_sv_interface(const SVInterfaceIR& i,
+                                      const aura::ast::StringPool& pool);
 
 } // namespace aura::compiler::sv_ir

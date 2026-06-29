@@ -1703,6 +1703,15 @@ aura_issue_test_link_llvm_jit(test_issue_313)
 # needed — the existing path is tag-agnostic.
 aura_add_issue_test(test_issue_314)
 aura_issue_test_link_llvm_jit(test_issue_314)
+# Issue #315: SVInterfaceIR + SVModportIR (SymId-based
+# structured IR) shipped in src/compiler/sv_ir.ixx +
+# sv_ir_impl.cpp. Parallel to the std::string-based #435
+# InterfaceIR / ModportIR (which were the list-emit-
+# friendly variant). Includes constructors + AST →
+# IR mapping helper (map_interface_node_to_ir). 3 ACs:
+# constructible, AST mapping, compiles.
+aura_add_issue_test(test_issue_315)
+aura_issue_test_link_llvm_jit(test_issue_315)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
