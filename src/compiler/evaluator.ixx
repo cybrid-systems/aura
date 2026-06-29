@@ -514,7 +514,8 @@ void register_reflect_and_type_primitives(
 void register_query_primitives(std::function<void(std::string, PrimFn)> add,
                                std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
                                void*& type_registry,
-                               std::function<std::string(const std::string&)> resolve_module_path);
+                               std::function<std::string(const std::string&)> resolve_module_path,
+                               Evaluator& ev);
 void register_workspace_query_primitives(
     std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
     aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool, void*& type_registry,

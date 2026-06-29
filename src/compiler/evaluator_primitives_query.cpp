@@ -31,7 +31,7 @@ static bool validate_code_against_schema_simple(const std::string& code,
 
 void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                std::pmr::vector<std::string>& string_heap, void*& type_registry,
-                               ModulePathResolver resolve_module_path) {
+                               ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     add("query:module-exports", [&pairs, &string_heap, resolve_module_path](
                                    std::span<const EvalValue> a) -> EvalValue {
@@ -1172,6 +1172,55 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             string_heap.push_back(repr);
             return make_string(repr_idx);
         }
+        return make_bool(true);
+    });
+
+    // (query:occurrence-stale? if-node-id) — Issue #339:
+    // returns #t when the if-node's occurrence-narrowing
+    // is stale (must re-analyze before the narrowing is
+    // trusted). The staleness bit is set by
+    // validate_occurrence_narrowing() when the
+    // post-mutation predicate or var type no longer
+    // matches the previously-recorded refined type.
+    // Returns #f otherwise (fresh + #f on bad args / OOR).
+    add("query:occurrence-stale?", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_bool(false);
+        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (node_id >= ws->size())
+            return make_bool(false);
+        return make_bool(ws->is_occurrence_stale(node_id) != 0);
+    });
+
+    // (query:occurrence-stale-count) — Issue #339:
+    // returns the current count of stale occurrence
+    // nodes in the workspace. Cheap O(n) walk; intended
+    // for observability + AI agent monitoring.
+    add("query:occurrence-stale-count", [&ev](const auto&) -> EvalValue {
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ws->occurrence_stale_count()));
+    });
+
+    // (query:mark-occurrence-stale if-node-id) — Issue
+    // #339: explicitly mark an if-node as stale.
+    // Used by callers that decide staleness outside
+    // the type-checker (e.g. an external validator or
+    // a test). Returns #t on success, #f on bad args.
+    add("query:mark-occurrence-stale", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_bool(false);
+        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (node_id >= ws->size())
+            return make_bool(false);
+        ws->mark_occurrence_stale(node_id);
         return make_bool(true);
     });
 }
