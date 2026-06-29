@@ -299,11 +299,27 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             dirty_calls = ws_flat->mark_dirty_upward_call_count();
             dirty_nodes = ws_flat->mark_dirty_total_nodes();
         }
+        // Issue #336: include the mark_dirty_upward_fast
+        // fixed-point early-exit counter so callers can
+        // benchmark the optimization.
+        std::uint64_t fast_hits = 0;
+        if (auto* ws_flat = ev.workspace_flat()) {
+            fast_hits = ws_flat->dirty_upward_fast_fixed_point_count();
+        }
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"children-call-count", make_int(static_cast<std::int64_t>(children_calls))},
             {"parent-of-call-count", make_int(static_cast<std::int64_t>(parent_calls))},
             {"mark-dirty-upward-call-count", make_int(static_cast<std::int64_t>(dirty_calls))},
             {"mark-dirty-total-nodes", make_int(static_cast<std::int64_t>(dirty_nodes))},
+            // Issue #336: fixed-point hits (the
+            // mark_dirty_upward_fast early-exit
+            // counter). When this number is large
+            // relative to mark-dirty-upward-call-count,
+            // the fast path is paying off (most calls
+            // hit a parent that was already dirty for
+            // the target reasons).
+            {"dirty-upward-fast-fixed-point-hits",
+             make_int(static_cast<std::int64_t>(fast_hits))},
         };
         return build_hash(kv);
     });
@@ -1538,6 +1554,36 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_int(0);
         auto packed = ev.get_incremental_stats_fn_();
         return make_int(static_cast<std::int64_t>((packed >> 32) & 0xFFFF));
+    });
+
+    // (compile:mark-dirty-upward-fast node-id [reasons]) —
+    // Issue #336: optimized variant of mark_dirty_upward
+    // that early-exits when the parent already has the
+    // target reason bits. Same signature as the
+    // lower-level mark_dirty_upward, but with the
+    // early-exit optimization (fixed-point check
+    // before walking further up the parent chain).
+    //
+    // reasons is a bitmask. When omitted, defaults to
+    // kGeneralDirty (same as mark_dirty_upward). The
+    // helper is primarily useful in AI self-modification
+    // loops that do many small mutations in deep ASTs;
+    // the (compile:ast-ops-stats) fast-fixed-point-hits
+    // counter surfaces how often the early-exit fires.
+    add("compile:mark-dirty-upward-fast", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_bool(false);
+        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (node_id >= ws->size())
+            return make_bool(false);
+        std::uint8_t reasons = aura::ast::FlatAST::kGeneralDirty;
+        if (a.size() >= 2 && is_int(a[1]))
+            reasons = static_cast<std::uint8_t>(as_int(a[1]));
+        ws->mark_dirty_upward_fast(node_id, reasons);
+        return make_void();
     });
 
     // (compile:epoch) — Issue #196: current mutation_epoch_ value.

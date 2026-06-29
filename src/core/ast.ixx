@@ -1191,6 +1191,11 @@ private:
     mutable std::atomic<std::uint64_t> parent_of_call_count_{0};
     mutable std::atomic<std::uint64_t> mark_dirty_upward_call_count_{0};
     mutable std::atomic<std::uint64_t> mark_dirty_total_nodes_{0};
+    // Issue #336: counter for the mark_dirty_upward_fast
+    // early-exit hits (when the parent already has the
+    // target reason bits). Surfaced via
+    // (compile:dirty-fast-stats).
+    mutable std::atomic<std::uint64_t> dirty_upward_fast_fixed_point_hits_{0};
     // Issue #412: per-FlatAST type cache generation counter.
     // Bumped by mark_dirty_upward() and by the explicit
     // bump_type_cache_generation() accessor. The
@@ -3922,6 +3927,98 @@ public:
                 }
             }
         }
+    }
+
+    // Issue #336: optimized variant of mark_dirty_upward.
+    // Early-exits the upward walk when a parent already
+    // has the target reason bits set (leverages the
+    // bitmask as a fixed-point check). This is the
+    // "fine-grained" optimization the issue asks for:
+    // when the parent already has the bits, the BFS
+    // stops there (no need to mark the grandparent
+    // again — it inherits the bits through the parent
+    // anyway, since any analysis that checks
+    // `is_dirty_for(p, mask)` walks up via parent_).
+    //
+    // Win: in deep ASTs with many small mutations
+    // (common in AI self-modification loops), the
+    // average propagation depth drops because we don't
+    // re-mark ancestors that are already dirty for
+    // these reasons.
+    //
+    // The early-exit check uses the existing
+    // is_dirty_for(id, mask) which is a single
+    // 8-bit AND — much cheaper than the BFS step
+    // it skips (queue.push_back + pop_front + mark_dirty
+    // + apply_ppa_dirty_bits + per-call counter bump).
+    //
+    // The stats counter dirty_upward_fast_fixed_point_hits_
+    // tracks how many times the early-exit fired (for
+    // perf benchmarking). On workloads with lots of
+    // repeated small mutations in deep ASTs, this
+    // should fire often.
+    void mark_dirty_upward_fast(const NodeId id, std::uint8_t reasons = kGeneralDirty,
+                                 std::uint8_t ppa_reasons = 0)
+        pre(id < tag_.size()) {
+        mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+        std::uint64_t touched = 0;
+        std::uint64_t fixed_point_hits = 0;
+        std::deque<NodeId> queue;
+        queue.push_back(id);
+        while (!queue.empty()) {
+            auto nid = queue.front();
+            queue.pop_front();
+            // Issue #336: if the node is already dirty
+            // for ALL the target reasons, skip the
+            // mark (the bitmask is idempotent under OR).
+            if (!is_dirty_for(nid, reasons)) {
+                mark_dirty(nid, reasons);
+                apply_ppa_dirty_bits(nid, ppa_reasons);
+                ++touched;
+            }
+            auto p = parent_[nid];
+            if (p == NULL_NODE) continue;
+            // Issue #336: early-exit when the parent
+            // already has all the target reason bits
+            // set. The parent's parents will inherit
+            // the bits through it (any analysis that
+            // checks the parent will see "dirty for
+            // these reasons" and propagate further
+            // itself if needed).
+            if (is_dirty_for(p, reasons)) {
+                ++fixed_point_hits;
+                continue;
+            }
+            queue.push_back(p);
+        }
+        mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+        dirty_upward_fast_fixed_point_hits_.fetch_add(
+            fixed_point_hits, std::memory_order_relaxed);
+        mark_tag_arity_index_dirty();
+        type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #336: clear specific bits on a node and
+    // all descendants. The pre-existing clear_dirty_for
+    // (line ~3747) handles the single-node case; this
+    // is the range variant for re-analysis passes
+    // that have already propagated the cleared bits'
+    // new value upward.
+    void clear_dirty_for_subtree(NodeId id, std::uint8_t reason_mask) {
+        if (id < dirty_.size())
+            dirty_[id] &= static_cast<std::uint8_t>(~reason_mask);
+        auto v = get(id);
+        for (auto c : v.children) {
+            if (c != NULL_NODE)
+                clear_dirty_for_subtree(c, reason_mask);
+        }
+    }
+
+    // Issue #336: counter for the fast-path early-exit
+    // hits. Surfaced via (compile:dirty-fast-stats)
+    // for observability.
+    [[nodiscard]] std::uint64_t dirty_upward_fast_fixed_point_count() const noexcept {
+        return dirty_upward_fast_fixed_point_hits_.load(std::memory_order_relaxed);
     }
 
     // Issue #262: propagate dirty upward but stop at `stop_at` (exclusive).
