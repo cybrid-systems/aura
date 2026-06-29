@@ -783,6 +783,11 @@ private:
         if (id < value_cache_.size())
             value_cache_[id] = kNotCached;
         node_first_mutation_[id] = 0;
+        // Issue #320: reset the per-node epoch column
+        // (the slot is recycled; the epoch starts at 0
+        // again, same semantics as a fresh node).
+        if (id < last_seen_epoch_.size())
+            last_seen_epoch_[id] = 0;
         parent_[id] = NULL_NODE;
         node_gen_[id] = generation_;
     }
@@ -883,6 +888,13 @@ private:
         else
             value_cache_[id] = kNotCached;
         node_first_mutation_.push_back(0);
+        // Issue #320: per-node epoch tracking. New
+        // nodes start at 0 (which compares != any real
+        // mutation_epoch_ >= 1, so the first
+        // synthesize_flat after a mutation will treat
+        // them as "stale" once and then settle into a
+        // stable state).
+        last_seen_epoch_.push_back(0);
         parent_.push_back(NULL_NODE);
         node_gen_.push_back(generation_);
         return id;
@@ -1113,6 +1125,17 @@ private:
     // full FlatAST reset, same lifecycle as mutation_log_.
     std::pmr::vector<NarrowingRecord> narrowing_log_;
     std::pmr::vector<std::uint32_t> node_first_mutation_;
+    // Issue #320: per-node epoch tracking. Records the
+    // last mutation_epoch_ at which this node was
+    // touched (marked dirty or structurally mutated).
+    // The TypeChecker's synthesize_flat cache uses this
+    // to detect which specific nodes need re-inference
+    // (per-node invalidation) vs the coarse whole-cache
+    // gate that #168 ships. The column is a
+    // parallel-array SoA vector; live nodes always
+    // carry a valid epoch (starts at 0, which
+    // compares != any real mutation_epoch_ >= 1).
+    std::pmr::vector<std::uint64_t> last_seen_epoch_;
     std::uint64_t next_mutation_id_ = 1;
     std::uint16_t generation_ = 1;
     std::pmr::vector<std::uint16_t> node_gen_;
@@ -1504,6 +1527,52 @@ public:
             static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
     }
 
+    // Issue #320: per-node epoch accessors + helper.
+    //
+    // The last_seen_epoch_ column records the
+    // mutation_epoch_ at which this node was last
+    // touched. The TypeChecker's synthesize_flat cache
+    // will use this to do per-node invalidation
+    // (rather than the coarse whole-cache gate that
+    // #168 ships). For now (this PR is the
+    // foundation), the column is plumbed but the
+    // synthesize_flat cache still uses the coarse gate.
+    // The follow-up issue wires the per-node check.
+    //
+    // The accessor returns 0 for out-of-range (which
+    // compares != any real mutation_epoch_ >= 1, so
+    // a never-touched node will look "stale" once
+    // after the first real epoch and then settle).
+
+    // Read-only accessor (public, used by the type
+    // checker + tests).
+    [[nodiscard]] std::uint64_t last_seen_epoch(NodeId id) const noexcept {
+        if (id >= last_seen_epoch_.size()) return 0;
+        return last_seen_epoch_[id];
+    }
+
+    // Stamp the node with the current mutation epoch.
+    // Called from mark_dirty() so any future read sees
+    // the updated epoch. The size of the column grows
+    // lazily (matches the pattern of other side-tables
+    // like verify_dirty_).
+    void stamp_last_seen_epoch(NodeId id, std::uint64_t epoch) noexcept {
+        if (id >= last_seen_epoch_.size())
+            last_seen_epoch_.resize(id + 1, 0);
+        last_seen_epoch_[id] = epoch;
+    }
+
+    // Convenience: stamp a node as having-seen the
+    // current global epoch. The caller is expected to
+    // pass the epoch from the global mutation counter
+    // (e.g. CompilerService::mutation_epoch_). This
+    // helper exists so the call site doesn't have to
+    // know about the column details.
+    void stamp_last_seen_epoch_to_current(NodeId id,
+                                          std::uint64_t current_epoch) noexcept {
+        stamp_last_seen_epoch(id, current_epoch);
+    }
+
     // Walk the parent_ chain upward (BFS, the same shape as
     // mark_dirty_upward at line ~3726) and apply
     // verification-dirty to each ancestor. The BFS logic is
@@ -1661,6 +1730,10 @@ public:
         , value_cache_(std::move(other.value_cache_))
         , mutation_log_(std::move(other.mutation_log_))
         , node_first_mutation_(std::move(other.node_first_mutation_))
+        // Issue #320: per-node epoch tracking column
+        // (SoA parallel to mutation_log_ /
+        // node_first_mutation_).
+        , last_seen_epoch_(std::move(other.last_seen_epoch_))
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
         , node_gen_(std::move(other.node_gen_))
@@ -1782,6 +1855,8 @@ public:
         , mutation_log_(other.mutation_log_)
         , narrowing_log_(other.narrowing_log_)
         , node_first_mutation_(other.node_first_mutation_)
+        // Issue #320: per-node epoch tracking column.
+        , last_seen_epoch_(other.last_seen_epoch_)
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
         , node_gen_(other.node_gen_)
@@ -1898,6 +1973,8 @@ public:
         , mutation_log_(alloc)
         , narrowing_log_(alloc)
         , node_first_mutation_(alloc)
+        // Issue #320: per-node epoch tracking column.
+        , last_seen_epoch_(alloc)
         , node_gen_(alloc)
         , free_list_(alloc) {}
 
@@ -3591,6 +3668,46 @@ public:
             dirty_.resize(id + 1, 0);
         dirty_[id] |= reasons;
         clear_cached_value(id); // invalidate result cache
+        // Issue #320: stamp the per-node epoch with the
+        // current mutation epoch (if known). The
+        // synthesize_flat cache will compare this against
+        // cache_epoch_ to decide per-node invalidation
+        // (follow-up wiring). For now (this PR is the
+        // foundation), the column is populated but not
+        // consulted.
+        //
+        // The mark_dirty signature doesn't take an
+        // explicit epoch (callers don't always have one
+        // handy). The stamp uses a separate helper
+        // stamp_last_seen_epoch() that the higher-level
+        // mark_dirty_upward() / typed_mutate paths call
+        // with the current global mutation_epoch_.
+        // Here we just bump the column by 1 from the
+        // previous value to give a "touched" signal for
+        // tests + introspection (the value isn't yet
+        // meaningful for the cache check; that's a
+        // follow-up).
+        if (id < last_seen_epoch_.size())
+            last_seen_epoch_[id] += 1;
+    }
+
+    // Issue #320: mark_dirty_for_reinfer helper.
+    // Combines mark_dirty + explicit epoch stamp. The
+    // caller passes the current global mutation_epoch_
+    // (from CompilerService::mutation_epoch_). The
+    // synthesize_flat cache check (follow-up wiring)
+    // will compare this against cache_epoch_ to decide
+    // per-node invalidation.
+    //
+    // For now (this PR is the foundation), this helper
+    // exists so typed_mutate / mark_dirty_upward can
+    // opt into the per-node epoch path when the global
+    // epoch is available. Callers that don't have the
+    // global epoch handy can fall back to plain
+    // mark_dirty (which still bumps the column by 1).
+    void mark_dirty_for_reinfer(NodeId id, std::uint64_t current_epoch) {
+        mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
+        stamp_last_seen_epoch(id, current_epoch);
     }
     void mark_subtree_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty,
                             std::uint8_t ppa_reasons = 0) {
