@@ -1002,15 +1002,7 @@ private:
     std::pmr::vector<std::uint8_t> macro_dirty_;
     // Issue #339: per-node occurrence-narrowing staleness
     // column. When a mutation affects a predicate or a
-    // narrowed var, the type checker marks the affected
-    // if-nodes' occurrence context as stale (the
-    // dirty_ byte is full with 8 DirtyReason bits; this
-    // column is the orthogonal side-table, like
-    // verify_dirty_ / verification_dirty_ / macro_dirty_).
-    // The narrow helper: 1 = stale (must re-analyze
-    // before use), 0 = fresh.
-    std::pmr::vector<std::uint8_t> occ_stale_;
-    std::pmr::vector<std::uint32_t> type_id_;
+std::pmr::vector<std::uint32_t> type_id_;
     // Issue #412: per-node type cache generation. Parallel to
     // type_id_; stores the type_cache_generation_ at the time
     // the cache entry was populated. On cache hit, the
@@ -1156,6 +1148,19 @@ private:
     // carry a valid epoch (starts at 0, which
     // compares != any real mutation_epoch_ >= 1).
     std::pmr::vector<std::uint64_t> last_seen_epoch_;
+    // Issue #339: per-node occurrence-narrowing
+    // staleness column. (Declared after last_seen_epoch_
+    // to match the init-list order in all 3 ctors;
+    // -Wreorder compliance.) When a mutation affects a
+    // predicate or a narrowed var, the type checker
+    // marks the affected if-nodes' occurrence context
+    // as stale (the dirty_ byte is full with 8
+    // DirtyReason bits; this column is the orthogonal
+    // side-table, like verify_dirty_ /
+    // verification_dirty_ / macro_dirty_). The narrow
+    // helper: 1 = stale (must re-analyze before use),
+    // 0 = fresh.
+    std::pmr::vector<std::uint8_t> occ_stale_;
     std::uint64_t next_mutation_id_ = 1;
     std::uint16_t generation_ = 1;
     std::pmr::vector<std::uint16_t> node_gen_;
@@ -1800,13 +1805,14 @@ public:
         , error_kind_(std::move(other.error_kind_))
         , value_cache_(std::move(other.value_cache_))
         , mutation_log_(std::move(other.mutation_log_))
-        , node_first_mutation_(std::move(other.node_first_mutation_))
         // Issue #320: per-node epoch tracking column
         // (SoA parallel to mutation_log_ /
         // node_first_mutation_).
         , last_seen_epoch_(std::move(other.last_seen_epoch_))
         // Issue #339: per-node occurrence-staleness
-        // column.
+        // column. (Declared after last_seen_epoch_ in
+        // the class; the init-list order must match the
+        // declaration order to silence -Wreorder.)
         , occ_stale_(std::move(other.occ_stale_))
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
@@ -1932,7 +1938,9 @@ public:
         // Issue #320: per-node epoch tracking column.
         , last_seen_epoch_(other.last_seen_epoch_)
         // Issue #339: per-node occurrence-staleness
-        // column.
+        // column. (Declared after last_seen_epoch_ in
+        // the class; init-list order must match the
+        // declaration order to silence -Wreorder.)
         , occ_stale_(other.occ_stale_)
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
@@ -2049,11 +2057,12 @@ public:
         , value_cache_(alloc)
         , mutation_log_(alloc)
         , narrowing_log_(alloc)
-        , node_first_mutation_(alloc)
         // Issue #320: per-node epoch tracking column.
         , last_seen_epoch_(alloc)
         // Issue #339: per-node occurrence-staleness
-        // column.
+        // column. (Declared after last_seen_epoch_ in
+        // the class; init-list order must match the
+        // declaration order to silence -Wreorder.)
         , occ_stale_(alloc)
         , node_gen_(alloc)
         , free_list_(alloc) {}
