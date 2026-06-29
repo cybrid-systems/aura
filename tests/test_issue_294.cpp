@@ -27,7 +27,26 @@ static std::string run_aura(const std::string& src) {
     if (fd < 0) return "<mkstemps-fail>";
     write(fd, src.data(), src.size());
     close(fd);
-    std::string cmd = std::string("timeout 10 build/aura < ") + tmpl + " 2>&1";
+    // Path resolution: tests are launched from build/ so a
+    // relative path like "build/aura" would resolve to
+    // "build/build/aura" (non-existent → rc=32512 "command
+    // not found"). Try env var AURA_BIN first (set by CI).
+    //
+    // IMPORTANT: we must cd to the source root before
+    // running the aura binary, because the Aura source
+    // references relative paths like (load "lib/std/eda.aura")
+    // which only resolve from the repo root. From the
+    // repo root the path to the binary is `./build/aura`.
+    static const std::string aura_bin = []() -> std::string {
+        if (auto* env = std::getenv("AURA_BIN")) return env;
+        return "./build/aura";
+    }();
+    static const std::string repo_root = []() -> std::string {
+        if (auto* env = std::getenv("AURA_SRC_ROOT")) return env;
+        return "..";
+    }();
+    std::string cmd = std::string("(cd ") + repo_root + " && timeout 10 " +
+                      aura_bin + " < " + tmpl + " 2>&1)";
     FILE* p = popen(cmd.c_str(), "r");
     if (!p) {
         unlink(tmpl);

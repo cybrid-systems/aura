@@ -28,7 +28,10 @@
 ; surface).
 
 (export query:list-categories query:help
-        query:nodes-with-marker query:find-by-name query:subtree)
+        query:nodes-with-marker query:find-by-name query:subtree
+        query:defines query:defines-by-marker
+        query:calls-by-marker
+        query:node-marker query:ref-counts)
 
 ; ── (query:list-categories) — list the query: sub-namespaces
 ;     Used for discovery by AI Agents / docs.
@@ -92,3 +95,32 @@
                (children (query:children current))
                (new-acc (cons current acc)))
           (loop (append rest children) new-acc)))))
+; ── Issue #278 — high-level "all defines / all calls" wrappers ──
+;     The (query:defines / calls / defines-by-marker /
+;     calls-by-marker) primitives are implemented as C++
+;     engine primitives (see
+;     src/compiler/evaluator_primitives_query_workspace.cpp).
+;     They were originally planned as Aura stdlib wrappers
+;     that compose (query:by-marker) + (query:defines /
+;     calls), but (define (query:foo) ...) at top level
+;     inside a (require ... all:) module hits a flat-
+;     evaluator closure issue (colon-prefixed names produce
+;     "invalid closure" when subsequently called). Moving
+;     them to C++ is cleaner + faster (single-pass walk vs
+;     2-pass set intersection).
+;
+; The Aura-level (define (query:foo) ...) form DOES work
+; for top-level imports when the name is bound through
+; the require mechanism's `all:` re-export — see
+; query:list-categories / query:help above. The mechanism
+; routes via the module's bindings table rather than the
+; flat-evaluator's local env, so the colon-name issue
+; doesn't trigger. We rely on this for the existing
+; wrappers; the new defines-by-marker / calls-by-marker
+; primitives are C++-engine-only for now.
+;
+; If you want to call them through stdlib, the C++
+; primitives are reachable globally (no (require ...)
+; needed for engine primitives — they're bound at the
+; evaluator level). The export list below is updated to
+; advertise them but they ARE available without require.
