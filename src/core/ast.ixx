@@ -1291,6 +1291,9 @@ public:
         if (id >= verify_dirty_.size()) return 0;
         return verify_dirty_[id];
     }
+    // Issue #469: verification_dirty_ accessor is defined
+    // later in this file (after apply_verification_dirty_bits
+    // is declared). See the second declaration.
     // Issue #456: public accessor for the main dirty_ byte
     // (used by (query:dirty-subtree) to check each node's
     // dirty bitmask against a reason filter).

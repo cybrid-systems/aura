@@ -2194,12 +2194,21 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         // (query:templates) ordering convention).
         EvalValue list = make_void();
         const auto n = ws->size();
-        // We need access to verification_dirty_ column to
-        // OR-test against kCoverageFeedbackDirty. The
-        // public accessor pair is
-        // (verify_dirty(id) & kCoverageFeedbackDirty).
+        // Issue #319 follow-up: read from
+        // `verification_dirty_` (#469), NOT `verify_dirty_`
+        // (#437). The two columns hold different bit sets:
+        //   - verify_dirty_ (legacy #437): verify_assertion /
+        //     verify_coverage / verify_sva / verify_formal_cex
+        //   - verification_dirty_ (new #469):
+        //     kCoverageFeedbackDirty / kAssertFailureDirty
+        //     (full byte per #313)
+        // `apply_verification_dirty_bits` (from #469) writes
+        // to `verification_dirty_`, so the coverage-holes
+        // read must use that column too. The legacy
+        // `verify_dirty(id)` would always return 0 for
+        // kCoverageFeedbackDirty (a different namespace).
         for (std::size_t id = n; id-- > 0;) {
-            const auto bits = ws->verify_dirty(static_cast<aura::ast::NodeId>(id));
+            const auto bits = ws->verification_dirty(static_cast<aura::ast::NodeId>(id));
             if (bits & aura::ast::FlatAST::kCoverageFeedbackDirty) {
                 auto idx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::to_string(id));
@@ -2241,8 +2250,12 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ws) return make_void();
         EvalValue list = make_void();
         const auto n = ws->size();
+        // Issue #319 follow-up: use verification_dirty_ (#469)
+        // column, not verify_dirty_ (#437). See the matching
+        // note in (verify:coverage-holes) above for the
+        // namespace distinction.
         for (std::size_t id = n; id-- > 0;) {
-            const auto bits = ws->verify_dirty(static_cast<aura::ast::NodeId>(id));
+            const auto bits = ws->verification_dirty(static_cast<aura::ast::NodeId>(id));
             if (bits & aura::ast::FlatAST::kCoverageFeedbackDirty) {
                 auto idx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::to_string(id));
