@@ -1597,6 +1597,109 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>((packed >> 16) & 0xFFFF));
     });
 
+    // (compile:dirty-reason-counts) — Issue #344: returns
+    // the 8-tuple of per-DirtyReason counts. Cheap O(n)
+    // walk of the dirty_ column. The 8 reasons are
+    // (in DirtyReason enum order):
+    //   0: kGeneralDirty    (0x01)
+    //   1: kConstraintDirty  (0x02)
+    //   2: kOccurrenceDirty  (0x04)
+    //   3: kOwnershipDirty   (0x08)
+    //   4: kCoercionDirty    (0x10)
+    //   5: kStructDirty      (0x20)
+    //   6: kDefUseDirty      (0x40)
+    //   7: kPpaHintDirty     (0x80)
+    // Returns 0s when no workspace is loaded.
+    add("compile:dirty-reason-counts", [&ev](const auto&) -> EvalValue {
+        auto* ws = ev.workspace_flat();
+        if (!ws) {
+            // Return a 0/0/0/0/0/0/0/0 8-tuple
+            // (pair-of-pair-of-pair-of-pair). Cheap.
+            EvalValue out = make_void();
+            for (int i = 0; i < 8; ++i) {
+                auto p_idx = ev.pairs_.size();
+                Pair tmp{make_int(0), out};
+                ev.pairs_.push_back(std::move(tmp));
+                out = make_pair(p_idx);
+            }
+            return out;
+        }
+        // Walk the dirty_view (cheap, cache-friendly)
+        // and OR-accumulate the counts.
+        std::array<std::uint64_t, 8> counts = {0, 0, 0, 0, 0, 0, 0, 0};
+        const auto view = ws->dirty_view();
+        for (auto byte : view) {
+            if (byte & 0x01) ++counts[0];
+            if (byte & 0x02) ++counts[1];
+            if (byte & 0x04) ++counts[2];
+            if (byte & 0x08) ++counts[3];
+            if (byte & 0x10) ++counts[4];
+            if (byte & 0x20) ++counts[5];
+            if (byte & 0x40) ++counts[6];
+            if (byte & 0x80) ++counts[7];
+        }
+        // Build the 8-tuple (nested pairs, right-folded).
+        EvalValue out = make_void();
+        for (int i = 7; i >= 0; --i) {
+            auto p_idx = ev.pairs_.size();
+            Pair tmp{make_int(static_cast<std::int64_t>(counts[i])), out};
+            ev.pairs_.push_back(std::move(tmp));
+            out = make_pair(p_idx);
+        }
+        return out;
+    });
+
+    // (query:dirty-nodes :reason "X") — Issue #344:
+    // returns a pair-list of NodeIds that have the
+    // target DirtyReason bit set. X is one of:
+    //   "general" | "constraint" | "occurrence" |
+    //   "ownership" | "coercion" | "struct" |
+    //   "defuse" | "ppa-hint"
+    // The pair-list is in NodeId order (smallest
+    // first) so the caller can iterate with
+    // (car / cdr) or take (length ...) of the
+    // sublist. Returns the empty list when no
+    // workspace is loaded or the reason is
+    // unknown.
+    add("query:dirty-nodes", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_void();
+        const auto& reason_name = ev.string_heap_[idx];
+        std::uint8_t mask = 0;
+        if (reason_name == "general")          mask = 0x01;
+        else if (reason_name == "constraint") mask = 0x02;
+        else if (reason_name == "occurrence") mask = 0x04;
+        else if (reason_name == "ownership")   mask = 0x08;
+        else if (reason_name == "coercion")    mask = 0x10;
+        else if (reason_name == "struct")      mask = 0x20;
+        else if (reason_name == "defuse")      mask = 0x40;
+        else if (reason_name == "ppa-hint")    mask = 0x80;
+        else
+            return make_void();
+        // Walk the dirty column; collect NodeIds
+        // with the target bit set. Returns the
+        // pair-list in NodeId order (smallest first).
+        const auto view = ws->dirty_view();
+        EvalValue list = make_void();
+        for (std::size_t id = view.size(); id-- > 0;) {
+            if (view[id] & mask) {
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::to_string(id));
+                auto p_idx = ev.pairs_.size();
+                Pair tmp{make_string(sidx), list};
+                ev.pairs_.push_back(std::move(tmp));
+                list = make_pair(p_idx);
+            }
+        }
+        return list;
+    });
+
     // (compile:dep-edges) — Issue #196: total number of edges
     // in the dep_graph_ map. Each edge means "this define
     // depends on that define"; mutations to the target cascade
