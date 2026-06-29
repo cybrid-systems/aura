@@ -1902,6 +1902,25 @@ aura_issue_test_link_llvm_jit(test_issue_344)
 # mutate context.
 aura_add_issue_test(test_issue_346)
 aura_issue_test_link_llvm_jit(test_issue_346)
+# Issue #347: [Docs] StableNodeRef, generation_ and
+# mutation safety best practices guide. Ships:
+#   - docs/design/core/stable_ref_best_practices.md
+#     (comprehensive best-practices doc covering
+#     when to use StableNodeRef vs raw NodeId,
+#     safe patterns for multi-round query-mutate-
+#     eval loops, stale-ref handling, workspace
+#     layering + COW, fiber concurrency, 3 code
+#     examples, 6 anti-patterns)
+#   - docs/architecture.md link to the new doc
+#     (in the "Agent 编排" section)
+#   - tests/test_issue_347.cpp verifying the doc
+#     exists + has the required sections + cross-
+#     references resolve to real files
+# 4 ACs: doc exists with sections, examples +
+# anti-patterns, linked from main docs, cross-
+# references resolve.
+aura_add_issue_test(test_issue_347)
+aura_issue_test_link_llvm_jit(test_issue_347)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
