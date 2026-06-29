@@ -110,6 +110,7 @@ Aura 层 helper：`lib/std/query.aura`（3 个）、`lib/std/refactor.aura`、`l
 - C++：`fiber:*`, `send`/`recv`, `session:*`（`src/serve/`）
 - Aura：`lib/std/orchestrator.aura`（`orch:*`, `agent:*`）
 - 测试：`tests/suite/orchestrator.aura`
+- 跨 eval/mutate 持有节点引用：`docs/design/core/stable_ref_best_practices.md`（StableNodeRef + generation_ 模式）
 
 ## 标准库
 
