@@ -1954,6 +1954,10 @@ aura_issue_test_link_llvm_jit(test_issue_348)
 # blame, end-to-end blame tracks the latest.
 aura_add_issue_test(test_issue_349)
 aura_issue_test_link_llvm_jit(test_issue_349)
+# Issue #350: [Follow-up #240-3 / #227-3] match exhaustiveness re-eval post-mutation.
+# Ships (query:match-exhaustiveness-notes) Aura primitive. C++ side already in place from #260.
+aura_add_issue_test(test_issue_350)
+aura_issue_test_link_llvm_jit(test_issue_350)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

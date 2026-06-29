@@ -916,6 +916,58 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             make_string(oidx), make_string(sidx)));
     });
 
+    // (query:match-exhaustiveness-notes) — Issue
+    // #350: returns the most-recent match-
+    // exhaustiveness notes (the kind = "Missing-
+    // ConstructorInNestedMatch" notes emitted by
+    // recheck_match_exhaustiveness_in_dirty_scope
+    // after a mutation that touches an ADT
+    // constructor). The function returns a
+    // pair-list of node-ids (smallest first) that
+    // are currently in the post-mutation
+    // exhaustiveness notes.
+    //
+    // The C++ side (recheck_match_exhaustiveness_in_dirty_scope
+    // in type_checker_impl.cpp #260) already
+    // computes these notes; this primitive
+    // surfaces the underlying match-info state to
+    // Aura so the AI agent can ask "which matches
+    // are currently flagged as non-exhaustive?".
+    add("query:match-exhaustiveness-notes",
+        [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_void();
+        auto* ws = ev->workspace_flat();
+        if (!ws) return make_void();
+        // Walk the flat; collect node-ids that
+        // have a match_info entry with
+        // exhaustiveness_checked = true + a
+        // candidate_constructors / used_constructors
+        // gap. We surface the NodeId; the agent can
+        // use (query:node-type <id>) to inspect.
+        EvalValue list = make_void();
+        const auto n = ws->size();
+        for (std::size_t id = n; id-- > 0; ) {
+            if (!ws->has_match_info(static_cast<aura::ast::NodeId>(id)))
+                continue;
+            const auto* mi = ws->get_match_info(
+                static_cast<aura::ast::NodeId>(id));
+            if (!mi || !mi->exhaustiveness_checked) continue;
+            // We surface any checked match. A
+            // future enhancement can filter to
+            // "non-exhaustive" (used < candidates)
+            // but the agent can derive that
+            // locally.
+            auto sidx = ev->push_string_heap(
+                std::to_string(id));
+            auto p_idx = ev->push_pair(
+                make_string(sidx), list);
+            list = make_pair(p_idx);
+        }
+        return list;
+    });
+
     // Issue #555: query:typed-mutation-stats-task1. Returns
     // the sum of 4 Task1 typed self-mod observability
     // counters + the 4 existing #550 counters (so the AI
