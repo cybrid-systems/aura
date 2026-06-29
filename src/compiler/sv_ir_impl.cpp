@@ -7,8 +7,21 @@ module;
 
 module aura.compiler.sv_ir;
 import std;
+import aura.core.mutation;   // SymId (Issue #315)
+import aura.core.ast;        // FlatAST + StringPool + NodeId + NodeTag
 
 namespace aura::compiler::sv_ir {
+
+// Issue #315: bring aura::ast types into the local namespace so
+// the signature can use unqualified names (matches the pattern
+// in other aura::compiler::sv_ir functions that take SymId).
+using aura::ast::FlatAST;
+using aura::ast::StringPool;
+using aura::ast::NodeId;
+using aura::ast::NodeTag;
+using aura::ast::NULL_NODE;
+using aura::ast::INVALID_SYM;
+using SymId = aura::ast::SymId;
 
 const char* wire_kind_to_symbol(WireKind k) noexcept {
     switch (k) {
@@ -442,6 +455,115 @@ std::string debug_property(const PropertyIR& p) {
     out.append(" expr=|");
     out.append(p.expr);
     out.push_back('|');
+    return out;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Issue #315 — SVInterfaceIR / SVModportIR (SymId-based)
+// ═══════════════════════════════════════════════════════════════
+
+SVModportIR make_sv_modport(SymId name,
+                             std::vector<SymId> port_names) noexcept {
+    SVModportIR m;
+    m.name = name;
+    m.port_names = std::move(port_names);
+    return m;
+}
+
+SVInterfaceIR make_sv_interface(SymId name,
+                                 std::vector<SVModportIR> modports) noexcept {
+    SVInterfaceIR i;
+    i.name = name;
+    i.modports = std::move(modports);
+    return i;
+}
+
+SVInterfaceIR make_sv_interface(SymId name,
+                                 SVModportIR mp0,
+                                 SVModportIR mp1) noexcept {
+    SVInterfaceIR i;
+    i.name = name;
+    std::vector<SVModportIR> mps;
+    mps.reserve(2);
+    mps.push_back(std::move(mp0));
+    mps.push_back(std::move(mp1));
+    i.modports = std::move(mps);
+    return i;
+}
+
+std::optional<SVInterfaceIR>
+map_interface_node_to_ir(const FlatAST& flat,
+                         const StringPool& pool,
+                         NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return std::nullopt;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Interface)
+        return std::nullopt;
+    SVInterfaceIR ir;
+    ir.name = v.sym_id;
+    // Walk the body + collect Modport nodes (signal-like
+    // children are skipped — a follow-up can extend to
+    // handle nested Begin blocks + Variable decls).
+    for (NodeId child_id : flat.children(id)) {
+        auto cv = flat.get(child_id);
+        if (cv.tag == NodeTag::Modport) {
+            SVModportIR mp;
+            mp.name = cv.sym_id;
+            // Port names come from the modport's param_data_
+            // side-table (mirrors add_modport's shape).
+            // No public param_count(id) accessor exists yet
+            // (follow-up issue can add it for cleaner
+            // iteration); use param_at(id, i) with a small
+            // bound + INVALID_SYM terminator. The bound of
+            // 64 covers the realistic SV modport port list
+            // size; larger lists would need a different
+            // shape (count + offset).
+            for (std::uint32_t i = 0; i < 64; ++i) {
+                SymId p = flat.param_at(child_id, i);
+                if (p == INVALID_SYM)
+                    break;
+                mp.port_names.push_back(p);
+            }
+            ir.modports.push_back(std::move(mp));
+        }
+        // Signal/decl children are silently skipped for
+        // now — only Modport nodes are reflected in IR.
+        // This matches the issue's scope (minimal IR +
+        // basic AST mapping; full lowering is follow-up).
+    }
+    (void)pool;  // not currently needed (SymId-only walker)
+    return ir;
+}
+
+std::string debug_sv_modport(const SVModportIR& m,
+                              const StringPool& pool) {
+    std::string out;
+    out.append("modport ");
+    if (m.name != INVALID_SYM)
+        out.append(pool.resolve(m.name));
+    out.append("(");
+    for (std::size_t i = 0; i < m.port_names.size(); ++i) {
+        if (i > 0) out.append(", ");
+        if (m.port_names[i] != INVALID_SYM)
+            out.append(pool.resolve(m.port_names[i]));
+    }
+    out.push_back(')');
+    return out;
+}
+
+std::string debug_sv_interface(const SVInterfaceIR& i,
+                               const StringPool& pool) {
+    std::string out;
+    out.append("interface ");
+    if (i.name != INVALID_SYM)
+        out.append(pool.resolve(i.name));
+    out.append(" { ");
+    for (std::size_t k = 0; k < i.modports.size(); ++k) {
+        if (k > 0) out.append("; ");
+        out.append(debug_sv_modport(i.modports[k], pool));
+    }
+    out.append(" }");
     return out;
 }
 
