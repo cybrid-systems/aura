@@ -1,16 +1,9 @@
 
-build/
-dist/
-build_repro/
-build_repro_a/
-build_repro_b/
-gcm.cache/
-build_asan
-build_dbg/
-build_debug
-build_gdb
+# Build trees — catch all variants: build/, build-gcc/, build-gcc16/, build-mac/,
+# build_asan, build_ubsan, build_o0/, build_dbg/, build_debug, build_gdb/, etc.
+build*/
 /build_rel/
-build_ubsan
+gcm.cache/
 # C++26
 compile_commands.json
 compiled/
@@ -18,27 +11,26 @@ compiled/
 *.exe
 # IDE
 .idea/
+.vscode/
+.claude/
+.sixth/
 *.log
 *.o
 *.obj
 # OS
 *.out
 /__pycache__/
+__pycache__/
 # Racket
 *.rkt~
 *.swo
 *.swp
+*.zo
 /Testing/
+Thumbs.db
 tests/bench_results/
 tests/bench_results/*.log
 tests/__pycache__/
-Thumbs.db
-.vscode/
-*.zo
-build_o0/
-build_o0/
-__pycache__/
-build_tsan/
 
 # Local-only memory files (Anqi's project context + workflow
 # preferences + session logs). Bootstrap-loaded by the dev
