@@ -1682,6 +1682,18 @@ aura_issue_test_link_llvm_jit(test_issue_311)
 # (Direct FlatAST scan via the new builders from #311).
 aura_add_issue_test(test_issue_312)
 aura_issue_test_link_llvm_jit(test_issue_312)
+# Issue #313: kVerificationDirty constant +
+# mark_dirty_verification(_upward) helpers +
+# is_verification_dirty(_for) /
+# clear_verification_dirty(_for) accessors. The constant
+# is a *named identifier* (not an actual dirty-byte bit)
+# because the existing uint8_t dirty bitmask is already
+# full (all 8 bits used by other DirtyReason values).
+# The actual per-reason state lives in the orthogonal
+# verification_dirty_ side-table (#469), which the
+# helpers populate. 6 tests + 3 ACs covered.
+aura_add_issue_test(test_issue_313)
+aura_issue_test_link_llvm_jit(test_issue_313)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
