@@ -1818,6 +1818,25 @@ aura_issue_test_link_llvm_jit(test_issue_335)
 # fast path via Aura.
 aura_add_issue_test(test_issue_336)
 aura_issue_test_link_llvm_jit(test_issue_336)
+# Issue #337: [Perf/C++23+] adopt std::flat_map /
+# std::span views in ShapeProfiler, caches, SoA
+# query paths. Ships:
+#   - ShapeProfiler.profiles_ is now
+#     std::flat_map<FnKey, FnProfile> (C++23)
+#     (replaces std::unordered_map for better
+#     cache locality in the lookup-heavy
+#     shape-stability check)
+#   - FlatAST gets 5 new std::span view accessors
+#     (dirty_view, ppa_dirty_view,
+#     last_seen_epoch_view, verify_dirty_view,
+#     verification_dirty_view) — the foundation
+#     for ranges::views::zip pass-level adoption
+# 5 ACs: flat_map used, dirty_view non-empty,
+# last_seen_epoch_view size matches, tracked_fns
+# no API regression, end-to-end views via
+# CompilerService.
+aura_add_issue_test(test_issue_337)
+aura_issue_test_link_llvm_jit(test_issue_337)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

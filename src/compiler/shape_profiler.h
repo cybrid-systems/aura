@@ -9,7 +9,15 @@
 #define AURA_COMPILER_SHAPE_PROFILER_H
 
 #include <cstdint>
-#include <unordered_map>
+// Issue #337: std::flat_map (C++23) for the
+// profiles_ container. Better cache locality
+// than std::unordered_map for the small-to-medium
+// profile sets typical in shape-stable code. The
+// flat_map keeps entries in sorted order (small
+// overhead vs hash) but avoids the per-lookup
+// cache miss pattern of unordered_map's
+// hash-bucket traversal.
+#include <flat_map>
 #include <vector>
 #include <string>
 #include "shape.h"
@@ -80,7 +88,14 @@ private:
         ShapeID compute_dominant() const;
     };
 
-    std::unordered_map<FnKey, FnProfile> profiles_;
+    // Issue #337: std::flat_map (C++23) for the
+    // profiles_ container. The flat_map's sorted
+    // iteration matches the per-Fn history window
+    // access pattern (the profiling engine iterates
+    // profiles to detect stability across functions
+    // — sorted access is more cache-friendly than
+    // hash-bucket iteration).
+    std::flat_map<FnKey, FnProfile> profiles_;
     std::uint32_t window_size_ = kDefaultWindowSize;
     double stability_ratio_ = kDefaultStabilityRatio;
     std::uint64_t global_time_ = 0;
