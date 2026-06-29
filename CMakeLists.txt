@@ -1837,6 +1837,27 @@ aura_issue_test_link_llvm_jit(test_issue_336)
 # CompilerService.
 aura_add_issue_test(test_issue_337)
 aura_issue_test_link_llvm_jit(test_issue_337)
+# Issue #339: mutation-aware validation + smart
+# invalidation for occurrence-narrowing contexts.
+# Ships the foundation: per-node occ_stale_ SoA
+# column on FlatAST (uint8_t per node, mirrors
+# the verify_dirty_ / verification_dirty_ /
+# macro_dirty_ side-table pattern from #437 +
+# #469 + #290) + 3 new Aura primitives
+# (query:occurrence-stale?,
+# query:occurrence-stale-count,
+# query:mark-occurrence-stale) + C++ accessors
+# (is_occurrence_stale, mark_occurrence_stale,
+# clear_occurrence_stale, occurrence_stale_count).
+# The validate_occurrence_narrowing() function
+# + post_mutation_invariant_check integration
+# are filed as follow-ups (deeper type system
+# refactor: BlameInfo + subtyping + env_type
+# lookup).
+# 5 ACs: column plumbed, mark + read, clear,
+# count, end-to-end via Aura.
+aura_add_issue_test(test_issue_339)
+aura_issue_test_link_llvm_jit(test_issue_339)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

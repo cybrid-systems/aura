@@ -788,6 +788,12 @@ private:
         // again, same semantics as a fresh node).
         if (id < last_seen_epoch_.size())
             last_seen_epoch_[id] = 0;
+        // Issue #339: reset occ_stale_ alongside
+        // last_seen_epoch_ (the slot is recycled; the
+        // staleness starts at 0 again, same as a
+        // fresh node).
+        if (id < occ_stale_.size())
+            occ_stale_[id] = 0;
         parent_[id] = NULL_NODE;
         node_gen_[id] = generation_;
     }
@@ -882,6 +888,10 @@ private:
         // Populated by the type-checker and runtime evaluator; queryable via
         // the AuraQuery `(has-error? N)` clause.
         error_kind_.push_back(0);
+        // Issue #339: per-node occurrence-narrowing
+        // staleness column. New nodes start fresh
+        // (0 = not stale).
+        occ_stale_.push_back(0);
         // value cache initialized lazily (not in arena — module-level vector)
         if (id >= static_cast<NodeId>(value_cache_.size()))
             value_cache_.resize(id + 1, kNotCached);
@@ -990,6 +1000,16 @@ private:
     //                            mutated a macro-introduced
     //                            node)
     std::pmr::vector<std::uint8_t> macro_dirty_;
+    // Issue #339: per-node occurrence-narrowing staleness
+    // column. When a mutation affects a predicate or a
+    // narrowed var, the type checker marks the affected
+    // if-nodes' occurrence context as stale (the
+    // dirty_ byte is full with 8 DirtyReason bits; this
+    // column is the orthogonal side-table, like
+    // verify_dirty_ / verification_dirty_ / macro_dirty_).
+    // The narrow helper: 1 = stale (must re-analyze
+    // before use), 0 = fresh.
+    std::pmr::vector<std::uint8_t> occ_stale_;
     std::pmr::vector<std::uint32_t> type_id_;
     // Issue #412: per-node type cache generation. Parallel to
     // type_id_; stores the type_cache_generation_ at the time
@@ -1578,6 +1598,52 @@ public:
         stamp_last_seen_epoch(id, current_epoch);
     }
 
+    // Issue #339: per-node occurrence-staleness
+    // accessors + helpers. The occ_stale_ column
+    // records whether the node's occurrence-narrowing
+    // information is fresh (0) or stale (1) after a
+    // mutation. Stale nodes must re-run
+    // analyze_predicate_flat before their narrowing
+    // is trusted.
+    //
+    // The narrowing is "stale" when the type checker
+    // (post-mutation) can't confirm the predicate
+    // still holds — either because the predicate
+    // itself mutated or because the bound variable's
+    // type changed in a way that's no longer a
+    // sub-type of the refined type.
+    //
+    // Public read accessor: returns 0/1 (or 0 for
+    // out-of-range, consistent with the other
+    // per-node dirty accessors).
+    [[nodiscard]] std::uint8_t is_occurrence_stale(NodeId id) const noexcept {
+        if (id >= occ_stale_.size()) return 0;
+        return occ_stale_[id];
+    }
+    // Mark a node as stale (after mutation or after
+    // validate_occurrence_narrowing() decides the
+    // refined type is no longer compatible). The
+    // caller can pass the mutation_id for
+    // provenance tracking.
+    void mark_occurrence_stale(NodeId id) noexcept {
+        if (id >= occ_stale_.size())
+            occ_stale_.resize(id + 1, 0);
+        occ_stale_[id] = 1;
+    }
+    // Clear the staleness bit (after a successful
+    // re-analysis via analyze_predicate_flat).
+    void clear_occurrence_stale(NodeId id) noexcept {
+        if (id < occ_stale_.size())
+            occ_stale_[id] = 0;
+    }
+    // Count of how many nodes are currently stale
+    // (for observability).
+    [[nodiscard]] std::size_t occurrence_stale_count() const noexcept {
+        std::size_t n = 0;
+        for (auto v : occ_stale_) if (v) ++n;
+        return n;
+    }
+
     // Walk the parent_ chain upward (BFS, the same shape as
     // mark_dirty_upward at line ~3726) and apply
     // verification-dirty to each ancestor. The BFS logic is
@@ -1739,6 +1805,9 @@ public:
         // (SoA parallel to mutation_log_ /
         // node_first_mutation_).
         , last_seen_epoch_(std::move(other.last_seen_epoch_))
+        // Issue #339: per-node occurrence-staleness
+        // column.
+        , occ_stale_(std::move(other.occ_stale_))
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
         , node_gen_(std::move(other.node_gen_))
@@ -1862,6 +1931,9 @@ public:
         , node_first_mutation_(other.node_first_mutation_)
         // Issue #320: per-node epoch tracking column.
         , last_seen_epoch_(other.last_seen_epoch_)
+        // Issue #339: per-node occurrence-staleness
+        // column.
+        , occ_stale_(other.occ_stale_)
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
         , node_gen_(other.node_gen_)
@@ -1980,6 +2052,9 @@ public:
         , node_first_mutation_(alloc)
         // Issue #320: per-node epoch tracking column.
         , last_seen_epoch_(alloc)
+        // Issue #339: per-node occurrence-staleness
+        // column.
+        , occ_stale_(alloc)
         , node_gen_(alloc)
         , free_list_(alloc) {}
 

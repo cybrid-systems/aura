@@ -50,7 +50,8 @@ void Evaluator::register_all_primitives() {
     primitives_detail::register_query_primitives(
         prim_registrar(),
         pairs_, string_heap_, type_registry_,
-        [this](const std::string& path) { return resolve_module_path(path); });
+        [this](const std::string& path) { return resolve_module_path(path); },
+        *this);
 
     primitives_detail::register_runtime_primitives(
         prim_registrar(),
