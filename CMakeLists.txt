@@ -1974,6 +1974,24 @@ aura_issue_test_link_llvm_jit(test_issue_350)
 # end-to-end via CompilerService.
 aura_add_issue_test(test_issue_351)
 aura_issue_test_link_llvm_jit(test_issue_351)
+# Issue #354: [Follow-up #241-3] fiber yield
+# assertion — no held mutation lock. Ships:
+#   - std::atomic<bool> mutation_boundary_held_
+#     on Evaluator (set/cleared by outermost
+#     MutationBoundaryGuard ctor/dtor)
+#   - mutation_boundary_held() public accessor
+#   - g_mutation_boundary_held bridge function
+#     in messaging_bridge.h (the C-linkage shim
+#     for the fiber code)
+#   - mutation_boundary_held_trampoline
+#     registered at static init
+#   - Fiber::yield() check: asserts in debug
+#     builds, logs warning + continues in release
+# 4 ACs: flag false outside Guard, flag true
+# inside Guard, flag cleared after Guard, end-
+# to-end via mutate:rebind primitive.
+aura_add_issue_test(test_issue_354)
+aura_issue_test_link_llvm_jit(test_issue_354)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

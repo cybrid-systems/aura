@@ -4605,6 +4605,15 @@ public:
 
     ast::ASTArena& arena() { return arena_; }
     Evaluator& evaluator() { return evaluator_; }
+    // Issue #354: passthrough for the
+    // mutation-boundary-held check. Returns true
+    // when an outermost MutationBoundaryGuard is
+    // currently alive. Useful for tests + agent
+    // monitoring; the underlying flag is an atomic
+    // bool on the Evaluator (cheap read).
+    bool mutation_boundary_held() const {
+        return evaluator_.mutation_boundary_held();
+    }
 
     // Issue #62 Iter 1: observability counters accessor.
     // Surfaced via --evo-explain (Iter 3) and AuraQuery (Iter 4).

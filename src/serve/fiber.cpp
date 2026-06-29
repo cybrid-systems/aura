@@ -5,6 +5,7 @@
 #include "aura_platform.h"
 
 #include <sys/mman.h>
+#include <cassert> // Issue #354: assert for yield-during-boundary check
 #include <unistd.h>
 
 import std;
@@ -265,6 +266,31 @@ void Fiber::yield() {
     auto* fb = g_current_fiber;
     if (!fb)
         return;
+
+    // Issue #354: "yield while holding a mutation
+    // boundary" check. The MutationBoundaryGuard
+    // holds the workspace write lock for its
+    // lifetime; yielding inside a mutate:*
+    // primitive body would release the fiber's
+    // view of the lock state and risk deadlock /
+    // starvation. In debug builds we assert; in
+    // release builds we log + continue (the
+    // production-readiness path doesn't crash).
+    // The bridge function is nullptr when no
+    // Evaluator is wired (test-binary), in which
+    // case we skip the check.
+    if (aura::messaging::g_mutation_boundary_held &&
+        aura::messaging::g_mutation_boundary_held()) {
+#ifndef NDEBUG
+        assert(false && "Fiber::yield called while a "
+                        "MutationBoundaryGuard is alive");
+#else
+        std::fprintf(stderr,
+            "WARNING: Fiber::yield called while a "
+            "MutationBoundaryGuard is alive "
+            "(forward-looking Issue #354 check)\n");
+#endif
+    }
 
     // Mark as explicit yield (safe to steal)
     fb->set_yield_reason(YieldReason::Explicit);

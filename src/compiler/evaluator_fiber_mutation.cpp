@@ -267,6 +267,17 @@ void flush_mutation_boundary_trampoline() {
         aura::compiler::Evaluator::yield_hook_evaluator()
             ->flush_mutation_boundary();
 }
+
+// Issue #354: "yield while holding a mutation
+// boundary" check trampoline. Returns true when an
+// outermost MutationBoundaryGuard is currently
+// alive. Used by Fiber::yield to detect a
+// programmer error (yielding inside a mutate:*
+// primitive body).
+bool mutation_boundary_held_trampoline() {
+    auto* ev = aura::compiler::Evaluator::yield_hook_evaluator();
+    return ev ? ev->mutation_boundary_held() : false;
+}
 } // anonymous namespace
 
 // Static initializer: register the trampoline at module load.
@@ -276,6 +287,10 @@ struct FlushHookRegistrar {
     FlushHookRegistrar() {
         aura::messaging::g_flush_mutation_boundary =
             &flush_mutation_boundary_trampoline;
+        // Issue #354: register the
+        // mutation-boundary-held check trampoline.
+        aura::messaging::g_mutation_boundary_held =
+            &mutation_boundary_held_trampoline;
     }
 };
 const FlushHookRegistrar g_flush_hook_registrar{};

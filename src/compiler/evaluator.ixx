@@ -2196,6 +2196,16 @@ private:
     std::atomic<std::uint64_t> mutation_yield_count_{0};
     std::atomic<std::uint64_t> compaction_paused_by_boundary_{0};
     std::atomic<std::uint64_t> cross_fiber_rollback_count_{0};
+    // Issue #354: set by outermost MutationBoundaryGuard
+    // ctor; cleared by dtor. The Fiber::yield path
+    // checks this flag to detect "yield while holding
+    // a mutation boundary" — a programmer error that
+    // could deadlock or starve competing fibers. The
+    // flag is per-Evaluator (set by the Guard ctor when
+    // outermost; nested guards don't reset it). The
+    // fiber's yield check reads this and asserts in
+    // debug builds / logs in release builds.
+    std::atomic<bool> mutation_boundary_held_{false};
     // Set by outermost MutationBoundaryGuard; used by
     // restore_post_yield_or_rollback to signal rollback on
     // cross-thread migration during an active boundary.
@@ -3183,6 +3193,14 @@ public:
     // Get the current checkpoint stack depth (for testing /
     // observability). Returns 0 if the stack is empty.
     static std::size_t mutation_boundary_depth() { return active_mutation_stack_static().size(); }
+    // Issue #354: per-Evaluator atomic flag set by
+    // outermost MutationBoundaryGuard. The Fiber::yield
+    // path reads this (cheap atomic load) to detect
+    // "yield while holding a mutation boundary". Returns
+    // true when an outermost guard is alive.
+    [[nodiscard]] bool mutation_boundary_held() const noexcept {
+        return mutation_boundary_held_.load(std::memory_order_acquire);
+    }
 
     // Static version of active_mutation_stack() for observability
     // accessors that don't have an Evaluator instance handy.
@@ -3522,6 +3540,14 @@ public:
                 lock_.lock();
                 ev_->outermost_mutation_success_flag_ = flag_;
                 ev_->bind_yield_hook_evaluator();
+                // Issue #354: set the atomic flag so
+                // Fiber::yield can detect "yield while
+                // holding a mutation boundary". The
+                // check is O(1) (atomic load) and the
+                // flag is cleared by the Guard dtor
+                // (the outermost one only).
+                ev_->mutation_boundary_held_.store(
+                    true, std::memory_order_release);
             }
             if (fine_rollback_)
                 ev_->request_fine_rollback_for_next_boundary();
@@ -3561,6 +3587,17 @@ public:
                 ev_->flush_mutation_boundary();
             }
             if (outermost) {
+                // Issue #354: clear the flag that
+                // Fiber::yield reads to detect "yield
+                // while holding a mutation boundary".
+                // We clear BEFORE releasing the write
+                // lock so any concurrent Fiber::yield
+                // observes the cleared flag (acquire
+                // ordering on the flag load is
+                // synchronized with the release
+                // ordering on this store).
+                ev_->mutation_boundary_held_.store(
+                    false, std::memory_order_release);
                 lock_.unlock();
                 ev_->outermost_mutation_success_flag_ = nullptr;
                 ev_->unbind_yield_hook_evaluator();
