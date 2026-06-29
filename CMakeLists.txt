@@ -1772,6 +1772,18 @@ aura_issue_test_link_llvm_jit(test_issue_319)
 # (coarse gate still works).
 aura_add_issue_test(test_issue_320)
 aura_issue_test_link_llvm_jit(test_issue_320)
+# Issue #325: ci/test — improve sanitizer coverage +
+# known-failures management + test reporting. Ships:
+#   - tests/run_sanitizer_matrix.sh (single entry
+#     point for TSan/ASan/UBSan + coverage on 4
+#     representative test binaries)
+#   - docs/sanitizers.md (usage doc)
+#   - tests/test_issue_325.cpp (smoke test that the
+#     script + doc exist + are valid)
+# 4 ACs: 3-sanitizer matrix + coverage toolchain +
+# known-failures handling + docs.
+aura_add_issue_test(test_issue_325)
+aura_issue_test_link_llvm_jit(test_issue_325)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
