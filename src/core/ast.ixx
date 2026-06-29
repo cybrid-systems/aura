@@ -2103,6 +2103,54 @@ public:
         return id;
     }
 
+    // Issue #311: SV `interface` builder. Mirrors add_export's
+    // shape (PersistentChildVector of body NodeIds) + stores
+    // the interface name in `sym_id_` (same shape as
+    // add_define_module's param_data_ side-table would, but
+    // body items are NodeIds — signal declarations, nested
+    // modport nodes, etc. — rather than bare symbols). Uses
+    // the PCV fill-constructor pattern to preserve copy-on-
+    // write semantics, and calls link_children() to wire up
+    // parent_[child] = id for each body item.
+    //
+    // The body items can be any NodeId (Define for signal
+    // decls, Modport for nested modports, Begin for module
+    // bodies, etc.). The builder doesn't constrain what the
+    // body contains — the parser / EDSL surface is
+    // responsible for that.
+    [[nodiscard]] NodeId add_interface(SymId name, std::span<const NodeId> body) {
+        auto id = add_node(NodeTag::Interface);
+        sym_id_[id] = name;
+        children_[id] = PersistentChildVector<NodeId>(
+            body.size(), [&](std::size_t i) -> NodeId { return body[i]; });
+        link_children(id);
+        return id;
+    }
+
+    // Issue #311: SV `modport` builder. Uses the param_data_
+    // side-table (same shape as add_define_module's
+    // type_params) to store the port-direction list as a
+    // flat symbol vector with offset/count indices. The
+    // direction information (input/output/inout) is captured
+    // implicitly via the port symbol's name (a future parser
+    // surface will decode e.g. "input data" -> {data, INPUT}
+    // and emit the modport accordingly; the builder just
+    // records the symbol list for now).
+    //
+    // Like add_define_module, no children_ is set (a modport
+    // is a leaf construct carrying only the port list); the
+    // param_data_ side-table is the canonical payload.
+    [[nodiscard]] NodeId add_modport(SymId name, std::span<const SymId> ports) {
+        auto id = add_node(NodeTag::Modport);
+        sym_id_[id] = name;
+        auto pstart = static_cast<std::uint32_t>(param_data_.size());
+        param_data_.insert(param_data_.end(), ports.begin(), ports.end());
+        param_annot_data_.resize(param_annot_data_.size() + ports.size(), NULL_NODE);
+        param_begin_[id] = pstart;
+        param_count_[id] = static_cast<std::uint32_t>(ports.size());
+        return id;
+    }
+
     [[nodiscard]] NodeId add_set(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Set);
         sym_id_[id] = name;
