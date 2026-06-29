@@ -1694,6 +1694,15 @@ aura_issue_test_link_llvm_jit(test_issue_312)
 # helpers populate. 6 tests + 3 ACs covered.
 aura_add_issue_test(test_issue_313)
 aura_issue_test_link_llvm_jit(test_issue_313)
+# Issue #314: structural mutations on the new SV tags
+# (Interface / Modport) automatically route through the
+# existing safety path: set_child/insert_child/remove_child
+# → add_mutation_child_op → add_mutation_with_rollback
+# → mutation_log_ + mark_dirty_upward + StructuralMutationGuard
+# bumps generation_. No code change in evaluator_impl is
+# needed — the existing path is tag-agnostic.
+aura_add_issue_test(test_issue_314)
+aura_issue_test_link_llvm_jit(test_issue_314)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
