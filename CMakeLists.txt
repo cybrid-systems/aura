@@ -1801,6 +1801,23 @@ aura_issue_test_link_llvm_jit(test_issue_325)
 # counters, perf-bound (<100ms for 100 calls).
 aura_add_issue_test(test_issue_335)
 aura_issue_test_link_llvm_jit(test_issue_335)
+# Issue #336: [Perf] fine-grained dirty propagation
+# using multi-reason bitmask. Ships:
+#   - mark_dirty_upward_fast() with early-exit
+#     (fixed-point check on parent for the target
+#     reason bits; BFS terminates at a parent
+#     that's already dirty for those reasons)
+#   - clear_dirty_for_subtree() range variant
+#   - (compile:mark-dirty-upward-fast) Aura
+#     primitive exposing the fast path
+#   - (compile:ast-ops-stats) extended with
+#     dirty-upward-fast-fixed-point-hits counter
+# 5 ACs: early-exit fires, clear_dirty_for_subtree
+# walks children, the Aura primitive works,
+# ast-ops-stats returns the new field, end-to-end
+# fast path via Aura.
+aura_add_issue_test(test_issue_336)
+aura_issue_test_link_llvm_jit(test_issue_336)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
