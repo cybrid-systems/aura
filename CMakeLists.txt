@@ -1870,6 +1870,20 @@ aura_issue_test_link_llvm_jit(test_issue_339)
 # infrastructure exists, end-to-end callable.
 aura_add_issue_test(test_issue_340)
 aura_issue_test_link_llvm_jit(test_issue_340)
+# Issue #344: refine targeted dirty bitmask for
+# precise incremental control + EDSL integration.
+# Ships:
+#   - (compile:dirty-reason-counts) Aura primitive
+#     returning the 8-tuple of per-DirtyReason counts
+#     (general / constraint / occurrence / ownership
+#     / coercion / struct / defuse / ppa-hint)
+#   - (query:dirty-nodes :reason "X") Aura
+#     primitive returning a pair-list of NodeIds
+#     dirty for the given reason
+# 5 ACs: 8-tuple shape, dirty-nodes primitive,
+# mark shows up, clear removes, end-to-end mark+query.
+aura_add_issue_test(test_issue_344)
+aura_issue_test_link_llvm_jit(test_issue_344)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
