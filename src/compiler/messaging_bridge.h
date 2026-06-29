@@ -200,6 +200,19 @@ extern HeapMutexFn g_heap_mutex;
 using FlushMutationBoundaryFn = void (*)();
 extern FlushMutationBoundaryFn g_flush_mutation_boundary;
 
+// Issue #354: "yield while holding a mutation boundary"
+// check. Returns true when an outermost MutationBoundaryGuard
+// is currently alive (i.e. the per-Evaluator atomic flag
+// `mutation_boundary_held_` is true). Set by evaluator at
+// module init; called by Fiber::yield right before swapcontext.
+// In debug builds, Fiber::yield asserts when the check returns
+// true (a yield-while-holding is a programmer error). In
+// release builds, Fiber::yield logs a warning + continues.
+// nullptr means "no active evaluator" (test-binary), in which
+// case Fiber::yield treats it as a no-op (no check).
+using MutationBoundaryHeldFn = bool (*)();
+extern MutationBoundaryHeldFn g_mutation_boundary_held;
+
 // Issue #453: Panic Checkpoint lifecycle hooks across fiber
 // migration. Three orthogonal indirection points:
 //

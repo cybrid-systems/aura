@@ -31,6 +31,12 @@ aura::messaging::HeapMutexFn aura::messaging::g_heap_mutex;
 // Issue #285: flush hook implementation.
 aura::messaging::FlushMutationBoundaryFn
     aura::messaging::g_flush_mutation_boundary = nullptr;
+// Issue #354: mutation-boundary-held check implementation
+// (defaults to null; wired at static init by
+// evaluator_fiber_mutation.cpp). Returns true when an
+// outermost MutationBoundaryGuard is alive.
+aura::messaging::MutationBoundaryHeldFn
+    aura::messaging::g_mutation_boundary_held = nullptr;
 // Issue #453: panic checkpoint lifecycle hooks (defaults to
 // null; wired at static init by evaluator_fiber_mutation.cpp).
 aura::messaging::PendingPanicCheckpointFn
