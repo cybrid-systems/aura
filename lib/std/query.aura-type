@@ -3,3 +3,6 @@ query:help: Any -> Any
 query:nodes-with-marker: Any -> Any
 query:find-by-name: Any -> Any
 query:subtree: Any -> Any
+query:defines: Any -> Any
+query:defines-by-marker: Any -> Any
+query:calls-by-marker: Any -> Any

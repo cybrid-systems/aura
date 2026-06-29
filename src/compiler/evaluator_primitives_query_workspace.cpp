@@ -245,28 +245,73 @@ void register_workspace_query_primitives(
     // (query:calls name) — Find all call sites of a named function
     add("query:calls", [ws, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query:calls name)");
+        // Issue #278 follow-up: 0-arg call returns ALL
+        // call sites in the workspace (regardless of
+        // callee). 1-arg call (legacy) still filters by
+        // the named function — preserves pre-#278 caller
+        // contracts.
+        if (a.size() > 1 || (a.size() == 1 && !is_string(a[0])))
+            return mev("bad-arg", "usage: (query:calls) or (query:calls name)");
         if (!ws.workspace_flat || !ws.workspace_pool)
             return mev("no-workspace", "no workspace AST loaded");
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ws.string_heap.size())
-            return mev("bad-arg", "name string index out of range");
+        aura::ast::SymId sym = aura::ast::INVALID_SYM;
+        if (a.size() == 1) {
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ws.string_heap.size())
+                return mev("bad-arg", "name string index out of range");
+            auto& flat = *ws.workspace_flat;
+            (void)flat;
+            auto name = ws.string_heap[idx];
+            // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
+            sym = ws.canonical_pool()->intern(name);
+        }
         auto& flat = *ws.workspace_flat;
-        auto name = ws.string_heap[idx];
-        // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
-        auto sym = ws.canonical_pool()->intern(name);
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
+            if (v.tag != aura::ast::NodeTag::Call || v.children.empty())
+                continue;
+            if (sym != aura::ast::INVALID_SYM) {
                 auto callee = flat.get(v.child(0));
-                if (callee.tag == aura::ast::NodeTag::Variable && callee.sym_id == sym) {
-                    auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                    result = make_pair(pid);
-                }
+                if (callee.tag != aura::ast::NodeTag::Variable || callee.sym_id != sym)
+                    continue;
             }
+            auto pid = ws.pairs.size();
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
+
+    // Issue #278: (query:defines) — return all define
+    // sites in the workspace. 0-arg returns every
+    // (define ...) node regardless of name. 1-arg
+    // filters by name (preserves the (query:calls name)
+    // symmetry for AI agent workflows).
+    add("query:defines", [ws, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.size() > 1 || (a.size() == 1 && !is_string(a[0])))
+            return mev("bad-arg", "usage: (query:defines) or (query:defines name)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        aura::ast::SymId sym = aura::ast::INVALID_SYM;
+        if (a.size() == 1 && ws.workspace_pool) {
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ws.string_heap.size())
+                return mev("bad-arg", "name string index out of range");
+            sym = ws.canonical_pool()->intern(ws.string_heap[idx]);
+        }
+        auto& flat = *ws.workspace_flat;
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag != aura::ast::NodeTag::Define)
+                continue;
+            if (sym != aura::ast::INVALID_SYM && v.sym_id != sym)
+                continue;
+            auto pid = ws.pairs.size();
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+            result = make_pair(pid);
         }
         return result;
     });
@@ -632,6 +677,144 @@ void register_workspace_query_primitives(
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             if (flat.get(id).tag == target_tag) {
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+            }
+        }
+        return result;
+    });
+
+    // Issue #278: (query:node-marker node-id) — return
+    // the SyntaxMarker name for a node as a string.
+    // Returns "User" / "MacroIntroduced" / "BoolLiteral"
+    // (the canonical Aura-level names). Returns empty
+    // string on out-of-range or unknown marker.
+    add("query:node-marker", [ws, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (query:node-marker node-id)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *ws.workspace_flat;
+        if (id >= flat.size())
+            return mev("out-of-range", "node ID >= flat size");
+        auto marker = flat.marker(id);
+        const char* name = "User";
+        switch (marker) {
+            case aura::ast::SyntaxMarker::User: name = "User"; break;
+            case aura::ast::SyntaxMarker::MacroIntroduced: name = "MacroIntroduced"; break;
+            case aura::ast::SyntaxMarker::BoolLiteral: name = "BoolLiteral"; break;
+        }
+        auto idx = ws.string_heap.size();
+        ws.string_heap.push_back(name);
+        return make_string(idx);
+    });
+
+    // Issue #278: (query:ref-counts node-id) — return the
+    // number of AST nodes whose children include this node-id
+    // (i.e. the number of direct parents in the AST). 0 if
+    // the node has no references (typical for a root-like
+    // node that's never embedded elsewhere). Used by AI agents
+    // to gauge how "central" a node is before mutating it
+    // (high ref-counts → wider invalidation potential).
+    add("query:ref-counts", [ws, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (query:ref-counts node-id)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *ws.workspace_flat;
+        if (target >= flat.size())
+            return make_int(0);
+        std::int64_t count = 0;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                if (v.child(ci) == target) {
+                    ++count;
+                    break;  // each id counts at most once
+                }
+            }
+        }
+        return make_int(count);
+    });
+
+    // Issue #278: (query:defines-by-marker marker-name) —
+    // return all Define nodes whose SyntaxMarker matches
+    // the given name. Same marker vocabulary as
+    // (query:by-marker): "User" / "MacroIntroduced" /
+    // "BoolLiteral". Composes the (query:defines) +
+    // (query:by-marker) data without a stdlib wrapper
+    // (the Aura-level (define ...) for colon-prefixed
+    // names hits a flat-evaluator closure issue, so the
+    // C++ engine primitive is the canonical implementation).
+    add("query:defines-by-marker", [ws, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query:defines-by-marker marker-name)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ws.string_heap.size())
+            return mev("bad-arg", "marker name string index out of range");
+        const auto& marker_name = ws.string_heap[idx];
+        aura::ast::SyntaxMarker target;
+        if (marker_name == "User") {
+            target = aura::ast::SyntaxMarker::User;
+        } else if (marker_name == "MacroIntroduced") {
+            target = aura::ast::SyntaxMarker::MacroIntroduced;
+        } else if (marker_name == "BoolLiteral") {
+            target = aura::ast::SyntaxMarker::BoolLiteral;
+        } else {
+            return mev("unknown-marker", std::string("unknown marker: \"") + marker_name +
+                                             "\" (expected User / MacroIntroduced / BoolLiteral)");
+        }
+        auto& flat = *ws.workspace_flat;
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define && v.marker == target) {
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+            }
+        }
+        return result;
+    });
+
+    // Issue #278: (query:calls-by-marker marker-name) —
+    // return all Call nodes whose SyntaxMarker matches
+    // the given name. C++ engine primitive (same
+    // rationale as query:defines-by-marker).
+    add("query:calls-by-marker", [ws, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query:calls-by-marker marker-name)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ws.string_heap.size())
+            return mev("bad-arg", "marker name string index out of range");
+        const auto& marker_name = ws.string_heap[idx];
+        aura::ast::SyntaxMarker target;
+        if (marker_name == "User") {
+            target = aura::ast::SyntaxMarker::User;
+        } else if (marker_name == "MacroIntroduced") {
+            target = aura::ast::SyntaxMarker::MacroIntroduced;
+        } else if (marker_name == "BoolLiteral") {
+            target = aura::ast::SyntaxMarker::BoolLiteral;
+        } else {
+            return mev("unknown-marker", std::string("unknown marker: \"") + marker_name +
+                                             "\" (expected User / MacroIntroduced / BoolLiteral)");
+        }
+        auto& flat = *ws.workspace_flat;
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Call && v.marker == target) {
                 auto pid = ws.pairs.size();
                 ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
                 result = make_pair(pid);

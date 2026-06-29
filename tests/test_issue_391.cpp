@@ -169,7 +169,16 @@ bool test_regression_prior_primitives() {
     std::println("\n--- AC8: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(query:compiler-cache-stats)");
-    CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
+    // #426 ships the primitive as a 3-tuple
+    // ((dirty-blocks . dirty-functions) .
+    //   incremental-candidates); the regression check
+    // accepts either a pair (3-tuple shape) or an int
+    // (legacy callers). This keeps the test stable
+    // across the #426 follow-ups that may flatten the
+    // tuple into a single count.
+    CHECK(r1.has_value() &&
+          (aura::compiler::types::is_int(*r1) ||
+           aura::compiler::types::is_pair(*r1)),
           "query:compiler-cache-stats (regression for #426)");
     auto r2 = cs.eval("(query:stable-ref-stats)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),

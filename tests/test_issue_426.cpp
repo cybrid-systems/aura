@@ -32,7 +32,14 @@ import aura.core.ast;
 
 namespace aura_issue_426_detail {
 
-// ── AC1: query:compiler-cache-stats returns an integer ──
+// ── AC1: query:compiler-cache-stats returns a value ──
+// The primitive ships as a 3-tuple
+// ((dirty-blocks . dirty-functions) . incremental-candidates)
+// per the #426 close comment ("P0 returns the
+// total_dirty_blocks count via the BlockDirtySummary
+// fields"). This test confirms the tuple shape and that
+// the inner dirty-blocks count is a non-negative integer
+// (via a round-trip through the Aura evaluator).
 bool test_query_compiler_cache_stats() {
     std::println("\n--- AC1: query:compiler-cache-stats returns a value ---");
     aura::compiler::CompilerService cs;
@@ -41,8 +48,20 @@ bool test_query_compiler_cache_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:compiler-cache-stats returns an integer");
+    CHECK(aura::compiler::types::is_pair(*r),
+          "query:compiler-cache-stats returns a 3-tuple (pair shape)");
+    // Use the Aura evaluator to extract the dirty-blocks
+    // count from the nested pair. The primitive returns
+    //   ((dirty-blocks . dirty-functions) . incremental-candidates)
+    // so (car (car <result>)) is the dirty-blocks int.
+    auto r_extract = cs.eval("(car (car (query:compiler-cache-stats)))");
+    CHECK(r_extract.has_value() && aura::compiler::types::is_int(*r_extract),
+          "(car (car (query:compiler-cache-stats))) extracts dirty-blocks int");
+    if (r_extract && aura::compiler::types::is_int(*r_extract)) {
+        const auto n = static_cast<std::int64_t>(
+            aura::compiler::types::as_int(*r_extract));
+        CHECK(n >= 0, "dirty-blocks count is >= 0");
+    }
     return true;
 }
 
@@ -132,14 +151,23 @@ bool test_query_compiler_cache_stats_after_mutate() {
         return false;
     }
     auto r = cs.eval("(query:compiler-cache-stats)");
-    if (!r || !aura::compiler::types::is_int(*r)) {
+    if (!r || !aura::compiler::types::is_pair(*r)) {
         ++g_failed;
         return false;
     }
-    const auto count =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
-    CHECK(count >= 0,
-          "query:compiler-cache-stats count >= 0");
+    // 3-tuple: ((dirty-blocks . dirty-functions) .
+    //            incremental-candidates). Extract the
+    // total dirty blocks via (car (car <r>)).
+    auto r_count = cs.eval("(car (car (query:compiler-cache-stats)))");
+    CHECK(r_count.has_value() && aura::compiler::types::is_int(*r_count),
+          "dirty-blocks count extracted from 3-tuple");
+    if (r_count && aura::compiler::types::is_int(*r_count)) {
+        const auto count =
+            static_cast<std::int64_t>(
+                aura::compiler::types::as_int(*r_count));
+        CHECK(count >= 0,
+              "query:compiler-cache-stats count >= 0");
+    }
     return true;
 }
 
