@@ -1464,6 +1464,96 @@ public:
         mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
     }
 
+    // Issue #313: mark_dirty_verification helper. Convenience
+    // wrapper around apply_verification_dirty_bits() that
+    // applies all standard verification reasons at once
+    // (coverage-feedback + assert-failure). Mirrors
+    // mark_ppa_dirty() (PPA-style API).
+    //
+    // Note on the bit value: the issue body suggests 0x20 for
+    // kVerificationDirty in the main dirty_ bitmask, but all 8
+    // bits of that byte are already used by kGeneralDirty (0x01),
+    // kConstraintDirty (0x02), kOccurrenceDirty (0x04),
+    // kOwnershipDirty (0x08), kCoercionDirty (0x10),
+    // kStructDirty (0x20), kDefUseDirty (0x40), and
+    // kPpaHintDirty (0x80) — see the DirtyReason enum. The
+    // honest close is therefore to keep the orthogonal
+    // verification_dirty_ side-table (set by #469) as the
+    // canonical storage for per-reason verification state, and
+    // use the constant kVerificationDirty as a *named
+    // identifier* (not an actual bit value) so that callers
+    // can document the verification concern without conflicting
+    // with existing dirty-bit assignments.
+    //
+    // Follow-up issue: a bitmask-widening refactor (uint8_t →
+    // uint16_t or wider) could consolidate the per-reason state
+    // into a single column. That's a separate, well-scoped
+    // change touching the storage vector, is_dirty / is_dirty_for
+    // accessors, and all mark_* helpers.
+    static constexpr std::uint8_t kVerificationDirty = 0x20;
+
+    // Mark a node as verification-dirty: set all verification
+    // reasons on the orthogonal verification_dirty_ side-table
+    // + mirror kGeneralDirty on the main dirty_ byte (via
+    // apply_verification_dirty_bits).
+    void mark_dirty_verification(NodeId id) {
+        apply_verification_dirty_bits(id,
+            static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
+    }
+
+    // Walk the parent_ chain upward (BFS, the same shape as
+    // mark_dirty_upward at line ~3726) and apply
+    // verification-dirty to each ancestor. The BFS logic is
+    // duplicated locally rather than funneling through
+    // mark_dirty_upward to avoid triggering the
+    // type_cache_generation_, mark_tag_arity_index_dirty, +
+    // per-binding-gen bump path — those cost meaningful work
+    // for nodes whose verification state changed but whose
+    // type is unaffected. The verification_dirty_ column is
+    // the canonical source of "verification needs re-eval"
+    // and `is_verification_dirty(id)` reads it directly. If
+    // the broader mark_dirty_upward side effects are wanted
+    // alongside verification, callers can chain the two.
+    void mark_dirty_verification_upward(NodeId id) {
+        // Match the mark_dirty_upward observability signal so
+        // monitoring tooling sees a single upward-walk per
+        // verification event.
+        mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+        std::deque<NodeId> queue;
+        queue.push_back(id);
+        while (!queue.empty()) {
+            auto nid = queue.front();
+            queue.pop_front();
+            apply_verification_dirty_bits(nid,
+                static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
+            auto p = parent_[nid];
+            if (p != NULL_NODE)
+                queue.push_back(p);
+        }
+    }
+
+    // Issue #313: read-only accessor for the verification-
+    // dirty side-table. Returns the OR'd set of verification
+    // reasons set on this node (kCoverageFeedbackDirty |
+    // kAssertFailureDirty | ...). 0 means "clean from a
+    // verification perspective".
+    bool is_verification_dirty(NodeId id) const {
+        return id < verification_dirty_.size() && verification_dirty_[id] != 0;
+    }
+    bool is_verification_dirty_for(NodeId id, std::uint8_t verify_mask) const {
+        return id < verification_dirty_.size()
+               && (verification_dirty_[id] & verify_mask) != 0;
+    }
+    void clear_verification_dirty(NodeId id) {
+        if (id < verification_dirty_.size())
+            verification_dirty_[id] = 0;
+    }
+    void clear_verification_dirty_for(NodeId id, std::uint8_t verify_mask) {
+        if (id < verification_dirty_.size())
+            verification_dirty_[id] &= static_cast<std::uint8_t>(~verify_mask);
+    }
+
+
     // Issue #290: macro_dirty_ bit definitions. OR'd into the
     // macro_dirty_ column when clone_macro_body or a
     // self-evolution step touches a node. Setting any macro bit
