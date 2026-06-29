@@ -1658,6 +1658,13 @@ aura_issue_test_link_llvm_jit(test_issue_308)
 # diagnostic format (AC4 — Wn + signedness + bit count).
 aura_add_issue_test(test_issue_309)
 aura_issue_test_link_llvm_jit(test_issue_309)
+# Issue #310: minimal SV structural NodeTags (Interface +
+# Modport) added to NodeTag enum + kNodeMeta + tag_dispatch
+# mirror. Pure AST-level foundation; no builder/query/emit
+# added in this PR (follow-up issues will wire the
+# constructors + side-table population + lowering hooks).
+aura_add_issue_test(test_issue_310)
+aura_issue_test_link_llvm_jit(test_issue_310)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

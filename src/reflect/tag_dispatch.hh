@@ -48,7 +48,15 @@ enum Tag : std::uint8_t {
     Cond = 0x0C,
     TypeAnnotation = 0x0F,
     Coercion = 0x10,
-    TAG_COUNT = 0x11 // one past max
+    // Issue #310: SV structural tags. Listed here so the Tag
+    // enum mirrors NodeTag (the ABF deserializer doesn't read
+    // them yet — the deserializer default-falls-through to
+    // nullptr for any tag >= TAG_COUNT). Follow-up issue
+    // adds the Interface/Modport deserializers + the lowerer
+    // hook that populates them.
+    Interface = 0x1B,
+    Modport = 0x1C,
+    TAG_COUNT = 0x1D // one past max
 };
 
 using ReadFn = void* (*)(void*);
