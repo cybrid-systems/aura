@@ -372,6 +372,66 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return make_int(static_cast<std::int64_t>(ev.arena_group_->auto_compact()));
     });
+    // (arena:adaptive-compact [name]) — Issue #335: adaptive
+    // variant of compact-all that uses the per-module
+    // savings-EMA to lower the trigger threshold when
+    // recent compactions were productive. name is
+    // optional; when provided, only that module is
+    // compacted. When omitted, all modules are checked
+    // individually. Returns total bytes reclaimed.
+    add("arena:adaptive-compact", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+        if (!ev.arena_group_)
+            return make_int(0);
+        if (ev.any_active_mutation_boundary()) {
+            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
+            return make_int(0);
+        }
+        if (a.size() == 1 && is_string(a[0])) {
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_int(0);
+            const auto& name = ev.string_heap_[idx];
+            return make_int(static_cast<std::int64_t>(
+                ev.arena_group_->adaptive_compact(name)));
+        }
+        return make_int(static_cast<std::int64_t>(
+            ev.arena_group_->adaptive_compact_all()));
+    });
+    // (arena:should-auto-compact? name) — Issue #335: cheap
+    // O(1) probe that returns #t when the per-module
+    // fragmentation ratio is at or above the adaptive
+    // threshold. Used by the memory_pressure sampling
+    // loop to decide whether to compact before the
+    // critical threshold.
+    add("arena:should-auto-compact?", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]) || !ev.arena_group_)
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto& name = ev.string_heap_[idx];
+        return make_bool(ev.arena_group_->should_auto_compact(name));
+    });
+    // (arena:adaptive-stats) — Issue #335: returns the
+    // adaptive-compact counters as a 2-tuple
+    // (trigger-count . skip-count). Stats-only.
+    add("arena:adaptive-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+        if (!ev.arena_group_)
+            return make_pair(ev.pairs_.size());  // empty pair
+        const auto trig = ev.arena_group_->auto_compact_trigger_count();
+        const auto skip = ev.arena_group_->auto_compact_skip_count();
+        // Pair (trigger-count . skip-count)
+        auto idx_t = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::to_string(trig));
+        auto idx_s = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::to_string(skip));
+        // Build (a . b) = pair(make_int(t), make_int(s))
+        auto car_idx = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(trig)),
+                              make_int(static_cast<std::int64_t>(skip))});
+        (void)idx_t; (void)idx_s;
+        return make_pair(car_idx);
+    });
     add("arena:shrink-to-fit", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_)
             return make_void();

@@ -1784,6 +1784,23 @@ aura_issue_test_link_llvm_jit(test_issue_320)
 # known-failures handling + docs.
 aura_add_issue_test(test_issue_325)
 aura_issue_test_link_llvm_jit(test_issue_325)
+# Issue #335: [Perf] enhance ArenaGroup auto_compact
+# heuristics + tight integration with evaluator
+# memory_pressure. Ships the ArenaGroup API:
+# should_auto_compact(name) probe + adaptive_compact
+# (single module) + adaptive_compact_all() + 3 new
+# Aura primitives (arena:adaptive-compact,
+# arena:should-auto-compact?, arena:adaptive-stats).
+# The EMA-based threshold adjustment (alpha=0.3,
+# gain=0.0001 per byte) lowers the effective trigger
+# threshold when recent compactions were productive
+# (shift next trigger sooner) and raises it toward
+# base when they were wasteful (shift later).
+# 5 ACs: probe works, adaptive_compact reclaims +
+# updates EMA, EMA lowers threshold, observability
+# counters, perf-bound (<100ms for 100 calls).
+aura_add_issue_test(test_issue_335)
+aura_issue_test_link_llvm_jit(test_issue_335)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
