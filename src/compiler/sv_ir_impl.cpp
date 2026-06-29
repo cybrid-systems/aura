@@ -491,6 +491,21 @@ SVInterfaceIR make_sv_interface(SymId name,
     return i;
 }
 
+SVInterfaceIR make_sv_interface(SymId name,
+                                 SVModportIR mp0,
+                                 SVModportIR mp1,
+                                 SVModportIR mp2) noexcept {
+    SVInterfaceIR i;
+    i.name = name;
+    std::vector<SVModportIR> mps;
+    mps.reserve(3);
+    mps.push_back(std::move(mp0));
+    mps.push_back(std::move(mp1));
+    mps.push_back(std::move(mp2));
+    i.modports = std::move(mps);
+    return i;
+}
+
 std::optional<SVInterfaceIR>
 map_interface_node_to_ir(const FlatAST& flat,
                          const StringPool& pool,
@@ -564,6 +579,52 @@ std::string debug_sv_interface(const SVInterfaceIR& i,
         out.append(debug_sv_modport(i.modports[k], pool));
     }
     out.append(" }");
+    return out;
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Issue #316 — SystemVerilog emit (SymId IR variant)
+// ═════════════════════════════════════════════════════════════════
+
+// Issue #316: minimal SV modport declaration. The grammar is:
+//   modport NAME(input|output|inout PORT_NAME1, ...);
+// The current implementation omits the direction keyword
+// (SystemVerilog allows direction-less port references in
+// modport decls; the formal emit is `(input|output|inout)`
+// per port, set by a follow-up that wires
+// port-direction metadata through the AST).
+// Returns a string ending with ';'. No trailing newline.
+std::string emit_sv_modport(const SVModportIR& m,
+                            const StringPool& pool) {
+    std::string out;
+    out.reserve(48 + 8 * m.port_names.size());
+    out.append("modport ");
+    if (m.name != INVALID_SYM)
+        out.append(pool.resolve(m.name));
+    out.append("(");
+    for (std::size_t i = 0; i < m.port_names.size(); ++i) {
+        if (i > 0) out.append(", ");
+        if (m.port_names[i] != INVALID_SYM)
+            out.append(pool.resolve(m.port_names[i]));
+    }
+    out.append(");");
+    return out;
+}
+
+std::string emit_sv_interface(const SVInterfaceIR& i,
+                             const StringPool& pool) {
+    std::string out;
+    out.reserve(96 + 64 * i.modports.size());
+    out.append("interface ");
+    if (i.name != INVALID_SYM)
+        out.append(pool.resolve(i.name));
+    out.append("();\n");
+    for (const auto& m : i.modports) {
+        out.append("  ");
+        out.append(emit_sv_modport(m, pool));
+        out.push_back('\n');
+    }
+    out.append("endinterface");
     return out;
 }
 

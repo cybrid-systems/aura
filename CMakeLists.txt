@@ -1712,6 +1712,15 @@ aura_issue_test_link_llvm_jit(test_issue_314)
 # constructible, AST mapping, compiles.
 aura_add_issue_test(test_issue_315)
 aura_issue_test_link_llvm_jit(test_issue_315)
+# Issue #316: emit_sv_interface + emit_sv_modport (SymId-
+# based SV emit) shipped in src/compiler/sv_ir.ixx +
+# sv_ir_impl.cpp. Parallel to the std::string-based #435
+# emit_interface + emit_modport (the list-emit-friendly
+# variant). 3 ACs: emits valid SV syntax with modport
+# list, supports balanced-paren lint, output passes basic
+# grammar checks.
+aura_add_issue_test(test_issue_316)
+aura_issue_test_link_llvm_jit(test_issue_316)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
