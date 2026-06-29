@@ -2133,6 +2133,127 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(marked));
     });
 
+    // Issue #318: (verify:coverage-holes [report-text]) —
+    // return a list of NodeIds that have
+    // kCoverageFeedbackDirty set (i.e. nodes whose coverpoint
+    // / covergroup simulation reports flagged as uncovered).
+    //
+    // Args:
+    //   report-text — optional string in the same format as
+    //                  (verify:parse-coverage-feedback)
+    //                  (newline-separated NodeIds). When
+    //                  provided, the primitive first marks the
+    //                  listed nodes dirty (same effect as the
+    //                  parse primitive) then returns the
+    //                  combined coverage-dirty list. When
+    //                  omitted, the primitive just returns
+    //                  whatever's already dirty.
+    //
+    // Returns: a pair-list of NodeIds (newest-first so the
+    //   caller can iterate left-to-right via (car / cdr) and
+    //   stop early if desired).
+    //
+    // Composes with (query:where :node-type "...") for
+    // filtered coverage-hole scans and
+    // (mutate:query-and-replace ...) for automated refine.
+    add("verify:coverage-holes", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        auto* ws = ev.workspace_flat();
+        if (!ws) return make_void();
+        // Optional first arg: parse the report first (so
+        // downstream calls see freshly-marked dirty nodes).
+        if (!a.empty() && is_string(a[0])) {
+            auto text_idx = as_string_idx(a[0]);
+            if (text_idx < ev.string_heap_.size()) {
+                const std::string& text = ev.string_heap_[text_idx];
+                std::size_t i = 0;
+                while (i < text.size()) {
+                    std::size_t j = i;
+                    while (j < text.size() && text[j] != '\n') ++j;
+                    const std::string_view line(text.data() + i, j - i);
+                    std::size_t k = 0;
+                    while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k;
+                    if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                        std::size_t val = 0;
+                        while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                            val = val * 10 + (line[k] - '0');
+                            ++k;
+                        }
+                        const auto nid = static_cast<aura::ast::NodeId>(val);
+                        if (nid < ws->size()) {
+                            ws->apply_verification_dirty_bits(
+                                nid, aura::ast::FlatAST::kCoverageFeedbackDirty);
+                        }
+                    }
+                    i = (j < text.size()) ? j + 1 : j;
+                }
+            }
+        }
+        // Collect coverage-dirty NodeIds into a pair-list
+        // (newest-first; reverse-iterates the flat so the
+        // last-marked node is at car, matching the
+        // (query:templates) ordering convention).
+        EvalValue list = make_void();
+        const auto n = ws->size();
+        // We need access to verification_dirty_ column to
+        // OR-test against kCoverageFeedbackDirty. The
+        // public accessor pair is
+        // (verify_dirty(id) & kCoverageFeedbackDirty).
+        for (std::size_t id = n; id-- > 0;) {
+            const auto bits = ws->verify_dirty(static_cast<aura::ast::NodeId>(id));
+            if (bits & aura::ast::FlatAST::kCoverageFeedbackDirty) {
+                auto idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::to_string(id));
+                auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(idx), list});
+                list = make_pair(pid);
+            }
+        }
+        return list;
+    });
+
+    // Issue #318: (verify:suggest-constraint-refine) —
+    // return a list of NodeIds that are candidates for
+    // constraint refinement. Currently this is the
+    // kCoverageFeedbackDirty set (the same coverage-holes
+    // list, since uncovered coverpoints are the canonical
+    // "constraint needs refining" signal). The separate
+    // primitive gives the AI agent / editor tool a
+    // stable name to call even if the heuristic
+    // expands later (e.g. include
+    // kAssertFailureDirty nodes too, or expand to a
+    // heuristic that walks parent chains).
+    //
+    // Args: none.
+    //
+    // Returns: pair-list of NodeIds (newest-first). Each
+    //   NodeId is also kCoverageFeedbackDirty (and the
+    //   caller can use (query:where ...) to filter by
+    //   :node-type "Define" / "Lambda" / etc. before
+    //   piping through (mutate:query-and-replace ...)).
+    //
+    // Composes with (verify:coverage-holes) (same source
+    // set) and (ast:snapshot / ast:rollback) for safe
+    // experimentation — callers are expected to snapshot
+    // before a refine loop and rollback on failure.
+    add("verify:suggest-constraint-refine", [&ev](const auto& a) -> EvalValue {
+        (void)a;
+        auto* ws = ev.workspace_flat();
+        if (!ws) return make_void();
+        EvalValue list = make_void();
+        const auto n = ws->size();
+        for (std::size_t id = n; id-- > 0;) {
+            const auto bits = ws->verify_dirty(static_cast<aura::ast::NodeId>(id));
+            if (bits & aura::ast::FlatAST::kCoverageFeedbackDirty) {
+                auto idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::to_string(id));
+                auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(idx), list});
+                list = make_pair(pid);
+            }
+        }
+        return list;
+    });
+
     // Issue #240: (compile:mark-narrowing-dirty! node-id
     // [set-or-clear]) — Set or clear the per-node
     // kOccurrenceDirty bit in the workspace FlatAST's
