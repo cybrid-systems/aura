@@ -55,6 +55,64 @@ bool stable_match_still_attached(const aura::ast::FlatAST& flat,
     return parent_child_index_if_attached(flat, match_ref.id).has_value();
 }
 
+// Issue #348: walk a subtree, collect all
+// (if pred then else) node ids, and mark each with
+// kOccurrenceDirty via the set_occurrence_dirty_fn_
+// hook. The walk is recursive over children; we
+// skip nullptr + free-slot nodes (the recycled
+// tombstone state from the free list).
+//
+// The walk is bounded: we visit each node at most
+// once (the visited set is the new_value's subtree
+// + the old_value's subtree combined). For a
+// typical rebind (a small expression body), the
+// total cost is O(subtree_size) and the count of
+// marked if-nodes is typically 0-3.
+//
+// The caller passes the new value's root; the
+// walker visits the new value's subtree (the new
+// function body) and marks every if-node there.
+// The old value's subtree is also visited (the
+// conservative path: if the old body had an
+// if-context, the rebind may have invalidated it).
+static void auto_wire_k_occurrence_dirty_for_subtree(
+    aura::ast::FlatAST& flat,
+    const std::function<bool(aura::ast::NodeId, bool)>& set_occurrence_dirty_fn,
+    aura::ast::NodeId root) {
+    if (!set_occurrence_dirty_fn || root == aura::ast::NULL_NODE
+        || root >= flat.size()) return;
+    // Iterative DFS to avoid stack overflow on deep ASTs.
+    // We use a small vector as the work stack; a typical
+    // subtree fits in a few dozen entries.
+    std::vector<aura::ast::NodeId> stack;
+    stack.push_back(root);
+    while (!stack.empty()) {
+        const auto id = stack.back();
+        stack.pop_back();
+        if (id == aura::ast::NULL_NODE || id >= flat.size()) continue;
+        const auto v = flat.get(id);
+        // Mark the if-node if it's an IfExpr. The
+        // hook signature is (node_id, set) where set
+        // = true marks the bit and returns the prior
+        // state. We always pass true (set the bit);
+        // the return value is the prior state (we
+        // don't use it here).
+        if (v.tag == aura::ast::NodeTag::IfExpr) {
+            set_occurrence_dirty_fn(id, true);
+        }
+        // Push children (in reverse order so the
+        // first child is processed first; this
+        // matches the natural left-to-right
+        // traversal).
+        if (!v.children.empty()) {
+            for (std::size_t i = v.children.size(); i-- > 0; ) {
+                const auto c = v.children[i];
+                if (c != aura::ast::NULL_NODE) stack.push_back(c);
+            }
+        }
+    }
+}
+
 }  // namespace
 
 void register_mutate_primitives(
@@ -1026,6 +1084,28 @@ void register_mutate_primitives(
         // Redirect old Define's value child to the new nodes
         // This is a valid NodeId in ev.workspace_flat_ since we parsed into it
         flat.set_child(old_define, 0, new_value);
+
+        // Issue #348: auto-wire kOccurrenceDirty on
+        // every (if pred then else) in the new
+        // function body. Without this, callers
+        // would have to call
+        // (compile:mark-narrowing-dirty! ...) manually
+        // for each if-context, and the conservative
+        // fallback in find_occurrence_contexts would
+        // keep firing. The walker iterates only the
+        // new value's subtree (the old value's
+        // if-contexts are NOT auto-marked here —
+        // they're handled by the conservative path
+        // because the old body is no longer
+        // reachable via the define). For the old
+        // value's if-contexts, the post-mutation
+        // invariant check (#147) still emits the
+        // conservative note, which is the right
+        // behavior.
+        if (ev.set_occurrence_dirty_fn_) {
+            auto_wire_k_occurrence_dirty_for_subtree(
+                flat, ev.set_occurrence_dirty_fn_, new_value);
+        }
 
         // ── 依赖图驱动：dirty 所有调用者 ────────────────────────
         // 利用从 def-use 索引预取的调用者列表，标记 dirty + 向上传播。
