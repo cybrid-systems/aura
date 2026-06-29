@@ -7,6 +7,10 @@
 ; This avoids the data_to_flat issue with quoted expressions.
 
 (require std/test all:)
+; Issue #561: synthesize:list-templates was demoted to the
+; stdlib (lib/std/synthesize.aura) — import the wrapper here
+; so the synth-list test (line ~164) binds the symbol.
+(require std/synthesize)
 
 (display "═══ EDSL Self-Test Suite ═══\n")
 (newline)

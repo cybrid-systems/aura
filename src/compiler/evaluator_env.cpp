@@ -481,10 +481,21 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // inconsistent with the post-mutation state — log a
     // warning + bump the frame's version_ so subsequent
     // lookups see it as fresh. We don't refresh the bindings
-    // themselves (that would require re-capturing against a
+        // themselves (that would require re-capturing against a
     // new env, which is out of scope for the P0 ship); the
     // warning + version bump is enough to make the staleness
     // observable and prevent repeated warnings.
+    //
+    // Issue #317 follow-up: the version bump + stats counter
+    // bump are still unconditional (the future-proofing is
+    // cheap and the observability counter is essential for
+    // (query:envframe-dualpath-stats)). The stderr warning
+    // emission is now gated on the AURA_VERBOSE_ENVFRAME env
+    // var — production runs + the default CI flow stay silent,
+    // while operators debugging a real staleness issue can set
+    // the var to opt back in. The test suite (suite/edsl_self
+    // _test.aura) uses default settings, so the warning no
+    // longer appears in the suite output.
     if (fr.version_ < defuse_version_.load(std::memory_order_acquire)) {
         // Mutate the version under the same shared lock. A
         // shared_lock allows multiple readers but blocks
@@ -499,15 +510,24 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         // events for production monitoring. Stats-only
         // (relaxed-ordering); doesn't affect control flow.
         bump_envframe_stale_refresh_count();
-        // Logging is best-effort — a fiber thread might not
-        // have a tty. We use std::println(std::cerr, ...) so
-        // the warning is always emitted (not just in debug).
-        std::println(std::cerr,
-                     "[#242 warning] materialize_call_env: stale EnvFrame id={} "
-                     "(frame.version_={}, current defuse_version_={}). "
-                     "Bindings may be inconsistent with post-mutation state. "
-                     "Bumped frame.version_ to silence future warnings.",
-                     cl.env_id, fr.version_, defuse_version_.load(std::memory_order_acquire));
+        // Issue #317 follow-up: emit the diagnostic only when
+        // the operator has opted in. Default silent. The
+        // (query:envframe-dualpath-stats) primitive is the
+        // canonical source for staleness telemetry; this
+        // stderr message is for one-off debugging.
+        static const char* verbose_env =
+            std::getenv("AURA_VERBOSE_ENVFRAME");
+        if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
+            // Logging is best-effort — a fiber thread might not
+            // have a tty. We use std::println(std::cerr, ...) so
+            // the warning is always emitted (not just in debug).
+            std::println(std::cerr,
+                         "[#242 warning] materialize_call_env: stale EnvFrame id={} "
+                         "(frame.version_={}, current defuse_version_={}). "
+                         "Bindings may be inconsistent with post-mutation state. "
+                         "Bumped frame.version_ to silence future warnings.",
+                         cl.env_id, fr.version_, defuse_version_.load(std::memory_order_acquire));
+        }
     }
     ne.bindings() = fr.bindings_;
     ne.bindings_symid_mut() = fr.bindings_symid_;
