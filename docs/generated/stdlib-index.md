@@ -41,7 +41,7 @@
 | `std/process` | `sh` `sh-ok?` `which` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
-| `std/query` | `query:list-categories` `query:help` `query:nodes-with-marker` `query:find-by-name` `query:subtree` | lib/std/query.aura — query: namespace high-level Agent API |
+| `std/query` | `query:list-categories` `query:help` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` `query:calls-by-marker` … (+2) | lib/std/query.aura — query: namespace high-level Agent API |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (pair-based, immutable) |
 | `std/random` | `make-random` `random-next` `random-integer` `random-float` `random-range` `random-vector` `shuffle` `random-seed` | random.aura — Simple pseudo-random number generator |
 | `std/refactor` | `refactor:rename-var` `refactor:extract-function` `refactor:inline-function` | — |
