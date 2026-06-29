@@ -1921,6 +1921,24 @@ aura_issue_test_link_llvm_jit(test_issue_346)
 # references resolve.
 aura_add_issue_test(test_issue_347)
 aura_issue_test_link_llvm_jit(test_issue_347)
+# Issue #348: auto-wire mark_narrowing_dirty into
+# mutate:rebind when target is if-predicate. Ships:
+#   - auto_wire_k_occurrence_dirty_for_subtree
+#     helper in evaluator_primitives_mutate.cpp
+#     (iterative DFS walker that marks every
+#     IfExpr in the new value's subtree via the
+#     set_occurrence_dirty_fn_ hook)
+#   - mutate:rebind calls the helper after
+#     set_child(old_define, 0, new_value), so the
+#     if-nodes in the new function body are
+#     auto-marked kOccurrenceDirty
+#   - mutate:replace-value + mutate:replace-type
+#     auto-wiring is filed as a follow-up
+# 4 ACs: helper walks subtree, rebind auto-marks
+# new if-nodes, walker only marks IfExpr (not
+# other node types), end-to-end via CompilerService.
+aura_add_issue_test(test_issue_348)
+aura_issue_test_link_llvm_jit(test_issue_348)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
