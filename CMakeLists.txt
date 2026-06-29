@@ -1756,6 +1756,22 @@ aura_issue_test_link_llvm_jit(test_issue_318)
 # only).
 aura_add_issue_test(test_issue_319)
 aura_issue_test_link_llvm_jit(test_issue_319)
+# Issue #320: per-node epoch tracking for infer_flat
+# (P1 follow-up to #227). Ships the foundation: the
+# last_seen_epoch_ SoA column on FlatAST + the
+# mark_dirty_for_reinfer helper + the mark_dirty
+# bump path + the reset_node_slot / push_back /
+# copy / move wiring. The synthesize_flat cache
+# check wiring (the actual per-node invalidation)
+# is deferred as a follow-up — the column is plumbed
+# but the cache still uses the coarse whole-cache
+# gate from #168. 6 ACs covered: column plumbed,
+# mark_dirty bumps, mark_dirty_for_reinfer stamps
+# supplied epoch, mark_dirty_upward propagates,
+# typed_mutate bumps end-to-end, #227 regression
+# (coarse gate still works).
+aura_add_issue_test(test_issue_320)
+aura_issue_test_link_llvm_jit(test_issue_320)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
