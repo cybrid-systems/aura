@@ -1742,6 +1742,20 @@ aura_issue_test_link_llvm_jit(test_issue_317)
 # 3 ACs + perf-bound (<50ms on 200-node workspace).
 aura_add_issue_test(test_issue_318)
 aura_issue_test_link_llvm_jit(test_issue_318)
+# Issue #319: pilot test for AI-driven SV constraint
+# refinement closed loop. Composes the SV EDSL work
+# (#310/#311/#315/#316/#317) with the verification
+# feedback primitives (#318/#469) and the mutation
+# pipeline (#110/#270) to demonstrate the full
+# "verification feedback drives self-evolution" loop
+# end-to-end. The "constraint" is a regular Aura
+# (define constraint-i body) form; "refinement" is
+# mutating the body in response to coverage feedback.
+# 4 ACs: closed loop runs, multi-round refinement,
+# rollback works, light CI compat (Aura primitives
+# only).
+aura_add_issue_test(test_issue_319)
+aura_issue_test_link_llvm_jit(test_issue_319)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
