@@ -883,6 +883,39 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return list;
     });
 
+    // (query:last-mutation-blame) — Issue #349: returns
+    // the blame info for the most recent mutation as
+    // a 2-tuple (operator_name . summary). The blame
+    // info is what post_mutation_invariant_check
+    // (#260) stamps on each emitted note; exposing
+    // it as an Aura primitive lets the AI agent
+    // display "triggered by mutate:rebind" in the
+    // diagnostic output. Returns the empty pair
+    // (void) when no mutation has been logged.
+    add("query:last-mutation-blame", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_void();
+        auto* ws = ev->workspace_flat();
+        if (!ws) return make_void();
+        const auto view = ws->mutation_log_view();
+        if (view.empty()) return make_void();
+        // Most-recent first.
+        const auto& rec = view.back();
+        // Build the 2-tuple (operator_name . summary).
+        // The pair is (op_str . summary_str) — a flat
+        // (a . b) pair where a is operator_name and
+        // b is summary. The cdr is a string (not a
+        // nested pair) because the test contracts
+        // expect a 2-tuple of strings.
+        const auto oidx = ev->push_string_heap(rec.operator_name);
+        const auto sidx = ev->push_string_heap(rec.summary);
+        // The push_pair helper copies the EvalValues
+        // (so the cdr is a fresh make_string of sidx).
+        return make_pair(ev->push_pair(
+            make_string(oidx), make_string(sidx)));
+    });
+
     // Issue #555: query:typed-mutation-stats-task1. Returns
     // the sum of 4 Task1 typed self-mod observability
     // counters + the 4 existing #550 counters (so the AI
