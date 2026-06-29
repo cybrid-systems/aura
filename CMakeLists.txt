@@ -1665,6 +1665,15 @@ aura_issue_test_link_llvm_jit(test_issue_309)
 # constructors + side-table population + lowering hooks).
 aura_add_issue_test(test_issue_310)
 aura_issue_test_link_llvm_jit(test_issue_310)
+# Issue #311: add_interface + add_modport builders shipped
+# on top of #310's NodeTag foundation. Uses
+# PersistentChildVector (mirrors add_export shape) for
+# Interface body + param_data_ side-table (mirrors
+# add_define_module shape) for Modport ports. 7 tests
+# covering 5 ACs: NodeId validity, PCV storage, parent_
+# links, COW semantics, end-to-end SV interface pattern.
+aura_add_issue_test(test_issue_311)
+aura_issue_test_link_llvm_jit(test_issue_311)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
