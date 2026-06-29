@@ -1884,6 +1884,24 @@ aura_issue_test_link_llvm_jit(test_issue_340)
 # mark shows up, clear removes, end-to-end mark+query.
 aura_add_issue_test(test_issue_344)
 aura_issue_test_link_llvm_jit(test_issue_344)
+# Issue #346: strengthen mutation audit log +
+# provenance + debugging. Ships:
+#   - (query:mutation-log [n]) Aura primitive
+#     returning a pair-list of the most recent n
+#     mutations (chronological, oldest first)
+#   - (query:mutations-since <id>) Aura primitive
+#     returning mutations with id > the given id
+#   - mutation_log_view() span accessor on
+#     FlatAST (the std::span pattern from #337
+#     + #344)
+#   - push_pair() public helper on Evaluator
+#     (needed because the pairs_ vector is
+#     private; pairs the existing push_string_heap)
+# 4 ACs: primitive returns pair-list, N-arg
+# works, mutations-since filters, end-to-end in
+# mutate context.
+aura_add_issue_test(test_issue_346)
+aura_issue_test_link_llvm_jit(test_issue_346)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)

@@ -3839,6 +3839,18 @@ public:
         return std::span<const std::uint8_t>(verification_dirty_.data(),
                                                verification_dirty_.size());
     }
+
+    // Issue #346: mutation_log view (most-recent first).
+    // Non-owning span over the log. The vector grows
+    // unbounded (no eviction); for production runs
+    // with many mutations, the agent can sample via
+    // (query:mutations-since <last_id>) instead of
+    // walking the whole log.
+    [[nodiscard]] std::span<const MutationRecord>
+    mutation_log_view() const noexcept {
+        return std::span<const MutationRecord>(mutation_log_.data(),
+                                                mutation_log_.size());
+    }
     // Issue #188: targeted check — true if a specific reason bit
     // (or any of the bits in the reason mask) is set. Lets the type
     // checker say "this node's occurrence narrowing is stale but

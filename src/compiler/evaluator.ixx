@@ -2671,6 +2671,18 @@ public:
         string_heap_.push_back(s);
         return idx;
     }
+    // Issue #346: push_pair helper. Returns the new
+    // pair's index. Used by the query:mutation-log +
+    // query:mutations-since primitives to build the
+    // pair-list result without needing direct access
+    // to the private pairs_ vector. The pair is
+    // stored by value (copy), so the input values
+    // remain valid after the call.
+    std::int32_t push_pair(EvalValue car, EvalValue cdr) {
+        const auto idx = static_cast<std::int32_t>(pairs_.size());
+        pairs_.push_back({car, cdr});
+        return idx;
+    }
     // Issue #439: request_gc_safepoint() — the
     // pre-requisite helper for safe GC coordination.
     // P0 scope-limited ship: this method bumps the
