@@ -284,6 +284,13 @@ export SVInterfaceIR make_sv_interface(aura::ast::SymId name,
                                        SVModportIR mp0,
                                        SVModportIR mp1) noexcept;
 
+// Convenience overload that takes 3 modports (covers the
+// common bus-style 3-role interfaces: master/slave/monitor).
+export SVInterfaceIR make_sv_interface(aura::ast::SymId name,
+                                       SVModportIR mp0,
+                                       SVModportIR mp1,
+                                       SVModportIR mp2) noexcept;
+
 // Issue #315: AST → IR mapping. Walks the body of an
 // Interface AST node + collects the nested Modport nodes.
 // Not a full lowering pass — surface-only conversion.
@@ -308,5 +315,41 @@ export std::string debug_sv_modport(const SVModportIR& m,
 
 export std::string debug_sv_interface(const SVInterfaceIR& i,
                                       const aura::ast::StringPool& pool);
+
+// ═════════════════════════════════════════════════════════════════
+// Issue #316 — SystemVerilog emit (symid IR variant)
+// ═════════════════════════════════════════════════════════════════
+//
+// Minimal SV emit for the SVInterfaceIR / SVModportIR layer (the
+// SymId-based structured IR from #315). The existing #435 layer
+// already emits the std::string InterfaceIR / ModportIR variant;
+// these exports are the parallel emit API for the SymId-based
+// pipeline.
+//
+// Output grammar (matches the SV Language Standard 1800-2017,
+// Section 25.10 — Interfaces):
+//   interface NAME();
+//     modport M1(...);
+//     modport M2(...);
+//   endinterface
+//
+// Missing or INVALID_SYM symbol entries are silently skipped
+// (the caller is responsible for validating the IR before
+// emit; a follow-up issue can wire the validate pass).
+
+// Emit a modport declaration as a single line (no trailing
+// newline). Example output:
+//   modport master(input data, output valid);
+export std::string emit_sv_modport(const SVModportIR& m,
+                                   const aura::ast::StringPool& pool);
+
+// Emit a complete interface block. The returned text is ready
+// to append to a .sv file (the caller adds the trailing newline
+// if desired; the current grammar doesn't require one). Example:
+//   interface Bus();
+//     modport master(input data, output valid);
+//   endinterface
+export std::string emit_sv_interface(const SVInterfaceIR& i,
+                                    const aura::ast::StringPool& pool);
 
 } // namespace aura::compiler::sv_ir
