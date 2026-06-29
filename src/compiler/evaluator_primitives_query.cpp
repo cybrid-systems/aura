@@ -805,6 +805,84 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             rollbacks + ws_commits + ws_bumps_saved));
     });
 
+    // (query:mutation-log [n]) — Issue #346: returns
+    // a pair-list of the most recent n mutations in
+    // chronological order (oldest first). n defaults
+    // to 10 when omitted; negative n returns void.
+    // Each element is a string representation
+    // "id=<id> target=<node-id> op=<operator>
+    //  summary=<summary>" so the AI agent can
+    // display the evolution trace in a log view.
+    // Returns the empty list (void) when no
+    // mutations are logged.
+    add("query:mutation-log", [](std::span<const EvalValue> a) -> EvalValue {
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_void();
+        auto* ws = ev->workspace_flat();
+        if (!ws) return make_void();
+        std::int64_t n = 10;
+        if (!a.empty() && is_int(a[0]))
+            n = as_int(a[0]);
+        if (n < 0) return make_void();
+        // Read the mutation log (most recent first)
+        // and take the last n.
+        const auto& log = ws->mutation_log_view();
+        if (log.empty()) return make_void();
+        const std::int64_t take = static_cast<std::int64_t>(log.size()) < n
+            ? static_cast<std::int64_t>(log.size())
+            : n;
+        // Build the pair-list in chronological order
+        // (oldest first). The log is most-recent first,
+        // so we walk from (log.size() - take) to end.
+        const std::size_t start = log.size() - static_cast<std::size_t>(take);
+        EvalValue list = make_void();
+        for (std::size_t i = log.size(); i-- > start; ) {
+            const auto& rec = log[i];
+            // Format: "id=<id> target=<node> op=<name> sum=<summary>"
+            const std::string s = "id=" + std::to_string(rec.mutation_id) +
+                                    " target=" + std::to_string(rec.target_node) +
+                                    " op=" + rec.operator_name +
+                                    " sum=" + rec.summary;
+            const auto sidx = ev->push_string_heap(std::move(s));
+            const auto p_idx = ev->push_pair(make_string(sidx), list);
+            list = make_pair(p_idx);
+        }
+        return list;
+    });
+
+    // (query:mutations-since <id>) — Issue #346: returns
+    // a pair-list of mutations with mutation_id >
+    // the given id. Useful for "what changed since my
+    // last checkpoint?" queries (the AI agent can
+    // record its last_queried_mutation_id and ask
+    // for the delta). Returns the empty list when
+    // no mutations match.
+    add("query:mutations-since", [](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_void();
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_void();
+        auto* ws = ev->workspace_flat();
+        if (!ws) return make_void();
+        const std::uint64_t since_id = static_cast<std::uint64_t>(as_int(a[0]));
+        const auto& log = ws->mutation_log_view();
+        EvalValue list = make_void();
+        // Walk most-recent first (the natural order
+        // for the agent's "newest changes" view).
+        for (std::size_t i = log.size(); i-- > 0; ) {
+            const auto& rec = log[i];
+            if (rec.mutation_id <= since_id) break;
+            const std::string s = "id=" + std::to_string(rec.mutation_id) +
+                                    " target=" + std::to_string(rec.target_node) +
+                                    " op=" + rec.operator_name +
+                                    " sum=" + rec.summary;
+            const auto sidx = ev->push_string_heap(std::move(s));
+            const auto p_idx = ev->push_pair(make_string(sidx), list);
+            list = make_pair(p_idx);
+        }
+        return list;
+    });
+
     // Issue #555: query:typed-mutation-stats-task1. Returns
     // the sum of 4 Task1 typed self-mod observability
     // counters + the 4 existing #550 counters (so the AI
