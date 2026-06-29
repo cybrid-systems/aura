@@ -196,6 +196,11 @@ struct DefUseIndex {
                     case NodeTag::Let:
                     case NodeTag::LetRec:
                     case NodeTag::Begin:
+                    // Issue #317: SV Interface + Modport create
+                    // their own scope (each has its own `name`
+                    // symbol + body/port-syms nested inside).
+                    case NodeTag::Interface:
+                    case NodeTag::Modport:
                         is_scope_creator = true;
                         break;
                     default:
@@ -235,6 +240,29 @@ struct DefUseIndex {
                         case NodeTag::LetRec:
                             def_syms_.push_back(v.sym_id);
                             def_nodes_.push_back(f.node_id);
+                            break;
+                        // Issue #317: SV Interface declares its
+                        // `name` symbol; Modport declares its
+                        // `name` + the port-list symbols in its
+                        // scope. Other modules that reference
+                        // the interface / modport name appear as
+                        // uses in this scope's def/use index.
+                        case NodeTag::Interface:
+                            def_syms_.push_back(v.sym_id);
+                            def_nodes_.push_back(f.node_id);
+                            break;
+                        case NodeTag::Modport:
+                            def_syms_.push_back(v.sym_id);
+                            def_nodes_.push_back(f.node_id);
+                            // Walk the port list via param_at (the
+                            // public accessor) and add each port
+                            // sym as a def in the modport scope.
+                            for (std::uint32_t pi = 0; pi < 64; ++pi) {
+                                auto port_sym = flat.param_at(f.node_id, pi);
+                                if (port_sym == INVALID_SYM) break;
+                                def_syms_.push_back(port_sym);
+                                def_nodes_.push_back(f.node_id);
+                            }
                             break;
                         default:
                             break;

@@ -1721,6 +1721,15 @@ aura_issue_test_link_llvm_jit(test_issue_315)
 # grammar checks.
 aura_add_issue_test(test_issue_316)
 aura_issue_test_link_llvm_jit(test_issue_316)
+# Issue #317: DefUseIndex extended with SV Interface +
+# Modport as scope-creators. Each Interface/Modport now
+# creates its own scope with defs (interface name for
+# the Interface; modport name + port-list SymIds for the
+# Modport). Cross-module Variable references to the
+# interface name appear as uses in the parent's scope.
+# 3 ACs + a perf-bound check.
+aura_add_issue_test(test_issue_317)
+aura_issue_test_link_llvm_jit(test_issue_317)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
