@@ -1674,6 +1674,14 @@ aura_issue_test_link_llvm_jit(test_issue_310)
 # links, COW semantics, end-to-end SV interface pattern.
 aura_add_issue_test(test_issue_311)
 aura_issue_test_link_llvm_jit(test_issue_311)
+# Issue #312: query:node-type + query:where flow through
+# the new Interface / Modport kNodeMeta entries added in
+# #310 — no code change in evaluator_impl is needed
+# (both primitives iterate kNodeMeta). Tests cover both
+# the Aura query path + the C++-side filter equivalent
+# (Direct FlatAST scan via the new builders from #311).
+aura_add_issue_test(test_issue_312)
+aura_issue_test_link_llvm_jit(test_issue_312)
 aura_add_issue_test(test_followups)
 aura_issue_test_link_llvm_jit(test_followups)
 target_include_directories(test_issue_264 PRIVATE src/serve tests)
