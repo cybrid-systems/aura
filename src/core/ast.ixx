@@ -3728,6 +3728,42 @@ public:
     // any dirty bit is set. The pre-#188 callers that asked "is this
     // node dirty?" still get the right answer.
     bool is_dirty(NodeId id) const { return id < dirty_.size() && dirty_[id] != 0; }
+
+    // Issue #337: flat views over SoA columns. C++23
+    // std::span gives a non-owning, bounds-checked
+    // view of contiguous memory; combined with
+    // std::views::zip (C++23), the caller can iterate
+    // multiple columns in lockstep without
+    // per-element overhead. The view is invalidated
+    // by any add_node / reset_all / push_back call
+    // (the underlying vector may reallocate); callers
+    // that hold a view across mutations should
+    // re-acquire it.
+    //
+    // The views are the foundation for the C++23
+    // modernization issue; concrete pass-level
+    // adoption (query:pattern, mark_dirty_upward_fast,
+    // IRFunctionSoA scans) is follow-up work.
+    [[nodiscard]] std::span<const std::uint8_t> dirty_view() const noexcept {
+        return std::span<const std::uint8_t>(dirty_.data(), dirty_.size());
+    }
+    [[nodiscard]] std::span<const std::uint8_t> ppa_dirty_view() const noexcept {
+        return std::span<const std::uint8_t>(ppa_dirty_.data(), ppa_dirty_.size());
+    }
+    // Issue #320: per-node epoch column view.
+    [[nodiscard]] std::span<const std::uint64_t> last_seen_epoch_view() const noexcept {
+        return std::span<const std::uint64_t>(last_seen_epoch_.data(),
+                                                last_seen_epoch_.size());
+    }
+    // Issue #456: dirty column accessor (the main dirty_).
+    [[nodiscard]] std::span<const std::uint8_t> verify_dirty_view() const noexcept {
+        return std::span<const std::uint8_t>(verify_dirty_.data(),
+                                               verify_dirty_.size());
+    }
+    [[nodiscard]] std::span<const std::uint8_t> verification_dirty_view() const noexcept {
+        return std::span<const std::uint8_t>(verification_dirty_.data(),
+                                               verification_dirty_.size());
+    }
     // Issue #188: targeted check — true if a specific reason bit
     // (or any of the bits in the reason mask) is set. Lets the type
     // checker say "this node's occurrence narrowing is stale but

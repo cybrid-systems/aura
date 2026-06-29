@@ -365,7 +365,15 @@ void ShapeProfiler::reset() {
 std::vector<FnKey> ShapeProfiler::tracked_fns() const {
     std::vector<FnKey> keys;
     keys.reserve(profiles_.size());
-    for (auto& [k, _] : profiles_)
+    // Issue #337: std::flat_map iterator's reference
+    // type is `pair<const K&, V&>` (not `pair<const K, V>&`
+    // like unordered_map). The structured-binding
+    // pattern still works (the compiler picks the
+    // right type), but the K binding is a const
+    // reference. We copy it into the local
+    // `keys` vector, which is fine for the FnKey
+    // type (cheap to copy, just an int).
+    for (const auto& [k, _] : profiles_)
         keys.push_back(k);
     return keys;
 }
