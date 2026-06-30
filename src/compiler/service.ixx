@@ -4729,6 +4729,11 @@ public:
             // Issue #368: current wrap_epoch_ so AI agents can
             // checkpoint / compact before the next wrap.
             s.current_wrap_epoch = ws_flat->wrap_epoch();
+            // Issue #369/370: structural rollback + safe-view
+            // counters.
+            s.structural_rollback_success = ws_flat->structural_rollback_success();
+            s.structural_rollback_besteffort = ws_flat->structural_rollback_besteffort();
+            s.children_safe_view_count = ws_flat->children_safe_view_count();
             // Issue #256: AST operation observability counters
             // (children/parent_of/mark_dirty_upward call counts
             // + total nodes marked dirty).

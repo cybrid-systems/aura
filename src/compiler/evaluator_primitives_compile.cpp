@@ -1504,6 +1504,10 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             {"structural-rollback-besteffort",
              make_int(static_cast<std::int64_t>(
                  snap.structural_rollback_besteffort))},
+            // Issue #370: lifetime-safe view count.
+            {"children-safe-view-count",
+             make_int(static_cast<std::int64_t>(
+                 snap.children_safe_view_count))},
         };
         return build_hash(kv);
     });
