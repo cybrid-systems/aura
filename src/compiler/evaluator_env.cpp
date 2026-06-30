@@ -563,6 +563,57 @@ bool Evaluator::is_env_frame_stale(EnvId id) const {
     return env_frames_[id].version_ < defuse_version_.load(std::memory_order_acquire);
 }
 
+// Issue #355: refresh_stale_frame_in_walk — single source of
+// truth for the "saw a stale frame during a walk" pattern.
+//
+// Mirrors the warning + version-bump + stats-counter logic that
+// materialize_call_env applies for closure-body entry. Walks
+// (lookup_by_symid_chain / walk_env_frame_roots / Env::lookup_
+// cell_ptr / Env::lookup_cell_index) call this on the const ref
+// they hold via walk_env_frames so the staleness is observed
+// the same way across every consumer path.
+//
+// The version_ bump uses const_cast on the const ref. Callers
+// must hold the shared env_frames_mtx_ read lock for the
+// duration of the frame ref (same as materialize_call_env); the
+// exclusive lock excludes walker threads by design.
+void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
+    if (id == NULL_ENV_ID || id >= env_frames_.size())
+        return; // invalid frame — let the walk skip it as before
+    // Caller already holds the shared lock; re-entering would
+    // deadlock under a shared_mutex. Use the existing reference
+    // path. We index env_frames_ directly since we're in a
+    // member function (the frame lifetime is safe because the
+    // caller's shared lock excludes alloc_env_frame writes).
+    const std::uint64_t current = defuse_version_.load(std::memory_order_acquire);
+    const EnvFrame& fr = env_frames_[id];
+    if (fr.version_ >= current) {
+        // Already refreshed by a concurrent walker since this
+        // walk started. Nothing to do — the version_ gate
+        // already silences the warning.
+        return;
+    }
+    // Bump the frame's version_ to silence future warnings at
+    // every walk site (same pattern as materialize_call_env).
+    const_cast<EnvFrame&>(fr).version_ = current;
+    // Stats: bump the canonical stale-refresh counter so
+    // (query:envframe-dualpath-stats) reports the event.
+    bump_envframe_stale_refresh_count();
+    // Optional stderr warning, gated behind AURA_VERBOSE_ENVFRAME
+    // (same env var as materialize_call_env uses, so operators
+    // can opt into all staleness diagnostics at once).
+    static const char* verbose_env =
+        std::getenv("AURA_VERBOSE_ENVFRAME");
+    if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
+        std::println(std::cerr,
+                     "[#242 warning] {}: stale EnvFrame id={} "
+                     "(frame.version_={}, current defuse_version_={}). "
+                     "Bindings may be inconsistent with post-mutation state. "
+                     "Bumped frame.version_ to silence future warnings.",
+                     site, id, fr.version_, current);
+    }
+}
+
 // Evaluator::lookup_by_symid_chain — demonstrate the SoA walk.
 // Walks env_frames_ via index lookup (no pointer chase) and
 // returns the first match (closest frame wins, shadowing
@@ -578,7 +629,11 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(EnvId start,
                                                                  aura::ast::SymId s) const {
     std::optional<types::EvalValue> result;
     const auto version_snap = defuse_version_.load(std::memory_order_acquire);
-    walk_env_frames(start, [&](EnvId, const EnvFrame& fr) {
+    // Hold the shared lock across the walk so frame refs stay
+    // valid; refresh_stale_frame_in_walk needs the shared lock
+    // to be held (consistent with materialize_call_env).
+    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    walk_env_frames(start, [&](EnvId cur, const EnvFrame& fr) {
         // Issue #264: skip frames stamped before the current
         // mutation epoch (stale under concurrent mutate/compact).
         if (fr.version_ < version_snap) {
@@ -588,6 +643,13 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(EnvId start,
             // monitoring. Stats-only (relaxed-ordering); doesn't
             // affect control flow.
             bump_envframe_version_mismatch_in_walk();
+            // Issue #355: refresh the stale frame (bump its
+            // version_ + emit the [#242 warning] gated behind
+            // AURA_VERBOSE_ENVFRAME) so the walker surfaces the
+            // same staleness diagnostic that
+            // materialize_call_env does, and subsequent walks
+            // see it as fresh.
+            refresh_stale_frame_in_walk(cur, "lookup_by_symid_chain");
             return true;
         }
         auto v = fr.lookup_local_by_symid(s);
@@ -617,7 +679,12 @@ void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
     // For now, just always set — the GC's mark_env_frame_roots
     // is idempotent (set() is a no-op if already set).
     const auto version_snap = defuse_version_.load(std::memory_order_acquire);
-    for (const auto& fr : env_frames_) {
+    // Hold the shared lock across the iteration so refresh_stale_frame_in_walk
+    // can safely bump the frame's version_ (same precondition as
+    // materialize_call_env + lookup_by_symid_chain).
+    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    for (EnvId cur = 0; cur < env_frames_.size(); ++cur) {
+        const EnvFrame& fr = env_frames_[cur];
         // Issue #543: skip frames stamped before the current
         // mutation epoch (stale under concurrent mutate/compact).
         // Bumping gc_walk_safe_skips_ lets
@@ -626,6 +693,12 @@ void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
         // (relaxed-ordering); doesn't affect control flow.
         if (fr.version_ < version_snap) {
             bump_envframe_gc_walk_safe_skips();
+            // Issue #355: refresh the stale frame (bump its
+            // version_ + emit the [#242 warning] gated behind
+            // AURA_VERBOSE_ENVFRAME) so the GC walk surfaces
+            // the same staleness diagnostic that
+            // materialize_call_env + lookup_by_symid_chain do.
+            refresh_stale_frame_in_walk(cur, "walk_env_frame_roots");
             continue;
         }
         // Dual-path length/order consistency check (#543).
@@ -764,10 +837,24 @@ EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* ce
         const auto version_snap =
             owner_->get_defuse_version();
         EvalValue* result = nullptr;
-        owner_->walk_env_frames(parent_id_, [&](EnvId, const EnvFrame& f) {
+        // Issue #355: take the shared lock for the duration of
+        // the walk so refresh_stale_frame_in_walk can bump the
+        // stale frame's version_ safely (consistent with
+        // materialize_call_env + lookup_by_symid_chain +
+        // walk_env_frame_roots). The shared lock also keeps the
+        // frame reference alive across the visitor call.
+        std::shared_lock<std::shared_mutex> rlock(owner_->env_frames_lock());
+        owner_->walk_env_frames(parent_id_, [&](EnvId cur, const EnvFrame& f) {
             // Skip frames stamped before the current mutation epoch.
-            if (f.version_ < version_snap)
+            if (f.version_ < version_snap) {
+                // Issue #355: refresh the stale frame (bump
+                // version_ + emit [#242 warning] gated behind
+                // AURA_VERBOSE_ENVFRAME) so this parent walk
+                // path surfaces the same staleness diagnostic
+                // as materialize_call_env.
+                owner_->refresh_stale_frame_in_walk(cur, "Env::lookup_cell_ptr");
                 return true; // continue walking past the stale frame
+            }
             for (auto& b : f.bindings_) {
                 if (b.first == n) {
                     if (is_cell(b.second)) {
@@ -815,8 +902,23 @@ std::optional<std::uint64_t> Env::lookup_cell_index(const std::string& n) const 
     }
     // 2. SoA walk via env_frames_ when registered
     if (owner_ && parent_id_ != NULL_ENV_ID) {
+        const auto version_snap =
+            owner_->get_defuse_version();
         std::optional<std::uint64_t> result;
-        owner_->walk_env_frames(parent_id_, [&](EnvId, const EnvFrame& f) {
+        // Issue #355: take the shared lock so refresh_stale_frame_in_walk
+        // can bump the stale frame's version_ safely (same
+        // precondition as the other walker sites).
+        std::shared_lock<std::shared_mutex> rlock(owner_->env_frames_lock());
+        owner_->walk_env_frames(parent_id_, [&](EnvId cur, const EnvFrame& f) {
+            // Issue #355: skip + refresh stale frames in the
+            // parent walk. This path was previously missing
+            // the staleness check entirely (the version_ gate
+            // existed only in lookup_cell_ptr /
+            // lookup_by_symid_chain / walk_env_frame_roots).
+            if (f.version_ < version_snap) {
+                owner_->refresh_stale_frame_in_walk(cur, "Env::lookup_cell_index");
+                return true; // continue walking past the stale frame
+            }
             for (auto& b : f.bindings_) {
                 if (b.first == n) {
                     if (is_cell(b.second))
