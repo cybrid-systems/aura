@@ -85,3 +85,25 @@ it. Fix: own the message as a std::string by value in the macro.
   CHECK macro dangling pointer)
 - 1 of them (#300 follow-up) caused the user-reported CI failure;
   the other (#226 pre-existing) was a latent bug surfaced by ASan
+
+## Session 2026-06-30 (continued) — Issue #355 closed
+
+`99e04e49` wires #242's stale-frame detection into all 4 SoA
+parent walks (lookup_by_symid_chain + walk_env_frame_roots +
+Env::lookup_cell_ptr + Env::lookup_cell_index). New helper
+`Evaluator::refresh_stale_frame_in_walk(id, site)` is the
+single source of truth for the "saw stale frame during walk"
+pattern (bump version_ + bump stats counter + emit
+[#242 warning] gated behind AURA_VERBOSE_ENVFRAME).
+
+lookup_cell_index was missing the version check entirely —
+the worst of the 4 sites. AC8 explicitly verifies it now
+bumps stale_refresh_count_.
+
+18/18 tests in test_issues_jit bundle. 0 ASan errors. No
+regression on #242 (which only consumed the helper indirectly
+via materialize_call_env).
+
+**Follow-up still open:** pre-existing test_issue_226
+doomsday_stress UAF (separate CHECK macro dangling-pointer
+bug, fixed earlier this session as 41d3aed8).
