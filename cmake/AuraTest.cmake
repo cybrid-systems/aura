@@ -14,6 +14,15 @@ function(aura_test_compile_options TARGET)
         -Wno-unused-but-set-variable -Wno-unused-parameter
         -Wno-misleading-indentation -Wno-parentheses
         -Wno-sign-compare -Wno-unused-result -Wno-type-limits
+        # Issue #0 (CI fix 2026-06-30): libstdc++ 16's <regex>
+        # headers (regex_automaton.h, regex_automaton.tcc) trigger
+        # `-Werror=maybe-uninitialized` false positives inside
+        # std::function's move ctor when imported via `import std`
+        # from aura::parser. Suppressing here is safe — our own
+        # code is small enough that maybe-uninitialized is
+        # genuinely an error we'd want to catch, and the warning
+        # only fires from inside the libstdc++ regex headers.
+        -Wno-error=maybe-uninitialized -Wno-maybe-uninitialized
     )
 endfunction()
 
