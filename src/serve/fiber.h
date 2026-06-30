@@ -15,6 +15,12 @@
 extern "C" std::size_t
 aura_evaluator_mutation_boundary_depth();
 
+// Issue #588: per-fiber mutation stack depth from opaque storage.
+// Used by is_at_mutation_boundary_safe() on the victim fiber
+// during work-steal (thief thread must not read thread_local).
+extern "C" std::size_t
+aura_evaluator_mutation_stack_depth_from_ptr(void* mutation_stack_storage);
+
 // Issue #451: C-linkage shim for Fiber's static GC-pause
 // counter (defined in fiber.cpp / fiber_bridge.cpp).
 extern "C" std::uint64_t
@@ -137,7 +143,10 @@ public:
         auto r = last_yield_reason_.load(std::memory_order_acquire);
         if (r != YieldReason::MutationBoundary)
             return true;
-        return aura_evaluator_mutation_boundary_depth() == 0;
+        // Issue #588: read this fiber's stack depth, not the
+        // thief thread's thread_local depth.
+        return aura_evaluator_mutation_stack_depth_from_ptr(
+                   mutation_stack_storage_) == 0;
     }
 
     // Issue #451: yield_classification() — returns a
@@ -151,7 +160,8 @@ public:
         switch (last_yield_reason_.load(std::memory_order_acquire)) {
             case YieldReason::BlockingIO: return "BlockingIO";
             case YieldReason::MutationBoundary:
-                return aura_evaluator_mutation_boundary_depth() == 0
+                return aura_evaluator_mutation_stack_depth_from_ptr(
+                           mutation_stack_storage_) == 0
                     ? "MutationBoundary/outermost"
                     : "MutationBoundary/inner";
             case YieldReason::Explicit: return "Explicit";
@@ -325,6 +335,8 @@ private:
 // the function signatures are minimal so the fiber side
 // doesn't need to know about Evaluator internals.
 extern void* (*g_fiber_setter_)(void*);
+// Issue #588: sync per-fiber mutation stack on resume.
+extern void (*g_fiber_sync_mutation_stack_)(void*);
 extern void (*g_fiber_storage_deleter_)(void*);
 // Issue #264: yield-boundary checkpoint hooks (registered by
 // evaluator_fiber_mutation.cpp). Called before yield swapcontext

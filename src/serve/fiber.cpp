@@ -28,6 +28,7 @@ thread_local WorkerContext* g_worker_ctx = nullptr;
 // Issue #213 Cycle 3: function pointers that the Evaluator
 // registers at startup. See fiber.h for the rationale.
 void* (*g_fiber_setter_)(void*) = nullptr;
+void (*g_fiber_sync_mutation_stack_)(void*) = nullptr;
 void (*g_fiber_storage_deleter_)(void*) = nullptr;
 void (*g_fiber_yield_checkpoint_)(uint8_t) = nullptr;
 
@@ -219,6 +220,9 @@ void Fiber::resume() {
     // Evaluator registers at startup (avoids the circular
     // include between fiber.h and evaluator.ixx).
     auto prev_fiber_void = g_fiber_setter_ ? g_fiber_setter_(this) : nullptr;
+    // Issue #588: bind per-fiber mutation stack on worker resume.
+    if (g_fiber_sync_mutation_stack_)
+        g_fiber_sync_mutation_stack_(mutation_stack_storage_);
     state_.store(FiberState::Running, std::memory_order_release);
 
     // Swap from worker's loop context to fiber's context

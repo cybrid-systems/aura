@@ -2824,6 +2824,7 @@ public:
     // The follow-up wires the call from Fiber::resume()
     // before g_fiber_setter_ runs.
     void transfer_mutation_stack_to_current_fiber() noexcept {
+        sync_per_fiber_mutation_stack(nullptr);
         bump_mutation_steal_attempt();
     }
     // Issue #391: validate a (id . gen) stable-ref pair
@@ -3301,6 +3302,11 @@ public:
         g_main_thread_stack.clear();
         g_main_thread_yield_checkpoints.clear();
     }
+
+    // Issue #588: on fiber resume, clear the worker thread's
+    // main-thread fallback stacks so steal probes and guard
+    // entry route exclusively through the per-fiber storage.
+    static void sync_per_fiber_mutation_stack(void* per_fiber_stack) noexcept;
 
     // Issue #236 follow-up: per-fiber (thread_local) depth
     // counter for MutationBoundaryGuard nesting. The
