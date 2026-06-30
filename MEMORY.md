@@ -188,3 +188,30 @@ headers (not project code), it's almost always a known
 false-positive in libstdc++ itself. Suppress with `-Wno-X`
 in the test compile options — not in the project source.
 Project code's `-Werror` coverage stays intact.
+
+## Session 2026-06-30 (continued) — tests/run_issue_tests.py cwd/env fix
+
+User: "tests_jit 56 passed, 2 failed, rc=1, 修一下".
+
+**Root cause**: `test_issue_294` and `test_issue_295` shell out
+to the aura binary via `popen((cd <repo_root> && timeout 10
+<aura_bin> < /tmp/...))`. Their default `repo_root` is ".."
+(assumes cwd=build/) and `aura_bin` is "./build/aura". When
+`tests/run_issue_tests.py run_one` invokes the bundle binary
+via `subprocess.run([bin_path])` with no cwd/env, cwd is the
+repo root, so `cd ..` exits the repo and `./build/aura`
+doesn't resolve → rc=127 → test reports `<non-zero exit:
+rc=32512>` (127 * 256) and fails.
+
+**Fix** (`3f0b736f`):
+In `tests/run_issue_tests.py run_one`, pass `cwd=ROOT` and
+set `AURA_BIN=<repo>/build/aura` + `AURA_SRC_ROOT=<repo>` in
+the subprocess env. The tests already check these env vars
+(env takes precedence over the hardcoded defaults).
+
+**Pattern for shell-out test failures**:
+When a test_issue_X test fails with `<non-zero exit: rc=32512>`
+in the output, that's 127 * 256 — the test's `popen` shell
+command couldn't find the binary. The runner probably forgot
+to set cwd/env vars. Check the test code for env-var fallbacks
+(default `./build/aura` + `cd ..` means cwd=build/ assumed).
