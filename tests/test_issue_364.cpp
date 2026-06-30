@@ -153,7 +153,12 @@ bool test_macro_defines_macro_with_mutation() {
 
 } // namespace aura_364_detail
 
-int main() {
+// Issue #364 deferred AC #5: bundle-compatible runner so the
+// test gets executed as part of `python3 build.py test issues`
+// (and the JIT + ASan bundles) instead of only as a standalone
+// target. The standalone `int main()` is preserved by the
+// aura_issue_364_run() trampoline.
+int aura_issue_364_run() {
     using namespace aura_364_detail;
     test_nested_macro_expansion();
     test_nested_swap();
@@ -161,8 +166,24 @@ int main() {
     test_snapshot_rollback_with_macro();
     test_100_cycle_stress();
     test_macro_defines_macro_with_mutation();
-    std::println("\nNested hygienic macros + mutation (#364): {}/{} passed, {}/{} failed",
-                 g_passed, g_passed + g_failed,
-                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+// Standalone entry point for `cmake --target test_issue_364`.
+// When compiled standalone, aura_issue_364_run is the only
+// extern "C" entry so the linker picks this `main`. When
+// compiled into a bundle, the bundle main calls
+// aura_issue_364_run() directly and this main is unused
+// (but the linker still needs to see a `main` symbol for the
+// standalone build path — guarded by AURA_BUNDLE_BUILD).
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() {
+    int rc = aura_issue_364_run();
+    std::println("Nested hygienic macros + mutation (#364): {}/{} passed, {}/{} failed",
+                 aura_364_detail::g_passed,
+                 aura_364_detail::g_passed + aura_364_detail::g_failed,
+                 aura_364_detail::g_failed,
+                 aura_364_detail::g_passed + aura_364_detail::g_failed);
+    return rc;
+}
+#endif
