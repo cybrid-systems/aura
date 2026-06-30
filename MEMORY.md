@@ -107,3 +107,45 @@ via materialize_call_env).
 **Follow-up still open:** pre-existing test_issue_226
 doomsday_stress UAF (separate CHECK macro dangling-pointer
 bug, fixed earlier this session as 41d3aed8).
+
+## Session 2026-06-30 (continued) — Issue #356 closed
+
+`9590bc33` ships the scope-limited version of #356 ([Follow-up
+#242-2] Arena rollback for env_frames_ via stable-id indirection).
+
+**Approach**: instead of truncating env_frames_ (which would
+invalidate Closure::env_id indices for live closures), mark
+entries allocated during the doomed transaction as
+INVALID_VERSION sentinel. The frames stay allocated but
+materialize_call_env + the #355 walker refuse to use them.
+
+- INVALID_VERSION sentinel = UINT64_MAX (monotonic counter
+  never reaches this in practice)
+- is_env_frame_invalid(id) accessor
+- invalidate_post_rollback_env_frames() helper — iterates
+  [panic_safe_env_frames_size_, env_frames_.size()) and marks
+  each frame's version_ = INVALID_VERSION
+- envframe_post_rollback_invalidations_ atomic counter,
+  bumped by the count of newly-invalid frames
+- materialize_call_env: emits a distinct [#356 warning] for
+  invalid frames, returns an empty Env (globals still reachable)
+- refresh_stale_frame_in_walk (#355): skips invalid frames
+  instead of refreshing them — INVALID is terminal
+- restore_panic_checkpoint: calls invalidate_post_rollback_env_frames
+  after the 3 arena truncations
+
+15/15 tests in test_issues_jit bundle.
+
+**Lesson learned (debugging the test)**:
+Evaluator's constructor pre-allocates 1 frame (for top_/module
+scratch), so env_frames_.size() starts at 1 — not 0. Tests that
+allocate "PRE + POST" frames and set panic_safe = PRE expect
+POST frames invalidated, but actually get POST + 1 (the
+pre-existing frame). Fix: read ev.env_frames_size() at the
+start of the test and use it as the base for panic_safe, so the
+pre-existing frame is treated as pre-checkpoint.
+
+**Follow-up still open (separate issue)**:
+Stable-id indirection refactor (Closure::env_id becomes a
+small dense index, env_frames_ is a dense arena, stable_to_arena_
+remap on rollback) — the actual memory-shrinking version.
