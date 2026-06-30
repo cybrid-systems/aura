@@ -496,6 +496,29 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // the var to opt back in. The test suite (suite/edsl_self
     // _test.aura) uses default settings, so the warning no
     // longer appears in the suite output.
+    if (fr.version_ == INVALID_VERSION) {
+        // Issue #356: post-rollback invalid frame. Do NOT
+        // refresh — the bindings may reference AST nodes / pool
+        // strings that no longer exist. Emit a distinct
+        // warning (gated behind AURA_VERBOSE_ENVFRAME, same as
+        // the regular stale warning) and return an empty Env so
+        // the closure body sees no captured bindings (it can
+        // still find globals via the workspace walk).
+        static const char* verbose_env =
+            std::getenv("AURA_VERBOSE_ENVFRAME");
+        if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
+            std::println(std::cerr,
+                         "[#356 warning] materialize_call_env: post-rollback "
+                         "EnvFrame id={} (frame.version_=INVALID). "
+                         "Bindings skipped — closure captured against a doomed "
+                         "transaction. Returning empty Env (globals still reachable).",
+                         cl.env_id);
+        }
+        // Still stamp the empty Env with the current version so
+        // downstream callers see a consistent snapshot.
+        ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
+        return ne;
+    }
     if (fr.version_ < defuse_version_.load(std::memory_order_acquire)) {
         // Mutate the version under the same shared lock. A
         // shared_lock allows multiple readers but blocks
@@ -587,6 +610,24 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
     // caller's shared lock excludes alloc_env_frame writes).
     const std::uint64_t current = defuse_version_.load(std::memory_order_acquire);
     const EnvFrame& fr = env_frames_[id];
+    // Issue #356: never "refresh" a post-rollback invalid
+    // frame. INVALID_VERSION is terminal — the bindings may
+    // reference AST nodes / pool strings that no longer exist
+    // after restore_panic_checkpoint truncated cells_/pairs_/
+    // string_heap_. The walker should skip and emit a
+    // distinct [#356 warning], not bump version_ + log a
+    // stale-refresh that would imply the frame is safe to use.
+    if (fr.version_ == INVALID_VERSION) {
+        static const char* verbose_env =
+            std::getenv("AURA_VERBOSE_ENVFRAME");
+        if (verbose_env && verbose_env[0] != '0' && verbose_env[0] != '\0') {
+            std::println(std::cerr,
+                         "[#356 warning] {}: post-rollback EnvFrame id={} "
+                         "(frame.version_=INVALID). Walk stopped at this frame.",
+                         site, id);
+        }
+        return;
+    }
     if (fr.version_ >= current) {
         // Already refreshed by a concurrent walker since this
         // walk started. Nothing to do — the version_ gate
@@ -611,6 +652,65 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
                      "Bindings may be inconsistent with post-mutation state. "
                      "Bumped frame.version_ to silence future warnings.",
                      site, id, fr.version_, current);
+    }
+}
+
+// Issue #356: is_env_frame_invalid — true if the frame has
+// been marked INVALID_VERSION by a post-rollback invalidation
+// pass. Distinct from is_env_frame_stale (which tests against
+// the current defuse_version_ and can be self-healing); an
+// invalid frame is terminal — never refreshable.
+bool Evaluator::is_env_frame_invalid(EnvId id) const {
+    if (id == NULL_ENV_ID || id >= env_frames_.size())
+        return true;
+    // Shared lock to keep the frame reference alive across the
+    // load (consistent with is_env_frame_stale). The version_
+    // load is atomic-friendly (uint64_t) but the shared_mutex
+    // guards against an alloc_env_frame concurrent reallocation.
+    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    return env_frames_[id].version_ == INVALID_VERSION;
+}
+
+// Issue #356: invalidate_post_rollback_env_frames — mark
+// every env_frames_ entry at indices
+// [panic_safe_env_frames_size_, env_frames_.size()) as
+// INVALID_VERSION. Called from restore_panic_checkpoint after
+// the 3 arena truncations (cells_/pairs_/string_heap_) have
+// completed successfully.
+//
+// The frames stay allocated — truncating env_frames_ would
+// invalidate Closure::env_id indices for any closure that
+// captured a frame before the doomed transaction. Marking
+// them invalid lets materialize_call_env / the
+// refresh_stale_frame_in_walk walker refuse to use them
+// without crashing (preserves the invariant "any frame
+// reachable from a live Closure is usable").
+//
+// Thread-safety: this is a writer (mutates version_ fields
+// across many frames), so it takes the exclusive
+// env_frames_lock(). Callers must NOT hold any reader lock
+// at the time of the call.
+//
+// Bumps envframe_post_rollback_invalidations_ by the count
+// of newly-invalid frames so observability can report
+// post-rollback leak volume.
+void Evaluator::invalidate_post_rollback_env_frames() {
+    const std::size_t checkpoint_size = panic_safe_env_frames_size_;
+    const std::size_t current_size = env_frames_.size();
+    if (checkpoint_size >= current_size) return; // nothing to invalidate
+    // Exclusive lock — many writes, one atomic counter bump
+    // at the end. alloc_env_frame cannot run concurrently
+    // because the lock excludes it.
+    std::unique_lock<std::shared_mutex> wlock(env_frames_lock());
+    std::uint64_t invalidated = 0;
+    for (std::size_t i = checkpoint_size; i < current_size; ++i) {
+        if (env_frames_[i].version_ != INVALID_VERSION) {
+            env_frames_[i].version_ = INVALID_VERSION;
+            ++invalidated;
+        }
+    }
+    if (invalidated > 0) {
+        bump_envframe_post_rollback_invalidations(invalidated);
     }
 }
 
