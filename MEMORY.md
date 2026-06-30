@@ -568,3 +568,34 @@ When correctness bug is wrapped in audit-first infra:
 **Bug 是 silent 的**: 因为 `panic_auto_rollback_` (source-based re-eval via `restore_panic_checkpoint`) 也能工作,所以开了 auto-rollback 的用户看不见。只有用 `rollback_to_size` 做 partial rollback 的会撞。
 
 **Lesson**: "rollback" 听起来 universal,但其实它有 source-based (`restore_panic_checkpoint`) 和 mutation-log-based (`rollback_to_size`) 两条路径, 后者需要 op 名字 + has_rollback_data + field_offset 都对得上。
+
+## Session 2026-06-30 (continued) — Issue #370 closed
+
+`b2995b29` ships SafePCVSpan lifetime-pinned view for #370.
+
+**Bug**: PCV 是 COW + shared_ptr<const Storage>,但 accessor
+(data/begin/end) 返回 raw std::span,holder 在 mutate / rollback 后
+会 dangle。
+
+**Fix** (~120 LOC):
+- 新 `SafePCVSpan<T>` class: span + shared_ptr const Storage
+  bundle,type 在 SafePCVSpan 活着期间 storage 就活着。
+- 新 free function `share_storage(pcv)` 替代 member (避免暴露
+  private Storage type),friend declaration。
+- 新 `FlatAST::children_safe(id)` accessor,bumps
+  `children_safe_view_count_` 计数器。
+- 旧 `children(id)` 加 WARNING 注释:"single-statement only"。
+- `(ast:generation-stats)` 新 key `children-safe-view-count`。
+
+14/14 PASS, bundle 71/71, no regression。
+
+**Deferred** (新 issue):
+- Migrate Aura-level FFI/closure primitives 把 `children(...)` 换成
+  `children_safe(...)` — site-specific work。
+- WeakPtr-based hold detection: fiber holds children_safe across
+  rollback → 永远握住 old storage。加 "checkpoint expires my holds"
+  API,out of scope。
+
+**Pattern**: "shared_ptr<T> + span<T>" 是 known pattern (Python
+buffer protocol / Rust's Arc<[T]>),值得在 Aura 标准
+化 — 任何未来不可变 buffer type 都该用这个。
