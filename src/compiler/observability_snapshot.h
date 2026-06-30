@@ -149,6 +149,12 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     // add_structural_mutation_log_entry yet).
     std::uint64_t structural_rollback_success = 0;
     std::uint64_t structural_rollback_besteffort = 0;
+    // Issue #370: lifetime-safe (SafePCVSpan) view count.
+    // Bumped in FlatAST::children_safe(NodeId). Lets AI
+    // agents audit how much of their code uses the safe view
+    // vs the raw std::span from children(NodeId) (which is the
+    // dangerous pattern across mutate boundaries).
+    std::uint64_t children_safe_view_count = 0;
     // Issue #256: AST operation observability. Mirrors
     // CompilerMetrics::{children_call_count,
     // parent_of_call_count, mark_dirty_upward_call_count,

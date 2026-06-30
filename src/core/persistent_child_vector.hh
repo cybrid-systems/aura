@@ -68,6 +68,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -301,6 +302,24 @@ public:
         return !(*this == other);
     }
 
+    // Issue #370: expose the SafePCVSpan<T> as a friend so it
+    // can access the private Storage type + data_ member
+    // needed to construct a lifetime-pinned view. (Without
+    // this friend, SafePCVSpan would need to take its own
+    // copy of Storage — doubling the alloc cost.)
+    template <typename U>
+    friend class SafePCVSpan;
+
+    // Issue #370: free function form of share_storage. Friend
+    // access grants read of the private data_; SafePCVSpan
+    // uses this to grab the shared_ptr without needing a
+    // public member.
+    template <typename U>
+    friend typename PersistentChildVector<U>::StoragePtr
+    share_storage(const PersistentChildVector<U>& v) noexcept {
+        return v.data_;
+    }
+
 private:
     // Internal storage. Holds a unique_ptr<T[]> (mutable,
     // since we write into it during construction) and a size.
@@ -375,6 +394,73 @@ private:
         out.size_ = n;
         return out;
     }
+
+    // (share_storage was moved to a public free function
+    // share_storage(pcv) below; see Issue #370.)
+};
+
+// ─────────────────────────────────────────────────────────────
+//  SafePCVSpan<T> — lifetime-pinned view of a PersistentChildVector
+//
+//  Issue #370: raw std::span<const T> returned by
+//  PersistentChildVector::data() / PersistentChildVector::begin/end()
+//  borrows the underlying storage. After a with_* mutation
+//  replaces the underlying PCV in FlatAST::children_[id], the
+//  span — if held by a closure, MutationRecord, AI Agent state,
+//  FFI buffer, etc. — dangles. Even if the storage refcount is
+//  >1 (because the holder copies the span pointer), raw pointers
+//  into the storage are unsafe across any modification path
+//  (including rollback via MutationCheckpoint that frees the
+//  storage when the LAST shared_ptr releases it).
+//
+//  SafePCVSpan fixes this by carrying the shared_ptr alongside
+//  the span. As long as the SafePCVSpan is alive, the storage
+//  it borrows stays valid. When the SafePCVSpan is destructed,
+//  the shared_ptr releases its refcount.
+//
+//  Usage (preferred over raw span):
+//
+//    auto safe = flat.children_safe(id);  // SafePCVSpan<NodeId>
+//    for (NodeId c : safe.span()) {
+//        ...                                 // safe even after mutate
+//    }
+//    // safe dtor releases the shared_ptr
+//
+//  Raw std::span (flat.children(id).span()):
+//
+//    auto span = flat.children(id);         // std::span<const NodeId>
+//    // WARNING: span dangles if the PCV at flat.children_[id]
+//    //          is replaced via with_* or rollback before span
+//    //          is read.
+//
+//  Trade-off: one atomic increment per call (1 ref bump). The
+//  bump is amortized across all reads via the same SafePCVSpan.
+//
+//  Thread safety: SafePCVSpan holds an atomic shared_ptr; multiple
+//  threads can hold independent SafePCVSpans of the same PCV
+//  without data races (the storage is immutable).
+// ─────────────────────────────────────────────────────────────
+template <typename T>
+class SafePCVSpan {
+public:
+    SafePCVSpan() noexcept = default;
+    SafePCVSpan(std::span<const T> sp, std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep)
+        : span_(sp), keep_(std::move(keep)) {}
+
+    [[nodiscard]] std::span<const T> span() const noexcept { return span_; }
+    [[nodiscard]] typename PersistentChildVector<T>::size_type size() const noexcept { return span_.size(); }
+    [[nodiscard]] bool empty() const noexcept { return span_.empty(); }
+    [[nodiscard]] const T* data() const noexcept { return span_.data(); }
+    [[nodiscard]] const T& operator[](typename PersistentChildVector<T>::size_type i) const { return span_[i]; }
+
+    // Refcount of the kept storage. Mostly for tests; useful
+    // diagnostic for AI agents to verify their hold doesn't
+    // leak (held across many calls would accumulate).
+    [[nodiscard]] long use_count() const noexcept { return keep_.use_count(); }
+
+private:
+    std::span<const T> span_;
+    std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep_;
 };
 
 }  // namespace aura::ast

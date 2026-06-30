@@ -1223,6 +1223,13 @@ std::pmr::vector<std::uint32_t> type_id_;
     // legacy add_mutation() and miss the children_ restore.
     mutable std::atomic<std::uint64_t> structural_rollback_success_{0};
     mutable std::atomic<std::uint64_t> structural_rollback_besteffort_{0};
+    // Issue #370: lifetime-safe view counter. Bumped in
+    // children_safe(NodeId). Mirrors children_call_count_ for
+    // the raw children(NodeId) accessor. AI agents can use
+    // (children-call-count + children-safe-view-count) to
+    // gauge how often their code crosses mutation boundaries
+    // with cached views.
+    mutable std::atomic<std::uint64_t> children_safe_view_count_{0};
     // Issue #256: AST operation observability counters.
     // The hand-written AST operations (children, parent_of,
     // mark_dirty_upward) are candidates for std::meta-based
@@ -2703,7 +2710,31 @@ public:
         children_call_count_.fetch_add(1, std::memory_order_relaxed);
         if (id >= children_.size())
             return {};
+        // WARNING (Issue #370): the returned std::span borrows
+        // the underlying storage. If callers cache this span
+        // across mutations (set_child / insert_child /
+        // remove_child / rollback_to_size), the span WILL
+        // dangle when the storage's last shared_ptr is
+        // released. Use children_safe(id) for lifetime-pinned
+        // views; reserve raw children(id) for single-statement
+        // use within the same mutation boundary.
         return std::span<const NodeId>(children_[id].data(), children_[id].size());
+    }
+
+    // Issue #370: lifetime-pinned accessor. Returns a
+    // SafePCVSpan<NodeId> that bundles the std::span with the
+    // underlying storage shared_ptr. As long as the
+    // SafePCVSpan is alive, the storage stays alive — so the
+    // returned span stays valid across mutate operations +
+    // rollback. One atomic refcount bump per call (amortized
+    // over all reads via the same handle).
+    [[nodiscard]] SafePCVSpan<NodeId> children_safe(NodeId id) const {
+        children_safe_view_count_.fetch_add(1, std::memory_order_relaxed);
+        if (id >= children_.size())
+            return {};
+        auto keep = share_storage(children_[id]);
+        std::span<const NodeId> sp(children_[id].data(), children_[id].size());
+        return SafePCVSpan<NodeId>(sp, std::move(keep));
     }
     // Mutable overload (for code paths that need to write through
     // the children list, e.g. fixup_deltas in ast_impl.cpp).
@@ -4752,6 +4783,10 @@ public:
     }
     [[nodiscard]] std::uint64_t structural_rollback_besteffort() const noexcept {
         return structural_rollback_besteffort_.load(std::memory_order_relaxed);
+    }
+    // Issue #370: lifetime-safe view call counter.
+    [[nodiscard]] std::uint64_t children_safe_view_count() const noexcept {
+        return children_safe_view_count_.load(std::memory_order_relaxed);
     }
 
     // Issue #191: bump the generation counter (with wrap-around
