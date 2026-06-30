@@ -1805,14 +1805,24 @@ public:
         , error_kind_(std::move(other.error_kind_))
         , value_cache_(std::move(other.value_cache_))
         , mutation_log_(std::move(other.mutation_log_))
+        // Issue #300 follow-up #2: regression from e5f559bf
+        // ("fix warning") which dropped node_first_mutation_
+        // from the move-ctor init list. Default-construction
+        // used the new_delete_resource, mixing with the
+        // arena-allocated columns during ~FlatAST() and
+        // producing a heap-use-after-free on the binding_gens_
+        // shared_ptr control block (the default-ctor'd
+        // column's heap buffer lived past the arena shrink in
+        // (arena:defrag), then died during teardown in an
+        // order that poisoned the next column's destructor).
+        // Restoring the init-list entry matches declaration
+        // order (node_first_mutation_ declared before
+        // last_seen_epoch_) and keeps the same pmr allocator.
+        , node_first_mutation_(std::move(other.node_first_mutation_))
         // Issue #320: per-node epoch tracking column
-        // (SoA parallel to mutation_log_ /
-        // node_first_mutation_).
+        // (SoA parallel to mutation_log_).
         , last_seen_epoch_(std::move(other.last_seen_epoch_))
-        // Issue #339: per-node occurrence-staleness
-        // column. (Declared after last_seen_epoch_ in
-        // the class; the init-list order must match the
-        // declaration order to silence -Wreorder.)
+        // Issue #339: per-node occurrence-staleness column.
         , occ_stale_(std::move(other.occ_stale_))
         , next_mutation_id_(other.next_mutation_id_)
         , generation_(other.generation_)
@@ -2057,12 +2067,22 @@ public:
         , value_cache_(alloc)
         , mutation_log_(alloc)
         , narrowing_log_(alloc)
+        // Issue #300 follow-up #2: regression from e5f559bf
+        // ("fix warning"). node_first_mutation_ must use the
+        // arena allocator (alloc), not the default
+        // new_delete_resource. Same root cause as the move
+        // ctor fix above — removing it from the init list
+        // caused default-construction with the wrong
+        // allocator and produced a heap-use-after-free on
+        // the binding_gens_ shared_ptr control block during
+        // ~FlatAST() after (arena:defrag) shrank the arena.
+        // Restoring the init-list entry matches declaration
+        // order (node_first_mutation_ declared before
+        // last_seen_epoch_).
+        , node_first_mutation_(alloc)
         // Issue #320: per-node epoch tracking column.
         , last_seen_epoch_(alloc)
-        // Issue #339: per-node occurrence-staleness
-        // column. (Declared after last_seen_epoch_ in
-        // the class; init-list order must match the
-        // declaration order to silence -Wreorder.)
+        // Issue #339: per-node occurrence-staleness column.
         , occ_stale_(alloc)
         , node_gen_(alloc)
         , free_list_(alloc) {}

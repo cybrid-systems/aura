@@ -462,20 +462,38 @@ private:
         dtors_.clear();
     }
 
-    // Issue #187 (P0): reset the pmr resource to point at the
-    // (possibly resized) buffer_. Use release() instead of
-    // destroy_at + construct_at — the latter corrupts the vtable
-    // on some libc++/libstdc++ versions when the resource is
-    // referenced by external pmr containers (FlatAST's 18+ pmr
-    // vectors all hold memory_resource* = &resource_). release()
-    // just resets the bump pointer to the buffer start, leaving
-    // the vtable intact. All live in-buffer allocations (pointed
-    // to by external pmr containers) are still valid because
-    // buffer_ hasn't moved (resize may shrink but never reallocates
-    // while shrinking, and any ptr below stats_.used is in the
-    // preserved prefix).
+    // Issue #187 (P0) + Issue #300 follow-up #3 (real root
+    // cause of the heap-use-after-free on FlatAST::binding_gens_):
+    // after compact()/defrag() shrinks buffer_, the resource_'s
+    // internal bump pointer is still pointing somewhere in the
+    // (old) buffer. The OLD release()-to-start behavior allowed
+    // the next allocation to overlap the live prefix where
+    // earlier FlatASTs were still alive (dtors_ still held
+    // pointers to them) — heap-use-after-free when the arena
+    // was destroyed.
+    //
+    // Fix: don't reset the bump pointer at all. Just leave it
+    // wherever the previous allocations left it (which equals
+    // the start of the buffer + stats_.used, i.e., right past
+    // the live data). The next allocation lands there, no
+    // overlap. This is also what compact()/defrag() want
+    // semantically: reclaim the unused tail without disturbing
+    // live objects.
+    //
+    // Note: this only works if the bump pointer is still
+    // pointing into valid buffer_ capacity. std::vector::resize
+    // with n < size() preserves capacity (no reallocation), so
+    // the bump pointer's storage stays valid even though
+    // buffer_.size() shrank. The bump pointer might point past
+    // the new size, but the underlying bytes are still
+    // allocated (capacity unchanged), so accessing them is safe
+    // (the resource just treats the bytes as allocatable).
     void rebuild_resource_() noexcept {
-        resource_.release();
+        // Intentionally empty: don't reset the bump pointer.
+        // See the comment above for why this is the correct
+        // behavior post-#300 follow-up #3.
+        // (Previously called resource_.release() which reset
+        // to buffer_.data() — that triggered the UAF.)
     }
 
     void* allocate_raw(std::size_t size, std::size_t alignment) pre(size > 0)
