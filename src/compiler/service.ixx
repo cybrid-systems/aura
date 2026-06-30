@@ -2264,6 +2264,11 @@ public:
                             if (!cache_it->second.has_shape_map &&
                                 shape_profiler_.is_stable(fn_key)) {
                                 // Drop shared lock; take unique for erase.
+                            } else if (jit_cache_shape_version_stale(cache_it->second,
+                                                                     fn_key)) {
+                                // Issue #605: shape version bumped by mutate — re-compile.
+                                shape::jit_shape_miss_count.fetch_add(
+                                    1, std::memory_order_relaxed);
                             } else {
                                 fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                                 need_compile = false;
@@ -2275,19 +2280,19 @@ public:
                     // Re-probe under unique lock for the hot-recompile path.
                     std::unique_lock cache_write(jit_cache_mtx_);
                     auto cache_it = jit_cache_.find(ir_fn.name);
+                    auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
                     if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
-                        shape_profiler_.is_stable(shape::make_fn_key(session_id_, ir_fn.name))) {
+                        shape_profiler_.is_stable(fn_key)) {
                         std::fprintf(stderr, "spec: hot-recompile '%s' (shape now stable)\n",
                                      ir_fn.name.c_str());
                         jit_cache_.erase(cache_it);
-                    } else {
-                        // Either not present, or no hot-recompile needed.
-                        // Set fn_ptr to whatever's there (might be a cached entry
-                        // with shape already).
-                        if (cache_it != jit_cache_.end()) {
-                            fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
-                            need_compile = false;
-                        }
+                    } else if (cache_it != jit_cache_.end() &&
+                               jit_cache_shape_version_stale(cache_it->second, fn_key)) {
+                        // Issue #605: drop stale shape-specialized entry.
+                        jit_cache_.erase(cache_it);
+                    } else if (cache_it != jit_cache_.end()) {
+                        fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
+                        need_compile = false;
                     }
                 }
             }
@@ -2336,6 +2341,11 @@ public:
                     it->second.arg_count = ir_fn.arg_count;
                     it->second.env_count = env_count;
                     it->second.has_shape_map = had_shape;
+                    if (had_shape) {
+                        auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
+                        it->second.compiled_shape_version_ =
+                            shape_profiler_.current_snapshot(fn_key).version;
+                    }
                 }
             }
 
@@ -6732,6 +6742,9 @@ public:
         std::uint32_t arg_count = 0;
         std::uint32_t env_count = 0;
         bool has_shape_map = false; // true if compiled with shape_map
+        // Issue #605: ShapeProfiler version at compile time.
+        // Compared on cache hit; mismatch → re-compile + jit_shape_miss.
+        std::uint64_t compiled_shape_version_ = 0;
     };
     std::unordered_map<std::string, JitCachedFn> jit_cache_;
     // Issue #59 Iter 2: shared_mutex for jit_cache_. Read-heavy access
@@ -6858,6 +6871,8 @@ public:
                     auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
                     if (!cache_it->second.has_shape_map && shape_profiler_.is_stable(fn_key)) {
                         // hot-recompile path: needs unique lock
+                    } else if (jit_cache_shape_version_stale(cache_it->second, fn_key)) {
+                        shape::jit_shape_miss_count.fetch_add(1, std::memory_order_relaxed);
                     } else {
                         fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                         need_compile = false;
@@ -6867,10 +6882,15 @@ public:
             if (need_compile && fn_ptr == nullptr) {
                 std::unique_lock cache_write(jit_cache_mtx_);
                 auto cache_it = jit_cache_.find(ir_fn.name);
+                auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
                 if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
-                    shape_profiler_.is_stable(shape::make_fn_key(session_id_, ir_fn.name))) {
+                    shape_profiler_.is_stable(fn_key)) {
                     std::fprintf(stderr, "spec: hot-recompile '%s' (try_jit)\n",
                                  ir_fn.name.c_str());
+                    jit_cache_.erase(cache_it);
+                } else if (cache_it != jit_cache_.end() &&
+                           jit_cache_shape_version_stale(cache_it->second, fn_key)) {
+                    // Issue #605: drop stale shape-specialized entry.
                     jit_cache_.erase(cache_it);
                 } else if (cache_it != jit_cache_.end()) {
                     fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
@@ -6979,6 +6999,10 @@ public:
                         it->second.arg_count = ir_fn.arg_count;
                         it->second.env_count = env_count;
                         it->second.has_shape_map = final_shape_map != nullptr;
+                        if (final_shape_map != nullptr) {
+                            it->second.compiled_shape_version_ =
+                                shape_profiler_.current_snapshot(fn_key).version;
+                        }
                     }
                 }
             }
@@ -7158,6 +7182,16 @@ public:
     shape::ShapeID dominant_shape(const std::string& name) const {
         auto fn_key = shape::make_fn_key(session_id_, name);
         return shape_profiler_.dominant_shape(fn_key);
+    }
+
+    // Issue #605: true when a shape-specialized JIT entry is stale
+    // because ShapeProfiler bumped version after mutate:*.
+    [[nodiscard]] bool jit_cache_shape_version_stale(const JitCachedFn& entry,
+                                                     shape::FnKey fn_key) const {
+        if (!entry.has_shape_map)
+            return false;
+        const auto snap = shape_profiler_.current_snapshot(fn_key);
+        return entry.compiled_shape_version_ != snap.version;
     }
 
     // Invalidate shape profile for a function (called after mutate:*).

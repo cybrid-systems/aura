@@ -899,16 +899,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             hits + delta + spec + cascade + per_fn));
     });
 
-    // Issue #570: query:shape-stability-stats. Returns the sum
-    // of 5 ShapeProfiler stability observability counters:
+    // Issue #570/#605: query:shape-stability-stats. Returns the sum
+    // of 6 ShapeProfiler stability observability counters:
     //   - shape_stability_hit_count    (first-time stable)
     //   - shape_version_bump_count     (invalidate version++)
     //   - shape_fiber_refresh_count    (MutationBoundary yield)
     //   - mutation_shape_churn_count   (stable→unstable / invalidate)
-    //   - deopt_count                  (CompilerMetrics GuardShape)
+    //   - shape_deopt_hook_fire_count  (invalidate deopt hook)
+    //   - jit_shape_miss_count         (#605 JIT cache version miss)
     //
-    // P0: returns an integer = sum of all 5 counters.
-    // Follow-up: returns a 5-tuple + derived stable_ratio_bp.
+    // P0: returns an integer = sum of all 6 counters.
+    // Follow-up: returns a 6-tuple + derived stable_ratio_bp.
     // Non-duplicative with #571 (value dispatch) and #607
     // (Task4 hot-path) — unified shape-stability surface.
     add("query:shape-stability-stats", [](std::span<const EvalValue> a) -> EvalValue {
@@ -923,8 +924,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             shape::mutation_shape_churn_count.load(std::memory_order_relaxed);
         const std::uint64_t deopt_hooks =
             shape::shape_deopt_hook_fire_count.load(std::memory_order_relaxed);
+        const std::uint64_t jit_shape_miss =
+            shape::jit_shape_miss_count.load(std::memory_order_relaxed);
         return make_int(static_cast<std::int64_t>(
-            stable_hits + version_bumps + fiber_refresh + churn + deopt_hooks));
+            stable_hits + version_bumps + fiber_refresh + churn + deopt_hooks +
+            jit_shape_miss));
     });
 
     // Issue #571: query:value-dispatch-stats. Returns the sum
