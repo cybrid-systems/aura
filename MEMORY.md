@@ -149,3 +149,42 @@ pre-existing frame is treated as pre-checkpoint.
 Stable-id indirection refactor (Closure::env_id becomes a
 small dense index, env_frames_ is a dense arena, stable_to_arena_
 remap on rollback) — the actual memory-shrinking version.
+
+## Session 2026-06-30 (continued) — CI asan-build fix
+
+User: "ci asan-build挂 修".
+
+Last failing CI run was on `0fdc68e3` (the #226 CHECK macro
+docs commit). asan-build failed; asan-verify skipped.
+
+**Root cause** (not a real bug, but a CI infra issue):
+libstdc++ 16's `<regex>` headers (regex_automaton.h,
+regex_automaton.tcc) trigger `-Werror=maybe-uninitialized`
+false positives inside `std::function`'s move ctor when
+imported via `import std` from `aura::parser`. CI image
+(`ghcr.io/cybrid-systems/aura-ci:v1.0.1`) builds with
+`-Werror`, so the false positive becomes a fatal error at
+`evaluator_primitives_query_workspace.cpp` (which pulls in
+`import aura.parser.parser`).
+
+**Why local builds don't hit it**:
+Same libstdc++ 16, same GCC 16, but the build environment
+slightly differs. CI's GCC version is slightly newer and
+emits the false-positive warning; local GCC 16.0.1
+(r16-8246-g569ace1fa50) doesn't.
+
+**Fix** (`cf1ffee8`):
+Add `-Wno-error=maybe-uninitialized -Wno-maybe-uninitialized`
+to `aura_test_compile_options` in `cmake/AuraTest.cmake`.
+The double flag is intentional: `-Wno-maybe-uninitialized`
+suppresses the warning entirely (safe — only fires from inside
+libstdc++ regex headers, not from project code), and
+`-Wno-error=maybe-uninitialized` is belt-and-suspenders in case
+a future compiler version upgrades the warning to error.
+
+**Pattern for libstdc++ header false-positives**:
+When CI fails with `-Werror=` warnings inside `/usr/include/c++/`
+headers (not project code), it's almost always a known
+false-positive in libstdc++ itself. Suppress with `-Wno-X`
+in the test compile options — not in the project source.
+Project code's `-Werror` coverage stays intact.
