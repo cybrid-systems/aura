@@ -243,6 +243,18 @@ bool Evaluator::restore_panic_checkpoint() {
         if (panic_safe_pairs_size_ > 0 && panic_safe_pairs_size_ <= pairs_.size()) {
             pairs_.resize(panic_safe_pairs_size_);
         }
+        // Issue #356: mark env_frames_ entries allocated during
+        // the doomed transaction as INVALID_VERSION. The frames
+        // stay allocated (truncating env_frames_ would invalidate
+        // Closure::env_id indices for closures that captured
+        // pre-rollback frames), but materialize_call_env and the
+        // parent walks will refuse to use them — preserving the
+        // invariant "any frame reachable from a live Closure is
+        // usable". This is the scope-limited compromise for the
+        // full stable-id indirection refactor (which would let
+        // env_frames_ actually shrink); see the issue body for
+        // the design sketch.
+        invalidate_post_rollback_env_frames();
         // Clear checkpoint after successful restore
         panic_safe_source_.clear();
         panic_safe_cells_size_ = 0;

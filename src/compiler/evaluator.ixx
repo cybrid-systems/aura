@@ -105,6 +105,26 @@ export class Evaluator;
 export using EnvId = std::uint32_t;
 export constexpr EnvId NULL_ENV_ID = std::numeric_limits<EnvId>::max();
 
+// Issue #356: INVALID_VERSION sentinel for frames that were
+// allocated during a doomed transaction and survived a panic
+// checkpoint restore. Materialize_call_env + the
+// refresh_stale_frame_in_walk walker treat a frame with
+// version_ == INVALID_VERSION as unusable: skip + emit a
+// distinct [#356 warning] instead of materializing or walking
+// into it. This is the scope-limited compromise for #356
+// ("[Follow-up #242-2] Arena rollback for env_frames_ via
+// stable-id indirection"): the stable-id indirection refactor
+// is a follow-up — for now we mark post-rollback frames
+// unusable so materialize_call_env never returns a poisoned
+// Env to a closure body. The frames stay allocated (memory
+// cost is bounded by the doomed transaction's size), but the
+// invariant "any frame reachable from a live Closure is
+// usable" is preserved.
+//
+// UINT64_MAX: monotonic counter never reaches this in practice
+// (would require 2^64 - 1 MutationBoundaryGuard entries).
+export constexpr std::uint64_t INVALID_VERSION = std::numeric_limits<std::uint64_t>::max();
+
 export class Env final {
 public:
     Env() = default;
@@ -1373,6 +1393,35 @@ public:
     // (so subsequent reads see it as fresh) or re-capture the
     // closure against a fresh env.
     bool is_env_frame_stale(EnvId id) const;
+    // Issue #356: is_env_frame_invalid — true if the frame's
+    // version_ has been marked INVALID_VERSION by a post-rollback
+    // invalidation pass. Distinct from is_env_frame_stale:
+    //   - stale = version_ < current defuse_version_ (will be
+    //     refreshed on next walk by refresh_stale_frame_in_walk)
+    //   - invalid = version_ == INVALID_VERSION (terminal:
+    //     NEVER refreshable, must skip)
+    // Frames become invalid when they were allocated during a
+    // doomed transaction that was rolled back via panic
+    // checkpoint restore — their bindings may reference AST
+    // nodes / pool strings that no longer exist. Returning
+    // false for invalid ids is the same safety net as
+    // is_env_frame_stale (treat invalid as the worst case).
+    [[nodiscard]] bool is_env_frame_invalid(EnvId id) const;
+    // Issue #356: invalidate_post_rollback_env_frames — call
+    // after restore_panic_checkpoint to mark every env_frames_
+    // entry allocated during the doomed transaction (indices
+    // [panic_safe_env_frames_size_, env_frames_.size())) as
+    // INVALID_VERSION. The frames stay allocated (avoiding
+    // Closure::env_id invalidation), but any closure body that
+    // tries to materialize or walk into them is refused with a
+    // distinct [#356 warning] — preserving the invariant
+    // "any frame reachable from a live Closure is usable".
+    // Bumps envframe_post_rollback_invalidations_ so
+    // (query:envframe-dualpath-stats) can report the count.
+    void invalidate_post_rollback_env_frames();
+    // Accessor for the post-rollback invalidation count
+    // (observability for (query:envframe-dualpath-stats)).
+    // Defined near the other envframe_*_ accessors below.
     // Issue #355: refresh_stale_frame_in_walk — single source of
     // truth for the "saw a stale frame during a walk" pattern.
     // When a SoA parent walk encounters a frame whose version_ is
@@ -2169,6 +2218,11 @@ private:
     mutable std::atomic<std::uint64_t> envframe_stale_refresh_count_{0};
     mutable std::atomic<std::uint64_t> envframe_version_mismatch_in_walk_{0};
     mutable std::atomic<std::uint64_t> envframe_gc_walk_safe_skips_{0};
+    // Issue #356: # of env_frames_ entries marked INVALID_VERSION
+    // by invalidate_post_rollback_env_frames after a panic
+    // checkpoint restore. Stats-only (relaxed-ordering).
+    // Surfaced by (query:envframe-dualpath-stats).
+    mutable std::atomic<std::uint64_t> envframe_post_rollback_invalidations_{0};
     // Issue #458: query hygiene metrics. Bumped by query:pattern
     // (and friends) when they skip a MacroIntroduced node during
     // traversal. Stats-only (relaxed-ordering). Exposed via
@@ -3457,6 +3511,12 @@ public:
     }
     void bump_envframe_gc_walk_safe_skips() const noexcept {
         envframe_gc_walk_safe_skips_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_envframe_post_rollback_invalidations() const noexcept {
+        return envframe_post_rollback_invalidations_.load(std::memory_order_relaxed);
+    }
+    void bump_envframe_post_rollback_invalidations(std::uint64_t n = 1) const noexcept {
+        envframe_post_rollback_invalidations_.fetch_add(n, std::memory_order_relaxed);
     }
 
 
