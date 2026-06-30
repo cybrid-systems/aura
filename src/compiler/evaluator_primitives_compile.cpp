@@ -2731,6 +2731,81 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->marker(id)));
     });
 
+    // (syntax:set-marker node-id marker) — Issue #366: set the
+    // SyntaxMarker value of a node. Returns true on success.
+    // marker is an integer (0=User, 1=MacroIntroduced,
+    // 2=BoolLiteral). Used by EDSL transformers and auditability
+    // tooling to correct marker drift after a manual mutation
+    // sequence. The primitive does NOT propagate the marker to
+    // children — use syntax:propagate-marker for that.
+    add("syntax:set-marker", [&ev](const auto& a) -> EvalValue {
+        bool ok = true;
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1])) {
+            ok = false;
+            return ev.make_merr("bad-arg", "usage: (syntax:set-marker node-id marker)");
+        }
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto marker_val = static_cast<int>(as_int(a[1]));
+        if (!ev.workspace_flat_) {
+            ok = false;
+            return ev.make_merr("no-workspace", "no active workspace");
+        }
+        if (id >= ev.workspace_flat_->size()) {
+            ok = false;
+            return ev.make_merr("out-of-range", "node id " + std::to_string(id) + " >= flat size");
+        }
+        if (marker_val < 0 || marker_val > 2) {
+            ok = false;
+            return ev.make_merr("bad-arg", "marker must be 0 (User), 1 (MacroIntroduced), or 2 (BoolLiteral)");
+        }
+        // No MutationBoundaryGuard — this is metadata-only, not a
+        // structural mutation. The version bump is unnecessary
+        // and would invalidate every cached marker query.
+        ev.workspace_flat_->set_marker(id, static_cast<aura::ast::SyntaxMarker>(marker_val));
+        return make_bool(true);
+    });
+
+    // (syntax:propagate-marker node-id marker) — Issue #366:
+    // set the marker on a node AND recursively on all
+    // descendants. Returns the count of nodes updated. Used by
+    // EDSL transformers to re-stamp a macro-introduced subtree
+    // after a structural mutation (insert-child, replace-subtree)
+    // that may have lost the original marker on some children.
+    // The primitive does NOT bump defuse_version_ — marker
+    // changes are observational metadata, not workspace state.
+    add("syntax:propagate-marker", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1])) {
+            return make_int(0);
+        }
+        auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto marker_val = static_cast<int>(as_int(a[1]));
+        if (!ev.workspace_flat_) return make_int(0);
+        if (root >= ev.workspace_flat_->size()) return make_int(0);
+        if (marker_val < 0 || marker_val > 2) return make_int(0);
+        // Recursive DFS — no mutation guard since this is
+        // metadata-only. We walk via workspace_flat_->children()
+        // which returns PersistentChildVector<NodeId>.
+        std::int64_t count = 0;
+        std::vector<aura::ast::NodeId> stack = {root};
+        while (!stack.empty()) {
+            auto cur = stack.back();
+            stack.pop_back();
+            if (cur == aura::ast::NULL_NODE || cur >= ev.workspace_flat_->size())
+                continue;
+            ev.workspace_flat_->set_marker(
+                cur, static_cast<aura::ast::SyntaxMarker>(marker_val));
+            ++count;
+            // Snapshot children before pushing to avoid
+            // invalidation issues (set_marker doesn't
+            // reallocate, but defensive).
+            const auto& children = ev.workspace_flat_->children(cur);
+            for (std::uint32_t ci = 0; ci < children.size(); ++ci) {
+                stack.push_back(children[ci]);
+            }
+        }
+        return make_int(count);
+    });
+
     // (syntax-marker-counts) — Issue #190: aggregate count of
     // each SyntaxMarker value across the workspace. Hash with
     // 3 integer fields: user, macro-introduced, bool-literal,
