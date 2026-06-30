@@ -30,7 +30,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-from _aura_harness import BUILD, B, G, N, R, Y
+from _aura_harness import BUILD, AURA_BIN, B, G, N, R, ROOT, Y
 from issue_tier import _member_to_bundle, issues_tier, resolve_issue_targets
 
 # Pre-existing test failures (NOT caused by recent PRs).
@@ -141,6 +141,18 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
     bin_path = BUILD / bin_name
     if not bin_path.is_file():
         return bin_name, 0, 0, 127, f"binary not found: {bin_path}"
+    # Issue #226 follow-up: pass AURA_BIN + AURA_SRC_ROOT to
+    # subprocesses so tests that shell out to the aura binary
+    # (test_issue_294, test_issue_295) can resolve relative
+    # paths regardless of cwd. The bundle binaries themselves
+    # don't read these vars, but the tests they link do.
+    # Use ROOT as cwd (consistent with build.py / CI infra)
+    # so the test's `cd <repo_root>` works as expected.
+    env = {
+        **os.environ,
+        "AURA_BIN": str(AURA_BIN),
+        "AURA_SRC_ROOT": str(ROOT),
+    }
     try:
         r = subprocess.run(
             [str(bin_path)],
@@ -148,6 +160,8 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
             text=True,
             timeout=timeout,
             errors="replace",
+            cwd=str(ROOT),
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return bin_name, 0, 0, 124, f"timeout after {timeout}s"
