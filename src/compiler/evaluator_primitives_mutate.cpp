@@ -1299,7 +1299,15 @@ void register_mutate_primitives(
                 }
 
                 // Record mutation
-                flat.add_mutation(id, "set-body", name, name, "set-body " + name);
+                // Issue #369: capture old body id for structural
+                // rollback (children_ column restore). The set-body
+                // op replaces child_idx=1 (the body slot of a
+                // Define) with pr.root.
+                aura::ast::NodeId old_body = (flat.children(id).size() > 1)
+                                      ? flat.children(id)[1]
+                                      : aura::ast::NULL_NODE;
+                flat.add_structural_mutation_log_entry(
+                    id, 1, old_body, pr.root, "set-body");
 
                 // Issue #230 / #166 semantics: branch on the
                 // shape of the new code.
@@ -1510,9 +1518,9 @@ void register_mutate_primitives(
                     ok = false;
                     return mev("mutation-error", std::string(result.error().message));
                 }
-                flat.add_mutation(id, "remove-node",
-                                  std::to_string(target), "",
-                                  "remove node " + std::to_string(target));
+                flat.add_structural_mutation_log_entry(
+                    id, static_cast<std::uint32_t>(ci), target,
+                    aura::ast::NULL_NODE, "remove-node");
                 removed = true;
                 break;
             }
@@ -1606,7 +1614,8 @@ void register_mutate_primitives(
         std::string summary = (a.size() > 3 && is_string(a[3]))
                                   ? ev.string_heap_[as_string_idx(a[3])]
                                   : "insert child at " + std::to_string(pos);
-        flat.add_mutation(parent, "insert-child", std::to_string(pos), summary, summary);
+        flat.add_structural_mutation_log_entry(
+            parent, pos, aura::ast::NULL_NODE, pr.root, "insert-child");
 
         return make_int(static_cast<std::int64_t>(pr.root));
     });
