@@ -215,3 +215,35 @@ in the output, that's 127 * 256 — the test's `popen` shell
 command couldn't find the binary. The runner probably forgot
 to set cwd/env vars. Check the test code for env-var fallbacks
 (default `./build/aura` + `cd ..` means cwd=build/ assumed).
+
+## Session 2026-06-30 (continued) — Issue #358 closed
+
+`94276d89` ships the scope-limited version of #358 ([Follow-up
+#243] Incremental re-AOT for dirty functions).
+
+**What ships (foundation only — steps 1+2)**:
+- `aura_set_is_define_dirty_fn(fn, userdata)` — C-linkage
+  setter for the host's dirty-Define callback
+- `aura_filter_dirty_flat_functions(functions, n, out, max)`
+  — returns indices of FlatFunctions whose name matches a
+  dirty Define
+- Uses function-name as the canonical key (no separate
+  DefineId table needed for the filter path)
+
+**What's deferred (follow-ups)**:
+- Stable DefineId → FlatFunction index that survives mutation
+  epochs (#358 step 1 full version)
+- `aura_reemit_aot_for_dirty(version)` AOT pipeline (#358
+  step 3) that consumes the dirty-index array
+- Hot-patch test (define + AOT + mutate + re-emit + verify)
+
+15/15 tests in test_issues_jit bundle. 60/60 bundle total.
+
+**Lesson — `aura_jit.h` + `import std` conflict**:
+`aura_jit.h` includes `<functional>` and `<memory>` etc.,
+which conflicts with `import std` in the test translation
+unit. Fix: forward-declare `aura::jit::FlatFunction` in the
+test instead of including `aura_jit.h`. The C-linkage
+`aura_filter_dirty_flat_functions` only needs the C struct
+layout, which the forward declaration + matching opaque-array
+declaration in the bridge.h covers.
