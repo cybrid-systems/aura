@@ -46,3 +46,42 @@ stress, unrelated to this fix. Track as separate issue.
 "shouldn't" be shared (shared_ptr with use_count=1 in every
 ~dtor), check if the destructor is being invoked twice on the
 same memory because of arena address reuse after a reset/rebuild.
+
+## Session 2026-06-30 (continued) — pre-existing CHECK macro UAF (#226 follow-up)
+
+The pre-existing UAF in test_issue_226 test_doomsday_stress was
+a different bug from the FlatAST/binding_gens_ one:
+
+`tests/test_harness.hpp:101` CHECK macro used
+`const auto& _check_msg = (msg);`. With msg = `("..." + ...).c_str()`,
+the const reference binds to the const char* value but the underlying
+temporary std::string is NOT bound to anything that extends its
+lifetime. By the time std::println's format_args dereferences the
+stored pointer (inside std::formatter<char const*, char>::format,
+via strlen / memcpy on a string_view constructed from the raw
+pointer), the buffer is freed. The [class.temporary] lifetime
+extension rule for "reference parameters in function calls" doesn't
+apply because _check_msg is a local variable, not a function parameter.
+
+Same bug in `tests/issue_test_harness.hpp` (re-evaluated the msg
+expression in each branch — same dangling-pointer hazard).
+
+Fix: store _check_msg as `const std::string _check_msg = (msg);`
+(by value). std::string's converting ctor accepts both const char*
+(deep copy) and std::string, so all existing call sites work unchanged.
+
+Commit 41d3aed8 pushed to origin/main.
+
+**Pattern**: when a CHECK macro (or similar printf-style helper) is
+ASan-flagged on a `READ of size N at 0x...` inside strlen/memcpy
+called from std::formatter<char const*, char>::format, the macro
+is holding a reference to a pointer whose target (a temporary
+std::string) was destroyed before the print actually dereferenced
+it. Fix: own the message as a std::string by value in the macro.
+
+## Total today
+- 3 commits to origin/main (02dd097e + cce076ab + 41d3aed8)
+- 2 unrelated heap-corruption bugs fixed (FlatAST binding_gens_ +
+  CHECK macro dangling pointer)
+- 1 of them (#300 follow-up) caused the user-reported CI failure;
+  the other (#226 pre-existing) was a latent bug surfaced by ASan
