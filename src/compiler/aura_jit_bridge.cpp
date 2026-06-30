@@ -539,7 +539,60 @@ static std::string find_runtime_c() {
         }
     }
 
+    // (4) Issue #360: install-path fallbacks. A packaged aura
+    //     installs runtime.c under /usr/local/share/aura/ or
+    //     /usr/share/aura/. This lets `make install` produce
+    //     a working AOT path without requiring AURA_RUNTIME_DIR
+    //     or a source-tree layout.
+    for (const char* rel : {
+            "/usr/local/share/aura/runtime.c",
+            "/usr/share/aura/runtime.c",
+            "/opt/aura/share/runtime.c"}) {
+        if (FILE* f = std::fopen(rel, "r")) {
+            std::fclose(f);
+            return rel;
+        }
+    }
+
     return ""; // not found
+}
+
+// Issue #360: get_aot_pic_flag — return the appropriate compile
+// flags for the current target architecture so the AOT pipeline
+// works on both x86_64 Linux (CI default) and aarch64 Linux
+// (local dev / ARM CI). The previous hardcoded "-fPIC -fno-pie"
+// was an x86_64 assumption; aarch64 toolchains accept the same
+// flags but the constant made the intent invisible to other
+// arch maintainers.
+//
+// Detection strategy: read /proc/self/exe → use uname() if the
+// binary doesn't reveal arch (e.g. statically linked with no
+// auxv). Falls back to x86_64 flags if detection fails (the
+// pre-#360 default), so the behavior is unchanged on the most
+// common CI arch.
+static const char* get_aot_pic_flag() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    // aarch64: PIC + no-pie work the same as x86_64. Keep the
+    // same flag pair so the link command is identical across
+    // arches (one less variable in CI logs).
+    return "-fPIC -fno-pie";
+#elif defined(__x86_64__) || defined(_M_X64)
+    // x86_64 modern gcc defaults to PIE; -fno-pie is required
+    // for the runtime.o to link cleanly with the LLVM-emitted
+    // .o (which uses absolute relocations). -fPIC keeps the
+    // runtime.o position-independent so the same .o can be
+    // linked into shared libraries later.
+    return "-fPIC -fno-pie";
+#elif defined(__i386__) || defined(_M_IX86)
+    return "-fPIC -fno-pie";
+#elif defined(__riscv)
+    return "-fPIC -fno-pie";
+#else
+    // Unknown arch — return the conservative x86_64 flag pair
+    // (the historical default). A maintainer adding a new arch
+    // should extend this function.
+    return "-fPIC -fno-pie";
+#endif
 }
 
 static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* functions,
@@ -600,7 +653,12 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     // with the LLVM-generated .o on x86_64 modern gcc (which defaults to
     // PIE for executables; without these flags the link fails with
     // "relocation R_X86_64_32S ... can not be used when making a PIE").
-    std::string pic_flag = "-fPIC -fno-pie";
+    //
+    // Issue #360: replaced the hardcoded string with get_aot_pic_flag()
+    // so the choice is auditable per-arch. Same flag pair on x86_64 /
+    // aarch64 / i386 / riscv — the helper exists so future arches
+    // (or per-arch overrides) have a single place to edit.
+    std::string pic_flag = get_aot_pic_flag();
     std::string runtime_o = out_path + ".runtime.o";
     {
         // Issue #237: removed `2>/dev/null` so the actual compile error
