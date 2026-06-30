@@ -449,6 +449,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:dirty-impact",
             // Issue #551 — Reflect post-mutate
             "query:reflect-postmutate-stats",
+            // Issue #597 — Macro+reflect+self-evo combined loop
+            "query:macro-reflect-self-evo-stats",
             // Issue #552 — EDSL stability
             "query:edsl-stability-stats",
             // Issue #553 — Atomic batch + mutation log
