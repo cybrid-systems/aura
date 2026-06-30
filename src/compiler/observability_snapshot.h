@@ -247,6 +247,12 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     std::uint64_t match_subject_narrowed_total = 0;
     std::uint64_t match_subject_total = 0;
     std::uint64_t match_narrowed_ratio_bp = 0;
+    // Issue #612: ADT/match exhaustiveness post-mutation
+    // reliability observability.
+    std::uint64_t adt_exhaust_rechecks_total = 0;
+    std::uint64_t adt_variant_mutate_impacts_total = 0;
+    std::uint64_t adt_stale_exhaust_prevented_total = 0;
+    std::uint64_t adt_occurrence_narrow_in_match_total = 0;
     // Issue #342: narrowing blame/provenance
     // observability. Mirrors the lifetime counter
     // in CompilerMetrics. The provenance fields

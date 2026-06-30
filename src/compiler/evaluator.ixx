@@ -822,6 +822,12 @@ public:
         return compiler_metrics_;
     }
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
+    // Issue #612: optional post-mutate ADT registry sync (wired by CompilerService).
+    using WorkspaceAdtSyncFn = void (*)(void* compiler_service);
+    void set_workspace_adt_sync_fn(WorkspaceAdtSyncFn fn) { workspace_adt_sync_fn_ = fn; }
+    // Issue #612: post-mutate hook — re-sync TypeRegistry ADT ctors
+    // from workspace DefineType nodes (delegates to CompilerService).
+    void sync_workspace_adt_registry();
     // Issue #426: public getter for compiler_service_ (as
     // void*). The (query:compiler-cache-stats) primitive
     // uses it to call CompilerService::dirty_block_count().
@@ -1840,6 +1846,7 @@ private:
     bool workspace_read_only_ = false; // quick lock flag for P6 mutations
     // ── CompilerService pointer (for messaging) ─────────────────
     void* compiler_service_ = nullptr; // CompilerService*
+    WorkspaceAdtSyncFn workspace_adt_sync_fn_ = nullptr;
     // Issue #223: function pointer that returns the service's
     // current bridge epoch. Set by CompilerService on
     // set_compiler_service() so Evaluator can query the epoch

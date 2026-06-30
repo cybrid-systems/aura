@@ -4700,22 +4700,90 @@ namespace {
         note.blame = BlameInfo{BlameParty::System, rec.operator_name, "mutation"};
     }
 
+    // Issue #612: collect constructor names from a DefineType node.
+    static std::vector<std::string> collect_define_type_ctor_names(const FlatAST& flat,
+                                                                   const StringPool& pool,
+                                                                   NodeId id) {
+        std::vector<std::string> ctors;
+        if (id == NULL_NODE || id >= flat.size())
+            return ctors;
+        auto v = flat.get(id);
+        if (v.tag != NodeTag::DefineType)
+            return ctors;
+        for (auto cid : v.children) {
+            if (cid >= flat.size())
+                continue;
+            auto cv = flat.get(cid);
+            if (cv.tag != NodeTag::Quote || cv.children.empty())
+                continue;
+            auto walk_quoted = cv.child(0);
+            if (walk_quoted >= flat.size())
+                continue;
+            auto wv = flat.get(walk_quoted);
+            if (wv.tag == NodeTag::Pair && !wv.children.empty()) {
+                auto car_id = wv.child(0);
+                if (car_id < flat.size()) {
+                    auto car_v = flat.get(car_id);
+                    if (car_v.tag == NodeTag::Variable) {
+                        auto cname = std::string(pool.resolve(car_v.sym_id));
+                        if (!cname.empty())
+                            ctors.push_back(cname);
+                    }
+                }
+            }
+        }
+        return ctors;
+    }
+
+    static void invalidate_match_exhaust_for_adt_type(FlatAST& flat, TypeId adt_tid, void* metrics) {
+        auto* m = static_cast<CompilerMetrics*>(metrics);
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            if (!flat.has_match_info(id))
+                continue;
+            auto* mi = flat.get_match_info(id);
+            if (!mi)
+                continue;
+            bool affects = false;
+            if (mi->subject_type_id > 0 && mi->subject_type_id < 0xFFFFFFFFu &&
+                TypeId{mi->subject_type_id, 1}.index == adt_tid.index) {
+                affects = true;
+            }
+            if (!affects)
+                continue;
+            if (mi->exhaustiveness_checked && m)
+                m->adt_stale_exhaust_prevented_total.fetch_add(1, std::memory_order_relaxed);
+            MatchClauseInfo updated = *mi;
+            updated.exhaustiveness_checked = false;
+            flat.set_match_info(id, std::move(updated));
+        }
+    }
+
     // Issue #260: re-run ADT exhaustiveness on dirty __match_tmp lets
     // (including nested matches — each match is its own let node).
     static void recheck_match_exhaustiveness_in_dirty_scope(
         FlatAST& flat, const StringPool& pool, TypeRegistry& reg, const std::vector<NodeId>& nodes,
-        const MutationRecord& rec, std::vector<OwnershipNote>& notes_out) {
+        const MutationRecord& rec, std::vector<OwnershipNote>& notes_out, void* metrics) {
+        auto* m = static_cast<CompilerMetrics*>(metrics);
         for (auto id : nodes) {
             if (id == NULL_NODE || id >= flat.size())
                 continue;
             if (!flat.has_match_info(id))
                 continue;
+            if (m)
+                m->adt_exhaust_rechecks_total.fetch_add(1, std::memory_order_relaxed);
             auto let_v = flat.get(id);
             bool had_subject_type = false;
+            bool narrowed_subject = false;
             if (let_v.tag == NodeTag::Let && !let_v.children.empty() && let_v.child(0) != NULL_NODE) {
                 auto tid_raw = flat.type_id(let_v.child(0));
                 had_subject_type = tid_raw > 0 && tid_raw < reg.size();
+                if (auto* mi = flat.get_match_info(id)) {
+                    narrowed_subject =
+                        mi->subject_type_id > 0 && mi->subject_type_id != tid_raw;
+                }
             }
+            if (narrowed_subject && m)
+                m->adt_occurrence_narrow_in_match_total.fetch_add(1, std::memory_order_relaxed);
             auto missing = analyze_match_exhaustiveness(flat, pool, reg, id);
             if (auto* mi = flat.get_match_info(id)) {
                 MatchClauseInfo updated = *mi;
@@ -4791,12 +4859,45 @@ namespace {
         }
     }
 
+    static void refresh_adt_constructors_for_dirty_define_types_impl(
+        FlatAST& flat, const StringPool& pool, TypeRegistry& reg,
+        const std::vector<NodeId>& dirty_nodes, void* metrics) {
+        auto* m = static_cast<CompilerMetrics*>(metrics);
+        for (auto id : dirty_nodes) {
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            if (flat.get(id).tag != NodeTag::DefineType)
+                continue;
+            auto type_name = std::string(pool.resolve(flat.get(id).sym_id));
+            auto ctors = collect_define_type_ctor_names(flat, pool, id);
+            if (ctors.empty())
+                continue;
+            auto tid = reg.lookup_type(type_name);
+            if (!tid.valid())
+                tid = reg.register_type(TypeTag::VARIANT, type_name);
+            if (!tid.valid())
+                continue;
+            reg.register_adt_constructors(tid, ctors);
+            if (m)
+                m->adt_variant_mutate_impacts_total.fetch_add(1, std::memory_order_relaxed);
+            invalidate_match_exhaust_for_adt_type(flat, tid, metrics);
+        }
+    }
+
 } // anonymous namespace
+
+void refresh_adt_constructors_for_dirty_define_types(FlatAST& flat, const StringPool& pool,
+                                                      TypeRegistry& reg,
+                                                      const std::vector<NodeId>& dirty_nodes,
+                                                      void* metrics) {
+    refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, dirty_nodes, metrics);
+}
 
 aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& flat,
                                                          const StringPool& pool, TypeRegistry& reg,
                                                          const aura::ast::MutationRecord& rec,
-                                                         std::vector<OwnershipNote>& notes_out) {
+                                                         std::vector<OwnershipNote>& notes_out,
+                                                         void* metrics) {
     // Pick a root to walk. For target_node mutations we use the
     // target subtree plus the dirty-upward chain (mark_dirty_upward
     // marked every ancestor of target_node). For subtree-level
@@ -4845,8 +4946,14 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
     // ── Occurrence-narrowing re-check on dirty nodes ─────────────
     find_occurrence_contexts(flat, pool, reg, dirty_nodes, notes_out);
 
+    // Issue #612: refresh ADT ctor lists from mutated DefineType
+    // nodes before re-running exhaustiveness (prevents stale
+    // TypeRegistry entries after variant add/remove).
+    refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, dirty_nodes, metrics);
+
     // Issue #260: nested match exhaustiveness + conservative fallback.
-    recheck_match_exhaustiveness_in_dirty_scope(flat, pool, reg, dirty_nodes, rec, notes_out);
+    recheck_match_exhaustiveness_in_dirty_scope(flat, pool, reg, dirty_nodes, rec, notes_out,
+                                                metrics);
 
     for (auto& note : notes_out) {
         if (!note.source_mutation_id)

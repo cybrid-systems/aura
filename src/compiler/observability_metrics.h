@@ -359,6 +359,21 @@ struct CompilerMetrics {
     //     feeds into match exhaustiveness.
     std::atomic<std::uint64_t> match_subject_narrowed_total{0};
     std::atomic<std::uint64_t> match_subject_total{0};
+    // Issue #612: ADT/match exhaustiveness post-mutation
+    // reliability observability. 4 lifetime counters:
+    //   - adt_exhaust_rechecks_total: post-mutation
+    //     __match_tmp exhaustiveness re-checks
+    //   - adt_variant_mutate_impacts_total: DefineType
+    //     nodes whose ctor list was re-synced from AST
+    //   - adt_stale_exhaust_prevented_total: match sites
+    //     whose cached exhaustiveness was cleared before
+    //     re-check (stale registry / ctor-list drift)
+    //   - adt_occurrence_narrow_in_match_total: re-checks
+    //     where the subject carried a narrowed type id
+    std::atomic<std::uint64_t> adt_exhaust_rechecks_total{0};
+    std::atomic<std::uint64_t> adt_variant_mutate_impacts_total{0};
+    std::atomic<std::uint64_t> adt_stale_exhaust_prevented_total{0};
+    std::atomic<std::uint64_t> adt_occurrence_narrow_in_match_total{0};
     // Issue #342: narrowing blame/provenance
     // observability. 1 lifetime counter: how many
     // OccurrenceInfoFlat records have been
