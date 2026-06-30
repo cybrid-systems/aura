@@ -30,7 +30,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-from _aura_harness import BUILD, AURA_BIN, B, G, N, R, ROOT, Y
+from _aura_harness import AURA_BIN, BUILD, ROOT, B, G, N, R, Y
 from issue_tier import _member_to_bundle, issues_tier, resolve_issue_targets
 
 # Pre-existing test failures (NOT caused by recent PRs).
