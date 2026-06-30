@@ -2,6 +2,7 @@
 #include "fiber.h"
 #include "scheduler.h"
 #include "../compiler/messaging_bridge.h" // Issue #285: g_flush_mutation_boundary
+#include "../compiler/shape.h"          // Issue #570: record_shape_fiber_refresh
 #include "aura_platform.h"
 
 #include <sys/mman.h>
@@ -328,7 +329,10 @@ void Fiber::yield(YieldReason reason) {
     // primitive reads these to compute yield breakdown.
     switch (reason) {
         case YieldReason::BlockingIO:        fb->bump_yield_blocking_io();        break;
-        case YieldReason::MutationBoundary:  fb->bump_yield_mutation_boundary();  break;
+        case YieldReason::MutationBoundary:
+            fb->bump_yield_mutation_boundary();
+            aura::compiler::shape::record_shape_fiber_refresh();
+            break;
         case YieldReason::Explicit:          fb->bump_yield_explicit();          break;
         case YieldReason::SchedulerSteal:    fb->bump_yield_scheduler_steal();   break;
         case YieldReason::OperationBoundary: fb->bump_yield_operation_boundary(); break;
