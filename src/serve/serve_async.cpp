@@ -205,7 +205,42 @@ void run_serve_async(int num_workers) {
 
     // Register mutation boundary yield callback (Issue #31):
     // Called by mutate:* and eval-current before/after mutation operations.
+    //
+    // Issue #362: when this callback is called INSIDE an active
+    // MutationBoundaryGuard (i.e., the fiber currently holds the
+    // exclusive workspace_mtx_), yielding would let another
+    // fiber take over and try to acquire the same lock —
+    // classic deadlock (the holder can''t release because it''s
+    // yielded away; the waiter can''t acquire because it''s
+    // held by the holder). The pre-#362 behavior was to yield
+    // unconditionally, relying on Fiber::yield''s
+    // mutation_boundary_held_ check to detect it (assert in
+    // debug, warn + continue in release). The release path was
+    // the bug: the warning fired but the yield still happened,
+    // causing the deadlock in production.
+    //
+    // Fix: when g_mutation_boundary_held reports true, skip
+    // the yield. The mutation work proceeds uninterrupted and
+    // the fiber will yield at the NEXT safe point (after the
+    // Guard''s dtor releases workspace_mtx_). This converts the
+    // unconditional yield into a safe yield-point hint that
+    // respects the lock-ownership protocol.
     aura::messaging::g_fiber_yield_mutation_boundary = []() {
+        // Skip yield if a MutationBoundaryGuard is currently
+        // active on this fiber. The bridge function is null
+        // when no Evaluator is wired (test-binary path), in
+        // which case we also skip the safety check.
+        if (aura::messaging::g_mutation_boundary_held &&
+            aura::messaging::g_mutation_boundary_held()) {
+            // Debug: log to stderr so the skip is visible in CI.
+            // In release builds the warning the old code emitted
+            // is replaced by an info-level skip notice.
+            std::fprintf(stderr,
+                "[#362] yield_mutation_boundary skipped: "
+                "MutationBoundaryGuard is alive (yield would "
+                "deadlock under workspace_mtx_)\n");
+            return;
+        }
         if (aura::serve::g_current_fiber) {
             aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
         }
