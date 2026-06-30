@@ -98,8 +98,21 @@ inline int register_test(const char* name, TestFn fn) {
 //
 // The CHECK macro below is the standard form. Tests that
 // already use it don't need to change.
+//
+// Issue #226 follow-up: store _check_msg as an owning
+// std::string (by value, not const-reference). The previous
+// `const auto&` bound a reference to the const char* returned
+// by `(...).c_str()`, but the underlying temporary std::string
+// is not bound to anything that extends its lifetime — so by
+// the time std::println's format_args dereferences the
+// stored pointer (in std::formatter<char const*, char>::format
+// via strlen / memcpy), the buffer is freed and ASan flags a
+// heap-use-after-free. Copying into a local std::string
+// makes the message own its data for the duration of the
+// macro body. Accepts both const char* and std::string
+// arguments thanks to std::string's converting constructor.
 #define CHECK(cond, msg) do { \
-    const auto& _check_msg = (msg); \
+    const std::string _check_msg = (msg); \
     if (!(cond)) { \
         std::println(std::cerr, "  FAIL: {} (line {})", _check_msg, __LINE__); \
         ++::aura::test::g_failed; \
