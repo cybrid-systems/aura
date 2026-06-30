@@ -546,3 +546,25 @@ When correctness bug is wrapped in audit-first infra:
 - 加 C++ semantic test (因为 Aura 不能读 hash 内部)
 - Smoke test (primitive 是否触发) 留 Aura 层
 - Bundle grep: 11/11 PASS, no regression
+
+## Session 2026-06-30 (continued) — Issue #369 closed
+
+`3a4c9bc0` ships structural-rollback fix for #369.
+
+**Two bugs in dispatcher**:
+1. `classify_rollback` 需要 `has_rollback_data=true` + 名字 starts with `structural-`,但 legacy `add_mutation("remove-node",...)` 同时失败这两条。
+2. `structural_rollback_op` 只认 canonical 名,没 alias wrapper 名。
+
+**Fix** (~80 LOC):
+- alias map 在 `structural_rollback_op`
+- 新 helper `add_structural_mutation_log_entry` (自动 remap + 填 field_offset + has_rollback=true)
+- wire 3 个 critical wrapper sites (remove-node, insert-child, set-body)
+- per-category 计数器 `structural_rollback_success_` + 暴露在 `(ast:generation-stats)`
+
+13/13 PASS, bundle 70/70, no regression。
+
+**Deferred** (新 issue): splice / wrap / move-node / replace-pattern 等还走 legacy `add_mutation`,需要 site-specific 改动 (parent+child_idx+old_child+new_child 各样)。
+
+**Bug 是 silent 的**: 因为 `panic_auto_rollback_` (source-based re-eval via `restore_panic_checkpoint`) 也能工作,所以开了 auto-rollback 的用户看不见。只有用 `rollback_to_size` 做 partial rollback 的会撞。
+
+**Lesson**: "rollback" 听起来 universal,但其实它有 source-based (`restore_panic_checkpoint`) 和 mutation-log-based (`rollback_to_size`) 两条路径, 后者需要 op 名字 + has_rollback_data + field_offset 都对得上。
