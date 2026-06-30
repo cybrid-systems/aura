@@ -137,6 +137,18 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     // wrap. AI agents can read this via (ast:generation-stats)
     // to checkpoint / compact before the next wrap.
     std::uint32_t current_wrap_epoch = 0;
+    // Issue #369: per-category counters for the structural
+    // rollback dispatcher in try_rollback_structural_child_op.
+    // structural_rollback_success: mutations whose children_
+    // column was fully restored (parent + child_idx +
+    // old/new_value data present + valid).
+    // structural_rollback_besteffort: mutations whose
+    // op_name aliased to a known structural op but lacked
+    // the field data (legacy add_mutation() calls that
+    // haven't been migrated to
+    // add_structural_mutation_log_entry yet).
+    std::uint64_t structural_rollback_success = 0;
+    std::uint64_t structural_rollback_besteffort = 0;
     // Issue #256: AST operation observability. Mirrors
     // CompilerMetrics::{children_call_count,
     // parent_of_call_count, mark_dirty_upward_call_count,

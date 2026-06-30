@@ -1486,6 +1486,24 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             {"current-wrap-epoch",
              make_int(static_cast<std::int64_t>(
                  snap.current_wrap_epoch))},
+            // Issue #369: per-category counters for the
+            // structural-rollback dispatcher. 'structural-
+            // rollback-success' is the number of mutations
+            // that were rolled back successfully (parent +
+            // child_idx + old/new data was available);
+            // 'structural-rollback-besteffort' is the number
+            // of mutations whose op_name aliases to a known
+            // structural op but lacked the field_offset /
+            // old/new_value data (i.e. the wrapper primitive
+            // hasn't been migrated to add_structural_mutation_log_entry
+            // yet). AI agents can use this to find structural
+            // ops that are still at risk of partial rollback.
+            {"structural-rollback-success",
+             make_int(static_cast<std::int64_t>(
+                 snap.structural_rollback_success))},
+            {"structural-rollback-besteffort",
+             make_int(static_cast<std::int64_t>(
+                 snap.structural_rollback_besteffort))},
         };
         return build_hash(kv);
     });

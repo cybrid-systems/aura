@@ -289,12 +289,34 @@ export [[nodiscard]] MutationRecord create_subtree_mutation_record(const Subtree
 
 export [[nodiscard]] std::expected<StructuralRollbackOp, MutationError>
 structural_rollback_op(std::string_view op_name) noexcept {
+    // Canonical names (used by add_mutation_child_op directly).
     if (op_name == "structural-set-child")
         return StructuralRollbackOp::SetChild;
     if (op_name == "structural-insert-child")
         return StructuralRollbackOp::InsertChild;
     if (op_name == "structural-remove-child")
         return StructuralRollbackOp::RemoveChild;
+    // Issue #369: alias map for wrapper-level Aura primitives
+    // that mutate the children_ column. The wrappers
+    // (mutate:remove-node, mutate:insert-child, etc.) historically
+    // called add_mutation() which records the op name but DOES NOT
+    // populate field_offset / old_value / new_value, so
+    // try_rollback_structural_child_op would return
+    // UnknownStructuralOp + leave children_ partially modified.
+    // The alias map + the new add_structural_mutation_log_entry
+    // helper below close this gap for the 3 most-critical ops:
+    // remove-node, insert-child, set-body. The other structural
+    // ops (splice, wrap, move-node, replace-pattern, replace-value
+    // for children) remain a separate follow-up to wire up
+    // add_mutation_child_op at the call sites (each requires
+    // knowing parent + child_idx + old_child + new_child, which
+    // is site-specific and out of scope for #369).
+    if (op_name == "remove-node" || op_name == "remove-child")
+        return StructuralRollbackOp::RemoveChild;
+    if (op_name == "insert-child")
+        return StructuralRollbackOp::InsertChild;
+    if (op_name == "set-body" || op_name == "set-child")
+        return StructuralRollbackOp::SetChild;
     return std::unexpected(MutationError::UnknownStructuralOp);
 }
 

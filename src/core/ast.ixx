@@ -1215,6 +1215,14 @@ std::pmr::vector<std::uint32_t> type_id_;
     // ~4 billion * 65535 = ~2.6e14 mutates to wrap, which is
     // well outside the lifetime of any realistic workspace.
     mutable std::atomic<std::uint32_t> wrap_epoch_{0};
+    // Issue #369: per-category counters for the structural
+    // rollback dispatcher. Bumped in
+    // try_rollback_structural_child_op on success vs.
+    // best-effort skip. Exposed via (ast:generation-stats) so
+    // AI agents can find structural ops that still rely on
+    // legacy add_mutation() and miss the children_ restore.
+    mutable std::atomic<std::uint64_t> structural_rollback_success_{0};
+    mutable std::atomic<std::uint64_t> structural_rollback_besteffort_{0};
     // Issue #256: AST operation observability counters.
     // The hand-written AST operations (children, parent_of,
     // mark_dirty_upward) are candidates for std::meta-based
@@ -4357,6 +4365,29 @@ public:
             /*has_rollback=*/true);
     }
 
+    // Issue #369: convenience wrapper for Aura-level mutate
+    // primitives that mutate the children_ column. Remaps the
+    // wrapper-op name (e.g. "remove-node") to a canonical
+    // "structural-X-child" name so that
+    // try_rollback_structural_child_op (which dispatches on the
+    // canonical name) can roll back the children_ SoA column.
+    // Wrapper primitives should prefer this over flat.add_mutation()
+    // for any op that modifies the children_ column.
+    std::uint64_t add_structural_mutation_log_entry(NodeId parent, std::uint32_t child_idx,
+                                                      NodeId old_child, NodeId new_child,
+                                                      std::string_view op_name) {
+        std::string canonical;
+        if (op_name == "remove-node" || op_name == "remove-child" || op_name == "structural-remove-child")
+            canonical = "structural-remove-child";
+        else if (op_name == "insert-child" || op_name == "structural-insert-child")
+            canonical = "structural-insert-child";
+        else if (op_name == "set-body" || op_name == "set-child" || op_name == "structural-set-child")
+            canonical = "structural-set-child";
+        else
+            canonical = std::string(op_name); // pass through; try_rollback_structural_child_op may still skip
+        return add_mutation_child_op(parent, child_idx, old_child, new_child, canonical);
+    }
+
     // Get mutation history for a specific node (0 == no history)
     // Get mutation history for a specific node (filters from log, O(n) in log size)
     std::pmr::vector<MutationRecord> mutation_history(NodeId node) const {
@@ -4715,6 +4746,13 @@ public:
     [[nodiscard]] std::uint32_t wrap_epoch() const noexcept {
         return wrap_epoch_.load(std::memory_order_relaxed);
     }
+    // Issue #369: structural-rollback counters.
+    [[nodiscard]] std::uint64_t structural_rollback_success() const noexcept {
+        return structural_rollback_success_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t structural_rollback_besteffort() const noexcept {
+        return structural_rollback_besteffort_.load(std::memory_order_relaxed);
+    }
 
     // Issue #191: bump the generation counter (with wrap-around
     // to 1, skipping 0 which is reserved). Called automatically
@@ -5014,6 +5052,11 @@ private:
         rec.status = MutationStatus::RolledBack;
         bump_generation_on_rollback();
         mark_dirty_upward(parent);
+        // Issue #369: bump the per-category counter. Success
+        // means the children_ column was restored via the
+        // structural op (parent, child_idx, old_child, new_child
+        // all valid).
+        structural_rollback_success_.fetch_add(1, std::memory_order_relaxed);
         return {};
     }
 
