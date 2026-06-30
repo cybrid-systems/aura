@@ -359,3 +359,39 @@ previous one is shadowed), so the final value is the result
 of one operation (`(+ 0 1)` → 1), not an accumulated total.
 For ACs that check no-UAF/no-hang, accept the
 operation-result value rather than the accumulated total.
+
+## Session 2026-06-30 (continued) — Issue #362 closed
+
+`b006a49c` ships the deadlock fix for #362 (yield-while-mutating).
+
+**Root cause**: g_fiber_yield_mutation_boundary was called
+INSIDE MutationBoundaryGuard blocks at multiple mutation
+primitives (mutate:replace-type, mutate:replace-value, etc).
+The lambda invoked Fiber::yield → scheduler context-switched
+to another fiber that tried to acquire the same
+workspace_mtx_ → classic deadlock (holder can''t release
+because yielded; waiter can''t acquire because held).
+
+Pre-#362: Fiber::yield detected this via the
+`mutation_boundary_held_` flag (assert in debug, warn + yield
+ANYWAY in release). The release path was the production bug.
+
+**Fix**: g_fiber_yield_mutation_boundary now checks
+g_mutation_boundary_held() and SKIPS the yield if a Guard is
+currently alive on this fiber. Surgical — only the
+mutation-boundary yield path is gated; regular Fiber::yield()
+calls outside a Guard are unchanged.
+
+**Tests**: 6/6 PASS in test_issues_jit bundle, 63/63 total.
+- AC1: any_active_mutation_boundary() reflects live Guard
+- AC2: 32 fibers × 20 eval cycles (the deadlock scenario)
+- AC3: yields outside Guards still context-switch
+
+**Lesson — yield-inside-mutex = deadlock**: when a
+cooperative-scheduling fiber holds an exclusive lock and
+yields, the scheduler will pick another fiber that may try to
+acquire the same lock. Two requirements for safe yielding:
+(1) yields MUST be guarded by a "no active exclusive lock"
+check, and (2) the check must be honored — NOT just logged.
+Fiber::yield''s existing detect-and-warn is good for debug;
+production needs a no-op skip, not just a warning.
