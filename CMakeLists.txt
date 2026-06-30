@@ -1318,6 +1318,17 @@ aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_full_matrix_task6)
 # #543/#545/#542/#544/#597 (per-theme tests).
 aura_add_issue_test(test_prompt6_full_memory_safety_fuzz_stress)
 aura_issue_test_link_llvm_jit(test_prompt6_full_memory_safety_fuzz_stress)
+# Issue #607: End-to-end hot-path fuzz + stress matrix for Task4
+# high-perf mechanisms (Arena/SoA/Value/Shape/Pass) under AI
+# multi-round self-modify + fiber/GC. 13 scenarios validating:
+# SoA dirty hook, shape profiler, mutate/eval hot path, arena/GC
+# integration, fuzz + 8-thread concurrent + fiber yield + long
+# stress + new (query:task4-hotpath-safety-score) +
+# (query:task4-cache-locality-win) + (query:task4-mutation-
+# stability) primitives + regression. Non-duplicative with
+# #602/#597/#547/#531/#254 (per-theme tests).
+aura_add_issue_test(test_task4_highperf_full_hotpath_matrix)
+aura_issue_test_link_llvm_jit(test_task4_highperf_full_hotpath_matrix)
 # Issue #546: Arena/pmr::vector + MutationBoundaryGuard
 # Panic Checkpoint Lifecycle + Auto-Rollback in Nested
 # Mutation + Fiber Resume scenarios (P0). 10 scenarios
