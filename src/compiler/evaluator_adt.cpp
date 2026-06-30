@@ -26,6 +26,11 @@ EvalValue Evaluator::make_merr(const std::string& k, const std::string& m) {
     return kp;
 }
 
+void Evaluator::sync_workspace_adt_registry() {
+    if (workspace_adt_sync_fn_ && compiler_service_)
+        workspace_adt_sync_fn_(compiler_service_);
+}
+
 void Evaluator::register_adt_ctor(const std::string& ctor_name, types::EvalValue tag_str,
                                   int field_count) {
     const auto slot = primitives_.slot_count();

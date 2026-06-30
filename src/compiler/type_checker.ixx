@@ -1150,7 +1150,14 @@ public:
 export aura::ast::InvariantStatus
 post_mutation_invariant_check(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                               aura::core::TypeRegistry& reg, const aura::ast::MutationRecord& rec,
-                              std::vector<OwnershipNote>& notes_out);
+                              std::vector<OwnershipNote>& notes_out, void* metrics = nullptr);
+
+// Issue #612: re-sync TypeRegistry ADT constructor lists from
+// DefineType nodes in the dirty scope and invalidate cached
+// match exhaustiveness for affected ADT subject types.
+export void refresh_adt_constructors_for_dirty_define_types(
+    aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
+    const std::vector<aura::ast::NodeId>& dirty_nodes, void* metrics = nullptr);
 
 // Issue #260: ADT match exhaustiveness for a single __match_tmp let node.
 // Returns missing constructor names (empty if complete, wildcard, or N/A).
@@ -1216,14 +1223,15 @@ affected_subtree_for_symbol(const aura::ast::FlatAST& flat,
 // (visit_mutation takes const MutationRecord& per the concept).
 export class PostMutationInvariantVisitor {
 public:
-    PostMutationInvariantVisitor(const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg)
-        : pool_(pool), reg_(reg) {}
+    PostMutationInvariantVisitor(const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
+                                 void* metrics = nullptr)
+        : pool_(pool), reg_(reg), metrics_(metrics) {}
 
     void visit_mutation(aura::ast::FlatAST& flat, const aura::ast::MutationRecord& rec) {
         if (rec.invariant_status != aura::ast::InvariantStatus::NotChecked)
             return;
         std::vector<OwnershipNote> notes;
-        auto st = post_mutation_invariant_check(flat, pool_, reg_, rec, notes);
+        auto st = post_mutation_invariant_check(flat, pool_, reg_, rec, notes, metrics_);
         status_updates_[rec.mutation_id] = st;
         if (st == aura::ast::InvariantStatus::Warnings) {
             worst_ = aura::ast::InvariantStatus::Warnings;
@@ -1249,6 +1257,7 @@ public:
 private:
     const aura::ast::StringPool& pool_;
     aura::core::TypeRegistry& reg_;
+    void* metrics_ = nullptr;
     aura::ast::InvariantStatus worst_ = aura::ast::InvariantStatus::Ok;
     std::vector<OwnershipNote> notes_out_;
     std::unordered_map<std::uint64_t, aura::ast::InvariantStatus> status_updates_;

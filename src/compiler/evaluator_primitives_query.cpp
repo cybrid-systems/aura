@@ -1191,6 +1191,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             make_string(oidx), make_string(sidx)));
     });
 
+    // Issue #612: query:adt-match-exhaust-stats. Returns the
+    // sum of 4 ADT/match post-mutation reliability counters:
+    //   - adt_exhaust_rechecks_total
+    //   - adt_variant_mutate_impacts_total
+    //   - adt_stale_exhaust_prevented_total
+    //   - adt_occurrence_narrow_in_match_total
+    add("query:adt-match-exhaust-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t rechecks = m->adt_exhaust_rechecks_total.load(
+            std::memory_order_relaxed);
+        const std::uint64_t impacts = m->adt_variant_mutate_impacts_total.load(
+            std::memory_order_relaxed);
+        const std::uint64_t stale = m->adt_stale_exhaust_prevented_total.load(
+            std::memory_order_relaxed);
+        const std::uint64_t narrow = m->adt_occurrence_narrow_in_match_total.load(
+            std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(rechecks + impacts + stale + narrow));
+    });
+
     // (query:match-exhaustiveness-notes) — Issue
     // #350: returns the most-recent match-
     // exhaustiveness notes (the kind = "Missing-

@@ -1702,6 +1702,9 @@ aura_issue_test_link_llvm_jit(test_issue_478)
 # hw module pattern (AC4 — covers AC1+AC2+AC3 together).
 aura_add_issue_test(test_issue_308)
 aura_issue_test_link_llvm_jit(test_issue_308)
+# Issue #612: ADT/match exhaustiveness post-mutation reliability.
+aura_add_issue_test(test_adt_match_exhaust_post_mutate_reliability)
+aura_issue_test_link_llvm_jit(test_adt_match_exhaust_post_mutate_reliability)
 # Issue #309: hardware lossy-coercion diagnostics + 2 new
 # Aura primitives (compile:hw-coercion-lossy? +
 # -warning). Extends the #308 BitVector foundation with

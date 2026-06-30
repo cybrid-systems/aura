@@ -416,6 +416,14 @@ public:
     void bump_type_propagation_int_width() noexcept {
         metrics_.type_propagation_int_width_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #612: re-sync TypeRegistry ADT constructors from the
+    // active workspace FlatAST (post-mutate validation hook).
+    void refresh_adt_constructors_from_workspace() {
+        auto* flat = evaluator_.workspace_flat();
+        if (!flat || !current_pool_ || flat->root == aura::ast::NULL_NODE)
+            return;
+        register_adt_from_define_types(*flat, *current_pool_, flat->root);
+    }
     // Issue #306: hardware resource linear-ownership
     // accessors (EDA track — wire/reg/mem/port borrow +
     // double-drive detection). Read directly from the shared
@@ -492,6 +500,9 @@ public:
         // a consistent value.
         evaluator_.set_compiler_metrics(&metrics_);
         evaluator_.set_compiler_service(this);
+        evaluator_.set_workspace_adt_sync_fn([](void* svc) {
+            static_cast<CompilerService*>(svc)->refresh_adt_constructors_from_workspace();
+        });
         evaluator_.set_session_id(session_id_);
 
         // Issue #272: route cached-define closures through persistent IR runtimes.
@@ -4894,6 +4905,20 @@ public:
         } else {
             s.match_narrowed_ratio_bp = 0;
         }
+        // Issue #612: ADT/match exhaustiveness post-mutation
+        // reliability observability.
+        s.adt_exhaust_rechecks_total =
+            metrics_.adt_exhaust_rechecks_total.load(
+                std::memory_order_relaxed);
+        s.adt_variant_mutate_impacts_total =
+            metrics_.adt_variant_mutate_impacts_total.load(
+                std::memory_order_relaxed);
+        s.adt_stale_exhaust_prevented_total =
+            metrics_.adt_stale_exhaust_prevented_total.load(
+                std::memory_order_relaxed);
+        s.adt_occurrence_narrow_in_match_total =
+            metrics_.adt_occurrence_narrow_in_match_total.load(
+                std::memory_order_relaxed);
         // Issue #342: narrowing provenance
         // observability. Mirrors the lifetime
         // counter in CompilerMetrics.
@@ -5670,7 +5695,8 @@ public:
             // got their status set by prior typed_mutate calls.
             // Issue #274: fold invariant checks via MutationVisitor pipeline.
             aura::compiler::PostMutationInvariantVisitor invariant_visitor(*current_pool_,
-                                                                           type_registry_);
+                                                                           type_registry_,
+                                                                           &metrics_);
             aura::ast::run_mutation_pipeline(*ws_flat, invariant_visitor);
             invariant_visitor.apply_status_updates(*ws_flat);
             res.invariant_status = invariant_visitor.worst_status();
@@ -5753,6 +5779,13 @@ public:
                 for (auto& rec : log) {
                     if (rec.mutation_id != mid)
                         continue;
+                    // Issue #612: re-sync ADT ctor registry from
+                    // DefineType nodes before partial re-infer so
+                    // match exhaustiveness sees the post-mutate ctor
+                    // list (not a stale pre-mutation snapshot).
+                    if (ws_flat->root != aura::ast::NULL_NODE)
+                        register_adt_from_define_types(*ws_flat, *current_pool_,
+                                                       ws_flat->root);
                     auto_invoke_incremental_typecheck_for(
                         *ws_flat, *current_pool_, rec, mid, "typed_mutate");
                     invoked = true;
