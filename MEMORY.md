@@ -316,3 +316,17 @@ done by prior commits, audit first then ship the rest as a
 scope-limited close. Mention what''s deferred explicitly in
 the close comment so the next maintainer sees the full
 scope.
+
+## Session 2026-06-30 (continued) — CI gate import-sort fix
+
+User: "ci gate挂 修".
+
+`build.py gate` runs ruff I001 (import block sort). My earlier
+edit to `tests/run_issue_tests.py` (added AURA_BIN + ROOT to
+`from _aura_harness import ...`) broke the alphabetical sort
+order. Ruff auto-fixed via `build.py lint --fix`.
+
+**Lesson**: when adding new symbols to an existing
+`from <module> import a, b, c` line, always run
+`build.py lint --fix` before committing. The CI gate is
+strict about import ordering and will fail otherwise.
