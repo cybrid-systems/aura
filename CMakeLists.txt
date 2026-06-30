@@ -1346,6 +1346,13 @@ aura_issue_test_link_llvm_jit(test_value_encoding_v2_dispatch_contracts_task4)
 # Non-duplicative with #571 (value dispatch) / test_shape.cpp.
 aura_add_issue_test(test_shape_profiler_stability_deopt_fiber_task4)
 aura_issue_test_link_llvm_jit(test_shape_profiler_stability_deopt_fiber_task4)
+# Issue #605: ShapeProfiler versioning + JIT cache synergy under
+# multi-round AI mutation. Validates jit_shape_miss_count,
+# shape_version staleness re-compile, (eval-current :jit)
+# semantics post-mutate, concurrent/fiber stress + stats.
+# Non-duplicative with #570 (fiber/deopt) / #601 (JIT hotswap).
+aura_add_issue_test(test_shapeprofiler_stability_deopt_jit_mutate)
+aura_issue_test_link_llvm_jit(test_shapeprofiler_stability_deopt_jit_mutate)
 # Issue #546: Arena/pmr::vector + MutationBoundaryGuard
 # Panic Checkpoint Lifecycle + Auto-Rollback in Nested
 # Mutation + Fiber Resume scenarios (P0). 10 scenarios
