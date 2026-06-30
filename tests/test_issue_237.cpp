@@ -186,12 +186,13 @@ bool test_emit_binary_simple_add() {
     std::string out_path = "/tmp/test_issue_237_add_bin";
     fs::remove(out_path);
     EmitResult res = run_emit_binary(aura, "(+ 1 2)", out_path);
-    if (!res.ok) {
-        // Surface aura's stderr + exit status so the failure mode
-        // is visible (was it a clean error? a crash? a non-zero
-        // exit code?). Especially important on CI x86_64 where
-        // the IR pipeline is known to segfault on certain inputs
-        // (see src/main.cpp:293 + :2116).
+    // Issue #360 task 5: always surface aura's stderr + exit
+    // status so CI logs can pinpoint the failure mode (clean
+    // error vs crash vs non-zero exit). The pre-#360 version
+    // only printed stderr when res.ok was false; downstream
+    // CHECKs (is_elf, output.contains("3")) would silently
+    // fail without surfacing the AOT stderr that explains why.
+    if (!res.ok || g_failed > 0) {
         std::println("       [aura failure] exit={} signal={} crashed={}",
                      res.exit_code, res.signal, res.crashed);
         if (!res.stderr.empty()) {
@@ -200,11 +201,21 @@ bool test_emit_binary_simple_add() {
     }
     CHECK(res.ok, "aura --emit-binary exited 0");
     CHECK(fs::exists(out_path), "output file exists");
-    if (!fs::exists(out_path)) return false;
+    if (!fs::exists(out_path)) {
+        // Belt-and-suspenders: print stderr even on the early
+        // return path so CI logs always have it.
+        if (!res.stderr.empty()) std::println("       [aura stderr] {}", res.stderr);
+        return false;
+    }
     CHECK(is_elf(out_path), "output is ELF (magic 0x7f 'E' 'L' 'F')");
     std::string output = run_capture_stdout(out_path);
     CHECK(!output.empty(), "exec captured output");
     CHECK(output.find("3") != std::string::npos, "output contains '3'");
+    if (g_failed > 0 && !res.stderr.empty()) {
+        // Surface stderr one more time at the end so it's never
+        // lost when multiple CHECKs fail in sequence.
+        std::println("       [aura stderr tail] {}", res.stderr);
+    }
     fs::remove(out_path);
     return true;
 }
@@ -216,7 +227,10 @@ bool test_emit_binary_lambda() {
     fs::remove(out_path);
     std::string src = "(define f (lambda (x) (* x x))) (f 7)";
     EmitResult res = run_emit_binary(aura, src, out_path);
-    if (!res.ok) {
+    // Issue #360 task 5: always surface aura's stderr on failure
+    // (was: only when res.ok was false; downstream is_elf /
+    // output.contains("49") checks could silently fail).
+    if (!res.ok || g_failed > 0) {
         std::println("       [aura failure] exit={} signal={} crashed={}",
                      res.exit_code, res.signal, res.crashed);
         if (!res.stderr.empty()) {
@@ -226,16 +240,18 @@ bool test_emit_binary_lambda() {
     CHECK(res.ok, "aura --emit-binary exited 0");
     CHECK(fs::exists(out_path), "output file exists");
     if (!fs::exists(out_path)) {
-        // Issue #237: surface the aura failure context even on the
-        // early-return path so CI logs can pinpoint what went wrong.
         std::println("       [test_237 early-return] aura returned {} but {} does not exist",
                      res.ok ? "ok" : "non-ok", out_path);
+        if (!res.stderr.empty()) std::println("       [aura stderr] {}", res.stderr);
         return false;
     }
     CHECK(is_elf(out_path), "output is ELF (magic 0x7f 'E' 'L' 'F')");
     std::string output = run_capture_stdout(out_path);
     CHECK(!output.empty(), "exec captured output");
     CHECK(output.find("49") != std::string::npos, "output contains '49'");
+    if (g_failed > 0 && !res.stderr.empty()) {
+        std::println("       [aura stderr tail] {}", res.stderr);
+    }
     fs::remove(out_path);
     return true;
 }
