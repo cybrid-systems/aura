@@ -741,6 +741,89 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             commit + cross_cow));
     });
 
+    // Issue #602: query:prompt6-violation-count. Returns
+    // the sum of 7 Prompt6 memory-safety violation counters
+    // that must stay at 0 under production load:
+    //   - boundary_violation_count_         (unsafe boundary)
+    //   - mutation_steal_violation_count_   (steal during guard)
+    //   - envframe_desync_detected_         (SoA dual-path mismatch)
+    //   - unsafe_boundary_attempts_         (EDSL concurrency)
+    //   - atomic_batch_steal_violation_     (batch + steal race)
+    //   - provenance_mismatch_              (StableNodeRef layer)
+    //   - fiber_stale_ref_count_            (cross-fiber stale ref)
+    //
+    // P0: returns an integer = sum of all 7 counters.
+    // Follow-up: returns a 7-tuple so the AI Agent can react
+    // to each category independently. Any value > 0 is a hard
+    // alert for commercial production sign-off.
+    //
+    // Non-duplicative with #438/#448/#531/#543 — those expose
+    // per-theme stats; this primitive is the unified Prompt6
+    // violation surface for the full memory-safety matrix.
+    add("query:prompt6-violation-count", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t boundary = ev->get_boundary_violation_count();
+        const std::uint64_t steal_viol =
+            ev->get_mutation_steal_violation_count();
+        const std::uint64_t desync = ev->get_envframe_desync_detected();
+        const std::uint64_t unsafe = ev->get_unsafe_boundary_attempts();
+        const std::uint64_t batch_steal = ev->get_atomic_batch_steal_violation();
+        const std::uint64_t provenance = ev->get_provenance_mismatch();
+        const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
+        return make_int(static_cast<std::int64_t>(
+            boundary + steal_viol + desync + unsafe + batch_steal +
+            provenance + fiber_stale));
+    });
+
+    // Issue #602: query:prompt6-safety-score. Returns
+    // the sum of 7 Prompt6 memory-safety positive indicators
+    // (higher = more safety checks passed / stale refs caught):
+    //   - bridge_epoch_hit_count_           (fresh closure bridge)
+    //   - linear_check_pass_count_          (linear ownership ok)
+    //   - closure_stale_refresh_count_      (stale closure refreshed)
+    //   - envframe_stale_refresh_count_     (stale EnvFrame refreshed)
+    //   - gc_envframe_stale_skipped_        (GC caught stale EnvFrame)
+    //   - envframe_gc_walk_safe_skips_      (GC walk safe skip)
+    //   - gc_safepoint_waits_total_         (GC coordination completed)
+    //
+    // P0: returns an integer = sum of all 7 counters.
+    // Follow-up: returns a 7-tuple so the AI Agent can compute
+    // safety_ratio = safety_score / (safety_score + violation_count).
+    //
+    // Non-duplicative with #531/#543/#439 — those expose per-theme
+    // pass counters; this primitive is the unified Prompt6 safety
+    // score for the full memory-safety fuzz/stress matrix.
+    add("query:prompt6-safety-score", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(
+                ev->compiler_metrics());
+        const std::uint64_t bridge_hit = m
+            ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t linear_pass = m
+            ? m->linear_check_pass_count_.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t closure_refresh = m
+            ? m->closure_stale_refresh_count_.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t env_refresh =
+            ev->get_envframe_stale_refresh_count();
+        const std::uint64_t gc_skipped = m
+            ? m->gc_envframe_stale_skipped_.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t gc_walk_skips =
+            ev->get_envframe_gc_walk_safe_skips();
+        const std::uint64_t gc_waits = ev->get_gc_safepoint_waits_total();
+        return make_int(static_cast<std::int64_t>(
+            bridge_hit + linear_pass + closure_refresh + env_refresh +
+            gc_skipped + gc_walk_skips + gc_waits));
+    });
+
     // Issue #552: query:edsl-stability-stats. Returns
     // the sum of 5 EDSL long-running stability counters
     // from across the workspace + Evaluator:
