@@ -89,6 +89,97 @@ extern "C" std::uint64_t aura_get_module_version(void) {
     return g_aot_module_version;
 }
 
+// ── Issue #358: incremental re-AOT foundation ───────────────────
+//
+// Foundation for incremental re-AOT (re-compile only dirty
+// functions instead of re-emitting the whole module). Step 3
+// from the issue body — the actual `aura_reemit_aot_for_dirty`
+// pipeline that drives the LLVM AOT path for just the dirty
+// functions — is deferred to a follow-up issue (it requires
+// a stable `DefineId → FlatFunction index` table that lives
+// across mutation epochs, which is its own body of work).
+//
+// What ships in this scope-limited close:
+//   1. `aura_set_is_define_dirty_fn` — host (Evaluator)
+//      registers a callback that answers "is the Define named
+//      <name> dirty since the last AOT emit?". This is the
+//      same function pointer pattern as the in-module
+//      `is_define_dirty_fn_` from #196/#240 but exposed as a
+//      C-linkage symbol so the AOT bridge (which lives in a
+//      separate compilation unit from the Evaluator) can
+//      consume it without a circular module dependency.
+//   2. `aura_filter_dirty_flat_functions` — walks a
+//      FlatFunction[] array and returns the indices of
+//      functions whose `name` matches a dirty Define. This
+//      is the data plumbing for incremental re-emit: the
+//      caller (the future `aura_reemit_aot_for_dirty`) takes
+//      these indices and runs the AOT pipeline for just
+//      those functions. The function name is the canonical
+//      mapping (Define name == function name == FlatFunction
+//      name) — no separate DefineId table needed for the
+//      name-based filtering path.
+//
+// Out of scope (follow-up issue):
+//   - Stable DefineId → FlatFunction index table that
+//     survives mutation epochs (the issue's step 1)
+//   - `aura_reemit_aot_for_dirty(version)` that drives the
+//     LLVM AOT path (the issue's step 3)
+//   - Hot-patch test (define + AOT + mutate + re-emit +
+//     verify) — requires the AOT path to be callable from
+//     a test, which needs the above two pieces.
+
+// Global: host-provided callback that answers "is Define <name>
+// dirty?". Set by aura_set_is_define_dirty_fn(). When null,
+// aura_filter_dirty_flat_functions returns -1 (the host has
+// not wired the dirty-tracking into the AOT bridge yet).
+// userdata is opaque to the bridge; it's threaded through to
+// the callback so the host can pass a `this` pointer or a
+// pointer to a closure / std::set of dirty names.
+typedef bool (*aura_is_define_dirty_fn_t)(void* userdata, const char* name);
+static aura_is_define_dirty_fn_t g_is_define_dirty_fn = nullptr;
+static void* g_is_define_dirty_userdata = nullptr;
+
+extern "C" void aura_set_is_define_dirty_fn(aura_is_define_dirty_fn_t fn,
+                                              void* userdata) {
+    g_is_define_dirty_fn = fn;
+    g_is_define_dirty_userdata = userdata;
+}
+
+// Filter the FlatFunction[] array by dirty Define status.
+// Returns the count of dirty functions; fills out_dirty_indices
+// with the indices of dirty functions (caller allocates,
+// size >= num_functions). Returns -1 on error (no callback
+// registered, null args, max_out < num_functions).
+//
+// Thread-safety: read-only with respect to the FlatFunction[]
+// array (the caller owns it). Reads g_is_define_dirty_fn under
+// a relaxed atomic load — the host is expected to register
+// the callback once at startup and never change it.
+extern "C" int aura_filter_dirty_flat_functions(
+    const void* functions,
+    unsigned int num_functions,
+    unsigned int* out_dirty_indices,
+    unsigned int max_out) {
+    if (!functions || !out_dirty_indices) return -1;
+    if (max_out < num_functions) return -1; // caller buffer too small
+    if (!g_is_define_dirty_fn) {
+        // Host hasn't wired dirty-tracking into the AOT bridge.
+        // Return -1 so the caller knows to fall back to full
+        // re-emit (the pre-#358 behavior).
+        return -1;
+    }
+    const auto* flat_fns = static_cast<const aura::jit::FlatFunction*>(functions);
+    unsigned int dirty_count = 0;
+    for (unsigned int i = 0; i < num_functions; ++i) {
+        const char* name = flat_fns[i].name;
+        if (!name) continue;
+        if (g_is_define_dirty_fn(g_is_define_dirty_userdata, name)) {
+            out_dirty_indices[dirty_count++] = i;
+        }
+    }
+    return static_cast<int>(dirty_count);
+}
+
 // ── Issue #287: AOT hot-reload scaffold ──────────────────────────────
 //
 // `aura_reload_aot_module(path, version)` is the host-facing
