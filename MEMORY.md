@@ -427,3 +427,26 @@ load. 6 tests across 2 layers:
 - Task 3 (closure cache by symid + defuse_version_):
   dedicated LRUCache for ClosureId resolution on the hot path.
   Requires careful thread-safety + version-invalidation.
+
+## Session 2026-06-30 (continued) — Issue #365 closed
+
+`229647e1` ships the depth guard for #365 (clone_macro_body
+hygienic macro expansion).
+
+**Fix**: MAX_HYGIENE_DEPTH=256 + thread_local depth counter +
+graceful NULL_NODE return + single `[#365 warning]` per
+top-level call. Catches pathologically deep recursion
+without breaking legitimate deeply-nested macros.
+
+**Also completed** (#364 deferred AC #5):
+`f5139c82` wires test_issue_364 into the JIT bundle so its
+207 macro/mutation assertions run as part of
+`build.py test issues`. Standalone target preserved.
+
+3/3 PASS in #365 test + 65/65 → 66/66 bundle total.
+
+**Lesson — `import std` + module-internal includes**:
+`<cstdio>` can''t be `#include`d after `import std` in a C++
+module — it conflicts with `std::` declarations. Move the
+include to the global module fragment (`module;` ... `module
+foo;` block) at the top of the file.
