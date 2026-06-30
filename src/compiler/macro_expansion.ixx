@@ -15,6 +15,12 @@ import aura.core.ast;
 
 namespace aura::compiler::macro_exp {
 
+// Issue #365: MAX_HYGIENE_DEPTH — upper bound on recursive
+// clone_macro_body nesting. Exported so tests + other modules
+// can read it (and so operators can detect when their macros
+// are close to the limit via compile-time diagnostic).
+export constexpr int MAX_HYGIENE_DEPTH = 256;
+
 export struct MacroExpansionDef {
     std::vector<std::string> params;
     bool dotted = false;

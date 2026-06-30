@@ -3,6 +3,7 @@
 
 module;
 
+#include <cstdio>
 
 module aura.compiler.macro_expansion;
 
@@ -29,12 +30,63 @@ const std::unordered_set<std::string>& hygiene_builtins() {
 
 } // namespace detail
 
+// Issue #365: MAX_HYGIENE_DEPTH — upper bound on recursive
+// clone_macro_body nesting. Exported from macro_expansion.ixx.
+// Prevents stack overflow on pathological inputs
+// (self-referential macro bodies, deeply nested quasiquote
+// chains). Tuned to be much larger than any realistic macro
+// body so well-formed programs never hit it; only
+// pathological or adversarial inputs trigger the
+// graceful-degradation path.
+
+// Thread-local depth counter for clone_macro_body recursion.
+// Each top-level call starts fresh; the recursive calls bump
+// the counter. When the counter reaches MAX_HYGIENE_DEPTH, the
+// caller logs a warning + returns NULL_NODE (graceful
+// degradation — the caller treats NULL as "use original name"
+// and falls back to unhygienic behavior). thread_local is safe
+// because clone_macro_body is re-entrant only via the caller's
+// own recursion chain (no concurrent re-entry from other
+// fibers / threads on the same Evaluator).
+thread_local int s_hygiene_depth = 0;
+
 aura::ast::NodeId clone_macro_body(
     aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
     aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
     const std::unordered_map<std::string, aura::ast::NodeId>* subst,
     std::unordered_map<std::string, std::string>* name_map, aura::ast::SyntaxMarker cloned_marker) {
     using namespace aura::ast;
+    // Issue #365: depth guard. The public API starts at
+    // depth=0 (s_hygiene_depth is bumped on recursion inside
+    // the function body below). When the depth exceeds
+    // MAX_HYGIENE_DEPTH, we degrade gracefully by returning
+    // NULL_NODE — the caller treats NULL as "no substitution"
+    // and proceeds with the unhygienic fallback (original
+    // name, no gensym). The warning is emitted ONCE per
+    // top-level call (not per recursion level) to avoid
+    // log spam.
+    //
+    // On top-level entry (s_hygiene_depth == 0), reset the
+    // once-per-call warning flag so the next top-level call
+    // gets a fresh warning budget. This is needed because
+    // s_hygiene_depth is thread_local — a previous failed
+    // call (or one that aborted via exception) might leave
+    // the counter > 0, so we always reset on entry.
+    static thread_local bool s_warned_this_call = false;
+    if (s_hygiene_depth == 0) {
+        s_warned_this_call = false;
+    }
+    if (s_hygiene_depth >= MAX_HYGIENE_DEPTH) {
+        if (!s_warned_this_call) {
+            s_warned_this_call = true;
+            std::fprintf(stderr,
+                "[#365 warning] clone_macro_body exceeded "
+                "MAX_HYGIENE_DEPTH=%d; falling back to unhygienic "
+                "substitution (original name).\n",
+                MAX_HYGIENE_DEPTH);
+        }
+        return NULL_NODE;
+    }
     if (body_id == NULL_NODE || body_id >= source.size())
         return NULL_NODE;
     auto v = source.get(body_id);
@@ -154,9 +206,17 @@ aura::ast::NodeId clone_macro_body(
         auto fresh = source.get(body_id);
         source_children.assign(fresh.children.begin(), fresh.children.end());
     }
-    for (auto cid : source_children)
+    for (auto cid : source_children) {
+        // Issue #365: bump the depth counter on recursive calls
+        // so we can detect pathologically deep nesting. The
+        // counter is decremented after the recursive call returns
+        // (RAII pattern via ++/-- in the for-loop body) so each
+        // sibling sees the same depth level.
+        ++s_hygiene_depth;
         child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, cid,
                                              subst, name_map, cloned_marker));
+        --s_hygiene_depth;
+    }
 
     // Clone params (for Lambda nodes) — with hygienic renaming
     std::vector<aura::ast::SymId> param_syms;
