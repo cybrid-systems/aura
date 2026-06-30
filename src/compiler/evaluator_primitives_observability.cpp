@@ -451,6 +451,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:reflect-postmutate-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
+            // Issue #602 — Prompt6 memory-safety matrix
+            "query:prompt6-violation-count",
+            "query:prompt6-safety-score",
             // Issue #552 — EDSL stability
             "query:edsl-stability-stats",
             // Issue #553 — Atomic batch + mutation log

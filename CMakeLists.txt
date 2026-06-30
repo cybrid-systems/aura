@@ -1307,6 +1307,17 @@ aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_index_sv)
 # #547/#548/#549/#551/#326/#327 (per-theme tests).
 aura_add_issue_test(test_macro_reflect_self_evo_full_matrix_task6)
 aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_full_matrix_task6)
+# Issue #602: Comprehensive fuzz + stress matrix for Prompt6
+# memory safety invariants (IRClosure/EnvFrame/bridge_epoch/
+# linear/GuardShape) under concurrent fiber + GC + multi-round
+# AI mutate. 12 scenarios validating: closure+invalidate path,
+# EnvFrame dualpath, mutate type matrix, GC integration, fuzz/
+# panic injection, 8-thread concurrent, fiber yield, long stress
+# + new (query:prompt6-violation-count) + (query:prompt6-safety-
+# score) primitives + regression. Non-duplicative with #531/
+# #543/#545/#542/#544/#597 (per-theme tests).
+aura_add_issue_test(test_prompt6_full_memory_safety_fuzz_stress)
+aura_issue_test_link_llvm_jit(test_prompt6_full_memory_safety_fuzz_stress)
 # Issue #546: Arena/pmr::vector + MutationBoundaryGuard
 # Panic Checkpoint Lifecycle + Auto-Rollback in Nested
 # Mutation + Fiber Resume scenarios (P0). 10 scenarios
