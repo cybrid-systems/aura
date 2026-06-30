@@ -46,6 +46,8 @@
     ; ── Issue #602 — Prompt6 memory-safety matrix ──
     "query:prompt6-violation-count"
     "query:prompt6-safety-score"
+    ; ── Issue #570 — ShapeProfiler stability + deopt ──
+    "query:shape-stability-stats"
     ; ── Issue #571 — EvalValue v2 dispatch + contracts ──
     "query:value-dispatch-stats"
     ; ── Issue #607 — Task4 high-perf hot-path matrix ──

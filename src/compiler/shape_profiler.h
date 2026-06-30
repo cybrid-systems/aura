@@ -49,8 +49,13 @@ public:
 
     // ── Invalidate after mutate:* ──────────────────────────────
     // Called when mutate:* modifies function `fn`.
-    // Resets stability state and increments version.
-    void invalidate(FnKey fn) pre(fn != 0);
+    // Resets stability state, increments version, fires deopt hook.
+    // Returns true when the profile was stable (needs deopt/refresh).
+    bool invalidate(FnKey fn) pre(fn != 0);
+
+    // Issue #570: invalidate every tracked profile (mutation path).
+    // Unlike reset(), preserves profiles and bumps version per fn.
+    void invalidate_all() noexcept;
 
     // ── Metrics ────────────────────────────────────────────────
     ShapeFnMetrics metrics(FnKey fn) const;
@@ -100,6 +105,12 @@ private:
     double stability_ratio_ = kDefaultStabilityRatio;
     std::uint64_t global_time_ = 0;
 };
+
+// Issue #570: deopt hook fired on version bump / stable→unstable.
+using ShapeDeoptHook = void (*)(FnKey fn, std::uint64_t version);
+
+void set_shape_deopt_hook(ShapeDeoptHook hook) noexcept;
+[[nodiscard]] ShapeDeoptHook shape_deopt_hook() noexcept;
 
 } // namespace aura::compiler::shape
 

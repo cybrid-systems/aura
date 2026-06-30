@@ -493,6 +493,7 @@ public:
         evaluator_.set_compiler_metrics(&metrics_);
         evaluator_.set_compiler_service(this);
         evaluator_.set_session_id(session_id_);
+
         // Issue #272: route cached-define closures through persistent IR runtimes.
         install_persistent_define_closure_bridge();
         // Phase 2: EDSL IR cache V2 hooks. Let evaluator partition TUs mark
@@ -5569,7 +5570,9 @@ public:
             // to trigger deoptimization on next eval.
             // Conservative: reset all profiles since we don't know which
             // functions were affected.
-            shape_profiler_.reset();
+            // Issue #570: per-profile version++ + deopt hook
+            // (preserves history keys vs full reset).
+            shape_profiler_.invalidate_all();
 
             tx.commit();
 
@@ -7127,8 +7130,33 @@ public:
     // Invalidate shape profile for a function (called after mutate:*).
     void invalidate_shape(const std::string& name) {
         auto fn_key = shape::make_fn_key(session_id_, name);
-        shape_profiler_.invalidate(fn_key);
+        const bool needs_deopt = shape_profiler_.invalidate(fn_key);
+        if (needs_deopt) {
+            jit_.invalidate(name.c_str());
+            {
+                std::unique_lock cache_write(jit_cache_mtx_);
+                jit_cache_.erase(name);
+            }
+        }
     }
+
+    // Issue #570: ShapeProfiler stability observability accessors.
+    [[nodiscard]] std::uint64_t get_shape_stability_hit_count() const noexcept {
+        return shape::shape_stability_hit_count.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_shape_version_bump_count() const noexcept {
+        return shape::shape_version_bump_count.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_shape_fiber_refresh_count() const noexcept {
+        return shape::shape_fiber_refresh_count.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_mutation_shape_churn_count() const noexcept {
+        return shape::mutation_shape_churn_count.load(std::memory_order_relaxed);
+    }
+    void bump_shape_fiber_refresh() noexcept {
+        shape::record_shape_fiber_refresh();
+    }
+
 
     // Register evaluator primitives with JIT runtime
     void register_jit_primitives() {

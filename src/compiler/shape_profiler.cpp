@@ -19,6 +19,31 @@
 // The shape_of function is implemented below using raw integer bit tests.
 namespace aura::compiler::shape {
 
+namespace {
+
+ShapeDeoptHook g_shape_deopt_hook = nullptr;
+
+void fire_shape_deopt_hook(FnKey fn, std::uint64_t version) noexcept {
+    shape_deopt_hook_fire_count.fetch_add(1, std::memory_order_relaxed);
+    if (g_shape_deopt_hook)
+        g_shape_deopt_hook(fn, version);
+}
+
+ShapeID finish_inline_shape_id(ShapeID id) noexcept {
+    contract_assert(is_known_inline_shape_id(id));
+    return id;
+}
+
+} // namespace
+
+void set_shape_deopt_hook(ShapeDeoptHook hook) noexcept {
+    g_shape_deopt_hook = hook;
+}
+
+ShapeDeoptHook shape_deopt_hook() noexcept {
+    return g_shape_deopt_hook;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // shape_of — fast shape classification from tagged int64_t bits
 // ═══════════════════════════════════════════════════════════════
@@ -39,36 +64,39 @@ ShapeID inline_shape_of(std::int64_t val) {
 
     switch (tag) {
     case EvalValueTag::Fixnum:
-        return SHAPE_INT;
+        return finish_inline_shape_id(SHAPE_INT);
     case EvalValueTag::Float:
-        return SHAPE_FLOAT;
+        return finish_inline_shape_id(SHAPE_FLOAT);
     case EvalValueTag::StringV2:
-        return SHAPE_STRING;
+        return finish_inline_shape_id(SHAPE_STRING);
     case EvalValueTag::Special:
         if (val == 3 || val == 7)
-            return SHAPE_BOOL;
+            return finish_inline_shape_id(SHAPE_BOOL);
         if (val == 11)
-            return SHAPE_VOID;
-        return SHAPE_ANY;
+            return finish_inline_shape_id(SHAPE_VOID);
+        return finish_inline_shape_id(SHAPE_ANY);
     case EvalValueTag::Ref: {
         const auto rt = ref_type(val);
         switch (rt) {
         case aura::compiler::types::RefPair:
-            return 10; // SHAPE_PAIR
+            return finish_inline_shape_id(SHAPE_PAIR);
         case aura::compiler::types::RefVector:
-            return 11; // SHAPE_VECTOR
+            return finish_inline_shape_id(SHAPE_VECTOR);
         case aura::compiler::types::RefHash:
-            return 12; // SHAPE_HASH
+            return finish_inline_shape_id(SHAPE_HASH);
         case aura::compiler::types::RefClosure:
-            return 13; // SHAPE_CLOSURE
+            return finish_inline_shape_id(SHAPE_CLOSURE);
         default:
-            return 14; // SHAPE_REF
+            return finish_inline_shape_id(SHAPE_REF);
         }
     }
     default:
-        return SHAPE_ANY;
+        return finish_inline_shape_id(SHAPE_ANY);
     }
 }
+
+static_assert(is_known_inline_shape_id(SHAPE_INT),
+              "inline_shape_of int path must be a known ShapeID");
 
 // ═══════════════════════════════════════════════════════════════
 // ShapeID computation (FNV-1a style)
@@ -269,12 +297,19 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     }
 
     if (ratio >= stability_ratio_) {
+        if (!profile.is_stable) {
+            shape_stability_hit_count.fetch_add(1, std::memory_order_relaxed);
+        }
         profile.is_stable = true;
         profile.stable_shape = dominant;
         profile.last_metric_time = now;
         return true;
     }
 
+    if (profile.is_stable) {
+        mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
+        fire_shape_deopt_hook(fn, profile.version);
+    }
     profile.is_stable = false;
     profile.stable_shape = SHAPE_UNKNOWN;
     return false;
@@ -302,16 +337,30 @@ ShapeSnapshot ShapeProfiler::current_snapshot(FnKey fn) const {
     return snap;
 }
 
-void ShapeProfiler::invalidate(FnKey fn) {
+bool ShapeProfiler::invalidate(FnKey fn) {
     // The pre (fn != 0) is on the declaration in shape_profiler.h.
     auto it = profiles_.find(fn);
-    if (it != profiles_.end()) {
-        it->second.history.clear();
-        it->second.is_stable = false;
-        it->second.stable_shape = SHAPE_UNKNOWN;
-        it->second.deopt_count++;
-        it->second.version++;
+    if (it == profiles_.end())
+        return false;
+
+    const bool was_stable = it->second.is_stable;
+    it->second.history.clear();
+    it->second.is_stable = false;
+    it->second.stable_shape = SHAPE_UNKNOWN;
+    it->second.deopt_count++;
+    it->second.version++;
+    shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+    if (was_stable) {
+        mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
     }
+    fire_shape_deopt_hook(fn, it->second.version);
+    return was_stable;
+}
+
+void ShapeProfiler::invalidate_all() noexcept {
+    const auto keys = tracked_fns();
+    for (FnKey fn : keys)
+        (void)invalidate(fn);
 }
 
 ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {

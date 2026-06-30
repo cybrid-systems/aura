@@ -1338,6 +1338,14 @@ aura_issue_test_link_llvm_jit(test_task4_highperf_full_hotpath_matrix)
 # with #181 (collision prototype) / #607 (Task4 hot-path).
 aura_add_issue_test(test_value_encoding_v2_dispatch_contracts_task4)
 aura_issue_test_link_llvm_jit(test_value_encoding_v2_dispatch_contracts_task4)
+# Issue #570: ShapeProfiler stability + versioning + deopt/fiber
+# hook matrix under AI mutate → eval → shape-classify. 12 scenarios
+# validating: stability ratio, version++ on invalidate, invalidate_all
+# mutation path, fuzz + 8-thread concurrent + fiber refresh + long
+# stress + new (query:shape-stability-stats) + regression.
+# Non-duplicative with #571 (value dispatch) / test_shape.cpp.
+aura_add_issue_test(test_shape_profiler_stability_deopt_fiber_task4)
+aura_issue_test_link_llvm_jit(test_shape_profiler_stability_deopt_fiber_task4)
 # Issue #546: Arena/pmr::vector + MutationBoundaryGuard
 # Panic Checkpoint Lifecycle + Auto-Rollback in Nested
 # Mutation + Fiber Resume scenarios (P0). 10 scenarios

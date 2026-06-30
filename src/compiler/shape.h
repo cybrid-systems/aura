@@ -14,6 +14,7 @@
 #ifndef AURA_COMPILER_SHAPE_H
 #define AURA_COMPILER_SHAPE_H
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -38,6 +39,31 @@ constexpr ShapeID SHAPE_VECTOR = 11;
 constexpr ShapeID SHAPE_HASH = 12;
 constexpr ShapeID SHAPE_CLOSURE = 13;
 constexpr ShapeID SHAPE_REF = 14;
+
+// Issue #570: constexpr guard for inline_shape_of results.
+inline constexpr bool is_known_inline_shape_id(ShapeID id) noexcept {
+    if (id == SHAPE_UNKNOWN || id == SHAPE_ANY)
+        return true;
+    if (id >= SHAPE_INT && id <= SHAPE_VOID)
+        return true;
+    if (id >= SHAPE_PAIR && id <= SHAPE_REF)
+        return true;
+    return false;
+}
+
+static_assert(is_known_inline_shape_id(SHAPE_INT), "SHAPE_INT in inline range");
+static_assert(is_known_inline_shape_id(SHAPE_PAIR), "SHAPE_PAIR in inline range");
+
+// Issue #570 observability (relaxed-ordering; advisory counts).
+inline std::atomic<std::uint64_t> shape_stability_hit_count{0};
+inline std::atomic<std::uint64_t> shape_version_bump_count{0};
+inline std::atomic<std::uint64_t> shape_fiber_refresh_count{0};
+inline std::atomic<std::uint64_t> mutation_shape_churn_count{0};
+inline std::atomic<std::uint64_t> shape_deopt_hook_fire_count{0};
+
+inline void record_shape_fiber_refresh() noexcept {
+    shape_fiber_refresh_count.fetch_add(1, std::memory_order_relaxed);
+}
 
 // ── ShapeTag: top-level classification ─────────────────────────
 enum class ShapeTag : std::uint8_t {
