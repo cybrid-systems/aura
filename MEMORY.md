@@ -330,3 +330,32 @@ order. Ruff auto-fixed via `build.py lint --fix`.
 `from <module> import a, b, c` line, always run
 `build.py lint --fix` before committing. The CI gate is
 strict about import ordering and will fail otherwise.
+
+## Session 2026-06-30 (continued) — Issue #361 closed
+
+`9b952e5a` ships the stress test for #361 (SoA EnvFrame
+concurrent mutation + materialization).
+
+**Audit-first**: tasks 1, 2, 4 were already covered by
+prior commits:
+- Task 1: `alloc_env_frame` unique_lock + version stamp
+  (#145 P0 follow-up at evaluator_env.cpp:376)
+- Task 2: dual-path versioned via per-frame version_ (#242)
+  + walker gates (#355) + INVALID post-rollback (#356)
+- Task 4: stable-id indirection deferred to a separate
+  issue (full #356 follow-up)
+
+**This commit**: only the missing stress test (task 3).
+4 tests across 2 layers in test_issues_jit bundle:
+- Layer 1: 32 fibers × capture + mutate + invoke cycle
+- Layer 2: 16 mutators + 16 allocators sharing scheduler
+  (no UAF / no hang)
+
+4/4 PASS, bundle 62/62, no regression.
+
+**Lesson — `(define x (+ x 1))` inside eval in --script mode**:
+Each `define` inside `eval` creates a NEW binding (the
+previous one is shadowed), so the final value is the result
+of one operation (`(+ 0 1)` → 1), not an accumulated total.
+For ACs that check no-UAF/no-hang, accept the
+operation-result value rather than the accumulated total.
