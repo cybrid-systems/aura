@@ -85,7 +85,10 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     // rollback-count, ops-per-batch (avg).
     add("atomic-batch:stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
+            // Issue #394 / #258: capacity 32 (was 8). This primitive
+            // returns 5 keys; cap-8 + FNV-1a probing occasionally
+            // failed to insert a key, so hash-ref returned void.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -151,7 +154,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         // pattern, so we re-bind to keep the closure:stats
         // self-contained.
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
+            // Issue #394 / #258: capacity 32 (was 8). closure:stats
+            // returns 7 keys; cap-8 insertion failures broke hash-ref.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
