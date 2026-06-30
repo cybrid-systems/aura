@@ -450,3 +450,35 @@ without breaking legitimate deeply-nested macros.
 module — it conflicts with `std::` declarations. Move the
 include to the global module fragment (`module;` ... `module
 foo;` block) at the top of the file.
+
+## Session 2026-06-30 (continued) — Issue #366 closed
+
+`e44bb8a0` ships the marker-maintenance primitives for #366
+(SyntaxMarker consistency under mutate).
+
+**Fix**: 2 new Aura primitives in evaluator_primitives_compile.cpp:
+- `(syntax:set-marker node-id marker)` — set one node''s marker
+- `(syntax:propagate-marker node-id marker)` — set + recurse
+
+Both are **metadata-only** (no MutationBoundaryGuard, no
+defuse_version_ bump) because marker changes are observational.
+
+**Tests** (tests/test_issue_366.cpp, 10 tests): round-trip
+set+query, subtree propagation, marker cycle (User → Macro →
+BoolLiteral → User). 10/10 PASS, bundle 67/67, no regression.
+
+**Deferred** (separate issues): automatic marker recomputation
+inside every structural mutate primitive (insert-child,
+replace-subtree); integration with MutationRecord + provenance.
+
+**Lesson (in test code)**:
+- `(query:find "name")` returns a list, not a node id —
+  use `(car (query:find "name"))` to extract.
+- The workspace AST only exists after `(set-code ...)` —
+  test must call set-code before any query:find /
+  syntax-marker primitive.
+
+Without these, --script mode tests will silently get
+`(no-workspace)` errors and the marker ops appear to
+no-op (writing to a default-constructed flat that the
+query reads from a different one).
