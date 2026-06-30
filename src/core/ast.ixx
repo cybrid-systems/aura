@@ -844,6 +844,10 @@ private:
         line_.push_back(0);
         col_.push_back(0);
         marker_.push_back(m);
+        // Issue #367: provenance column (parallel to marker_).
+        // 0 = no provenance. Stamped by hygiene / mutation
+        // primitives later via set_provenance().
+        provenance_.push_back(0);
         type_id_.push_back(0);
         // Issue #412: parallel type_cache_gen_ column. 0 = no
         // cache entry yet (matches type_id_ == 0 semantics).
@@ -968,6 +972,15 @@ private:
     std::pmr::vector<std::uint32_t> col_;
     // Type information (L6.5+): type_id per node, 0 = DYNAMIC
     std::pmr::vector<SyntaxMarker> marker_;
+    // Issue #367: per-node provenance id (0 = no provenance).
+    // Refers to the side-table in MarkerProvenanceTable; the
+    // table stores macro_def_id + expansion_id + mutation_id
+    // for tracing "where did this node come from?" for
+    // AI-agent auditability. Adding a column (rather than
+    // fields on Node) keeps the per-node struct size
+    // unchanged and lets us add provenance at any time
+    // without touching every FlatAST consumer.
+    std::pmr::vector<std::uint32_t> provenance_;
     std::pmr::vector<std::uint8_t> dirty_;
     // Issue #277: per-node PPA dirty bitmask (orthogonal to DirtyReason
     // which is full at 8 bits). OR'd with kPpaHintDirty on dirty_ when set.
@@ -3933,6 +3946,22 @@ public:
     // primitive to walk all nodes in O(n).
     [[nodiscard]] const std::pmr::vector<SyntaxMarker>& marker_column() const noexcept {
         return marker_;
+    }
+
+    // Issue #367: per-node provenance accessor + setter.
+    // provenance_id is an index into the FlatAST's own
+    // MarkerProvenanceTable (so it's per-FlatAST — no cross-AST
+    // lookup required). 0 means "no provenance recorded".
+    void set_provenance(NodeId id, std::uint32_t prov_id) noexcept {
+        if (id < provenance_.size())
+            provenance_[id] = prov_id;
+    }
+    [[nodiscard]] std::uint32_t provenance(NodeId id) const noexcept {
+        if (id >= provenance_.size()) return 0;
+        return provenance_[id];
+    }
+    [[nodiscard]] const std::pmr::vector<std::uint32_t>& provenance_column() const noexcept {
+        return provenance_;
     }
 
     // ── Node validation (NodeMeta invariants) ─────────────────

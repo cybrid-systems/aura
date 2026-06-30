@@ -2806,6 +2806,37 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(count);
     });
 
+    // (syntax:set-provenance node-id prov-id) — Issue #367:
+    // set the per-node provenance id. The prov-id is a
+    // workspace-scoped identifier that AI agents can use to
+    // trace "this node came from macro X during expansion Y".
+    // The actual provenance data (macro_def_id, expansion_id,
+    // mutation_id) lives in a side-table that the host can
+    // populate out-of-band; this primitive only stores the
+    // index. 0 = no provenance recorded.
+    add("syntax:set-provenance", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
+            return make_bool(false);
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto prov = static_cast<std::uint32_t>(as_int(a[1]));
+        if (!ev.workspace_flat_) return make_bool(false);
+        if (id >= ev.workspace_flat_->size()) return make_bool(false);
+        ev.workspace_flat_->set_provenance(id, prov);
+        return make_bool(true);
+    });
+
+    // (syntax:get-provenance node-id) — Issue #367: return
+    // the per-node provenance id (0 if unset). The host can
+    // look up the actual macro_def_id / expansion_id /
+    // mutation_id via its own side-table.
+    add("syntax:get-provenance", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0])) return make_int(0);
+        if (!ev.workspace_flat_) return make_int(0);
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (id >= ev.workspace_flat_->size()) return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->provenance(id)));
+    });
+
     // (syntax-marker-counts) — Issue #190: aggregate count of
     // each SyntaxMarker value across the workspace. Hash with
     // 3 integer fields: user, macro-introduced, bool-literal,
