@@ -395,3 +395,35 @@ acquire the same lock. Two requirements for safe yielding:
 check, and (2) the check must be honored — NOT just logged.
 Fiber::yield''s existing detect-and-warn is good for debug;
 production needs a no-op skip, not just a warning.
+
+## Session 2026-06-30 (continued) — Issue #363 closed
+
+`03d91bba` ships the verification tests for #363 (C++
+orchestration scheduler improvements).
+
+**Audit-first**: 4 of 5 tasks already done in prior commits:
+- Task 1 (work-stealing): `try_steal_from` in
+  src/serve/worker.cpp:135 + called at line 282
+- Task 2 (per-fiber yield budget): `StealBudget` in
+  src/serve/worker.h:30 with adaptive success-rate-driven
+  `max_before_sleep`
+- Task 4 (observability): comprehensive metrics in
+  src/serve/metrics.h (GlobalMetrics + WorkerMetrics +
+  (orch:metrics) Aura primitive)
+- Task 5 (lock-free): most hot paths use shared_mutex +
+  atomics already
+
+**This commit**: only the missing end-to-end verification
+that the observability + work-stealing actually works under
+load. 6 tests across 2 layers:
+- Layer 1: scheduler load (64 fibers × 4 workers) — verifies
+  spawned/completed counters advance
+- Layer 2: uneven load (100 fibers × 4 workers) — verifies
+  fibers distributed across >= 2 workers
+
+6/6 PASS, bundle 64/64, no regression.
+
+**Deferred** (separate issue):
+- Task 3 (closure cache by symid + defuse_version_):
+  dedicated LRUCache for ClosureId resolution on the hot path.
+  Requires careful thread-safety + version-invalidation.
