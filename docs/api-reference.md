@@ -18,12 +18,14 @@
 |------|----------|
 | 加载 | `set-code` `current-source` `eval-current` `eval-current-output` |
 | Query | `query:find` `query:pattern` `query:where` `query:calls` `query:def-use` … |
-| Mutate | `mutate:rebind` `mutate:query-and-replace` `mutate:extract-function` … |
+| Mutate | `mutate:rebind` `mutate:query-and-replace` `mutate:extract-function` `mutate:atomic-batch` … |
 | 验证 | `query:schema` `mutate:validate-against-schema` |
 | 版本 | `ast:snapshot` `ast:restore` `rollback` `mutation-history` |
 | Workspace | `workspace:create` `workspace:switch` `workspace:merge` `workspace:lock` … |
 
 示例：[tutorial.md](tutorial.md) §EDSL · `tests/suite/mutate-structured.aura`
+
+`mutate:atomic-batch` 强原子性、`(atomic-batch:stats)` 可观测字段与并发 fiber 语义见 [design/core/mutate_api.md](design/core/mutate_api.md)。
 
 ## Agent 入口
 

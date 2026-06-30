@@ -1514,6 +1514,10 @@ aura_add_issue_test(test_issue_434)
 aura_issue_test_link_llvm_jit(test_issue_434)
 aura_add_issue_test(test_issue_390)
 aura_issue_test_link_llvm_jit(test_issue_390)
+# Issue #394: hash-ref fix for (atomic-batch:stats) + concurrent
+# fiber safety during atomic batch + mutate_api.md docs.
+aura_add_issue_test(test_issue_394)
+aura_issue_test_link_llvm_jit(test_issue_394)
 aura_add_issue_test(test_issue_409)
 aura_issue_test_link_llvm_jit(test_issue_409)
 aura_add_issue_test(test_issue_341)
