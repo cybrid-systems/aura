@@ -482,3 +482,26 @@ Without these, --script mode tests will silently get
 `(no-workspace)` errors and the marker ops appear to
 no-op (writing to a default-constructed flat that the
 query reads from a different one).
+
+## Session 2026-06-30 (continued) — Issue #367 closed
+
+`f8a622a1` ships the provenance foundation for #367 (macro
+provenance tracking).
+
+**Audit-first**: tasks 1, 2 partially covered by prior
+commits (#190 marker column + #213 mutation_log_).
+
+**This commit**: parallel `provenance_` column in FlatAST +
+2 Aura primitives (set/get-provenance) + 7 tests.
+
+7/7 PASS, bundle 68/68, no regression.
+
+**Deferred** (separate issues): auto-stamp provenance from
+clone_macro_body (thread_local expansion_id threading);
+MutationRecord + provenance correlation; query:macro-origin
+primitive.
+
+**Pattern**: adding a parallel column to FlatAST (rather than
+extending Node) keeps per-node struct size unchanged +
+avoids touching every consumer. Same pattern as marker_,
+dirty_, ppa_dirty_, verification_dirty_ etc.
