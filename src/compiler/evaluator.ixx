@@ -1373,6 +1373,34 @@ public:
     // (so subsequent reads see it as fresh) or re-capture the
     // closure against a fresh env.
     bool is_env_frame_stale(EnvId id) const;
+    // Issue #355: refresh_stale_frame_in_walk — single source of
+    // truth for the "saw a stale frame during a walk" pattern.
+    // When a SoA parent walk encounters a frame whose version_ is
+    // older than the current defuse_version_ snapshot, callers
+    // invoke this helper to:
+    //   1. bump the frame's version_ to silence future warnings,
+    //   2. bump envframe_stale_refresh_count_ (the stats counter
+    //      surfaced by (query:envframe-dualpath-stats)),
+    //   3. emit the same [#242 warning] stderr message that
+    //      materialize_call_env uses, gated behind
+    //      AURA_VERBOSE_ENVFRAME so production runs + the default
+    //      CI flow stay silent.
+    // The helper takes the caller's site label (e.g.
+    // "lookup_by_symid_chain") so the warning can disambiguate
+    // which walker observed the staleness.
+    //
+    // Why a helper: lookup_by_symid_chain / walk_env_frame_roots /
+    // Env::lookup_cell_ptr / Env::lookup_cell_index all need the
+    // same behavior. Concentrating it here keeps the warning text
+    // and stats accounting consistent across sites.
+    //
+    // Thread-safety: caller is expected to hold the shared
+    // env_frames_mtx_ read lock for the duration of the frame
+    // reference (same precondition as materialize_call_env).
+    // The version_ mutation uses const_cast on the const ref, so
+    // a concurrent writer holding the exclusive lock would race
+    // — by design the exclusive lock excludes walker threads.
+    void refresh_stale_frame_in_walk(EnvId id, const char* site) const;
     // Look up an EnvFrame by id. UB if id is invalid.
     const EnvFrame& env_frame(EnvId id) const pre(id != NULL_ENV_ID) { return env_frames_[id]; }
     EnvFrame& env_frame_mut(EnvId id) pre(id != NULL_ENV_ID) { return env_frames_[id]; }
