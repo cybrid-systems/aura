@@ -277,3 +277,42 @@ binaries that aren''t wired to a workspace (e.g.
 tests, focus on absence-of-deadlock + state-consistency
 checks rather than exact mutation-result values. The
 structural AC is what matters.
+
+## Session 2026-06-30 (continued) — Issue #360 closed
+
+`2a66b2b0` ships the scope-limited version of #360 (AOT
+multi-arch / install-path fragility).
+
+**Audited first** — tasks already done in prior commits:
+- Task 3 (loud AOT failure): `src/main.cpp` L2334-2348
+  returns 1 when `compiled==false && !flat_fn_array.empty()`.
+- Task 5 (stderr capture): `run_emit_binary` in
+  `tests/test_issue_237.cpp` already captures stderr via pipe
+  + wait status + signal name.
+
+**What this commit ships**:
+- `get_aot_pic_flag()` arch-aware helper (x86_64 / aarch64 /
+  i386 / riscv + conservative fallback). Replaces the
+  hardcoded `"-fPIC -fno-pie"` literal. Same flag pair on
+  all arches today, but the abstraction makes future
+  per-arch overrides a single-function change.
+- `find_runtime_c()` extended with 3 install-path fallbacks
+  (`/usr/local/share/aura/runtime.c`, `/usr/share/aura/runtime.c`,
+  `/opt/aura/share/runtime.c`) for `make install` workflows.
+- test_issue_237 diagnostics: aura stderr is now printed on
+  ANY test failure (not just `res.ok==false`). Catches the
+  case where downstream CHECKs (is_elf, output.contains) fail
+  but aura returned 0 with helpful diagnostics in stderr.
+
+**Deferred** (separate issues — too invasive for scope-limited):
+- Task 1: full AotCompileOptions struct
+- Task 4: relocation-model / target triple in emit_native_object
+
+Verified: test_issue_237 11/11 PASS, bundle 61/61 PASS,
+AOT smoke on aarch64 produces a working ELF binary.
+
+**Lesson**: when an issue lists 5 tasks and 3 are already
+done by prior commits, audit first then ship the rest as a
+scope-limited close. Mention what''s deferred explicitly in
+the close comment so the next maintainer sees the full
+scope.
