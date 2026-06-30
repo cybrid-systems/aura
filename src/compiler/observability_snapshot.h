@@ -132,6 +132,11 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     std::uint16_t current_generation = 0;
     std::uint64_t generation_wrap_count = 0;
     std::uint64_t node_gen_stale_access_count = 0;
+    // Issue #368: current wrap_epoch_ (bumped per
+    // generation_ wrap). uint32_t; needs ~2.6e14 mutates to
+    // wrap. AI agents can read this via (ast:generation-stats)
+    // to checkpoint / compact before the next wrap.
+    std::uint32_t current_wrap_epoch = 0;
     // Issue #256: AST operation observability. Mirrors
     // CompilerMetrics::{children_call_count,
     // parent_of_call_count, mark_dirty_upward_call_count,
