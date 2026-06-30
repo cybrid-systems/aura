@@ -702,6 +702,45 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             snapshots + pass + fail + dirty));
     });
 
+    // Issue #597: query:macro-reflect-self-evo-stats. Returns
+    // the sum of 8 observability counters spanning the full
+    // Task6 production-review closed loop:
+    //   macro expand (MacroIntroduced) → query:pattern hygiene
+    //   → mutate under Guard → reflect auto_validate → epoch/
+    //   dirty propagation → self-evo stability:
+    //   - macro_introduced_skipped_in_query_  (hygiene filter)
+    //   - hygiene_violation_count_            (hygiene breach)
+    //   - mutation_impact_count_            (Guard success)
+    //   - impact_snapshot_count_              (reflect snapshot)
+    //   - schema_validation_pass_count_       (auto_validate ok)
+    //   - schema_validation_fail_count_     (auto_validate fail)
+    //   - panic_checkpoint_commit_count_      (Guard commit)
+    //   - cross_cow_invalidations_            (self-evo COW)
+    //
+    // P0: returns an integer = sum of all 8 counters.
+    // Follow-up: returns an 8-tuple so the AI Agent can react
+    // to each category independently.
+    //
+    // Non-duplicative with #547/#548/#549/#551 — those expose
+    // per-theme stats; this primitive is the unified Task6
+    // matrix observability surface for macro+reflect+self-evo.
+    add("query:macro-reflect-self-evo-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t skips = ev->get_macro_introduced_skipped_in_query();
+        const std::uint64_t violations = ev->get_hygiene_violation_count();
+        const std::uint64_t impact = ev->get_mutation_impact_count();
+        const std::uint64_t snapshots = ev->get_impact_snapshot_count();
+        const std::uint64_t pass = ev->get_schema_validation_pass_count();
+        const std::uint64_t fail = ev->get_schema_validation_fail_count();
+        const std::uint64_t commit = ev->get_panic_checkpoint_commit_count();
+        const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
+        return make_int(static_cast<std::int64_t>(
+            skips + violations + impact + snapshots + pass + fail +
+            commit + cross_cow));
+    });
+
     // Issue #552: query:edsl-stability-stats. Returns
     // the sum of 5 EDSL long-running stability counters
     // from across the workspace + Evaluator:

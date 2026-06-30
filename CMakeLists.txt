@@ -1296,6 +1296,17 @@ aura_issue_test_link_llvm_jit(test_mutation_boundary_panic_rollback_fiber)
 # + #528/#524 (marker propagation) + #514 (meta).
 aura_add_issue_test(test_query_pattern_hygiene_index_sv)
 aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_index_sv)
+# Issue #597: Comprehensive test coverage matrix +
+# observability for macro hygiene + static reflection +
+# EDSL self-evolution paths (Task6 production review).
+# 11 scenarios validating: full macro → query:pattern →
+# Guard mutate → reflect validate → dirty/epoch → eval
+# → fiber yield + new (query:macro-reflect-self-evo-stats)
+# primitive + fuzz/panic injection + 8-thread concurrent
+# + 200-iter stress + regression. Non-duplicative with
+# #547/#548/#549/#551/#326/#327 (per-theme tests).
+aura_add_issue_test(test_macro_reflect_self_evo_full_matrix_task6)
+aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_full_matrix_task6)
 # Issue #546: Arena/pmr::vector + MutationBoundaryGuard
 # Panic Checkpoint Lifecycle + Auto-Rollback in Nested
 # Mutation + Fiber Resume scenarios (P0). 10 scenarios
