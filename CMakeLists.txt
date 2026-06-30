@@ -1402,6 +1402,14 @@ aura_issue_test_link_llvm_jit(test_soa_envframe_dualpath_consistency)
 # observed in first iteration).
 aura_add_issue_test(test_fiber_mutation_steal_safety)
 aura_issue_test_link_llvm_jit(test_fiber_mutation_steal_safety)
+# Issue #588: MutationBoundary per-fiber stack sync +
+# precise is_at_mutation_boundary_safe + scheduler steal
+# defer under inner guard. 8 scenarios: depth probe,
+# defer vs allow, resume sync, mixed matrix, stress,
+# fiber-migration-stats + regression. Non-duplicative
+# with #542 (yield metrics) / #545 (GC safepoint).
+aura_add_issue_test(test_runtime_mutation_boundary_steal_safety)
+aura_issue_test_link_llvm_jit(test_runtime_mutation_boundary_steal_safety)
 # Issue #329: white-box StableNodeRef / generation_ stress
 # + dangling-rate gate. Extends #345 with NodeId sampling
 # via query:children + mutation invalidation tracking.

@@ -165,6 +165,9 @@ namespace {
             return;
         (void)g_yield_hook_evaluator->restore_post_yield_or_rollback();
     }
+    void fiber_sync_mutation_stack_impl(void* per_fiber_stack) {
+        Evaluator::sync_per_fiber_mutation_stack(per_fiber_stack);
+    }
 } // namespace
 
 // Register the function pointers at static-init time. The
@@ -173,6 +176,7 @@ namespace {
 struct FiberHookRegistrar {
     FiberHookRegistrar() {
         aura::serve::g_fiber_setter_ = fiber_setter_impl;
+        aura::serve::g_fiber_sync_mutation_stack_ = fiber_sync_mutation_stack_impl;
         aura::serve::g_fiber_storage_deleter_ = fiber_storage_deleter_impl;
         aura::serve::g_fiber_yield_checkpoint_deleter_ = fiber_yield_checkpoint_deleter_impl;
         aura::serve::g_fiber_yield_checkpoint_ = fiber_yield_checkpoint_impl;
@@ -425,6 +429,40 @@ bool Evaluator::pending_panic_checkpoint() const noexcept {
 extern "C" std::size_t
 aura_evaluator_mutation_boundary_depth() {
     return Evaluator::mutation_boundary_depth();
+}
+
+// Issue #588: depth from a fiber's opaque mutation_stack_storage_.
+extern "C" std::size_t
+aura_evaluator_mutation_stack_depth_from_ptr(void* mutation_stack_storage) {
+    if (mutation_stack_storage == nullptr)
+        return 0;
+    using C = Evaluator::MutationCheckpoint;
+    return static_cast<std::vector<C>*>(mutation_stack_storage)->size();
+}
+
+void Evaluator::sync_per_fiber_mutation_stack(void* per_fiber_stack) noexcept {
+    g_main_thread_stack.clear();
+    g_main_thread_yield_checkpoints.clear();
+    if (g_current_fiber_void == nullptr)
+        return;
+    auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
+    void* p = per_fiber_stack != nullptr ? per_fiber_stack : fiber->mutation_stack_ptr();
+    if (p == nullptr) {
+        p = new std::vector<MutationCheckpoint>();
+        fiber->set_mutation_stack_ptr(p);
+    }
+}
+
+// Test seam (#588): push/pop a synthetic checkpoint on the
+// active (per-fiber) mutation stack for steal-safety tests.
+extern "C" void aura_evaluator_test_push_mutation_checkpoint() {
+    Evaluator::active_mutation_stack_static().push_back({0, 0});
+}
+
+extern "C" void aura_evaluator_test_pop_mutation_checkpoint() {
+    auto& stack = Evaluator::active_mutation_stack_static();
+    if (!stack.empty())
+        stack.pop_back();
 }
 
 // Issue #439: C-linkage shims for GC safepoint

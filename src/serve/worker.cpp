@@ -152,9 +152,18 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             continue;
         }
 
-        if (stolen->is_stealable()) {
+        // Issue #588: defer steal when victim yielded at
+        // MutationBoundary with active inner/outer guard
+        // (per-fiber stack depth > 0).
+        if (stolen->is_stealable() && stolen->is_at_mutation_boundary_safe()) {
+            stolen->bump_steal_success();
             local_queue_.push(stolen);
             return true;
+        }
+
+        if (stolen->is_stealable() &&
+            stolen->last_yield_reason() == YieldReason::MutationBoundary) {
+            stolen->bump_steal_deferred_mutation_boundary();
         }
 
         // Not stealable — put it back on the victim's queue.
