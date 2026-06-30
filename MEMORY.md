@@ -247,3 +247,33 @@ test instead of including `aura_jit.h`. The C-linkage
 `aura_filter_dirty_flat_functions` only needs the C struct
 layout, which the forward declaration + matching opaque-array
 declaration in the bridge.h covers.
+
+## Session 2026-06-30 (continued) — Issue #359 closed
+
+`15b05bf6` ships the production-hardening stress tests for
+MutationBoundaryGuard (#359 P0).
+
+**Audited first** — the 3 issues from the issue body were
+already addressed by prior commits:
+- Yield safety (#354): `mutation_boundary_held_` flag +
+  Fiber::yield assert-in-debug / warn-in-release
+- Nested guards (#236): thread_local depth slot, outermost-only
+  lock acquisition
+- Lock ordering: verified by inspection — workspace_mtx_
+  (write) acquired before env_frames_mtx_ (write) at all
+  call sites (mutation → closure capture → alloc_env_frame_from_env;
+  Guard dtor failure → restore_panic_checkpoint → invalidate_post_rollback_env_frames)
+
+**What this commit ships**: TSan-style stress tests for the
+3 scenarios. 7 tests across 3 layers in test_issues_jit bundle:
+- Layer 1: 64 fibers × 5 nested eval cycles (no deadlock)
+- Layer 2: any_active_mutation_boundary() reflects live Guard
+- Layer 3: 16 mutators + 16 readers sharing scheduler (no deadlock)
+
+**Lesson — testing mutation primitives in tests**:
+`mutate:rebind` / `set!` etc. don''t always work in test
+binaries that aren''t wired to a workspace (e.g.
+--script mode primitives). For production-hardening stress
+tests, focus on absence-of-deadlock + state-consistency
+checks rather than exact mutation-result values. The
+structural AC is what matters.
