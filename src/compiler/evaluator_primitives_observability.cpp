@@ -454,6 +454,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #602 — Prompt6 memory-safety matrix
             "query:prompt6-violation-count",
             "query:prompt6-safety-score",
+            // Issue #607 — Task4 high-perf hot-path matrix
+            "query:task4-hotpath-safety-score",
+            "query:task4-cache-locality-win",
+            "query:task4-mutation-stability",
             // Issue #552 — EDSL stability
             "query:edsl-stability-stats",
             // Issue #553 — Atomic batch + mutation log

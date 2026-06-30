@@ -824,6 +824,104 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             gc_skipped + gc_walk_skips + gc_waits));
     });
 
+    // Issue #607: query:task4-hotpath-safety-score. Returns
+    // the sum of 6 Task4 high-perf hot-path positive indicators:
+    //   - specialization_hits_         (shape/JIT fast path)
+    //   - relower_skipped_entirely_    (incremental re-lower win)
+    //   - passes_skipped_type_dirty_   (Pass short-circuit)
+    //   - linear_elide_count_          (linear-move elision)
+    //   - tag_arity_index_hits_        (SoA query index hit)
+    //   - module_dirty_skips_          (clean module skip)
+    //
+    // P0: returns an integer = sum of all 6 counters.
+    // Non-duplicative with #602/#547/#550 — unified Task4
+    // hot-path observability for Arena/SoA/Value/Shape/Pass.
+    add("query:task4-hotpath-safety-score", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(
+                ev->compiler_metrics());
+        auto* ws = ev->workspace_flat();
+        const std::uint64_t spec_hits = m
+            ? m->specialization_hits.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t relower_skip = m
+            ? m->relower_skipped_entirely_count.load(
+                  std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t passes_skip = ev->get_passes_skipped_type_dirty();
+        const std::uint64_t linear_elide = m
+            ? m->linear_elide_count.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t index_hits = ws ? ws->tag_arity_index_hits() : 0;
+        const std::uint64_t mod_skip = m
+            ? m->module_dirty_skips.load(std::memory_order_relaxed)
+            : 0;
+        return make_int(static_cast<std::int64_t>(
+            spec_hits + relower_skip + passes_skip + linear_elide +
+            index_hits + mod_skip));
+    });
+
+    // Issue #607: query:task4-cache-locality-win. Returns
+    // the sum of 5 cache-friendly / incremental-win counters:
+    //   - tag_arity_index_hits_          (SoA index cache hit)
+    //   - tag_arity_index_delta_hits_    (incremental index update)
+    //   - specialization_hits_           (shape specialization)
+    //   - cascade_body_only_count_       (targeted dirty cascade)
+    //   - relower_per_function_called_   (per-fn incremental re-lower)
+    //
+    // P0: returns an integer = sum of all 5 counters.
+    add("query:task4-cache-locality-win", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(
+                ev->compiler_metrics());
+        auto* ws = ev->workspace_flat();
+        const std::uint64_t hits = ws ? ws->tag_arity_index_hits() : 0;
+        const std::uint64_t delta = ws ? ws->tag_arity_index_delta_hits() : 0;
+        const std::uint64_t spec = m
+            ? m->specialization_hits.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t cascade = m
+            ? m->cascade_body_only_count.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t per_fn = m
+            ? m->relower_per_function_called_count.load(
+                  std::memory_order_relaxed)
+            : 0;
+        return make_int(static_cast<std::int64_t>(
+            hits + delta + spec + cascade + per_fn));
+    });
+
+    // Issue #607: query:task4-mutation-stability. Returns
+    // the sum of 6 mutation-stability counters under load:
+    //   - dirty_propagation_count_       (dirty walks completed)
+    //   - selective_recheck_count_       (selective re-narrow)
+    //   - guard_dirty_epoch_count_       (Guard + type cache sync)
+    //   - narrowing_refresh_count_     (OccurrenceInfo refresh)
+    //   - impact_snapshot_count_         (post-mutate snapshot)
+    //   - cross_cow_invalidations_     (COW boundary detection)
+    //
+    // P0: returns an integer = sum of all 6 counters.
+    add("query:task4-mutation-stability", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t dirty_prop = ev->get_dirty_propagation_count();
+        const std::uint64_t selective = ev->get_selective_recheck_count();
+        const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
+        const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
+        const std::uint64_t snapshots = ev->get_impact_snapshot_count();
+        const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
+        return make_int(static_cast<std::int64_t>(
+            dirty_prop + selective + guard_epoch + narrowing +
+            snapshots + cross_cow));
+    });
+
     // Issue #552: query:edsl-stability-stats. Returns
     // the sum of 5 EDSL long-running stability counters
     // from across the workspace + Evaluator:
