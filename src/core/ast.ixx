@@ -1204,6 +1204,17 @@ std::pmr::vector<std::uint32_t> type_id_;
     mutable std::atomic<std::uint64_t> generation_wrap_count_{0};
     mutable std::atomic<std::uint64_t> node_gen_stale_access_count_{0};
     mutable std::atomic<std::uint64_t> atomic_batch_commits_{0};
+    // Issue #368: wrap_epoch_ is bumped each time generation_
+    // (uint16_t) wraps back to 1. Captured in StableNodeRef at
+    // make_ref() time and checked in is_valid(). With uint16_t
+    // generation_, wrap happens every 65535 structural
+    // mutations; without the epoch check, a ref captured before
+    // the first wrap could become a false positive after a
+    // SECOND wrap returns generation_ to its prior value
+    // (~130K mutates in). epoch_ is atomic uint32_t: needs
+    // ~4 billion * 65535 = ~2.6e14 mutates to wrap, which is
+    // well outside the lifetime of any realistic workspace.
+    mutable std::atomic<std::uint32_t> wrap_epoch_{0};
     // Issue #256: AST operation observability counters.
     // The hand-written AST operations (children, parent_of,
     // mark_dirty_upward) are candidates for std::meta-based
@@ -4492,6 +4503,16 @@ public:
         // (query:ref-provenance). Defaults to 0 to match
         // pre-#303 behavior.
         std::uint16_t last_validated_generation = 0;
+        // Issue #368: wrap_epoch at capture time. Bumped by
+        // FlatAST::bump_generation() every time generation_
+        // (uint16_t) wraps back to 1. is_valid() compares this
+        // to the current wrap_epoch_ — mismatch means the ref
+        // was captured at a different wrap cycle. Without this
+        // check, a ref captured before wrap #1 could false-
+        // positive after wrap #2 returns generation_ to the
+        // same numeric value (~130K mutates in). Captured at
+        // make_ref() time. Default 0 = pre-#368 ref.
+        std::uint32_t wrap_epoch = 0;
 
         // Default-constructed refs are always invalid (id=NULL).
         bool is_valid_in(const FlatAST& ast) const noexcept { return ast.is_valid(*this); }
@@ -4609,7 +4630,11 @@ public:
         // defaults to 0 (root); callers working across
         // WorkspaceTree layers can set it explicitly via
         // make_ref_in_layer(id, workspace_id).
-        return StableNodeRef{id, generation_, next_mutation_id_, 0};
+        // Issue #368: also capture wrap_epoch_ so is_valid()
+        // can detect false positives from a second generation_
+        // wrap returning to the original numeric value.
+        return StableNodeRef{id, generation_, next_mutation_id_, 0,
+                             0, generation_, wrap_epoch_.load(std::memory_order_relaxed)};
     }
 
     // Issue #291: make_ref variant that also tags the ref
@@ -4617,7 +4642,8 @@ public:
     // query/mutate primitives that operate on a child
     // workspace.
     [[nodiscard]] StableNodeRef make_ref_in_layer(NodeId id, std::uint32_t workspace_id) const noexcept {
-        return StableNodeRef{id, generation_, next_mutation_id_, workspace_id};
+        return StableNodeRef{id, generation_, next_mutation_id_, workspace_id,
+                             0, generation_, wrap_epoch_.load(std::memory_order_relaxed)};
     }
 
     // Issue #303: make_safe_ref records full provenance
@@ -4631,7 +4657,8 @@ public:
                                               std::uint32_t workspace_id = 0,
                                               std::uint32_t fiber_id = 0) const noexcept {
         return StableNodeRef{id, generation_, next_mutation_id_,
-                             workspace_id, fiber_id, generation_};
+                             workspace_id, fiber_id, generation_,
+                             wrap_epoch_.load(std::memory_order_relaxed)};
     }
 
     // Issue #303: capture_for_fiber is a shorthand for
@@ -4650,12 +4677,20 @@ public:
     [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept
         post(r: r == (ref.id != NULL_NODE && ref.id < tag_.size() &&
                       ref.id < node_gen_.size() && node_gen_[ref.id] == ref.gen &&
-                      ref.gen == generation_)) {
+                      ref.gen == generation_ &&
+                      // Issue #368: generation_ is uint16_t; after
+                      // ~130K mutates a second wrap could match
+                      // the ref's captured gen by accident. Check
+                      // wrap_epoch explicitly (uint32_t, wraps
+                      // every ~2.6e14 mutates).
+                      ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed))) {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
         bool ok = ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
                   node_gen_[ref.id] == ref.gen &&
-                  ref.gen == generation_; // gen must also match current
+                  ref.gen == generation_ && // gen must also match current
+                  // Issue #368: catch second-wrap false positives.
+                  ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed);
         if (!ok) {
             // Stale ref — bump the invalidations counter.
             // The whole point of StableNodeRef is to detect
@@ -4670,6 +4705,15 @@ public:
         if (!is_valid(ref))
             return std::nullopt;
         return get(ref.id);
+    }
+
+    // Issue #368: accessor for the current wrap_epoch_.
+    // Returned by (ast:generation-stats) under the wrap-epoch key
+    // so AI agents can checkpoint / compact before the next
+    // generation_ wrap creates a wave of false-positive refs in
+    // their long-running workspaces.
+    [[nodiscard]] std::uint32_t wrap_epoch() const noexcept {
+        return wrap_epoch_.load(std::memory_order_relaxed);
     }
 
     // Issue #191: bump the generation counter (with wrap-around
@@ -4738,6 +4782,12 @@ public:
             // the AI Agent can (query:stable-ref-stats)
             // and decide whether to checkpoint / compact.
             generation_wrap_count_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #368: bump wrap_epoch_ so StableNodeRefs
+            // captured before this wrap become invalid even
+            // after the SECOND wrap returns generation_ to
+            // its prior value (~130K mutates in).
+            // uint32_t: ~2.6e14 mutates per wrap_epoch wrap.
+            wrap_epoch_.fetch_add(1, std::memory_order_relaxed);
         }
         // Issue #255: only count actual bumps (suppressed
         // ones are accounted for via atomic_batch_commits_).

@@ -4726,6 +4726,9 @@ public:
             s.generation_wrap_count = ws_flat->generation_wrap_count();
             s.node_gen_stale_access_count =
                 ws_flat->node_gen_stale_access_count();
+            // Issue #368: current wrap_epoch_ so AI agents can
+            // checkpoint / compact before the next wrap.
+            s.current_wrap_epoch = ws_flat->wrap_epoch();
             // Issue #256: AST operation observability counters
             // (children/parent_of/mark_dirty_upward call counts
             // + total nodes marked dirty).

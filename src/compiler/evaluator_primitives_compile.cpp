@@ -1479,6 +1479,13 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             {"node-gen-stale-access-total",
              make_int(static_cast<std::int64_t>(
                  snap.node_gen_stale_access_count))},
+            // Issue #368: current wrap_epoch_ (uint32_t).
+            // AI agents can checkpoint / compact before the
+            // next generation_ wrap creates a wave of stale
+            // refs in long-running workspaces.
+            {"current-wrap-epoch",
+             make_int(static_cast<std::int64_t>(
+                 snap.current_wrap_epoch))},
         };
         return build_hash(kv);
     });
