@@ -505,3 +505,44 @@ primitive.
 extending Node) keeps per-node struct size unchanged +
 avoids touching every consumer. Same pattern as marker_,
 dirty_, ppa_dirty_, verification_dirty_ etc.
+
+## Session 2026-06-30 (continued) — Issue #368 closed
+
+`d6b8a10c` ships the StableNodeRef false-positive fix for #368
+(uint16_t generation_ wrap-around bug).
+
+**Audit-first**: #191 ships bump_generation() + wrap-to-1; #457 ships
+generation_wrap_count_ stats. Wrap counter was STATS only, not a
+correctness guard — is_valid() never consulted it.
+
+**This commit** (60 LOC core + 1 primitive key + 11 tests):
+
+1. `wrap_epoch_` (atomic uint32_t) bumped in bump_generation()
+   on each uint16_t wrap. uint32_t wrap math: 65535 *
+   2^32 = ~2.6e14 mutates total.
+2. `wrap_epoch` field on StableNodeRef. Captured in
+   make_ref / make_ref_in_layer / make_safe_ref.
+3. `is_valid()` postcondition + body checks
+   `ref.wrap_epoch == wrap_epoch_`.
+4. `current_wrap_epoch` in CompilerObservabilitySnapshot +
+   `(ast:generation-stats)` hash key.
+
+11/11 PASS, bundle 69/69, no regression.
+
+**Deferred** (新 issue): migrate `generation_` uint16_t → uint32t
+(layout change, touches serialize_stable_ref format); format-bump
+magic for serialize_stable_ref to include `wrap_epoch`.
+
+**Lesson (in test)**: Aura 不导出 `hash-get` primitive — 没法
+从 Aura 一侧验 hash 内部 keys。Smoke test (primitive 不崩 / 返回
+truthy) 走 Aura 层, semantic validation 必须走 C++ FlatAST +
+CompilerService API 直接。
+
+## Today's closing shot pattern
+When correctness bug is wrapped in audit-first infra:
+- 先看现有 infrastructure (#191 + #457 cases)
+- 找到 gaps: counter 是 STATS only,not a correctness guard
+- 加 smallest possible correctness check (~10 LOC 改动)
+- 加 C++ semantic test (因为 Aura 不能读 hash 内部)
+- Smoke test (primitive 是否触发) 留 Aura 层
+- Bundle grep: 11/11 PASS, no regression
