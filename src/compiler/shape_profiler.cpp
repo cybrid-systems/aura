@@ -8,6 +8,7 @@
 #include "shape_profiler.h"
 #include "value_tags.h"
 #include <algorithm>
+#include <contracts>
 #include <cstdint>
 #include <unordered_set>
 
@@ -22,62 +23,51 @@ namespace aura::compiler::shape {
 // shape_of — fast shape classification from tagged int64_t bits
 // ═══════════════════════════════════════════════════════════════
 //
-// Matches the Aura value encoding from value.ixx:
-//   bit0=0 : Fixnum (int), range-checked against FLOAT_BIAS
-//   bit0-1=11 : Special (#f=3, #t=7, void=11)
-//   bit0-1=01 : Ref (pool-indexed heap type, bits 2-5 = subtype)
-//   FLOAT_BIAS (≤ -10000000000000000) : Float
-//   STRING_BIAS (≤ STRING_BIAS_VAL_2) : String
-//   (Issue #181 Cycle 2: STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2,
-//   the v2 upper bound of the string range.)
+// Issue #571: uses classify_eval_value_tag() from value_tags.h
+// (consteval low-2-bit table + v2 string range check). Contracts
+// guard the hot path in debug builds (zero release cost).
 //
-// Timing: ~2-5ns (bit ops, no heap access)
-//
-// Tag/bit constants come from value_tags.h (issue #58); we just
-// alias them under the local names this file used before.
-static constexpr std::int64_t kFloatBias = aura::compiler::types::FLOAT_BIAS_VAL;
-static constexpr std::int64_t kStringBias = aura::compiler::types::STRING_BIAS_VAL_2;
-
-static inline bool is_fixnum_val(std::int64_t v) noexcept {
-    return (v & 1) == 0;
-}
-static inline bool is_ref_val(std::int64_t v) noexcept {
-    return (v & 3) == 1;
-}
-static inline bool is_special_val(std::int64_t v) noexcept {
-    return (v & 3) == 3;
-}
-static inline std::uint64_t ref_type_val(std::int64_t v) noexcept {
-    return (static_cast<std::uint64_t>(v) >> 2) & 0xF;
-}
+// Timing: ~2-5ns (bit ops + table dispatch, no heap access)
 
 ShapeID inline_shape_of(std::int64_t val) {
-    if (is_fixnum_val(val) && val > kFloatBias)
+    using aura::compiler::types::EvalValueTag;
+    using aura::compiler::types::classify_eval_value_tag;
+    using aura::compiler::types::ref_type;
+
+    const EvalValueTag tag = classify_eval_value_tag(val);
+    contract_assert(tag != EvalValueTag::Unknown);
+
+    switch (tag) {
+    case EvalValueTag::Fixnum:
         return SHAPE_INT;
-    if (val == 3 || val == 7)
-        return SHAPE_BOOL;
-    if (val == 11)
-        return SHAPE_VOID;
-    if (val <= kFloatBias && val > kStringBias)
+    case EvalValueTag::Float:
         return SHAPE_FLOAT;
-    if (val <= kStringBias)
+    case EvalValueTag::StringV2:
         return SHAPE_STRING;
-    if (is_ref_val(val)) {
-        auto rt = ref_type_val(val);
+    case EvalValueTag::Special:
+        if (val == 3 || val == 7)
+            return SHAPE_BOOL;
+        if (val == 11)
+            return SHAPE_VOID;
+        return SHAPE_ANY;
+    case EvalValueTag::Ref: {
+        const auto rt = ref_type(val);
         switch (rt) {
-            case aura::compiler::types::RefPair:
-                return 10; // SHAPE_PAIR
-            case aura::compiler::types::RefVector:
-                return 11; // SHAPE_VECTOR
-            case aura::compiler::types::RefHash:
-                return 12; // SHAPE_HASH
-            case aura::compiler::types::RefClosure:
-                return 13; // SHAPE_CLOSURE
-            default:
-                return 14; // SHAPE_REF
+        case aura::compiler::types::RefPair:
+            return 10; // SHAPE_PAIR
+        case aura::compiler::types::RefVector:
+            return 11; // SHAPE_VECTOR
+        case aura::compiler::types::RefHash:
+            return 12; // SHAPE_HASH
+        case aura::compiler::types::RefClosure:
+            return 13; // SHAPE_CLOSURE
+        default:
+            return 14; // SHAPE_REF
         }
     }
-    return SHAPE_ANY;
+    default:
+        return SHAPE_ANY;
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════

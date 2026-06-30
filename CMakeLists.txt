@@ -1329,6 +1329,15 @@ aura_issue_test_link_llvm_jit(test_prompt6_full_memory_safety_fuzz_stress)
 # #602/#597/#547/#531/#254 (per-theme tests).
 aura_add_issue_test(test_task4_highperf_full_hotpath_matrix)
 aura_issue_test_link_llvm_jit(test_task4_highperf_full_hotpath_matrix)
+# Issue #571: EvalValue v2 encoding dispatch table + hot-path
+# Contracts matrix under AI mutate → eval → shape-classify.
+# 12 scenarios validating: consteval table, classify roundtrip,
+# collision idx 19/31, shape_profiler v2 path, fuzz + 8-thread
+# concurrent + fiber yield + long stress + new
+# (query:value-dispatch-stats) + regression. Non-duplicative
+# with #181 (collision prototype) / #607 (Task4 hot-path).
+aura_add_issue_test(test_value_encoding_v2_dispatch_contracts_task4)
+aura_issue_test_link_llvm_jit(test_value_encoding_v2_dispatch_contracts_task4)
 # Issue #546: Arena/pmr::vector + MutationBoundaryGuard
 # Panic Checkpoint Lifecycle + Auto-Rollback in Nested
 # Mutation + Fiber Resume scenarios (P0). 10 scenarios

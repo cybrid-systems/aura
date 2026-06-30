@@ -43,9 +43,57 @@
 #ifndef AURA_COMPILER_VALUE_TAGS_H
 #define AURA_COMPILER_VALUE_TAGS_H
 
+#include <atomic>
 #include <cstdint>
 
 namespace aura::compiler::types {
+
+// Issue #571: unified tag classification for EvalValue v2 dispatch.
+enum class EvalValueTag : std::uint8_t {
+    Fixnum = 0,
+    Ref = 1,
+    StringV2 = 2,
+    Special = 3,
+    Float = 4,
+    Unknown = 255,
+};
+
+// consteval low-2-bit dispatch table (bits 0-1 of the tagged int64).
+inline constexpr EvalValueTag kEvalValueTagLow2Table[4] = {
+    EvalValueTag::Fixnum,
+    EvalValueTag::Ref,
+    EvalValueTag::StringV2,
+    EvalValueTag::Special,
+};
+
+inline consteval EvalValueTag eval_value_tag_low2_table(std::size_t idx) noexcept {
+    return kEvalValueTagLow2Table[idx & 3u];
+}
+
+static_assert(eval_value_tag_low2_table(0) == EvalValueTag::Fixnum,
+              "dispatch table drift: low2=0 must be Fixnum");
+static_assert(eval_value_tag_low2_table(1) == EvalValueTag::Ref,
+              "dispatch table drift: low2=1 must be Ref");
+static_assert(eval_value_tag_low2_table(2) == EvalValueTag::StringV2,
+              "dispatch table drift: low2=2 must be StringV2");
+static_assert(eval_value_tag_low2_table(3) == EvalValueTag::Special,
+              "dispatch table drift: low2=3 must be Special");
+
+// Issue #571 observability (relaxed-ordering; advisory counts).
+inline std::atomic<std::uint64_t> value_dispatch_hit_count{0};
+inline std::atomic<std::uint64_t> value_dispatch_miss_count{0};
+inline std::atomic<std::uint64_t> value_contract_violation_count{0};
+inline std::atomic<std::uint64_t> v2_string_collision_attempts{0};
+
+inline void record_value_dispatch_hit() noexcept {
+    value_dispatch_hit_count.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_value_dispatch_miss() noexcept {
+    value_dispatch_miss_count.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_v2_string_collision_attempt() noexcept {
+    v2_string_collision_attempts.fetch_add(1, std::memory_order_relaxed);
+}
 
 // ── Pool bias sentinels ───────────────────────────────────────────
 inline constexpr std::int64_t FLOAT_BIAS_VAL = -10000000000000000LL;
@@ -200,6 +248,45 @@ static_assert(string_idx_raw_v2(make_string_raw_v2(0)) == 0, "v2 roundtrip broke
 static_assert(string_idx_raw_v2(make_string_raw_v2(42)) == 42, "v2 roundtrip broke for idx=42");
 static_assert(string_idx_raw_v2(make_string_raw_v2(0xFFFFFULL)) == 0xFFFFFULL,
               "v2 roundtrip broke for idx=0xFFFFF");
+
+// Issue #571: full tagged-value classification with v2 string
+// range check + float/fixnum disambiguation. Bumps dispatch hit/
+// miss counters for observability via (query:value-dispatch-stats).
+//
+// Order matters: fixnums use (v<<1) so val=2,6,10… have (v&3)==2
+// but are NOT strings — string-v2 requires (v&3)==2 AND
+// v <= STRING_BIAS_VAL_2 (the v2 range guard from #181).
+inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
+    if ((v & 3) == 3) {
+        if (v == 3 || v == 7 || v == 11) {
+            record_value_dispatch_hit();
+            return EvalValueTag::Special;
+        }
+        record_value_dispatch_miss();
+        return EvalValueTag::Unknown;
+    }
+    if ((v & 3) == 1) {
+        record_value_dispatch_hit();
+        return EvalValueTag::Ref;
+    }
+    if ((v & 3) == 2 && v <= STRING_BIAS_VAL_2) {
+        record_value_dispatch_hit();
+        return EvalValueTag::StringV2;
+    }
+    if (is_fixnum(v) && v > FLOAT_BIAS_VAL) {
+        record_value_dispatch_hit();
+        return EvalValueTag::Fixnum;
+    }
+    if (v <= FLOAT_BIAS_VAL && v > STRING_BIAS_VAL_2) {
+        record_value_dispatch_hit();
+        return EvalValueTag::Float;
+    }
+    if ((v & 3) == 2) {
+        record_v2_string_collision_attempt();
+    }
+    record_value_dispatch_miss();
+    return EvalValueTag::Unknown;
+}
 
 } // namespace aura::compiler::types
 

@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
+#include "compiler/value_tags.h"
 #include "serve/fiber.h"
 
 module aura.compiler.evaluator;
@@ -895,6 +896,31 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             : 0;
         return make_int(static_cast<std::int64_t>(
             hits + delta + spec + cascade + per_fn));
+    });
+
+    // Issue #571: query:value-dispatch-stats. Returns the sum
+    // of 4 EvalValue v2 dispatch observability counters:
+    //   - value_dispatch_hit_count       (table + range hit)
+    //   - value_dispatch_miss_count      (ambiguous tag/range)
+    //   - value_contract_violation_count (debug contract tally)
+    //   - v2_string_collision_attempts   (false string tag; expect 0)
+    //
+    // P0: returns an integer = sum of all 4 counters.
+    // Follow-up: returns a 4-tuple + derived dispatch_hit_rate_bp.
+    // Non-duplicative with #181 (encoding prototype) and #607
+    // (Task4 hot-path matrix) — unified value-dispatch surface.
+    add("query:value-dispatch-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const std::uint64_t hits =
+            types::value_dispatch_hit_count.load(std::memory_order_relaxed);
+        const std::uint64_t misses =
+            types::value_dispatch_miss_count.load(std::memory_order_relaxed);
+        const std::uint64_t violations =
+            types::value_contract_violation_count.load(std::memory_order_relaxed);
+        const std::uint64_t collisions =
+            types::v2_string_collision_attempts.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(
+            hits + misses + violations + collisions));
     });
 
     // Issue #607: query:task4-mutation-stability. Returns
