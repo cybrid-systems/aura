@@ -98,11 +98,10 @@ export inline EvalValue make_int(std::int64_t v) noexcept {
     return EvalValue(v << 1); // fixnum encoding
 }
 export inline bool is_int(const EvalValue& v) noexcept {
-    // Fixnum: bit0=0, but STRING_BIAS and FLOAT_BIAS values also have bit0=0.
-    // Exclude both ranges to avoid type confusion.
-    return is_fixnum(v.val) && v.val > FLOAT_BIAS_VAL;
+    return classify_eval_value_tag(v.val) == EvalValueTag::Fixnum;
 }
 export inline std::int64_t as_int(const EvalValue& v) noexcept {
+    contract_assert(is_int(v));
     return v.val >> 1;
 }
 
@@ -110,9 +109,11 @@ export inline EvalValue make_bool(bool v) noexcept {
     return EvalValue(v ? 7 : 3); // #t=7, #f=3
 }
 export inline bool is_bool(const EvalValue& v) noexcept {
-    return v.val == 3 || v.val == 7;
+    return classify_eval_value_tag(v.val) == EvalValueTag::Special &&
+           (v.val == 3 || v.val == 7);
 }
 export inline bool as_bool(const EvalValue& v) noexcept {
+    contract_assert(is_bool(v));
     return v.val == 7;
 }
 
@@ -120,21 +121,18 @@ export inline EvalValue make_void() noexcept {
     return EvalValue(11); // void sentinel = 11
 }
 export inline bool is_void(const EvalValue& v) noexcept {
-    return v.val == 11; // void sentinel = 11
+    return classify_eval_value_tag(v.val) == EvalValueTag::Special &&
+           v.val == 11;
 }
 
 export inline EvalValue make_float(double d) {
     return EvalValue(aura_alloc_float(d)); // FLOAT_BIAS encoding
 }
 export inline bool is_float(const EvalValue& v) noexcept {
-    // Issue #181 Cycle 2: upper bound of float range is
-    // STRING_BIAS_VAL_2 (the new string upper bound), not
-    // STRING_BIAS_VAL. With the v2 string encoding,
-    // string values can be at STRING_BIAS_VAL_2, so the
-    // float range ends just below that.
-    return v.val <= FLOAT_BIAS_VAL && v.val > STRING_BIAS_VAL_2;
+    return classify_eval_value_tag(v.val) == EvalValueTag::Float;
 }
 export inline double as_float(const EvalValue& v) {
+    contract_assert(is_float(v));
     return aura_float_ref(v.val);
 }
 
@@ -149,13 +147,10 @@ export inline EvalValue make_string(std::uint64_t idx) noexcept {
     return EvalValue(make_string_raw_v2(idx));
 }
 export inline bool is_string(const EvalValue& v) noexcept {
-    // Tag check is necessary (the bug fix) but not sufficient
-    // (fixnums in the right range with the right bit pattern
-    // would also pass the pure tag check). The range check
-    // is the safety belt that prevents false positives.
-    return is_string_raw_v2(v.val) && v.val <= STRING_BIAS_VAL_2;
+    return classify_eval_value_tag(v.val) == EvalValueTag::StringV2;
 }
 export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
+    contract_assert(is_string(v));
     return string_idx_raw_v2(v.val);
 }
 
@@ -173,16 +168,10 @@ export inline EvalValue make_string_v2(std::uint64_t idx) noexcept {
     return EvalValue(make_string_raw_v2(idx));
 }
 export inline bool is_string_v2(const EvalValue& v) noexcept {
-    // Tag check is necessary (the bug fix) but not sufficient
-    // (fixnums in the right range with the right bit pattern
-    // would also pass the pure tag check). For the Cycle 1
-    // prototype, keep the range check as a safety belt.
-    // Cycle 2 may remove it once the encoding is fully
-    // migrated and the bit allocation is documented as
-    // reserved for strings.
-    return is_string_raw_v2(v.val) && v.val <= STRING_BIAS_VAL_2;
+    return classify_eval_value_tag(v.val) == EvalValueTag::StringV2;
 }
 export inline std::uint64_t as_string_idx_v2(const EvalValue& v) noexcept {
+    contract_assert(is_string_v2(v));
     return string_idx_raw_v2(v.val);
 }
 
@@ -193,6 +182,7 @@ export inline bool is_pair(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefPair;
 }
 export inline std::uint64_t as_pair_idx(const EvalValue& v) noexcept {
+    contract_assert(is_pair(v));
     return ref_index(v.val);
 }
 
@@ -203,6 +193,7 @@ export inline bool is_closure(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefClosure;
 }
 export inline std::uint64_t as_closure_id(const EvalValue& v) noexcept {
+    contract_assert(is_closure(v));
     return ref_index(v.val);
 }
 
@@ -213,6 +204,7 @@ export inline bool is_cell(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefCell;
 }
 export inline std::uint64_t as_cell_id(const EvalValue& v) noexcept {
+    contract_assert(is_cell(v));
     return ref_index(v.val);
 }
 
@@ -223,6 +215,7 @@ export inline bool is_vector(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefVector;
 }
 export inline std::uint64_t as_vector_idx(const EvalValue& v) noexcept {
+    contract_assert(is_vector(v));
     return ref_index(v.val);
 }
 
@@ -233,6 +226,7 @@ export inline bool is_hash(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefHash;
 }
 export inline std::uint64_t as_hash_idx(const EvalValue& v) noexcept {
+    contract_assert(is_hash(v));
     return ref_index(v.val);
 }
 
@@ -243,6 +237,7 @@ export inline bool is_primitive(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefPrimitive;
 }
 export inline std::size_t as_primitive_slot(const EvalValue& v) noexcept {
+    contract_assert(is_primitive(v));
     return static_cast<std::size_t>(ref_index(v.val));
 }
 
@@ -253,6 +248,7 @@ export inline bool is_module(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefModule;
 }
 export inline std::uint64_t as_module_idx(const EvalValue& v) noexcept {
+    contract_assert(is_module(v));
     return ref_index(v.val);
 }
 
@@ -263,6 +259,7 @@ export inline bool is_error(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefError;
 }
 export inline std::uint64_t as_error_idx(const EvalValue& v) noexcept {
+    contract_assert(is_error(v));
     return ref_index(v.val);
 }
 
@@ -273,6 +270,7 @@ export inline bool is_opaque(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefOpaque;
 }
 export inline std::uint64_t as_opaque_idx(const EvalValue& v) noexcept {
+    contract_assert(is_opaque(v));
     return ref_index(v.val);
 }
 
@@ -283,6 +281,7 @@ export inline bool is_linear(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefLinear;
 }
 export inline std::uint64_t as_linear_id(const EvalValue& v) noexcept {
+    contract_assert(is_linear(v));
     return ref_index(v.val);
 }
 
@@ -293,6 +292,7 @@ export inline bool is_keyword(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefKeyword;
 }
 export inline std::uint64_t as_keyword_idx(const EvalValue& v) noexcept {
+    contract_assert(is_keyword(v));
     return ref_index(v.val);
 }
 
