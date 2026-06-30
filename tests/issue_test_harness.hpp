@@ -9,12 +9,25 @@
 static int g_passed = 0;
 static int g_failed = 0;
 
+// Issue #226 follow-up: store _check_msg as an owning
+// std::string (by value, not as the bare msg expression
+// re-evaluated in each branch). The previous form passed
+// the message expression directly to std::println, which
+// stores the pointer in format_args; the underlying
+// temporary std::string is not bound to anything that
+// extends its lifetime, so by the time std::println
+// dereferences the stored pointer (via strlen inside
+// std::formatter<char const*, char>::format), the buffer
+// is freed and ASan flags a heap-use-after-free. Copying
+// into a local std::string makes the message own its data
+// for the duration of the macro body.
 #define CHECK(cond, msg) do { \
+    const std::string _check_msg = (msg); \
     if (!(cond)) { \
-        std::println("  FAIL: {} (line {})", msg, __LINE__); \
+        std::println("  FAIL: {} (line {})", _check_msg, __LINE__); \
         ++g_failed; \
     } else { \
-        std::println("  PASS: {}", msg); \
+        std::println("  PASS: {}", _check_msg); \
         ++g_passed; \
     } \
 } while(0)
