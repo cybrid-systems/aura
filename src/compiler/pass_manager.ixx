@@ -492,6 +492,8 @@ public:
         : type_reg_(reg) {}
 
     void run(aura::ir::IRModule& module) {
+        castop_emitted_ = 0;
+        narrow_evidence_skipped_ = 0;
         // Issue #73 Phase 3: don't silently bail out when no registry
         // is provided. Fall through so the per-instruction checks below
         // can no-op naturally (their \`type_id == 0\` guards handle the
@@ -554,6 +556,7 @@ public:
                             block.instructions.insert(block.instructions.begin() +
                                                           static_cast<std::ptrdiff_t>(i),
                                                       cast_instr);
+                            ++castop_emitted_;
                             ++i;
                             // After insert, original instruction is at index i — update by index.
                             block.instructions[i].operands[2] = cast_slot;
@@ -584,6 +587,7 @@ public:
                             block.instructions.insert(block.instructions.begin() +
                                                           static_cast<std::ptrdiff_t>(i),
                                                       cast_instr);
+                            ++castop_emitted_;
                             ++i;
                             // After insert, original Return is at index i — update by index.
                             block.instructions[i].operands[0] = cast_slot;
@@ -610,6 +614,9 @@ public:
                         // result type (e.g. an if-conditional used as a
                         // statement) shouldn't be type-checked.
                         bool narrowed_type_known = (instr.narrow_evidence != 0);
+                        if (narrowed_type_known) {
+                            ++narrow_evidence_skipped_;
+                        }
                         if (!narrowed_type_known && if_result_type != 0 &&
                             if_result_type != dyn_id.index) {
                             auto then_blk = ops[1];
@@ -646,6 +653,7 @@ public:
                                                 blk.instructions.begin() +
                                                     static_cast<std::ptrdiff_t>(j),
                                                 cast_instr);
+                                            ++castop_emitted_;
                                             // After insert, `loc` shifted to j+1 — update by index.
                                             blk.instructions[j + 1].operands[1] = cast_slot;
                                         }
@@ -735,12 +743,20 @@ public:
     // Service.ixx reads this after each ts.run() and
     // accumulates into metrics_.linear_elide_count.
     std::size_t linear_elide_count() const { return linear_elide_count_; }
+    // Issue #629: CastOps inserted by this pass (per-run).
+    std::size_t castop_emitted() const { return castop_emitted_; }
+    // Issue #629: Branch instructions whose per-branch cast
+    // insertion was skipped due to narrow_evidence (per-run).
+    std::size_t narrow_evidence_skipped() const { return narrow_evidence_skipped_; }
 
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
     std::size_t removed_count_ = 0;
     // Issue #253: linear-move elision accumulator.
     std::size_t linear_elide_count_ = 0;
+    // Issue #629: per-run coercion observability.
+    std::size_t castop_emitted_ = 0;
+    std::size_t narrow_evidence_skipped_ = 0;
 };
 
 // ── mark_coercions — mark nodes needing coercion (Issue #163) ───
@@ -877,6 +893,8 @@ public:
 
     void run(aura::ir::IRModule& module) {
         eliminated_ = 0;
+        type_prop_hits_ = 0;
+        narrow_evidence_hits_ = 0;
         kept_for_debug_ = 0;
         elapsed_us_ = 0;
         if (keep_for_debug_) {
@@ -936,6 +954,27 @@ public:
                             return &block.instructions[it->second];
                         };
 
+                        // Rule 6 (#629): narrow_evidence-proved identity.
+                        // When occurrence-narrowing has statically
+                        // proved the cast target, elide the CastOp
+                        // when source type_id matches.
+                        if (instr.narrow_evidence != 0 && instr.type_id != 0) {
+                            if (auto* src = find_source(ops[1])) {
+                                if (src->type_id != 0 && src->type_id == instr.type_id) {
+                                    block.instructions[i] = aura::ir::IRInstruction{
+                                        .opcode = aura::ir::IROpcode::Local,
+                                        .operands = {ops[0], ops[1], 0, 0},
+                                        .type_id = instr.type_id,
+                                        .narrow_evidence = instr.narrow_evidence,
+                                    };
+                                    ++eliminated_;
+                                    ++narrow_evidence_hits_;
+                                    changed = true;
+                                    continue;
+                                }
+                            }
+                        }
+
                         // Rule 1: identity cast — source type == target type
                         // Check via type_id propagation (from FlatAST)
                         if (instr.type_id != 0) {
@@ -948,6 +987,7 @@ public:
                                         .type_id = instr.type_id,
                                     };
                                     ++eliminated_;
+                                    ++type_prop_hits_;
                                     changed = true;
                                     continue;
                                 }
@@ -1028,6 +1068,10 @@ public:
     bool has_error() const { return false; }
     std::string_view name() const { return "dead-coercion"; }
     std::size_t eliminated_count() const { return eliminated_; }
+    // Issue #629: Rule 1 elisions using type_id propagation.
+    std::size_t type_prop_hits() const { return type_prop_hits_; }
+    // Issue #629: Rule 6 elisions using narrow_evidence.
+    std::size_t narrow_evidence_hits() const { return narrow_evidence_hits_; }
     // Issue #508: number of CastOps that were NOT elided because
     // keep_for_debug was set. Useful for "what would the pass
     // have done?" observability in blame mode.
@@ -1040,6 +1084,8 @@ public:
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
     std::size_t eliminated_ = 0;
+    std::size_t type_prop_hits_ = 0;
+    std::size_t narrow_evidence_hits_ = 0;
     std::size_t kept_for_debug_ = 0;
     std::uint64_t elapsed_us_ = 0;
     bool keep_for_debug_ = false;

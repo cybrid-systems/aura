@@ -631,6 +631,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             runs + total + unknown + int_width));
     });
 
+    // Issue #629: query:coercion-zerooverhead-stats. Returns the
+    // sum of the 4 zero-overhead coercion lifetime counters:
+    //   - coercion_castop_emitted_total (TypeSpec CastOp inserts)
+    //   - coercion_type_prop_hits_total (DCE Rule 1 elisions)
+    //   - coercion_narrow_evidence_hits_total (DCE Rule 6 +
+    //     TypeSpec narrow skips + GuardShape fast-path)
+    //   - coercion_zerooverhead_win_total (per-run wins)
+    add("query:coercion-zerooverhead-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t castop = m->coercion_castop_emitted_total.load(
+            std::memory_order_relaxed);
+        const std::uint64_t type_prop = m->coercion_type_prop_hits_total.load(
+            std::memory_order_relaxed);
+        const std::uint64_t narrow = m->coercion_narrow_evidence_hits_total.load(
+            std::memory_order_relaxed);
+        const std::uint64_t win = m->coercion_zerooverhead_win_total.load(
+            std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(castop + type_prop + narrow + win));
+    });
+
     // Issue #306: query:linear-ownership-stats. Returns the
     // sum of 4 hardware resource linear-ownership observability
     // counters (EDA track — wire/reg/mem/port borrow + double-

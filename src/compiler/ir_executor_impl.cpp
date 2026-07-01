@@ -658,6 +658,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         // shape check, accepting all narrowed
                         // values — equivalent to saying "the JIT
                         // can fast-path this".)
+                        if (metrics_) {
+                            metrics_->coercion_narrow_evidence_hits_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
                         locals[ops[0]] = types::make_bool(true);
                         break;
                     }

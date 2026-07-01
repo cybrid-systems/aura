@@ -1303,8 +1303,16 @@ static std::uint32_t lower_flat_expr(
             // CastOp type_id = coercion target type (stored on the Coercion node)
             // blame info is carried via blame_loc operand and source_id, not type_id
             auto target_type_id = flat.type_id(v.id);
-            state.emit_with_type(IROpcode::CastOp, target_type_id, slot, inner, type_tag,
-                                 blame_loc);
+            // Issue #629: attach narrow_evidence to coercion CastOps
+            // when lowering inside a narrowed if-branch context.
+            if (state.current_narrowing_evidence != 0) {
+                state.emit_with_metadata(IROpcode::CastOp, target_type_id, 0, 0,
+                                         state.current_narrowing_evidence, slot, inner, type_tag,
+                                         blame_loc);
+            } else {
+                state.emit_with_type(IROpcode::CastOp, target_type_id, slot, inner, type_tag,
+                                     blame_loc);
+            }
             return slot;
         }
         case NodeTag::Linear:
