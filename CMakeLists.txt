@@ -1779,6 +1779,9 @@ aura_issue_test_link_llvm_jit(test_incremental_type_soundness)
 # query:solve-delta-safety-stats matrix.
 aura_add_issue_test(test_constraintsystem_solve_delta_clean_conflict_detection)
 aura_issue_test_link_llvm_jit(test_constraintsystem_solve_delta_clean_conflict_detection)
+# Issue #573: Task2 solve_delta cross-delta + typed-incremental-stats.
+aura_add_issue_test(test_constraint_system_solve_delta_cross_delta_task2)
+aura_issue_test_link_llvm_jit(test_constraint_system_solve_delta_cross_delta_task2)
 aura_add_issue_test(test_issue_341)
 aura_issue_test_link_llvm_jit(test_issue_341)
 aura_add_issue_test(test_issue_342)
