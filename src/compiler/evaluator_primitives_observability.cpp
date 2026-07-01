@@ -460,6 +460,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #550 — Typed mutation + dirty impact
             "query:typed-mutation-stats",
             "query:dirty-impact",
+            // Issue #608 — Incremental type reliability
+            "query:type-incremental-stats",
             // Issue #551 — Reflect post-mutate
             "query:reflect-postmutate-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop

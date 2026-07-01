@@ -1403,6 +1403,10 @@ aura_issue_test_link_llvm_jit(test_incremental_typed_selfmod_dirty_narrowing)
 # Pass short-circuit for typed self-mod soundness.
 aura_add_issue_test(test_incremental_type_dirty)
 aura_issue_test_link_llvm_jit(test_incremental_type_dirty)
+# Issue #608: dependency-tracked solve_delta + occurrence-dirty
+# + per-symbol post-mutate incremental type reliability matrix.
+aura_add_issue_test(test_typechecker_incremental_dependency_occurrence_dirty_post_mutate)
+aura_issue_test_link_llvm_jit(test_typechecker_incremental_dependency_occurrence_dirty_post_mutate)
 # Issue #518 P0 Phase 1: Post-Mutation Occurrence Typing
 # Re-Narrowing (reanalyze_occurrence_contexts +
 # propagate_narrowing_to_uses in infer_flat_partial).
