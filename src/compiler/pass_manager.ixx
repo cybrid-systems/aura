@@ -27,6 +27,7 @@ import aura.compiler.arity;
 import aura.compiler.constant_folding;
 import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
+import aura.compiler.ir_soa;
 import aura.diag;
 
 namespace aura::compiler {
@@ -913,155 +914,219 @@ public:
         }
         auto t0 = std::chrono::steady_clock::now();
         for (auto& func : module.functions) {
-            for (auto& block : func.blocks) {
-                bool changed;
-                do {
-                    changed = false;
-                    // Build slot → instruction index map once per
-                    // do-while iteration. ops[1] is a SLOT NUMBER
-                    // (assigned by alloc_local), not an index into
-                    // block.instructions. The legacy code indexed
-                    // block.instructions[ops[1]] directly which
-                    // works only when slots happen to be
-                    // 0,1,2,... (true for the test_ir synthetic
-                    // IR, false in real IR from lowering). The
-                    // map is O(N) to build and O(1) to query.
-                    std::unordered_map<std::uint32_t, std::size_t> slot_to_idx;
-                    slot_to_idx.reserve(block.instructions.size() * 2);
-                    for (std::size_t i = 0; i < block.instructions.size(); ++i) {
-                        auto& ii = block.instructions[i];
-                        if (auto* info = aura::ir::lookup_opcode(ii.opcode)) {
-                            if (info->has_result_slot) {
-                                slot_to_idx[ii.operands[0]] = i;
-                            }
-                        }
-                    }
-                    for (std::size_t i = 0; i < block.instructions.size(); ++i) {
-                        auto& instr = block.instructions[i];
-                        if (instr.opcode != aura::ir::IROpcode::CastOp)
-                            continue;
-                        auto& ops = instr.operands;
-                        auto target_tag = ops[2];
-
-                        // Helper: find the source instruction
-                        // for slot `s` (the value being cast).
-                        // Returns nullptr if the slot isn't
-                        // defined in this block.
-                        auto find_source = [&](std::uint32_t s)
-                            -> const aura::ir::IRInstruction* {
-                            auto it = slot_to_idx.find(s);
-                            if (it == slot_to_idx.end()) return nullptr;
-                            return &block.instructions[it->second];
-                        };
-
-                        // Rule 6 (#629): narrow_evidence-proved identity.
-                        // When occurrence-narrowing has statically
-                        // proved the cast target, elide the CastOp
-                        // when source type_id matches.
-                        if (instr.narrow_evidence != 0 && instr.type_id != 0) {
-                            if (auto* src = find_source(ops[1])) {
-                                if (src->type_id != 0 && src->type_id == instr.type_id) {
-                                    block.instructions[i] = aura::ir::IRInstruction{
-                                        .opcode = aura::ir::IROpcode::Local,
-                                        .operands = {ops[0], ops[1], 0, 0},
-                                        .type_id = instr.type_id,
-                                        .narrow_evidence = instr.narrow_evidence,
-                                    };
-                                    ++eliminated_;
-                                    ++narrow_evidence_hits_;
-                                    changed = true;
-                                    continue;
-                                }
-                            }
-                        }
-
-                        // Rule 1: identity cast — source type == target type
-                        // Check via type_id propagation (from FlatAST)
-                        if (instr.type_id != 0) {
-                            if (auto* src = find_source(ops[1])) {
-                                if (src->type_id != 0 && src->type_id == instr.type_id) {
-                                    // target == source type: replace with Local
-                                    block.instructions[i] = aura::ir::IRInstruction{
-                                        .opcode = aura::ir::IROpcode::Local,
-                                        .operands = {ops[0], ops[1], 0, 0},
-                                        .type_id = instr.type_id,
-                                    };
-                                    ++eliminated_;
-                                    ++type_prop_hits_;
-                                    changed = true;
-                                    continue;
-                                }
-                            }
-                        }
-
-                        // Rule 2: nested cast — (cast (cast x T1) T2)
-                        if (auto* src = find_source(ops[1])) {
-                            if (src->opcode == aura::ir::IROpcode::CastOp) {
-                                // Skip the intermediate cast: ops[1] = src->ops[1]
-                                ops[1] = src->operands[1];
-                                ++eliminated_;
-                                changed = true;
-                                continue;
-                            }
-                        }
-
-                        // Issue #508 Rule 3: safe Dynamic passthrough.
-                        // When the target type_tag is Dynamic (≥3,
-                        // the default case in the IR interpreter
-                        // is `locals[ops[0]] = val`), the CastOp
-                        // does no work at runtime — it's a pure
-                        // type assertion that any value is
-                        // "Dynamic", which is always true.
-                        //
-                        // We require source info to be safe —
-                        // we can't elide a CastOp on a slot we
-                        // don't know the type of, because the
-                        // lowering pass may have inserted it
-                        // for a reason (e.g. a function-call
-                        // arg with no type info yet).
-                        if (target_tag >= 3) {
-                            if (auto* src = find_source(ops[1])) {
-                                auto src_tid = src->type_id;
-                                bool src_is_ground_known = false;
-                                if (src_tid != 0) {
-                                    if (type_reg_) {
-                                        auto src_ty = aura::core::TypeId{src_tid, 1};
-                                        src_is_ground_known =
-                                            (src_ty != type_reg_->dynamic_type());
-                                    } else {
-                                        // No registry: any non-zero
-                                        // type_id is ground (the
-                                        // TypeChecker only sets
-                                        // non-zero for concrete
-                                        // types).
-                                        src_is_ground_known = true;
-                                    }
-                                }
-                                if (src_is_ground_known) {
-                                    // Copy source's type_id onto
-                                    // the new Local so chained
-                                    // Dynamic passthroughs see
-                                    // a non-zero type_id on the
-                                    // source and can be elided
-                                    // too (Rule 3 → Rule 1
-                                    // transitively).
-                                    block.instructions[i] = aura::ir::IRInstruction{
-                                        .opcode = aura::ir::IROpcode::Local,
-                                        .operands = {ops[0], ops[1], 0, 0},
-                                        .type_id = src_tid,
-                                    };
-                                    ++eliminated_;
-                                    changed = true;
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                } while (changed);
-            }
+            run_function(func);
         }
         auto t1 = std::chrono::steady_clock::now();
         elapsed_us_ = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+    }
+
+    // Issue #538: per-function entry for incremental post-mutate
+    // re-lower. Semantically equivalent to run() restricted to
+    // one function.
+    void run_function(aura::ir::IRFunction& func) {
+        if (keep_for_debug_)
+            return;
+        for (auto& block : func.blocks) {
+            run_on_block(block);
+        }
+    }
+
+    // Issue #538: per-block entry for incremental passes.
+    bool run_on_block(aura::ir::BasicBlock& block) {
+        if (keep_for_debug_)
+            return false;
+        bool any_change = false;
+        bool changed;
+        do {
+            changed = false;
+            // Build slot → instruction index map once per
+            // do-while iteration. ops[1] is a SLOT NUMBER
+            // (assigned by alloc_local), not an index into
+            // block.instructions. The legacy code indexed
+            // block.instructions[ops[1]] directly which
+            // works only when slots happen to be
+            // 0,1,2,... (true for the test_ir synthetic
+            // IR, false in real IR from lowering). The
+            // map is O(N) to build and O(1) to query.
+            std::unordered_map<std::uint32_t, std::size_t> slot_to_idx;
+            slot_to_idx.reserve(block.instructions.size() * 2);
+            for (std::size_t i = 0; i < block.instructions.size(); ++i) {
+                auto& ii = block.instructions[i];
+                if (auto* info = aura::ir::lookup_opcode(ii.opcode)) {
+                    if (info->has_result_slot) {
+                        slot_to_idx[ii.operands[0]] = i;
+                    }
+                }
+            }
+            for (std::size_t i = 0; i < block.instructions.size(); ++i) {
+                auto& instr = block.instructions[i];
+                if (instr.opcode != aura::ir::IROpcode::CastOp)
+                    continue;
+                auto& ops = instr.operands;
+                auto target_tag = ops[2];
+
+                // Helper: find the source instruction
+                // for slot `s` (the value being cast).
+                // Returns nullptr if the slot isn't
+                // defined in this block.
+                auto find_source = [&](std::uint32_t s) -> const aura::ir::IRInstruction* {
+                    auto it = slot_to_idx.find(s);
+                    if (it == slot_to_idx.end())
+                        return nullptr;
+                    return &block.instructions[it->second];
+                };
+
+                // Rule 6 (#629): narrow_evidence-proved identity.
+                // When occurrence-narrowing has statically
+                // proved the cast target, elide the CastOp
+                // when source type_id matches.
+                if (instr.narrow_evidence != 0 && instr.type_id != 0) {
+                    if (auto* src = find_source(ops[1])) {
+                        if (src->type_id != 0 && src->type_id == instr.type_id) {
+                            block.instructions[i] = aura::ir::IRInstruction{
+                                .opcode = aura::ir::IROpcode::Local,
+                                .operands = {ops[0], ops[1], 0, 0},
+                                .type_id = instr.type_id,
+                                .narrow_evidence = instr.narrow_evidence,
+                            };
+                            ++eliminated_;
+                            ++narrow_evidence_hits_;
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
+
+                // Rule 1: identity cast — source type == target type
+                // Check via type_id propagation (from FlatAST)
+                if (instr.type_id != 0) {
+                    if (auto* src = find_source(ops[1])) {
+                        if (src->type_id != 0 && src->type_id == instr.type_id) {
+                            // target == source type: replace with Local
+                            block.instructions[i] = aura::ir::IRInstruction{
+                                .opcode = aura::ir::IROpcode::Local,
+                                .operands = {ops[0], ops[1], 0, 0},
+                                .type_id = instr.type_id,
+                            };
+                            ++eliminated_;
+                            ++type_prop_hits_;
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
+
+                // Rule 2: nested cast — (cast (cast x T1) T2)
+                if (auto* src = find_source(ops[1])) {
+                    if (src->opcode == aura::ir::IROpcode::CastOp) {
+                        // Skip the intermediate cast: ops[1] = src->ops[1]
+                        ops[1] = src->operands[1];
+                        ++eliminated_;
+                        changed = true;
+                        continue;
+                    }
+                }
+
+                // Issue #508 Rule 3: safe Dynamic passthrough.
+                // When the target type_tag is Dynamic (≥3,
+                // the default case in the IR interpreter
+                // is `locals[ops[0]] = val`), the CastOp
+                // does no work at runtime — it's a pure
+                // type assertion that any value is
+                // "Dynamic", which is always true.
+                //
+                // We require source info to be safe —
+                // we can't elide a CastOp on a slot we
+                // don't know the type of, because the
+                // lowering pass may have inserted it
+                // for a reason (e.g. a function-call
+                // arg with no type info yet).
+                if (target_tag >= 3) {
+                    if (auto* src = find_source(ops[1])) {
+                        auto src_tid = src->type_id;
+                        bool src_is_ground_known = false;
+                        if (src_tid != 0) {
+                            if (type_reg_) {
+                                auto src_ty = aura::core::TypeId{src_tid, 1};
+                                src_is_ground_known = (src_ty != type_reg_->dynamic_type());
+                            } else {
+                                // No registry: any non-zero
+                                // type_id is ground (the
+                                // TypeChecker only sets
+                                // non-zero for concrete
+                                // types).
+                                src_is_ground_known = true;
+                            }
+                        }
+                        if (src_is_ground_known) {
+                            // Copy source's type_id onto
+                            // the new Local so chained
+                            // Dynamic passthroughs see
+                            // a non-zero type_id on the
+                            // source and can be elided
+                            // too (Rule 3 → Rule 1
+                            // transitively).
+                            block.instructions[i] = aura::ir::IRInstruction{
+                                .opcode = aura::ir::IROpcode::Local,
+                                .operands = {ops[0], ops[1], 0, 0},
+                                .type_id = src_tid,
+                            };
+                            ++eliminated_;
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+            if (changed)
+                any_change = true;
+        } while (changed);
+        return any_change;
+    }
+
+    // Issue #538: SoA IR incremental DCE. Processes only dirty
+    // blocks when dirty_blocks_only is true (default). Marks
+    // blocks dirty when elisions occur so downstream JIT can
+    // invalidate specialized code.
+    void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
+        if (keep_for_debug_)
+            return;
+        auto t0 = std::chrono::steady_clock::now();
+        for (auto& func : mod.functions) {
+            for (auto& block : func.blocks_) {
+                if (dirty_blocks_only && !func.is_block_dirty(block.block_id))
+                    continue;
+                aura::ir::BasicBlock aos_block;
+                aos_block.id = block.block_id;
+                aos_block.instructions.reserve(block.end_idx - block.start_idx);
+                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                    aos_block.instructions.push_back(aura::ir::IRInstruction{
+                        .opcode = func.opcodes_[i],
+                        .operands = {func.operand0_[i], func.operand1_[i], func.operand2_[i],
+                                     func.operand3_[i]},
+                        .type_id = func.type_ids_[i],
+                        .narrow_evidence = func.narrow_evidence_[i],
+                    });
+                }
+                if (!run_on_block(aos_block))
+                    continue;
+                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                    const auto local_i = i - block.start_idx;
+                    const auto& instr = aos_block.instructions[local_i];
+                    func.opcodes_[i] = instr.opcode;
+                    func.operand0_[i] = instr.operands[0];
+                    func.operand1_[i] = instr.operands[1];
+                    func.operand2_[i] = instr.operands[2];
+                    func.operand3_[i] = instr.operands[3];
+                    func.type_ids_[i] = instr.type_id;
+                    func.narrow_evidence_[i] = instr.narrow_evidence;
+                }
+                func.mark_block_dirty(block.block_id);
+            }
+        }
+        auto t1 = std::chrono::steady_clock::now();
+        elapsed_us_ += static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
     }
 

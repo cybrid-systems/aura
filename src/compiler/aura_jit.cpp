@@ -743,6 +743,12 @@ struct LLVMBuilder {
             // matches, 0 if deopt). The IR's subsequent Branch uses
             // the result to choose specialized vs generic-trampoline.
             case OpGuardShape: {
+                // Issue #538: trust occurrence-narrowing evidence and
+                // skip the runtime shape check (mirrors ir_executor).
+                if (inst.narrow_evidence != 0) {
+                    store(inst.ops[0], c64(KWD_TRUE_VAL));
+                    return true;
+                }
                 auto* arg_val = load(inst.ops[1]);
                 // The runtime shape of a tagged value: extract a 32-bit
                 // shape id. We do this with a chain of icmp + select
@@ -1401,6 +1407,13 @@ struct LLVMBuilder {
             // CastOp: runtime type check
             case OpCastOp: {
                 // ops[0] = result_slot, ops[1] = value_slot, ops[2] = type_tag
+                // Issue #538: narrow_evidence-proved identity — forward
+                // without runtime cast (DCE may have missed this on
+                // incremental paths).
+                if (inst.narrow_evidence != 0) {
+                    store(inst.ops[0], load(inst.ops[1]));
+                    return true;
+                }
                 auto val = load(inst.ops[1]);
                 auto call = irb->CreateCall(llvm::FunctionCallee(fn_cast_op),
                                             llvm::ArrayRef<llvm::Value*>{val, c64(inst.ops[2])});
