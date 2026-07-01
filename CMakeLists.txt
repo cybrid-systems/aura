@@ -1496,6 +1496,16 @@ aura_issue_test_link_llvm_jit(test_issue_372)
 # marker column.
 aura_add_issue_test(test_issue_373)
 aura_issue_test_link_llvm_jit(test_issue_373)
+# Issue #374: AURA_RUNTIME_DIR CI lookup + install layout
+# support. 3 scenarios — env-var override works from a CWD
+# with no lib/ (AC1, the CI fix), walk-up from aura binary
+# finds runtime.c when env var unset (AC2, regression check
+# for the post-#237 v4 walk), and bad AURA_RUNTIME_DIR falls
+# through to walk-up / CWD-rel / install-path without
+# surfacing "AOT: cannot find runtime.c" (AC3, guards
+# against future short-circuits). Pairs with #237 v4 + #360.
+aura_add_issue_test(test_issue_374)
+aura_issue_test_link_llvm_jit(test_issue_374)
 # Issue #301: C++26 std::meta migration audit + foundation.
 # 4 scenarios: call-site audit, auto_serialize validation
 # on StableNodeRef-like POD, serialize perf baseline,

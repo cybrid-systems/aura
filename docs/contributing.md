@@ -287,3 +287,25 @@ cmake --preset tsan   && cmake --build --preset tsan
 - [ ] 若规则依赖 type_reg 信息，在 `tests/test_ir.cpp` 对应位置补一个 `(reg2)` 重载测试。
 - [ ] 更新 `docs/contributing.md` 本节，描述新规则的语义边界。
 - [ ] 跑 `./build.py check`（test_ir + test_issue_433 + test_issue_508 全绿）。
+
+## §X Runtime.c 查找策略（Issue #237 v4 / #360 / #374）
+
+AOT 路径需要一个能运行的 `lib/runtime.c` 源文件。`find_runtime_c()`（`src/compiler/aura_jit_bridge.cpp`）按以下顺序试候选路径，返回第一个能 `fopen` 成功的：
+
+1. **`$AURA_RUNTIME_DIR/runtime.c`** — 环境变量显式覆盖，最高优先级。
+2. **从 aura binary 所在目录向上 walk 8 层**，每层试 `lib/runtime.c`。覆盖：
+   - dev-machine layout：`build/aura` + 相对源码 `lib/runtime.c`
+   - CI build tree：`build/aura` + 多个 `..` 后的 `lib/runtime.c`
+   - 典型 install layout：`/usr/local/bin/aura` + `../lib/runtime.c`（走 walk-up 也行）
+3. **CWD 相对 fallback**：`lib/runtime.c`、`../lib/runtime.c`。保留是为了 pre-#237 启动脚本。
+4. **Install path fallback（Issue #360）**：`/usr/local/share/aura/runtime.c`、`/usr/share/aura/runtime.c`、`/opt/aura/share/runtime.c`。FHS-compliant，`make install` 后开箱即用，无需设 `AURA_RUNTIME_DIR`。
+
+**CI 用法**：在 `.github/workflows/ci.yml` 的 `build-test` job 里，如果 `runtime.c` 在某条路径找不到（容器 `/proc` 受限、build tree 路径不在 walk-up 8 层内），可显式设 `AURA_RUNTIME_DIR=$GITHUB_WORKSPACE` 强制指向仓库根（运行时通过相对路径在 `$AURA_RUNTIME_DIR/lib/runtime.c` 找到）。Pre-#237 时代是 `1 passed + 4 failed`，post-#237 v4 是 `11/11`，post-#360 加 install-path fallback 让本地 `make install` 也跑得通。
+
+**调试验证**：如果 `aura --emit-binary` 报 `AOT: cannot find runtime.c`，按以下顺序排查：
+
+- `echo $AURA_RUNTIME_DIR` — 是否设了，路径里有没有 `runtime.c`。
+- `ls -l $(which aura)` 所在目录 → 上 8 层，每层试 `ls lib/runtime.c`。
+- 走 install path 时 `ls /usr/local/share/aura/runtime.c` / `ls /usr/share/aura/runtime.c` / `ls /opt/aura/share/runtime.c`。
+- 找到路径后 `head -3 <path>` 确认是 C 源码不是空文件或 binary。
+- 仍找不到就在 aura stderr 提示的位置加 `export AURA_RUNTIME_DIR=...` 显式覆盖。
