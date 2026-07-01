@@ -204,7 +204,105 @@ void ConstraintSystem::add(Constraint c) {
 // up. The dirty flag is append-only (no tombstoning); the
 // constraint is simply excluded from subsequent solve()
 // scans once mark_clean() or clear() is called.
+void ConstraintSystem::note_touched_var(TypeId id) {
+    if (!reg_.is_var(id) || id.index >= parent_.size())
+        return;
+    auto idx = static_cast<std::size_t>(id.index);
+    if (parent_[idx] < 0)
+        parent_[idx] = static_cast<std::int64_t>(idx);
+    // Union-Find rep only — do not follow binding_, which
+    // would hide the var root after a concrete bind (#466).
+    auto p = static_cast<std::int64_t>(idx);
+    while (static_cast<std::size_t>(p) < parent_.size() &&
+           parent_[static_cast<std::size_t>(p)] >= 0 &&
+           static_cast<std::size_t>(parent_[static_cast<std::size_t>(p)]) !=
+               static_cast<std::size_t>(p)) {
+        p = parent_[static_cast<std::size_t>(p)];
+    }
+    touched_roots_.insert(static_cast<std::uint32_t>(p));
+}
+
+void ConstraintSystem::mark_touched_on_delta(TypeId var) {
+    note_touched_var(var);
+}
+
+bool ConstraintSystem::constraint_references_touched(const Constraint& c) const {
+    auto refs_touched = [&](TypeId id) {
+        if (!id.valid())
+            return false;
+        const auto norm = const_cast<ConstraintSystem*>(this)->find(id);
+        if (!reg_.is_var(norm))
+            return false;
+        const auto rep = const_cast<ConstraintSystem*>(this)->find_var(norm);
+        if (!reg_.is_var(rep))
+            return false;
+        return touched_roots_.count(rep.index) > 0;
+    };
+    return refs_touched(c.lhs) || refs_touched(c.rhs);
+}
+
+bool ConstraintSystem::reverify_clean_constraints_for_touched() {
+    if (touched_roots_.empty())
+        return true;
+
+    const bool saved_record = delta_record_mode_;
+    delta_record_mode_ = false;
+
+    std::unordered_set<std::size_t> to_check;
+    to_check.reserve(touched_roots_.size() * 2);
+    for (auto root : touched_roots_) {
+        auto it = var_to_constraints_.find(root);
+        if (it == var_to_constraints_.end())
+            continue;
+        for (auto idx : it->second) {
+            if (idx >= constraints_.size())
+                continue;
+            if (idx < constraint_dirty_.size() && constraint_dirty_[idx])
+                continue;
+            to_check.insert(idx);
+            if (to_check.size() >= kReverifyCleanScanLimit)
+                break;
+        }
+        if (to_check.size() >= kReverifyCleanScanLimit)
+            break;
+    }
+
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->delta_conflict_reverify_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+
+    for (auto idx : to_check) {
+        const auto& c = constraints_[idx];
+        bool ok = false;
+        if (c.kind == Constraint::EQUAL)
+            ok = unify(c.lhs, c.rhs);
+        else
+            ok = consistent_unify(c.lhs, c.rhs);
+        if (!ok) {
+            if (metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->delta_conflict_detected_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            delta_record_mode_ = saved_record;
+            return false;
+        }
+    }
+    delta_record_mode_ = saved_record;
+    return true;
+}
+
 void ConstraintSystem::add_delta(Constraint c) {
+    const auto lhs = c.lhs;
+    const auto rhs = c.rhs;
+    if (delta_record_mode_) {
+        if (lhs.valid() && reg_.is_var(lhs))
+            note_touched_var(lhs);
+        if (rhs.valid() && reg_.is_var(rhs))
+            note_touched_var(rhs);
+    }
     const auto new_idx = constraints_.size();
     constraints_.push_back(std::move(c));
     if (constraint_dirty_.size() <= new_idx)
@@ -215,12 +313,12 @@ void ConstraintSystem::add_delta(Constraint c) {
     }
     // Issue #409: also maintain the reverse map for
     // delta constraints. See add() above for rationale.
-    if (c.lhs.valid()) {
-        auto rep = find(c.lhs).index;
+    if (lhs.valid()) {
+        auto rep = find(lhs).index;
         var_to_constraints_[rep].push_back(new_idx);
     }
-    if (c.rhs.valid()) {
-        auto rep = find(c.rhs).index;
+    if (rhs.valid()) {
+        auto rep = find(rhs).index;
         var_to_constraints_[rep].push_back(new_idx);
     }
 }
@@ -412,6 +510,7 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
         if (!reg_.is_var(t2)) {
             // Bind variable to concrete type
             binding_[idx] = t2;
+            note_touched_var(t1);
         } else {
             auto idx2 = static_cast<std::size_t>(t2.index);
             if (idx2 >= parent_.size()) {
@@ -439,6 +538,8 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
             parent_[r2] = static_cast<std::int64_t>(r1);
             if (rank_[r1] == rank_[r2])
                 rank_[r1]++;
+            note_touched_var(TypeId{static_cast<std::uint32_t>(r1), 1});
+            note_touched_var(TypeId{static_cast<std::uint32_t>(r2), 1});
             // Merge bindings: if r2 had a binding, move to r1
             if (binding_[r2].valid()) {
                 if (!binding_[r1].valid()) {
@@ -503,6 +604,10 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
         m->consistent_unify_total.fetch_add(
             1, std::memory_order_relaxed);
     }
+    const auto orig_lhs = t1;
+    const auto orig_rhs = t2;
+    if (delta_record_mode_)
+        add_delta(Constraint{Constraint::CONSISTENT, orig_lhs, orig_rhs});
     t1 = find(t1);
     t2 = find(t2);
 
@@ -849,6 +954,15 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         }
     }
 
+    // Issue #466: lightweight re-verify of clean constraints
+    // whose vars intersect touched_roots_. Catches cross-delta
+    // conflicts that dirty-only processing can miss.
+    if (!reverify_clean_constraints_for_touched()) {
+        clear_touched_roots();
+        return SolveResult::CONFLICT;
+    }
+    clear_touched_roots();
+
     // Mark all currently-dirty constraints as clean (the
     // delta is committed). New add_delta calls after this
     // point will re-mark their indices dirty.
@@ -876,6 +990,8 @@ void ConstraintSystem::clear() {
     dirty_count_ = 0;
     // Issue #409: reset the reverse map.
     var_to_constraints_.clear();
+    // Issue #466: reset touched-root tracking.
+    touched_roots_.clear();
     fresh_counter_ = 0;
     first_free_var_ = 0;
 } // ═══════════════════════════════════════════════════════════
@@ -1758,7 +1874,7 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
     return std::nullopt;
 }
 
-TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
+TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, bool preserve_cs) {
     if (id == NULL_NODE || id >= flat.size())
         return reg_.dynamic_type();
 
@@ -1786,10 +1902,20 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
         }
     }
 
-    cs_.clear();
+    if (!preserve_cs)
+        cs_.clear();
+    cs_.set_delta_record_mode(incremental_delta_record_);
     auto result = synthesize_flat(flat, pool, id, flat.get(id));
+    cs_.set_delta_record_mode(false);
     std::vector<Constraint> unresolved;
-    auto solve_status = cs_.solve(&unresolved);
+    SolveResult solve_status = SolveResult::SOLVED;
+    if (incremental_delta_solve_ && preserve_cs)
+        solve_status = cs_.solve_delta(&unresolved);
+    else {
+        solve_status = cs_.solve(&unresolved);
+        if (incremental_delta_record_)
+            cs_.mark_clean();
+    }
     if (solve_status != SolveResult::SOLVED) {
         // Build a human-readable summary of the unresolved
         // constraints for the diagnostic. The summary is
@@ -4550,19 +4676,16 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
 
     std::size_t re_inferred = 0;
     std::uint32_t max_narrow_evidence = 0;
-    for (aura::ast::NodeId id : affected) {
+    for (std::size_t ai = 0; ai < affected.size(); ++ai) {
+        const auto id = affected[ai];
         if (id == aura::ast::NULL_NODE || id >= flat.size())
             continue;
-        // The per-node infer_flat does:
-        //   1. Clear the engine's CS.
-        //   2. synthesize_flat on the node (which has the
-        //      cache check at the top).
-        //   3. solve the CS.
-        //   4. Return the type.
-        // The CS is cleared each iteration — fine for now
-        // since we're scoping to the affected set, not
-        // trying to batch across nodes.
-        auto type = engine.infer_flat(flat, const_cast<aura::ast::StringPool&>(pool), id);
+        // Issue #466: preserve ConstraintSystem across affected
+        // nodes; first node full-solves + mark_clean, subsequent
+        // nodes add_delta + solve_delta with touched-root reverify.
+        engine.set_incremental_delta_mode(true, ai > 0);
+        auto type = engine.infer_flat(flat, const_cast<aura::ast::StringPool&>(pool), id,
+                                      /*preserve_cs=*/ai > 0);
         max_narrow_evidence =
             std::max(max_narrow_evidence, engine.last_narrowing_evidence());
         if (type != types.dynamic_type()) {

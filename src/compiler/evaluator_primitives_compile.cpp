@@ -969,8 +969,25 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             {"restart-total",
              make_int(static_cast<std::int64_t>(
                  snap.worklist_restart_total))},
+            {"reverify-total",
+             make_int(static_cast<std::int64_t>(
+                 snap.delta_conflict_reverify_total))},
+            {"conflict-detected",
+             make_int(static_cast<std::int64_t>(
+                 snap.delta_conflict_detected_total))},
         };
         return build_hash(kv);
+    });
+
+    // Issue #466: (query:constraint-stats) — alias summarizing
+    // solve_delta conflict re-verify observability.
+    add("query:constraint-stats", [&ev](const auto&) -> EvalValue {
+        if (!ev.compiler_service_)
+            return make_int(0);
+        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
+        const auto snap = svc->snapshot();
+        return make_int(static_cast<std::int64_t>(
+            snap.delta_conflict_reverify_total + snap.delta_conflict_detected_total));
     });
 
     // (compile:let-poly-stats)

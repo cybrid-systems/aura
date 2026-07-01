@@ -114,6 +114,19 @@ export class ConstraintSystem {
     // out by the dirty bit check at solve_delta time.
     std::unordered_map<std::uint32_t, std::vector<std::size_t>>
         var_to_constraints_;
+    // Issue #466: Union-Find roots whose bindings changed during
+    // the current delta solve. Used for lightweight re-verify of
+    // clean constraints that may be invalidated by cross-delta
+    // unifications.
+    std::unordered_set<std::uint32_t> touched_roots_;
+    static constexpr std::size_t kReverifyCleanScanLimit = 256;
+    void note_touched_var(aura::core::TypeId id);
+    bool constraint_references_touched(const Constraint& c) const;
+    bool reverify_clean_constraints_for_touched();
+    void clear_touched_roots() { touched_roots_.clear(); }
+    // Issue #466: when true, consistent_unify records constraints
+    // via add_delta for incremental solve_delta replay.
+    bool delta_record_mode_ = false;
 public:
     explicit ConstraintSystem(aura::core::TypeRegistry& reg);
     void add(Constraint c);
@@ -164,6 +177,18 @@ public:
     void* metrics_ = nullptr;
 
     void set_metrics(void* m) { metrics_ = m; }
+    // Issue #466: enable constraint recording in consistent_unify
+    // for incremental solve_delta paths (infer_flat_partial).
+    void set_delta_record_mode(bool on) noexcept { delta_record_mode_ = on; }
+    [[nodiscard]] bool delta_record_mode() const noexcept {
+        return delta_record_mode_;
+    }
+    // Issue #466: mark a type variable root as touched for the
+    // post-delta clean-constraint re-verify scan.
+    void mark_touched_on_delta(aura::core::TypeId var);
+    [[nodiscard]] std::size_t touched_roots_size() const noexcept {
+        return touched_roots_.size();
+    }
     // O(1) "is the constraint set dirty?". True iff
     // add_delta has been called since the last clear or solve.
     bool is_dirty() const { return dirty_count_ > 0; }
@@ -592,6 +617,10 @@ public:
     // branch. Used as a fast-path opt-out for workspaces
     // where bidirectional is too eager / slow.
     bool bidirectional_mode_ = true;
+    // Issue #466: incremental solve_delta path for
+    // infer_flat_partial multi-node re-inference.
+    bool incremental_delta_record_ = false;
+    bool incremental_delta_solve_ = false;
 
     // Issue #281: per-condition memoization for analyze_predicate_flat.
     // Keyed by cond NodeId + the epoch at which the predicate was
@@ -654,7 +683,11 @@ public:
 
     // FlatAST inference entries
     aura::core::TypeId infer_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                  aura::ast::NodeId node);
+                                  aura::ast::NodeId node, bool preserve_cs = false);
+    void set_incremental_delta_mode(bool record, bool use_delta_solve) noexcept {
+        incremental_delta_record_ = record;
+        incremental_delta_solve_ = use_delta_solve;
+    }
     void check_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId id,
                     aura::core::TypeId expected);
 
