@@ -1248,6 +1248,8 @@ void register_mutate_primitives(
             std::vector<aura::compiler::OwnershipNote> onotes;
             bool opass = aura::compiler::OwnershipEnv::validate_ownership(
                 flat, *ev.workspace_pool_, flat.root, affected, onotes);
+            aura::compiler::record_linear_ownership_mutation_metrics(
+                ev.compiler_metrics(), true, onotes, opass);
             if (!opass) {
                 std::string err = "ownership validation after mutate:rebind failed:";
                 for (auto& n : onotes)
@@ -1440,6 +1442,8 @@ void register_mutate_primitives(
                     std::vector<aura::compiler::OwnershipNote> onotes;
                     bool opass = aura::compiler::OwnershipEnv::validate_ownership(
                         flat, *ev.workspace_pool_, flat.root, affected, onotes);
+                    aura::compiler::record_linear_ownership_mutation_metrics(
+                        ev.compiler_metrics(), true, onotes, opass);
                     if (!opass) {
                         std::string err = "ownership validation after mutate:set-body failed:";
                         for (auto& n : onotes)

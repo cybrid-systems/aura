@@ -745,6 +745,31 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             wire_borrows + reg_writes + mem_access + double_drive));
     });
 
+    // Issue #610: query:linear-ownership-mutation-stats. Returns
+    // the sum of 4 post-mutation linear ownership observability
+    // counters:
+    //   - post_mutate_revalidations: linear_post_mutate_revalidations_total
+    //   - violations_caught: linear_violations_caught_total
+    //   - deopt_on_linear: linear_deopt_on_invalidate_total
+    //   - leak_prevented: linear_leak_prevented_total
+    add("query:linear-ownership-mutation-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const auto* m = static_cast<const CompilerMetrics*>(
+                Evaluator::get_query_evaluator()->compiler_metrics());
+            if (!m) return make_int(0);
+            const std::uint64_t revalidations =
+                m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed);
+            const std::uint64_t violations =
+                m->linear_violations_caught_total.load(std::memory_order_relaxed);
+            const std::uint64_t deopt =
+                m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed);
+            const std::uint64_t leaks =
+                m->linear_leak_prevented_total.load(std::memory_order_relaxed);
+            return make_int(static_cast<std::int64_t>(
+                revalidations + violations + deopt + leaks));
+        });
+
     // Issue #551: query:reflect-postmutate-stats. Returns
     // the sum of the 4 reflect post-mutate observability
     // counters:

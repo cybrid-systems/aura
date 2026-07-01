@@ -6535,6 +6535,11 @@ private:
         // bridge_epoch_hit_count_ bump in apply_closure.
         metrics_.closure_stale_refresh_count_.fetch_add(
             1, std::memory_order_relaxed);
+        // Issue #610: linear ownership JIT/closure refresh after
+        // invalidate — pairs with closure_stale_refresh for the
+        // post-mutate linear runtime contract path.
+        metrics_.linear_deopt_on_invalidate_total.fetch_add(
+            1, std::memory_order_relaxed);
 
         // Issue #59 Iter 3: acquire the Mutation Lock in exclusive mode.
         // A mutate:* that triggers this must drain any in-flight compile

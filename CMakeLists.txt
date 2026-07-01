@@ -1235,6 +1235,9 @@ aura_issue_test_link_llvm_jit(test_issue_345)
 # + regression for #556 + #555 + #549.
 aura_add_issue_test(test_hardware_resource_linear_ownership)
 aura_issue_test_link_llvm_jit(test_hardware_resource_linear_ownership)
+# Issue #610: linear ownership post-mutate validation + runtime
+aura_add_issue_test(test_linear_ownership_post_mutate_validation_runtime)
+aura_issue_test_link_llvm_jit(test_linear_ownership_post_mutate_validation_runtime)
 # Issue #305: Propagate rich TypeId/TypeScheme from TypeChecker
 # to IR for hardware optimization & synthesis (P0 EDA track).
 # 9 scenarios validating: 4 new type_propagation counters +

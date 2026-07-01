@@ -490,6 +490,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:edsl-concurrency-stats",
             // Issue #531 — Closure env safety
             "query:closure-env-safety-stats",
+            // Issue #610 — Linear ownership post-mutate validation
+            "query:linear-ownership-mutation-stats",
             // Pre-existing (Issue #288, #391, #447, #457, #459)
             "query:query-stats",
             "query:stale-ref-stats",
