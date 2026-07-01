@@ -1182,6 +1182,35 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             commit + cross_cow));
     });
 
+    // Issue #595: query:self-evolution-loop-stats. Returns the
+    // sum of 5 marker/dirty/epoch/Guard self-evolution loop
+    // counters (non-duplicative synthesis of #541/#525/#557
+    // themes; avoids #597 macro+reflect 8-counter bundle and
+    // #619 follow-up 4-counter bundle):
+    //   - hygiene_skips: macro_introduced_skipped_in_query_
+    //   - dirty_propagated: dirty_propagation_count_
+    //   - epoch_deltas: guard_dirty_epoch_count_
+    //   - validation_pass: schema_validation_pass_count_
+    //   - rollback_count: mutation_log_rollback_count_
+    add("query:self-evolution-loop-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const std::uint64_t hygiene =
+                ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t dirty =
+                ev->get_dirty_propagation_count();
+            const std::uint64_t epoch =
+                ev->get_guard_dirty_epoch_count();
+            const std::uint64_t validation =
+                ev->get_schema_validation_pass_count();
+            const std::uint64_t rollback =
+                ev->get_mutation_log_rollback_count();
+            return make_int(static_cast<std::int64_t>(
+                hygiene + dirty + epoch + validation + rollback));
+        });
+
     // Issue #602: query:prompt6-violation-count. Returns
     // the sum of 7 Prompt6 memory-safety violation counters
     // that must stay at 0 under production load:

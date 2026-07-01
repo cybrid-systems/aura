@@ -1510,6 +1510,12 @@ aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_full_matrix_task6)
 # Issue #619: Task6 macro+reflect+self-evo follow-up closed loop.
 aura_add_issue_test(test_macro_reflect_self_evo_closed_loop_task6_followup)
 aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_closed_loop_task6_followup)
+# Issue #595: EDSL self-evolution marker/dirty/epoch/Guard closed loop.
+# 7 ACs: self-evolution-loop-stats synthesis, hygiene filter, Guard dirty/
+# epoch propagation, validation_pass, marker+epoch regression, multi-round
+# monotonic + regression. Non-duplicative with #597/#619/#547/#525.
+aura_add_issue_test(test_edsl_self_evolution_marker_dirty_guard_task6)
+aura_issue_test_link_llvm_jit(test_edsl_self_evolution_marker_dirty_guard_task6)
 # Issue #514: Task6 Top 3 production-readiness closed loop (meta).
 # 8 ACs: ir-hygiene + pattern-marker + production-readiness stats,
 # macro→query hygiene → Guard mutate → dirty/type incremental,
