@@ -110,7 +110,15 @@ void Evaluator::register_all_primitives() {
     primitives_detail::register_workspace_query_primitives(
         prim_registrar(),
         workspace_mtx_, workspace_flat_, workspace_pool_, type_registry_, keyword_table_, pairs_,
-        string_heap_, temp_arena_, tag_arity_index_, [this]() { return canonical_pool(); },
+        string_heap_, temp_arena_, tag_arity_index_,
+        // Issue #371: pass the (tag, arity) index mutex
+        // so query:pattern's fast path read can take a
+        // shared_lock while build/invalidate take unique
+        // locks internally (the member functions lock
+        // themselves — passing the reference lets the
+        // reader acquire a paired shared_lock).
+        tag_arity_index_mtx_,
+        [this]() { return canonical_pool(); },
         [this]() { build_tag_arity_index(); }, mev, *this);
 
     primitives_detail::register_mutate_primitives(

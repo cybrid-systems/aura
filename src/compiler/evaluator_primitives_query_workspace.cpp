@@ -33,6 +33,11 @@ struct WorkspaceQueryState {
     std::pmr::vector<std::string>& string_heap;
     aura::ast::ASTArena*& temp_arena;
     std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index;
+    // Issue #371: pair with tag_arity_index_mtx_ on Evaluator.
+    // query:pattern's fast path acquires a shared_lock around
+    // the `find` + bucket iteration; build / sync / invalidate
+    // take unique_lock internally (paired).
+    std::shared_mutex& tag_arity_index_mtx;
     std::function<aura::ast::StringPool*()> canonical_pool;
     std::function<void()> build_tag_arity_index;
 };
@@ -43,11 +48,15 @@ void register_workspace_query_primitives(
     std::vector<std::string>& keyword_table, std::pmr::vector<Pair>& pairs,
     std::pmr::vector<std::string>& string_heap, aura::ast::ASTArena*& temp_arena,
     std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
+    // Issue #371: shared_mutex around tag_arity_index. See
+    // WorkspaceQueryState::tag_arity_index_mtx above.
+    std::shared_mutex& tag_arity_index_mtx,
     std::function<aura::ast::StringPool*()> canonical_pool, std::function<void()> build_tag_arity_index,
     MakeErrorVal mev, Evaluator& ev) {
     WorkspaceQueryState ws{workspace_mtx,     workspace_flat,   workspace_pool, type_registry,
                          keyword_table,       pairs,            string_heap,    temp_arena,
-                         tag_arity_index,     canonical_pool,   build_tag_arity_index};
+                         tag_arity_index,     tag_arity_index_mtx,
+                         canonical_pool,      build_tag_arity_index};
 
     // (query:find name) — Find all node IDs with matching symbol name
     add("query:find", [ws, mev](const auto& a) -> EvalValue {
@@ -1386,7 +1395,20 @@ void register_workspace_query_primitives(
         if (use_index_fast_path) {
             // Index lookup: find all nodes whose (tag, arity)
             // matches the pattern's root.
+            //
+            // Issue #371: build takes unique_lock internally,
+            // we then drop back to shared_lock for the actual
+            // `find` + bucket iteration. The window between
+            // build's lock release and our shared_lock acquire
+            // admits a semantic race (another fiber can
+            // invalidate + rebuild with a different gen), but
+            // the worst case is `find` returning end() — safe
+            // (no UB on hash table). We accept that gap for the
+            // scope of #371; closing it is a follow-up
+            // (combined build+read under a single unique_lock
+            // would defeat reader parallelism).
             ws.build_tag_arity_index();
+            std::shared_lock<std::shared_mutex> rlock(ws.tag_arity_index_mtx);
             const std::uint32_t pat_tag_val = static_cast<std::uint32_t>(pat_root_node.tag);
             const std::uint64_t pat_key = (static_cast<std::uint64_t>(pat_tag_val) << 32) |
                                           static_cast<std::uint64_t>(pat_child_count);

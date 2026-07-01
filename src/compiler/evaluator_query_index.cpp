@@ -28,6 +28,12 @@ constexpr std::uint64_t kTagArityKeyNone = ~std::uint64_t{0};
 
 void Evaluator::tag_arity_index_insert_node(const aura::ast::FlatAST& flat,
                                             aura::ast::NodeId id) const {
+    // Issue #371: nested helper under the writer held by
+    // build_tag_arity_index / rebuild_full / append_nodes /
+    // sync_after_mutation. Do NOT take a unique_lock here
+    // (would deadlock). Callers acquire the lock once at
+    // the entry point and then call these helpers under
+    // that umbrella.
     if (id >= flat.size())
         return;
     // Issue #484: skip orphan nodes. After mutate:replace-pattern,
@@ -137,8 +143,25 @@ void Evaluator::tag_arity_index_sync_after_mutation(const aura::ast::FlatAST& fl
 }
 
 void Evaluator::build_tag_arity_index() const {
+    // Issue #371: take unique_lock for the duration of the
+    // build/sync path. invalidate_tag_arity_index() (reached
+    // below when workspace_flat_ is null) takes the same
+    // lock internally — reentry into a non-recursive
+    // std::unique_lock<shared_mutex> would deadlock, so the
+    // helper variants (invalidate_tag_arity_index, etc.)
+    // assume the lock is already held when called from
+    // build_tag_arity_index. We keep the helpers named
+    // *insert_node / *remove_node etc. lock-free for that
+    // reason.
+    std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
     if (!workspace_flat_) {
-        invalidate_tag_arity_index();
+        // Direct clear — lock already held. Do NOT call
+        // invalidate_tag_arity_index() here (would deadlock).
+        tag_arity_index_.clear();
+        tag_arity_indexed_key_.clear();
+        tag_arity_index_workspace_ = nullptr;
+        tag_arity_index_synced_size_ = 0;
+        tag_arity_index_synced_gen_ = 0;
         return;
     }
     const auto& flat = *workspace_flat_;
