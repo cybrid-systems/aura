@@ -486,6 +486,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:macro-reflect-self-evo-stats",
             // Issue #595 — Marker/dirty/epoch/Guard self-evo loop
             "query:self-evolution-loop-stats",
+            // Issue #415 — DirtyReason verification categories +
+            // mark_dirty_upward propagation synthesis
+            "query:dirty-reason-propagation-stats",
             // Issue #514 — Task6 Top 3 production-readiness synthesis
             "query:ir-hygiene-stats",
             "query:pattern-marker-stats",
