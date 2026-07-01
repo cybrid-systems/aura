@@ -922,6 +922,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             snapshots + pass + fail + dirty));
     });
 
+    // Issue #619: query:macro-reflect-self-evo-followup-stats.
+    // Returns the sum of 4 Task6 follow-up closed-loop counters:
+    //   - hygiene_skips: macro_introduced_skipped_in_query_
+    //   - post_mutate_reflect_pass: schema_validation_pass_count_
+    //   - dirty_type_recheck_count: narrowing_dirty_recovery_total +
+    //     incremental_typecheck_auto_invocations_total
+    //   - transform_applied: mutation_impact_count_
+    add("query:macro-reflect-self-evo-followup-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t hygiene = ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t reflect = ev->get_schema_validation_pass_count();
+            const std::uint64_t dirty_recheck =
+                m ? m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t type_recheck =
+                m ? m->incremental_typecheck_auto_invocations_total.load(
+                        std::memory_order_relaxed)
+                  : 0;
+            const std::uint64_t transform = ev->get_mutation_impact_count();
+            return make_int(static_cast<std::int64_t>(
+                hygiene + reflect + dirty_recheck + type_recheck + transform));
+        });
+
     // Issue #597: query:macro-reflect-self-evo-stats. Returns
     // the sum of 8 observability counters spanning the full
     // Task6 production-review closed loop:

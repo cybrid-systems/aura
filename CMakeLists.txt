@@ -1489,6 +1489,9 @@ aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_index_sv)
 # #547/#548/#549/#551/#326/#327 (per-theme tests).
 aura_add_issue_test(test_macro_reflect_self_evo_full_matrix_task6)
 aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_full_matrix_task6)
+# Issue #619: Task6 macro+reflect+self-evo follow-up closed loop.
+aura_add_issue_test(test_macro_reflect_self_evo_closed_loop_task6_followup)
+aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_closed_loop_task6_followup)
 # Issue #602: Comprehensive fuzz + stress matrix for Prompt6
 # memory safety invariants (IRClosure/EnvFrame/bridge_epoch/
 # linear/GuardShape) under concurrent fiber + GC + multi-round
