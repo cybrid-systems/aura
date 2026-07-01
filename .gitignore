@@ -34,3 +34,4 @@ Thumbs.db
 build_o0/
 build_o0/
 __pycache__/
+build_tsan/

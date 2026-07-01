@@ -542,6 +542,13 @@ void register_workspace_query_primitives(
     std::vector<std::string>& keyword_table, std::pmr::vector<Pair>& pairs,
     std::pmr::vector<std::string>& string_heap, aura::ast::ASTArena*& temp_arena,
     std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
+    // Issue #371: shared_mutex protecting `tag_arity_index`.
+    // query:pattern fast path takes a shared_lock around the
+    // `find` + bucket-iterate. Build/sync/invalidate helpers
+    // take unique_lock internally; readers must drop their
+    // shared_lock before triggering a build (see comment at
+    // the query:pattern fast-path site for the trade-off).
+    std::shared_mutex& tag_arity_index_mtx,
     std::function<aura::ast::StringPool*()> canonical_pool, std::function<void()> build_tag_arity_index,
     std::function<EvalValue(const std::string&, const std::string&)> mev, Evaluator& ev);
 void register_defuse_query_primitives(
@@ -1692,6 +1699,23 @@ private:
     // The workspace pointer the index was built for.
     // When this changes, the index must be rebuilt.
     mutable const ast::FlatAST* tag_arity_index_workspace_ = nullptr;
+    // Issue #371: shared_mutex around the (tag, arity)
+    // index. Reader (query:pattern fast path read in
+    // evaluator_primitives_query_workspace.cpp,
+    // tag_arity_index_size/entry_count accessors) takes a
+    // shared_lock; writer (build_tag_arity_index, all the
+    // insert/remove/rebuild/append/prune/sync helpers, and
+    // invalidate_tag_arity_index) takes a unique_lock.
+    //
+    // Without this lock, a fiber mutator's
+    // invalidate_tag_arity_index() can .clear() the
+    // std::unordered_map while another fiber iterating the
+    // same map in query:pattern races on the hash table —
+    // UB that surfaces as ASan SEGV / heap-use-after-free
+    // on fuzz. Locking discipline mirrors closures_mtx_ /
+    // workspace_mtx_: writers exclusive, readers concurrent,
+    // never both inside the same task at once.
+    mutable std::shared_mutex tag_arity_index_mtx_;
     // Build (or rebuild) the index for the current
     // workspace. Called by query:pattern (and other
     // future matchers) before walking.
@@ -1703,7 +1727,13 @@ private:
     void tag_arity_index_prune_stale_entries(const ast::FlatAST& flat) const;
     void tag_arity_index_sync_after_mutation(const ast::FlatAST& flat) const;
     // Drop the index (called on workspace changes).
+    // Issue #371: take unique_lock on tag_arity_index_mtx_.
+    // The helpers (build_tag_arity_index, insert/remove/
+    // rebuild/append/prune/sync_after_mutation) likewise
+    // take unique_lock at entry — once a writer is in,
+    // nested helpers do not re-acquire (assume already held).
     void invalidate_tag_arity_index() const {
+        std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
         tag_arity_index_.clear();
         tag_arity_indexed_key_.clear();
         tag_arity_index_workspace_ = nullptr;
@@ -2455,6 +2485,12 @@ private:
 public:
     // Issue #211: test accessors for the (tag, arity) index.
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
+        // Issue #371: shared_lock for read parity with
+        // query:pattern. The unordered_map may be torn
+        // down by an invalidate_tag_arity_index() call
+        // on another fiber; without the lock .size()
+        // races on the bucket pointer.
+        std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_);
         return tag_arity_index_.size();
     }
     // Issue #453: panic checkpoint metric accessors. Public so
@@ -2909,6 +2945,12 @@ public:
         return tag_arity_index_synced_gen_;
     }
     [[nodiscard]] std::size_t tag_arity_index_entry_count() const noexcept {
+        // Issue #371: shared_lock for read parity with
+        // query:pattern. Iterating the map while invalidate
+        // .clear()s it on another fiber is UB (the bucket
+        // pointer is freed mid-iteration). rlock pairs with
+        // the unique_lock in invalidate_tag_arity_index.
+        std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_);
         std::size_t total = 0;
         for (const auto& [_, bucket] : tag_arity_index_)
             total += bucket.size();

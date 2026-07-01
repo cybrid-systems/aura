@@ -1465,6 +1465,16 @@ aura_issue_test_link_llvm_jit(test_issue_357)
 # changes (pass_manager, evaluator.ixx, evaluator_primitives_compile).
 aura_add_issue_test(test_issue_388)
 aura_issue_test_link_llvm_jit(test_issue_388)
+# Issue #371: tag/arity index atomic invalidation under
+# fiber concurrent mutate + query:pattern. 6 scenarios:
+# single-thread regression + index round-trip + 4-thread
+# serialized eval race + 4-thread direct-lock race (the
+# real concurrency probe, bypasses eval() serializer) +
+# 200-iter mixed-op stress + (query:pattern-index-stats)
+# observability. Pairs with TSan for race detection on
+# the std::shared_mutex discipline.
+aura_add_issue_test(test_issue_371)
+aura_issue_test_link_llvm_jit(test_issue_371)
 # Issue #301: C++26 std::meta migration audit + foundation.
 # 4 scenarios: call-site audit, auto_serialize validation
 # on StableNodeRef-like POD, serialize perf baseline,
