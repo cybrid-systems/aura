@@ -38,6 +38,15 @@
 //   AC5 — Stress: 200-iter loop on 4 threads mixing mutate +
 //         query:pattern + (set-code ...) under the eval()
 //         mutex. Catches regressions in locking discipline.
+//         Note: AC5 is effectively sequential (eval_mtx
+//         serializes every eval() call) and has super-linear
+//         scaling past ~400 iters because each (set-code ...)
+//         path re-parses + rebuilds the workspace. The
+//         default 200 × 4 finishes in ~5s; high-contention
+//         (8 thread × 1000 iter) completes in minutes but
+//         does NOT deadlock — it just gets very slow. Run
+//         with --sanitizer=tsan + small iters for race
+//         detection on the std::shared_mutex discipline.
 //   AC6 — query:pattern-index-stats primitive still callable
 //         and returns consistent values.
 //
