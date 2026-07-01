@@ -270,7 +270,7 @@ cmake --preset tsan   && cmake --build --preset tsan
 **观测**：
 
 - `(query:constraint-stats)` — `delta_conflict_reverify_total + delta_conflict_detected_total` 之和。
-- `(compile:constraint-delta-stats)` — 含 `conflict-reverify` / `conflict-detected` 字段。
+- `(query:constraint-delta-stats)` — `touched_roots_hits`（`delta_conflict_reverify_total`）+ `cross_delta_conflicts_caught` 之和。
 - `CompilerService::snapshot().delta_conflict_*` — lifetime 计数器。
 
 **回归测试**：`tests/test_incremental_type_soundness.cpp`（16 AC，含注入冲突矩阵 ≥50% 检出率 + 多轮 mutate smoke）。

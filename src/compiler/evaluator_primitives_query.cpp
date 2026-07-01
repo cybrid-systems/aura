@@ -590,6 +590,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             ev->get_touched_roots_size()));
     });
 
+    // Issue #509: query:constraint-delta-stats. Returns the sum
+    // of 2 solve_delta touched_roots soundness counters:
+    //   - touched_roots_hits: delta_conflict_reverify_total
+    //     (bounded clean-constraint re-scans after touched roots)
+    //   - cross_delta_conflicts_caught: cross_delta_conflicts_caught_
+    add("query:constraint-delta-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t touched_hits =
+            m ? m->delta_conflict_reverify_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t conflicts = ev->get_cross_delta_conflicts_caught();
+        return make_int(static_cast<std::int64_t>(touched_hits + conflicts));
+    });
+
     // Issue #628: query:solve-delta-safety-stats. Returns the sum
     // of 4 solve_delta clean-constraint safety counters:
     //   - clean_conflicts_detected: delta_conflict_detected_total
