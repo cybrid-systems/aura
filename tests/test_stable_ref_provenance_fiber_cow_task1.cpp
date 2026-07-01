@@ -48,8 +48,7 @@ using aura::compiler::Evaluator;
 using aura::ast::NodeId;
 
 static int k_long_iters() {
-    if (const char* e = std::getenv("AURA_552_ITERS")) return std::atoi(e);
-    return 500;  // 5000 too long; 500 is fast
+    return k_int_env("AURA_STRESS_ITERS", 500);
 }
 
 // ── AC1: 5 counters reachable (cross_cow + fiber_stale +

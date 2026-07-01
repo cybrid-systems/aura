@@ -50,8 +50,7 @@ using aura::compiler::Evaluator;
 
 // ── Tunables ──────────────────────────────────────────────
 static int k_stress_iters() {
-    if (const char* e = std::getenv("AURA_547_STRESS")) return std::atoi(e);
-    return 200;  // 1000 hung on macro expansion; 200 is fast
+    return k_int_env("AURA_STRESS_ITERS", 200);
 }
 
 // ── AC1: tag_arity_index hits/misses/rebuilds/dirty_marks

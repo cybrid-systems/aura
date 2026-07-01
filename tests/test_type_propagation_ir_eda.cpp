@@ -43,8 +43,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 
 static int k_long_iters() {
-    if (const char* e = std::getenv("AURA_305_ITERS")) return std::atoi(e);
-    return 100;  // 5000 too long; 100 is fast
+    return k_int_env("AURA_STRESS_ITERS", 100);
 }
 
 // ── AC1: 4 new type-propagation counters reachable + start at 0

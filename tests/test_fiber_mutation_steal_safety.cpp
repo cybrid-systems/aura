@@ -95,16 +95,13 @@ static std::mutex& cs_eval_mutex() {
 
 // ── Tunables (env-overridable for stress scaling) ────────
 static int k_iters_8() {
-    if (const char* env = std::getenv("AURA_542_ITERS_8")) return std::atoi(env);
-    return 50;  // 8 × 50 = 400 ops
+    return k_int_env("AURA_STRESS_ITERS", 50);
 }
 static int k_iters_50() {
-    if (const char* env = std::getenv("AURA_542_ITERS_50")) return std::atoi(env);
-    return 20;  // 16 × 20 = 320 ops (50 was too contention-heavy)
+    return k_int_env("AURA_STRESS_ITERS", 20);
 }
 static int k_iters_fuzz() {
-    if (const char* env = std::getenv("AURA_542_ITERS_FUZZ")) return std::atoi(env);
-    return 500;  // single-thread fuzz
+    return k_int_env("AURA_FUZZ_ITERS", 500);
 }
 static constexpr int K_FIBERS_8 = 8;
 static constexpr int K_FIBERS_50 = 8;   // 50 deadlocked on mutex; #321 uses 8

@@ -193,4 +193,47 @@ inline int RUN_ALL_TESTS() {
     return failed == 0 ? 0 : 1;
 }
 
+// ── Env-var knob helpers (Issue #371 follow-up) ───────────
+//
+// Convention (2026-07-01, replaces the per-issue
+// `AURA_NNN_*` prefix that the suite accumulated over
+// 2025-2026). Single env var name across all tests for a
+// given purpose; per-test default preserves the original
+// intent (some tests want 8 iters, others 200, others
+// 1000).
+//
+//   AURA_STRESS_ITERS    main stress-loop iteration count
+//                        (default varies per test; e.g. 200
+//                        for #371, 8 for #542's 8-thread
+//                        scenario, 50 for 50-thread, 200
+//                        for 605's stress, etc.)
+//   AURA_STRESS_PARALLEL parallel-unit count for concurrent
+//                        stress (threads / fibers / workers;
+//                        default 4)
+//   AURA_RACE_ITERS      race-scenario iteration count
+//                        (default 200)
+//   AURA_FUZZ_ITERS      fuzz-scenario iteration count
+//                        (default 200)
+//   AURA_WARMUP_CALLS    JIT warmup call count (default 120)
+//
+// Why no issue number? Env vars are process-global — when
+// a test binary runs, it's the only reader. The NNN prefix
+// didn't isolate anything; it just made every test have a
+// different name. Centralizing shrinks the CI / local
+// override surface to 5 names total.
+//
+// Returns the env value as int, or `default_value` if the
+// env is unset / empty / unparseable / non-positive.
+[[nodiscard]] inline int k_int_env(const char* name,
+                                   int default_value) noexcept {
+    if (const char* v = std::getenv(name); v != nullptr && *v != '\0') {
+        char* end = nullptr;
+        const long parsed = std::strtol(v, &end, 10);
+        if (end != v && parsed > 0 && parsed <= 1'000'000'000) {
+            return static_cast<int>(parsed);
+        }
+    }
+    return default_value;
+}
+
 #endif  // AURA_TEST_HARNESS_HPP

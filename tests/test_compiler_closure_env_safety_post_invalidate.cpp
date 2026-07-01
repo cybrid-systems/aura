@@ -48,8 +48,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 
 static int k_invalidate_iters() {
-    if (const char* e = std::getenv("AURA_531_ITERS")) return std::atoi(e);
-    return 100;  // 1000 too long; 100 is fast
+    return k_int_env("AURA_STRESS_ITERS", 100);
 }
 
 // ── AC1: 4 new counters reachable + start at 0

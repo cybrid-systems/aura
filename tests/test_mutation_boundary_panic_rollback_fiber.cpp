@@ -53,8 +53,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 
 static int k_fuzz_iters() {
-    if (const char* e = std::getenv("AURA_548_FUZZ")) return std::atoi(e);
-    return 100;  // 500 hung on panic-restore loop; 100 is fast
+    return k_int_env("AURA_FUZZ_ITERS", 100);
 }
 
 // ── AC1: 4 panic-checkpoint lifecycle counters reachable

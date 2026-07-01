@@ -49,8 +49,7 @@ using aura::compiler::Evaluator;
 using aura::ast::NodeId;
 
 static int k_long_iters() {
-    if (const char* e = std::getenv("AURA_549_ITERS")) return std::atoi(e);
-    return 200;  // 5000 too long; 200 is fast
+    return k_int_env("AURA_STRESS_ITERS", 200);
 }
 
 // ── AC1: 4 new self-evolution-stability counters reachable

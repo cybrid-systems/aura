@@ -48,8 +48,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 
 static int k_stress_iters() {
-    if (const char* e = std::getenv("AURA_553_ITERS")) return std::atoi(e);
-    return 50;  // 3000 too long; 50 is fast
+    return k_int_env("AURA_STRESS_ITERS", 50);
 }
 
 // ── AC1: query:mutation-log-stats returns integer sum
