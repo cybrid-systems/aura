@@ -1407,6 +1407,12 @@ aura_issue_test_link_llvm_jit(test_stable_ref_provenance_fiber_cow_task1)
 # with #535/#525/#504/#502/#514 (prior reflect/Guard work).
 aura_add_issue_test(test_reflect_postmutate_guard_snapshot)
 aura_issue_test_link_llvm_jit(test_reflect_postmutate_guard_snapshot)
+# Issue #454: Reflection-to-EDSL bridge closed loop (FlatAST/marker/mutate).
+# 8 ACs: reflect-node-members, schema-of-marker, marker-stats, reflect-members,
+# mutate under Guard + bridge stats monotonic, mutation-log + regression.
+# Non-duplicative with #218/#248/#551 (per-theme reflect tests).
+aura_add_issue_test(test_reflect_edsl_bridge_closed_loop_454)
+aura_issue_test_link_llvm_jit(test_reflect_edsl_bridge_closed_loop_454)
 # Issue #550: Dirty/Epoch Propagation + Incremental
 # solve_delta + Occurrence Re-Narrowing + Pass Short-Circuit
 # for reliable typed self-mod (P0). 9 scenarios validating:

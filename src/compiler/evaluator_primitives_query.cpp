@@ -936,6 +936,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 revalidations + violations + deopt + leaks));
         });
 
+    // Issue #454: query:reflect-edsl-bridge-stats. Returns the
+    // sum of 4 reflection-to-EDSL bridge observability counters:
+    //   - schema_validation_pass_count_  (auto_validate hook)
+    //   - schema_validation_fail_count_  (validation failures)
+    //   - impact_snapshot_count_         (post-mutate reflection data)
+    //   - macro_introduced_skipped_in_query_  (SyntaxMarker filter
+    //     introspection via query:pattern / schema-of-marker bridge)
+    add("query:reflect-edsl-bridge-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t pass = ev->get_schema_validation_pass_count();
+        const std::uint64_t fail = ev->get_schema_validation_fail_count();
+        const std::uint64_t snapshots = ev->get_impact_snapshot_count();
+        const std::uint64_t marker_skips = ev->get_macro_introduced_skipped_in_query();
+        return make_int(static_cast<std::int64_t>(
+            pass + fail + snapshots + marker_skips));
+    });
+
     // Issue #551: query:reflect-postmutate-stats. Returns
     // the sum of the 4 reflect post-mutate observability
     // counters:
