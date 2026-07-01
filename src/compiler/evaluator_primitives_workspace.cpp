@@ -137,6 +137,62 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         return make_pair(pid);
     });
 
+    // Issue #372: (workspace:find-define name)
+    //   → NodeId of the first Define node whose name matches
+    //     `name` in the current workspace's flat, or void if
+    //     not found.
+    //
+    // Works across COW layers: each layer has its own
+    // StringPool (so the same name interned in two layers has
+    // different SymIds), but name-based lookup goes through
+    // the *current* layer's pool and AST. A caller who
+    // captured a StableNodeRef in the parent layer and then
+    // (workspace:switch) to a child can re-resolve by name:
+    //
+    //   (workspace:switch parent-id)
+    //   (define ref-id (workspace:find-define "my-fn"))
+    //   (workspace:switch child-id)
+    //   (define child-ref (workspace:find-define "my-fn"))
+    //
+    // The two NodeIds may differ (parent's pre-mutation vs
+    // child's post-COW), but both refer to "my-fn" in their
+    // respective layers.
+    //
+    // Falls back to the implicit root workspace's flat + pool
+    // when no WorkspaceTree is initialized (no (workspace:create)
+    // has been called yet) — useful for ad-hoc lookups in tests
+    // and for callers that haven't adopted the workspace_tree.
+    add("workspace:find-define", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]) || !ev.workspace_flat_
+            || !ev.workspace_pool_)
+            return make_void();
+        auto name_idx = as_string_idx(a[0]);
+        if (name_idx >= ev.string_heap_.size())
+            return make_void();
+        const auto& name = ev.string_heap_[name_idx];
+        // Prefer the active workspace layer's flat + pool when
+        // a WorkspaceTree exists (so (workspace:switch) actually
+        // changes where lookups go). If the tree is missing or
+        // the active layer is unset, fall back to the implicit
+        // root workspace's flat + pool — top-level (define ...)
+        // from previous eval() calls still live there.
+        if (ev.workspace_tree_) {
+            auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+            auto* ws = wt->active();
+            if (ws && ws->flat && ws->pool) {
+                auto found = ws->flat->find_define_by_name(*ws->pool, name);
+                if (!found)
+                    return make_void();
+                return make_int(static_cast<std::int64_t>(*found));
+            }
+        }
+        auto found = ev.workspace_flat_->find_define_by_name(
+            *ev.workspace_pool_, name);
+        if (!found)
+            return make_void();
+        return make_int(static_cast<std::int64_t>(*found));
+    });
+
     // (workspace:switch id) → #t
     add("workspace:switch", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
