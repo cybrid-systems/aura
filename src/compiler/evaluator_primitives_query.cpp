@@ -767,6 +767,31 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             runs + total + unknown + int_width));
     });
 
+    // Issue #468: query:dead-coercion-zerooverhead-stats. Returns
+    // the sum of 4 DeadCoercionEliminationPass zero-overhead
+    // lifetime counters (refines #433 observability):
+    //   - dead_coercion_eliminated_total (identity/no-op elisions)
+    //   - dead_coercion_elapsed_us_total (pass pipeline time)
+    //   - coercion_type_prop_hits_total (Rule 1 type_id identity)
+    //   - coercion_zerooverhead_win_total (per-run pipeline wins)
+    add("query:dead-coercion-zerooverhead-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const auto* m = static_cast<const CompilerMetrics*>(
+                Evaluator::get_query_evaluator()->compiler_metrics());
+            if (!m) return make_int(0);
+            const std::uint64_t eliminated =
+                m->dead_coercion_eliminated_total.load(std::memory_order_relaxed);
+            const std::uint64_t elapsed =
+                m->dead_coercion_elapsed_us_total.load(std::memory_order_relaxed);
+            const std::uint64_t type_prop =
+                m->coercion_type_prop_hits_total.load(std::memory_order_relaxed);
+            const std::uint64_t win = m->coercion_zerooverhead_win_total.load(
+                std::memory_order_relaxed);
+            return make_int(static_cast<std::int64_t>(
+                eliminated + elapsed + type_prop + win));
+        });
+
     // Issue #629: query:coercion-zerooverhead-stats. Returns the
     // sum of the 4 zero-overhead coercion lifetime counters:
     //   - coercion_castop_emitted_total (TypeSpec CastOp inserts)
