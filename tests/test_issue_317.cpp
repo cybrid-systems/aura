@@ -70,7 +70,10 @@ void check_local_(bool cond, const char* msg, int line) {
     }
 }
 #define CHECK_EQ_LOCAL(a, b, msg) check_eq_local_((std::size_t)(a), (std::size_t)(b), msg, __LINE__)
-#define CHECK(cond, msg) check_local_(cond, msg, __LINE__)
+// CHECK is provided by test_harness.hpp (included above).
+// Do not redefine it here — under -Werror the redefinition is
+// fatal and breaks the whole build (pre-existing bug from the
+// import std migration, 8d3e42b7).
 
 // ═══════════════════════════════════════════════════════════════
 // Helper: build a minimal workspace with an Interface + a
