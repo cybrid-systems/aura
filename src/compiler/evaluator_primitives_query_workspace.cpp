@@ -251,6 +251,52 @@ void register_workspace_query_primitives(
         return make_pair(pair_pid);
     });
 
+    // Issue #347 follow-up #1 / #393: (query:ref-valid? stable-ref)
+    // — Verify a stable-ref (the (id . gen) pair shape returned by
+    // (query:stable-ref) / (query:children-stable) /
+    // (query:parent-stable)) is still valid in the current
+    // workspace. Returns #t iff the slot at `id` is in-bounds AND
+    // its stored generation matches `gen` AND the wrap_epoch
+    // matches (Issue #368 second-wrap protection).
+    //
+    // Uses FlatAST::is_valid_id_gen() — the flat-style check from
+    // #393 — rather than the strict is_valid(ref) used by the
+    // older (ast:ref-valid? id gen) from #191. The flat-style
+    // check ONLY consults the slot's stored generation, so it is
+    // NOT invalidated by unrelated subtree bumps (use
+    // (query:ref-valid?* strict) for the strict global-gen check).
+    // This makes it the right primitive for scoped-invalidated
+    // workspaces (EDA, AI agent multi-subtree loops).
+    //
+    // Companion note: (ast:ref-valid? id gen) from #191 still
+    // works and uses the strict is_valid() check; it's the right
+    // primitive for "has the global state changed since capture?"
+    // but produces false positives in scoped-invalidated
+    // workspaces.
+    add("query:ref-valid?", [ws, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !is_pair(a[0]))
+            return mev("bad-arg", "usage: (query:ref-valid? (id . gen))");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto& flat = *ws.workspace_flat;
+        // Unpack the (id . gen) pair. Same shape as
+        // (query:children-stable)'s return value.
+        auto& outer = ws.pairs[as_pair_idx(a[0])];
+        if (!is_int(outer.car))
+            return mev("bad-arg", "stable-ref car must be a node id (int)");
+        auto id = static_cast<aura::ast::NodeId>(as_int(outer.car));
+        if (!is_pair(outer.cdr))
+            return mev("bad-arg", "stable-ref cdr must be a pair (gen . nil)");
+        auto& inner = ws.pairs[as_pair_idx(outer.cdr)];
+        if (!is_int(inner.car))
+            return mev("bad-arg", "stable-ref gen must be an int");
+        auto gen = static_cast<std::uint16_t>(as_int(inner.car));
+        // Use the flat-style #393 helper: slot check only,
+        // respects scoped invalidation via wrap_epoch.
+        return make_bool(flat.is_valid_id_gen(id, gen));
+    });
+
     // (query:calls name) — Find all call sites of a named function
     add("query:calls", [ws, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);

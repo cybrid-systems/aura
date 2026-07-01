@@ -1107,6 +1107,12 @@ aura_add_issue_test(test_issue_392)
 #   - is_valid_id_gen(NodeId, uint16_t gen, uint32_t wrap_epoch = 0)
 # Pure AST-level — same shape as test_issue_392.
 aura_add_issue_test(test_issue_393)
+# Issue #393 AC10/AC11 add (query:ref-valid?) Aura primitive
+# tests via CompilerService; needs the minimal LLVM JIT link
+# (the original 9 ACs are pure FlatAST and don't, but the new
+# ones import aura.compiler.evaluator which transitively
+# pulls in JIT).
+aura_issue_test_link_llvm_jit_minimal(test_issue_393)
 
 # Issue #326: Hygienic macros + EDSL integration coverage.
 # 8 scenarios extending test_issue_120/121 to integration

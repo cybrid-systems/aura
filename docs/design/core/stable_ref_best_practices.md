@@ -20,6 +20,12 @@ self-modification loops.
 >   used by all `-stable` query primitives)
 > - `(query:parent-stable <node-id>)` → single
 >   `(id . gen)` pair (or `void` for root)
+> - `(query:ref-valid? <pair>)` → `#t`/`#f` (validate a
+>   captured `(id . gen)`; uses the flat-style
+>   `is_valid_id_gen` check from #393, so respects
+>   scoped invalidation — refs in non-bumped subtrees
+>   stay valid even after `compile:subtree-bump` on
+>   other subtrees)
 >
 > In C++, the `FlatAST` C++26 modules also ship
 > `children_stable(NodeId)` and `parent_stable(NodeId)`
@@ -291,7 +297,9 @@ a fiber-local query cache), **also store the `gen`**
 in the same record. This lets you run `is_valid_id_gen`
 on the pair without allocating a `StableNodeRef`
 wrapper, which matters for hot paths that read
-thousands of pairs per second.
+thousands of pairs per second. From Aura, use
+`(query:ref-valid? (cons <id> (cons <gen> nil)))`;
+from C++, use `flat.is_valid_id_gen(id, gen)`.
 
 ## Anti-patterns to avoid
 
