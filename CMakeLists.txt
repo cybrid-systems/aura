@@ -840,6 +840,21 @@ target_compile_options(stable_ref_bench PRIVATE -Wall
 target_link_libraries(stable_ref_bench PRIVATE stdc++ aura_test_objects aura-reflect)
 add_test(NAME stable_ref_bench COMMAND ./stable_ref_bench)
 
+# Issue #393 follow-up #3: production-scale variant of
+# stable_ref_bench. Same shape as the 1k bench, but
+# 10x the defines (1k → 10k nodes total) to verify the
+# scoped invalidation win holds at production-shaped
+# AST scale (typical EDA / AI agent workspaces).
+# 100 rounds × 10k refs should run in ~30s wall time.
+add_executable(stable_ref_bench_10k tests/bench/stable_ref_bench_10k.cpp)
+set_property(TARGET stable_ref_bench_10k PROPERTY CXX_MODULE_STD ON)
+target_include_directories(stable_ref_bench_10k PRIVATE src)
+target_compile_options(stable_ref_bench_10k PRIVATE -Wall
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter)
+target_link_libraries(stable_ref_bench_10k PRIVATE stdc++ aura_test_objects aura-reflect)
+add_test(NAME stable_ref_bench_10k COMMAND ./stable_ref_bench_10k)
+
 # Issue #217 Cycle 14 P4: benchmark suite for the C++26 P2996
 # reflection + auto_serialize/auto_deserialize path. Measures
 # throughput across 4 dimensions (FlatAST SoA, NodeView
