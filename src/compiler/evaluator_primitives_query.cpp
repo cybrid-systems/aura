@@ -590,6 +590,36 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             ev->get_touched_roots_size()));
     });
 
+    // Issue #495: query:task2-refinement-stats. Returns the sum
+    // of 4 Task2 review refinement pillar counters:
+    //   - constraint_soundness: delta_conflict_reverify_total +
+    //     delta_conflict_detected_total (#466/#509)
+    //   - coercion_zerooverhead: dead_coercion_eliminated_total +
+    //     coercion_zerooverhead_win_total (#468/#574)
+    //   - occurrence_blame: narrowing_dirty_recovery_total +
+    //     occurrence_blame_chain_complete_total (#467)
+    //   - jit_elision_hits: coercion_narrow_evidence_hits_total
+    //     (JIT/IR narrow-evidence elision synergy)
+    add("query:task2-refinement-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t constraint =
+            m->delta_conflict_reverify_total.load(std::memory_order_relaxed) +
+            m->delta_conflict_detected_total.load(std::memory_order_relaxed);
+        const std::uint64_t coercion =
+            m->dead_coercion_eliminated_total.load(std::memory_order_relaxed) +
+            m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed);
+        const std::uint64_t occurrence =
+            m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed) +
+            m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed);
+        const std::uint64_t jit_elision =
+            m->coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(
+            constraint + coercion + occurrence + jit_elision));
+    });
+
     // Issue #509: query:constraint-delta-stats. Returns the sum
     // of 2 solve_delta touched_roots soundness counters:
     //   - touched_roots_hits: delta_conflict_reverify_total

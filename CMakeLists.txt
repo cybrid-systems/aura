@@ -1117,6 +1117,9 @@ aura_issue_test_link_llvm_jit(test_coercion_dead_elim_castop_flow_zerooverhead)
 # Issue #574: Task2 dead-coercion elimination + coercion-elim-stats.
 aura_add_issue_test(test_dead_coercion_elimination_task2)
 aura_issue_test_link_llvm_jit(test_dead_coercion_elimination_task2)
+# Issue #495: Task2 refinement closed-loop integration matrix.
+aura_add_issue_test(test_task2_refinement_closed_loop_495)
+aura_issue_test_link_llvm_jit(test_task2_refinement_closed_loop_495)
 # Issue #384: Bidirectional inference engine — first slice.
 # Additive check-mode plumbing in synthesize_flat_lambda (the
 # caller hands an expected function type when the arg is a
