@@ -1054,6 +1054,12 @@ aura_issue_test_link_llvm_jit(test_issue_508)
 # synthesizing fresh vars and unifying post-hoc at the call
 # site). No LLVM JIT needed — pure type-checker exercise.
 aura_add_issue_test(test_issue_384)
+# Issue #389: follow-up #247 — (compile:snapshot) Aura primitive +
+# JSON schema docs (scope-limited slice). The test exercises
+# CompilerService + marker observability, which depends on the
+# JIT-linked service object files.
+aura_add_issue_test(test_issue_389)
+aura_issue_test_link_llvm_jit(test_issue_389)
 # Issue #326: Hygienic macros + EDSL integration coverage.
 # 8 scenarios extending test_issue_120/121 to integration
 # (CompilerService path, not parser-only). See
