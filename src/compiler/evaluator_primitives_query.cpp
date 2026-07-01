@@ -1050,6 +1050,50 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>(top1 + top2 + top3));
         });
 
+    // Issue #441: query:compiler-runtime-production-readiness-stats.
+    // Returns the sum of 12 counters spanning the consolidated
+    // P0 production-readiness pillars (non-duplicative synthesis
+    // of #438/#439/#440/#437 themes; avoids #514 Task6 hygiene/
+    // dirty focus and the core-three #426/#427/#428 tracks):
+    //   Runtime fiber (#438): mutation_steal_attempts +
+    //                          boundary_violation_count
+    //   Runtime GC (#439): gc_safepoint_requests + waits + deferred
+    //   EDSL workspace (#440): cross_cow + fiber_stale + provenance
+    //                          + mutation_log_rollback + schema_pass
+    //                          + mutation_impact
+    //   EDA verify (#437): verify_dirty (assertion+coverage+sva+
+    //                      formal) + verify_tool_calls
+    add("query:compiler-runtime-production-readiness-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const std::uint64_t runtime_fiber =
+                ev->get_mutation_steal_attempts() +
+                ev->get_boundary_violation_count();
+            const std::uint64_t runtime_gc =
+                ev->get_gc_safepoint_requests_total() +
+                ev->get_gc_safepoint_waits_total() +
+                ev->get_gc_safepoint_deferred_total();
+            const std::uint64_t edsl_workspace =
+                ev->get_cross_cow_invalidations() +
+                ev->get_fiber_stale_ref_count() +
+                ev->get_provenance_mismatch() +
+                ev->get_mutation_log_rollback_count() +
+                ev->get_schema_validation_pass_count() +
+                ev->get_mutation_impact_count();
+            const std::uint64_t eda_verify =
+                (ws ? ws->verify_assertion_dirty_total() +
+                          ws->verify_coverage_dirty_total() +
+                          ws->verify_sva_dirty_total() +
+                          ws->verify_formal_cex_dirty_total()
+                    : 0) +
+                ev->get_verify_tool_calls_total();
+            return make_int(static_cast<std::int64_t>(
+                runtime_fiber + runtime_gc + edsl_workspace + eda_verify));
+        });
+
     // Issue #619: query:macro-reflect-self-evo-followup-stats.
     // Returns the sum of 4 Task6 follow-up closed-loop counters:
     //   - hygiene_skips: macro_introduced_skipped_in_query_
