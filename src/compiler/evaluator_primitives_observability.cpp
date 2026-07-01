@@ -464,6 +464,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:typed-incremental-stats",
             // Issue #608 — Incremental type reliability
             "query:type-incremental-stats",
+            // Issue #509 — solve_delta touched_roots soundness
+            "query:constraint-delta-stats",
             // Issue #628 — solve_delta clean-conflict safety
             "query:solve-delta-safety-stats",
             // Issue #609 — Occurrence narrow post-mutate recovery
