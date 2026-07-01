@@ -2541,7 +2541,18 @@ void register_mutate_primitives(
             ev.workspace_flat_->rollback_atomic_batch();
             ev.atomic_batch_rollbacks_++;
             guard_ok = false;
-            return make_bool(false);
+            // Issue #250 / regression fix: the previous
+            // `make_bool(false)` return made the failure
+            // indistinguishable from a legitimate "all sub-ops
+            // succeeded but reported #f" outcome. Callers
+            // match against `(error-key . error-msg)` pairs
+            // (see `mutate:atomic-batch` docs), so we return
+            // an `ev.make_merr` pair instead. The legacy
+            // `batch-unsupported-op` path above already uses
+            // make_merr — this matches the convention.
+            return ev.make_merr(
+                "batch-failed",
+                "mutate:atomic-batch sub-op failed; batch rolled back to pre-batch state");
         }
         // Issue #250: commit the batch. This performs the single
         // generation bump (consolidated from the per-op bumps
