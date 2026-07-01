@@ -501,6 +501,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:commercial-production-readiness-stats",
             // Issue #635 — Macro+reflect+self-evo commercial closed-loop
             "query:macro-reflect-self-evo-commercial-stats",
+            // Issue #636 — EDSL workspace query/mutate commercial closed-loop
+            "query:edsl-query-mutate-commercial-stats",
             // Issue #619 — Task6 macro+reflect+self-evo follow-up
             "query:macro-reflect-self-evo-followup-stats",
             // Issue #602 — Prompt6 memory-safety matrix

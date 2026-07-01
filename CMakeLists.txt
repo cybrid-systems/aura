@@ -1558,6 +1558,9 @@ aura_issue_test_link_llvm_jit(test_commercial_production_readiness_closed_loop_6
 # Issue #635: Macro+reflect+self-evo commercial closed-loop (July 2026).
 aura_add_issue_test(test_macro_reflect_self_evo_commercial_closed_loop_635)
 aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_commercial_closed_loop_635)
+# Issue #636: EDSL workspace query/mutate commercial closed-loop (July 2026).
+aura_add_issue_test(test_edsl_query_mutate_commercial_closed_loop_636)
+aura_issue_test_link_llvm_jit(test_edsl_query_mutate_commercial_closed_loop_636)
 # Issue #602: Comprehensive fuzz + stress matrix for Prompt6
 # memory safety invariants (IRClosure/EnvFrame/bridge_epoch/
 # linear/GuardShape) under concurrent fiber + GC + multi-round

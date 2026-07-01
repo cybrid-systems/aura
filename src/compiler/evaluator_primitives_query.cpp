@@ -1332,6 +1332,74 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 guard_epoch + dirty_up + stable_ref + deopt));
         });
 
+    // Issue #636: query:edsl-query-mutate-commercial-stats.
+    // Returns the sum of 10 counter groups spanning the July 2026
+    // EDSL workspace + query/mutate + StableNodeRef commercial
+    // closed-loop (non-duplicative synthesis of #620/#622/#619/
+    // #621/#630/#623/#618 themes; avoids #552 edsl-stability
+    // long-run focus, #635 macro-reflect, and #634 runtime pillars):
+    //   StableNodeRef (#620/#631): stable_ref_invalidations +
+    //                              node_gen_stale_access +
+    //                              provenance_mismatch + fiber_stale_ref
+    //   Query/pattern (#619/#621): tag_arity_index_hits +
+    //                              tag_arity_index_dirty_marks +
+    //                              macro_introduced_skipped_in_query
+    //   Mutate/Guard (#622): mutation_impact_count +
+    //                        guard_dirty_epoch_count
+    //   Dirty propagation: mark_dirty_upward_call_count +
+    //                     mark_dirty_total_nodes
+    //   Atomic batch (#632): atomic_batch_commits +
+    //                        atomic_batch_rollbacks + batch_count
+    //   EDA feedback (#630): verification_coverage_feedback +
+    //                        verification_assert_failure
+    //   GC/orchestration (#623/#618): gc_safepoint_requests/waits +
+    //                                 steal_attempts + lock_contention
+    //
+    // P0: returns an integer = sum of all 10 counter groups.
+    // Follow-up: returns a 10-tuple for per-pillar fleet dashboards.
+    add("query:edsl-query-mutate-commercial-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            if (!ws) return make_int(0);
+            const std::uint64_t stable_ref =
+                ws->stable_ref_invalidations() +
+                ws->node_gen_stale_access_count();
+            const std::uint64_t provenance =
+                ev->get_provenance_mismatch() +
+                ev->get_fiber_stale_ref_count();
+            const std::uint64_t query_index =
+                ws->tag_arity_index_hits() +
+                ws->tag_arity_index_dirty_marks();
+            const std::uint64_t query_hygiene =
+                ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t guard_mutate =
+                ev->get_mutation_impact_count() +
+                ev->get_guard_dirty_epoch_count();
+            const std::uint64_t dirty_up =
+                ws->mark_dirty_upward_call_count() +
+                ws->mark_dirty_total_nodes();
+            const std::uint64_t atomic =
+                ws->atomic_batch_commits() +
+                ev->atomic_batch_count() +
+                ev->atomic_batch_rollbacks();
+            const std::uint64_t eda_feedback =
+                ws->verification_coverage_feedback_total() +
+                ws->verification_assert_failure_total();
+            const std::uint64_t gc_coord =
+                ev->get_gc_safepoint_requests_total() +
+                ev->get_gc_safepoint_waits_total();
+            const std::uint64_t orchestration =
+                ev->get_mutation_steal_attempts() +
+                ev->get_lock_contention_us();
+            return make_int(static_cast<std::int64_t>(
+                stable_ref + provenance + query_index + query_hygiene +
+                guard_mutate + dirty_up + atomic + eda_feedback +
+                gc_coord + orchestration));
+        });
+
     // Issue #619: query:macro-reflect-self-evo-followup-stats.
     // Returns the sum of 4 Task6 follow-up closed-loop counters:
     //   - hygiene_skips: macro_introduced_skipped_in_query_
