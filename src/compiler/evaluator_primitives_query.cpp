@@ -1965,6 +1965,47 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             cross_cow + fiber_stale + wraps + rollback + provenance));
     });
 
+    // Issue #529: query:atomic-batch-rollback-stats. Returns the
+    // sum of 7 counters spanning the end-to-end atomic batch +
+    // mutation_log_ rollback + Guard + fiber orchestration
+    // closed loop (non-duplicative with #459 1-counter steal
+    // ship, #553 7-counter batch matrix, and atomic-batch:stats
+    // hash in observability):
+    //   - batch_commits: atomic_batch_count_
+    //   - batch_rollbacks: atomic_batch_rollbacks_
+    //   - bumps_saved: atomic_batch_bumps_saved_total_
+    //   - fiber_safety: atomic_batch_steal_violation_ +
+    //                   atomic_batch_in_fiber_total_
+    //   - guard_rollbacks: mutation_log_rollback_count_
+    //   - guard_success: mutation_impact_count_
+    //   - panic_recovery: panic_checkpoint_restore_count_
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    // Follow-up: returns a 7-tuple so the AI Agent can compute
+    // rollback_rate and fiber_safety_ratio independently.
+    add("query:atomic-batch-rollback-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const std::uint64_t commits = ev->atomic_batch_count();
+            const std::uint64_t rollbacks = ev->atomic_batch_rollbacks();
+            const std::uint64_t bumps_saved =
+                ev->atomic_batch_bumps_saved_total();
+            const std::uint64_t fiber_safety =
+                ev->get_atomic_batch_steal_violation() +
+                ev->atomic_batch_in_fiber_total();
+            const std::uint64_t guard_rollbacks =
+                ev->get_mutation_log_rollback_count();
+            const std::uint64_t guard_success =
+                ev->get_mutation_impact_count();
+            const std::uint64_t panic_recovery =
+                ev->get_panic_checkpoint_restore_count();
+            return make_int(static_cast<std::int64_t>(
+                commits + rollbacks + bumps_saved + fiber_safety +
+                guard_rollbacks + guard_success + panic_recovery));
+        });
+
     // Issue #553: query:mutation-log-stats. Returns the
     // sum of 4 atomic-batch + mutation-log observability
     // counters from across the workspace + Evaluator:
