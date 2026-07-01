@@ -793,6 +793,84 @@ void register_workspace_query_primitives(
         return make_string(idx);
     });
 
+    // Issue #454: (query:reflect-node-members node-id) — reflection
+    // bridge for FlatAST/SyntaxMarker introspection. Returns an alist
+    // of (field-name . value) pairs describing the node's SoA fields
+    // without hard-coded EDSL tag switches:
+    //   tag-name, tag-id, marker, type-id, dirty, children-count
+    // plus tag-specific members (sym for Define/Let, int-value for
+    // LiteralInt, etc.).
+    add("query:reflect-node-members", [ws, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (query:reflect-node-members node-id)");
+        if (!ws.workspace_flat || !ws.workspace_pool)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *ws.workspace_flat;
+        if (node >= flat.size())
+            return mev("out-of-range", "node ID >= flat size");
+        auto v = flat.get(node);
+
+        auto marker_name = "User";
+        switch (flat.marker(node)) {
+            case aura::ast::SyntaxMarker::User: marker_name = "User"; break;
+            case aura::ast::SyntaxMarker::MacroIntroduced:
+                marker_name = "MacroIntroduced";
+                break;
+            case aura::ast::SyntaxMarker::BoolLiteral:
+                marker_name = "BoolLiteral";
+                break;
+        }
+
+        EvalValue result = make_void();
+        auto append_field = [&](const std::string& fname, EvalValue val) {
+            auto nidx = ws.string_heap.size();
+            ws.string_heap.push_back(fname);
+            auto entry = ws.pairs.size();
+            ws.pairs.push_back({make_string(nidx), val});
+            auto cons = ws.pairs.size();
+            ws.pairs.push_back({make_pair(entry), result});
+            result = make_pair(cons);
+        };
+
+        append_field("tag-name", [&]() {
+            auto tidx = ws.string_heap.size();
+            ws.string_heap.push_back(std::string(aura::ast::meta(v.tag).name));
+            return make_string(tidx);
+        }());
+        append_field("tag-id", make_int(static_cast<std::int64_t>(v.tag)));
+        append_field("marker", [&]() {
+            auto midx = ws.string_heap.size();
+            ws.string_heap.push_back(marker_name);
+            return make_string(midx);
+        }());
+        append_field("type-id", make_int(static_cast<std::int64_t>(flat.type_id(node))));
+        append_field("dirty", make_int(static_cast<std::int64_t>(flat.dirty(node))));
+        append_field("children-count",
+                      make_int(static_cast<std::int64_t>(v.children.size())));
+
+        if (v.has_name()) {
+            auto sym = std::string(ws.workspace_pool->resolve(v.sym_id));
+            auto sidx = ws.string_heap.size();
+            ws.string_heap.push_back(sym);
+            append_field("sym", make_string(sidx));
+        }
+        if (v.has_int() && v.tag == aura::ast::NodeTag::LiteralInt) {
+            append_field("int-value", make_int(v.int_value));
+        }
+        if (v.tag == aura::ast::NodeTag::Define && !v.children.empty()) {
+            append_field("body-node", make_int(static_cast<std::int64_t>(v.child(0))));
+        }
+        if ((v.tag == aura::ast::NodeTag::Let || v.tag == aura::ast::NodeTag::LetRec) &&
+            v.children.size() >= 2) {
+            append_field("init-node", make_int(static_cast<std::int64_t>(v.child(0))));
+            append_field("body-node", make_int(static_cast<std::int64_t>(v.child(1))));
+        }
+
+        return result;
+    });
+
     // Issue #278: (query:ref-counts node-id) — return the
     // number of AST nodes whose children include this node-id
     // (i.e. the number of direct parents in the AST). 0 if
