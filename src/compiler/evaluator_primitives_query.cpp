@@ -1097,6 +1097,69 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             skips + violations + markers));
     });
 
+    // Issue #517: query:consolidated-production-priority-stats.
+    // Returns the sum of 9 counter groups spanning the 3 P0 foundational
+    // pillars from the consolidated meta tracker (non-duplicative with
+    // #514 Task6, #515 consolidated P0, #516 Prompt6, and #520 Top-5
+    // roadmap which adds batch/orchestration/SV-mutate themes):
+    //   P1 Persistence + EDA (#511/#510): panic_checkpoint_save/commit +
+    //                                    generation_wrap_count +
+    //                                    verification_coverage_feedback +
+    //                                    verification_assert_failure
+    //   P2 Memory-safety (#505/#516): bridge_epoch_hit +
+    //                                 closure_stale_refresh +
+    //                                 envframe_stale_refresh +
+    //                                 envframe_gc_walk_safe_skips +
+    //                                 gc_safepoint_waits_total
+    //   P3 SoA hotpath (#506/#463): ir_soa_instructions_emitted +
+    //                               ir_soa_functions_emitted +
+    //                               passes_skipped_type_dirty +
+    //                               module_dirty_skips
+    //
+    // P0: returns an integer = sum of all 9 counter groups.
+    // Follow-up: returns a 3-tuple (persistence+eda memory soa) for
+    // fleet dashboards tracking the #517 north-star pillars.
+    add("query:consolidated-production-priority-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const auto* m = static_cast<const CompilerMetrics*>(
+                ev->compiler_metrics());
+            const std::uint64_t persistence =
+                ev->get_panic_checkpoint_save_count() +
+                ev->get_panic_checkpoint_commit_count() +
+                (ws ? ws->generation_wrap_count() : 0);
+            const std::uint64_t eda_feedback =
+                ws ? ws->verification_coverage_feedback_total() +
+                         ws->verification_assert_failure_total()
+                   : 0;
+            const std::uint64_t memory_bridge = m
+                ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) +
+                      m->closure_stale_refresh_count_.load(
+                          std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t memory_env =
+                ev->get_envframe_stale_refresh_count() +
+                ev->get_envframe_gc_walk_safe_skips();
+            const std::uint64_t gc_sync =
+                ev->get_gc_safepoint_waits_total();
+            const std::uint64_t ir_soa = m
+                ? m->ir_soa_instructions_emitted.load(
+                      std::memory_order_relaxed) +
+                      m->ir_soa_functions_emitted.load(
+                          std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t soa_dirty =
+                ev->get_passes_skipped_type_dirty() +
+                (m ? m->module_dirty_skips.load(std::memory_order_relaxed)
+                   : 0);
+            return make_int(static_cast<std::int64_t>(
+                persistence + eda_feedback + memory_bridge +
+                memory_env + gc_sync + ir_soa + soa_dirty));
+        });
+
     // Issue #520: query:production-roadmap-stats. Returns the sum of
     // 10 counter groups spanning the consolidated Top 5 production
     // priorities (non-duplicative synthesis of #496/#510/#511/#505/
