@@ -20,7 +20,6 @@ using types::EvalValue;
 using namespace types;
 using namespace aura::diag;
 
-
 // Issue #107 part 4: inline typecheck helpers. Caller MUST hold
 // workspace_mtx_ (shared or unique). The two helpers share the
 // same infer_flat + diag-drain pattern; they differ only in
@@ -99,6 +98,68 @@ bool Evaluator::run_typecheck_no_lock_bool() {
     }
     workspace_flat_->clear_all_dirty();
     return diag.diagnostics().empty();
+}
+
+bool Evaluator::run_post_mutate_typecheck_no_lock() {
+    // Issue #526: post-mutate selective type recheck for Aura
+    // mutate primitives (rebind / set-body). When the mutation
+    // log has entries, route through infer_flat_partial on the
+    // latest record (solve_delta + occurrence re-narrow on the
+    // affected subtree only). Fall back to full infer_flat when
+    // the log is empty (degenerate / pre-log mutations).
+    if (!workspace_flat_ || !workspace_pool_)
+        return true;
+    if (!type_registry_) {
+        type_registry_ = new aura::core::TypeRegistry();
+    }
+    auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+    aura::compiler::TypeChecker tc(treg);
+    if (!declared_type_sigs_.empty()) {
+        std::unordered_map<std::string, std::string> sig_map;
+        std::unordered_map<std::string, std::string> mod_src_map;
+        for (auto& [name, decl] : declared_type_sigs_) {
+            sig_map[name] = decl.type_str;
+            if (!decl.module_file.empty())
+                mod_src_map[name] = decl.module_file;
+        }
+        tc.inject_type_sigs(sig_map, mod_src_map);
+    }
+    aura::diag::DiagnosticCollector diag;
+
+    const auto& log = workspace_flat_->all_mutations();
+    const bool selective = !log.empty();
+    if (selective) {
+        tc.set_cache_epoch(defuse_version_.load(std::memory_order_relaxed));
+        if (compiler_metrics_)
+            tc.set_metrics(compiler_metrics_);
+        tc.set_on_narrowing_refresh([this]() { bump_narrowing_refresh_count(); });
+        tc.set_on_selective_recheck([this]() { bump_selective_recheck_count(); });
+        const auto reinferred =
+            tc.infer_flat_partial(*workspace_flat_, *workspace_pool_, log.back(), diag);
+        (void)reinferred;
+    } else {
+        tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, diag);
+        workspace_flat_->clear_all_dirty();
+    }
+
+    {
+        auto cm = tc.take_coercions();
+        if (!cm.empty()) {
+            aura::compiler::apply_coercion_map(*workspace_flat_, cm);
+        }
+    }
+
+    auto local_diags = diag.diagnostics();
+    if (local_diags.empty()) {
+        last_mutate_error_.clear();
+        return true;
+    }
+    std::string err = selective ? "typecheck after mutate (selective) failed:"
+                                : "typecheck after mutate failed:";
+    for (auto& d : local_diags)
+        err += " " + d.format() + ";";
+    last_mutate_error_ = err;
+    return false;
 }
 
 } // namespace aura::compiler

@@ -1223,52 +1223,12 @@ void register_mutate_primitives(
         if (ev.mark_define_dirty_fn_)
             ev.mark_define_dirty_fn_(name);
 
-        // ── Auto-typecheck (Issue #107 part 3.5) ────────────
-        // Run the typecheck inline WITHOUT going through the
-        // typecheck-current primitive dispatch. Going through the
-        // primitive would re-acquire ev.workspace_mtx_ in shared mode
-        // and deadlock (we already hold unique_lock from the
-        // mutate). The check populates ev.last_mutate_error_ so
-        // (typecheck-status) can surface the result.
-        if (ev.workspace_flat_ && ev.workspace_pool_) {
-            if (!ev.type_registry_) {
-                ev.type_registry_ = new aura::core::TypeRegistry();
-            }
-            auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
-            aura::compiler::TypeChecker tc(treg);
-            if (!ev.declared_type_sigs_.empty()) {
-                std::unordered_map<std::string, std::string> sig_map;
-                std::unordered_map<std::string, std::string> mod_src_map;
-                for (auto& [name, decl] : ev.declared_type_sigs_) {
-                    sig_map[name] = decl.type_str;
-                    if (!decl.module_file.empty())
-                        mod_src_map[name] = decl.module_file;
-                }
-                tc.inject_type_sigs(sig_map, mod_src_map);
-            }
-            aura::diag::DiagnosticCollector local_diag;
-            tc.infer_flat(*ev.workspace_flat_, *ev.workspace_pool_, ev.workspace_flat_->root, local_diag);
-            // Issue #116: apply deferred coercions so the
-            // upcoming IR generation sees CoercionNodes.
-            // (The mutate:rebind path proceeds to eval, so
-            //  the workspace must be lowering-ready.)
-            {
-                auto cm = tc.take_coercions();
-                if (!cm.empty()) {
-                    aura::compiler::apply_coercion_map(*ev.workspace_flat_, cm);
-                }
-            }
-            ev.workspace_flat_->clear_all_dirty();
-            auto local_diags = local_diag.diagnostics();
-            if (local_diags.empty()) {
-                ev.last_mutate_error_.clear();
-            } else {
-                std::string err = "typecheck after mutate:rebind failed:";
-                for (auto& d : local_diags)
-                    err += " " + d.format() + ";";
-                ev.last_mutate_error_ = err;
-            }
-        }
+        // ── Auto-typecheck (Issue #107 / #526) ──────────────
+        // Selective infer_flat_partial when the mutation log
+        // has entries; full infer_flat fallback otherwise.
+        // Inline (no primitive dispatch) to avoid workspace_mtx_
+        // deadlock while the Guard holds unique_lock.
+        (void)ev.run_post_mutate_typecheck_no_lock();
 
         // ── Ownership validation: ensure ownership invariants hold ──
         if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
@@ -1459,49 +1419,8 @@ void register_mutate_primitives(
                                           aura::ast::FlatAST::kGeneralDirty |
                                               aura::ast::FlatAST::kConstraintDirty);
 
-                // ── Auto-typecheck (Issue #107 part 3.5) ────────────
-                // Run the typecheck inline WITHOUT going through the
-                // typecheck-current primitive dispatch. Same deadlock
-                // avoidance as mutate:rebind. Populates
-                // ev.last_mutate_error_ so (typecheck-status) works.
-                if (ev.workspace_flat_ && ev.workspace_pool_) {
-                    if (!ev.type_registry_) {
-                        ev.type_registry_ = new aura::core::TypeRegistry();
-                    }
-                    auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
-                    aura::compiler::TypeChecker tc(treg);
-                    if (!ev.declared_type_sigs_.empty()) {
-                        std::unordered_map<std::string, std::string> sig_map;
-                        std::unordered_map<std::string, std::string> mod_src_map;
-                        for (auto& [name2, decl] : ev.declared_type_sigs_) {
-                            sig_map[name2] = decl.type_str;
-                            if (!decl.module_file.empty())
-                                mod_src_map[name2] = decl.module_file;
-                        }
-                        tc.inject_type_sigs(sig_map, mod_src_map);
-                    }
-                    aura::diag::DiagnosticCollector local_diag;
-                    tc.infer_flat(*ev.workspace_flat_, *ev.workspace_pool_, ev.workspace_flat_->root,
-                                  local_diag);
-                    // Issue #116: apply deferred coercions before eval
-                    // (the set-body path proceeds to re-execute the workspace).
-                    {
-                        auto cm = tc.take_coercions();
-                        if (!cm.empty()) {
-                            aura::compiler::apply_coercion_map(*ev.workspace_flat_, cm);
-                        }
-                    }
-                    ev.workspace_flat_->clear_all_dirty();
-                    auto local_diags = local_diag.diagnostics();
-                    if (local_diags.empty()) {
-                        ev.last_mutate_error_.clear();
-                    } else {
-                        std::string err = "typecheck after mutate:set-body failed:";
-                        for (auto& d : local_diags)
-                            err += " " + d.format() + ";";
-                        ev.last_mutate_error_ = err;
-                    }
-                }
+                // ── Auto-typecheck (Issue #107 / #526) ──────────
+                (void)ev.run_post_mutate_typecheck_no_lock();
 
                 // ── Ownership validation ──
                 if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
