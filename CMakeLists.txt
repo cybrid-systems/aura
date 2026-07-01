@@ -1428,6 +1428,9 @@ aura_issue_test_link_llvm_jit(test_typechecker_incremental_dependency_occurrence
 # round mutate, occurrence-stale-count query, regression.
 aura_add_issue_test(test_occurrence_mutate_narrowing)
 aura_issue_test_link_llvm_jit(test_occurrence_mutate_narrowing)
+# Issue #467: per-node occurrence-dirty + blame chain post-mutate.
+aura_add_issue_test(test_occurrence_dirty_blame_post_mutate_467)
+aura_issue_test_link_llvm_jit(test_occurrence_dirty_blame_post_mutate_467)
 # Issue #639: narrow blame + stale invalidation post-mutate
 aura_add_issue_test(test_occurrence_narrow_blame_stale_invalidation_post_mutate)
 aura_issue_test_link_llvm_jit(test_occurrence_narrow_blame_stale_invalidation_post_mutate)

@@ -1922,6 +1922,35 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                   stale_prevented));
     });
 
+    // Issue #467: query:occurrence-stats. Returns the sum of 4
+    // per-node occurrence-dirty + blame chain propagation counters:
+    //   - occurrence_dirty_recoveries: narrowing_dirty_recovery_total
+    //   - blame_chain_propagated: narrow_blame_attached_total +
+    //     occurrence_blame_chain_complete_total
+    //   - stale_narrowing_prevented: occurrence_stale_refreshes_total +
+    //     stale_check_narrow_prevented_total
+    //   - narrowing_refresh: narrowing_refresh_count_ (Evaluator)
+    add("query:occurrence-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t dirty_recovery =
+            m ? m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t blame_attached =
+            m ? m->narrow_blame_attached_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t blame_complete =
+            m ? m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t stale_refresh =
+            m ? m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t stale_prevented =
+            m ? m->stale_check_narrow_prevented_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
+        return make_int(static_cast<std::int64_t>(
+            dirty_recovery + blame_attached + blame_complete + stale_refresh +
+            stale_prevented + narrowing));
+    });
+
     // Issue #576: query:occurrence-blame-stats. Returns the sum
     // of 4 Task2 occurrence typing + blame/provenance counters:
     //   - stale_narrowing_prevented: stale_check_narrow_prevented_total
