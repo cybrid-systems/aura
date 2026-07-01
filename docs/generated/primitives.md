@@ -2,12 +2,12 @@
 
 # Primitives (generated)
 
-**555** registrations scanned from `src/**/*.cpp`.
+**556** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 141 primitives (25%)
+- **mutation-safety**: 142 primitives (26%)
 - **core**: 177 primitives (32%)
 - **internal-observable**: 90 primitives (16%)
 - **convenience**: 147 primitives (26%)
@@ -211,7 +211,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `synthesize:optimize` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (60)
+## Compile: (61)
 
 - `compile:and-or-precision-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:ast-ops-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -242,6 +242,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:inline-pass-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:invalidations-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:ir-soa-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:ir-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:is-instruction-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:let-poly-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:linear-elide-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -667,7 +668,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (141)
+### Mutation safety (must remain primitive) (142)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -724,6 +725,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:inline-pass-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:invalidations-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:ir-soa-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:ir-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:is-instruction-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:let-poly-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:linear-elide-count` — `src/compiler/evaluator_primitives_compile.cpp`
