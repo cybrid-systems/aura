@@ -1079,9 +1079,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             ws ? ws->atomic_batch_commits() : 0;
         const std::uint64_t ws_bumps_saved =
             ws ? ws->atomic_batch_bumps_saved() : 0;
+        // Issue #396 Phase 3: include the in-fiber heuristic
+        // counter in the sum so changes to it show up in the
+        // mutation-log-stats aggregate.
+        const std::uint64_t in_fiber_total =
+            ev->atomic_batch_in_fiber_total();
         return make_int(static_cast<std::int64_t>(
             steal_violations + batch_count + bumps_saved_total +
-            rollbacks + ws_commits + ws_bumps_saved));
+            rollbacks + ws_commits + ws_bumps_saved + in_fiber_total));
     });
 
     // (query:mutation-log [n]) — Issue #346: returns

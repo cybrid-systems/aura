@@ -2489,6 +2489,23 @@ void register_mutate_primitives(
     add("mutate:atomic-batch", [&ev, mev](const auto& a) -> EvalValue {
         bool guard_ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        // Issue #396 Phase 1: set the current fiber's yield reason
+        // to MutationBoundary for the duration of the batch. This
+        // makes work-stealing decisions (is_stealable()) see this
+        // fiber as being at a mutation boundary, even though the
+        // actual batch hasn't yielded. The hook is a no-op when
+        // not in serve mode (no scheduler).
+        //
+        // Issue #396 Phase 3: also track whether we were in a
+        // fiber context for the "executed-under-concurrent-fiber"
+        // heuristic counter. The hook being non-null implies
+        // serve mode (scheduler active); combined with the fact
+        // that we're inside a fiber call site, this is a good
+        // proxy for "ran under concurrent fiber pressure".
+        const bool in_fiber = (aura::messaging::g_fiber_set_yield_reason_mutation_boundary != nullptr);
+        if (in_fiber) {
+            aura::messaging::g_fiber_set_yield_reason_mutation_boundary();
+        }
         // Allow a.size() == 1 with the ops list being empty (void)
         // — that's a vacuous success (no ops, no rollback needed).
         // The summary string is optional in that case.
@@ -2564,6 +2581,12 @@ void register_mutate_primitives(
                 sub_result = ev.eval_flat_apply_mutate_replace_value(op_args);
             } else if (op_name == "mutate:tweak-literal") {
                 sub_result = ev.eval_flat_apply_mutate_tweak_literal(op_args);
+            } else if (op_name == "mutate:remove-node") {
+                // Issue #396 Phase 2: lockless variant extracted.
+                sub_result = ev.eval_flat_apply_mutate_remove_node(op_args);
+            } else if (op_name == "mutate:insert-child") {
+                // Issue #396 Phase 2: lockless variant extracted.
+                sub_result = ev.eval_flat_apply_mutate_insert_child(op_args);
             } else {
                 // For other ops (insert-child / remove-node / etc.)
                 // that aren't extracted to lockless helpers yet,
@@ -2605,6 +2628,11 @@ void register_mutate_primitives(
         ev.atomic_batch_count_++;
         ev.atomic_batch_ops_total_ += op_count;
         ev.atomic_batch_bumps_saved_total_ += saved;
+        // Issue #396 Phase 3: track fiber-context commits for
+        // the "executed-under-concurrent-fiber" heuristic.
+        if (in_fiber) {
+            ev.atomic_batch_in_fiber_total_.fetch_add(1, std::memory_order_relaxed);
+        }
         return make_bool(true);
     });
     // (mutate:splice parent-id position code-strings... "summary")

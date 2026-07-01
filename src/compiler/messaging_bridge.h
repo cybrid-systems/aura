@@ -68,6 +68,18 @@ extern FiberYieldFn g_fiber_yield;
 using FiberYieldMutationFn = void (*)();
 extern FiberYieldMutationFn g_fiber_yield_mutation_boundary;
 
+// Fiber SET yield reason to MutationBoundary (lightweight) —
+// called by (mutate:atomic-batch) on Guard entry so work-
+// stealing decisions (Fiber::is_stealable()) see this fiber
+// as being at a mutation boundary. The "lightweight" part:
+// unlike g_fiber_yield_mutation_boundary (which actually
+// yields the fiber), this hook only sets the field, no
+// yield. Set by serve_async.cpp when the fiber scheduler is
+// active. nullptr when not in serve mode (no-op then).
+// Issue #396 Phase 1.
+using FiberSetYieldReasonMutationFn = void (*)();
+extern FiberSetYieldReasonMutationFn g_fiber_set_yield_reason_mutation_boundary;
+
 // Fiber join — wait for a fiber to complete and return its result (future use)
 // Currently a placeholder — evaluator handles fiber:join internally.
 using FiberJoinFn = void (*)();

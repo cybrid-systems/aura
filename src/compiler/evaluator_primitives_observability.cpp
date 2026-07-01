@@ -138,6 +138,14 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             // dashboards ("how much churn did batching save?").
             {"bumps-saved-total",
              make_int(static_cast<std::int64_t>(ev.atomic_batch_bumps_saved_total_))},
+            // Issue #396 Phase 3: heuristic for "ran under
+            // concurrent fiber pressure". Bumped when the
+            // bridge fiber setter was active at commit time
+            // (i.e. serve mode + fiber context). Stays 0 in
+            // test-binary paths where the hook is null.
+            // Name matches the issue's proposed field.
+            {"executed-under-concurrent-fiber",
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_in_fiber_total_))},
         };
         return build_hash(kv);
     });

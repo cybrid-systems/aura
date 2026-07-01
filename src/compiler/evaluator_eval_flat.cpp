@@ -1443,6 +1443,111 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
         "batch :tweak-literal not yet supported (use standalone mutate:tweak-literal)"});
 }
 
+// Issue #396 Phase 2: lockless variant of (mutate:remove-node).
+// Replicates the inner logic of the wrapper primitive but skips
+// the MutationBoundaryGuard + fiber-yield + read-only check (the
+// outer atomic-batch guard already owns these). Called from
+// (mutate:atomic-batch) for the "mutate:remove-node" sub-op.
+EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::EvalValue> a) {
+    if (a.empty() || !is_int(a[0]))
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
+                                   "batch :remove-node requires a node-id (int)"});
+    if (!workspace_flat_)
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :remove-node: no workspace loaded"});
+    auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    auto& flat = *workspace_flat_;
+    if (target >= flat.size())
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :remove-node: node ID " + std::to_string(target) +
+                " >= flat size " + std::to_string(flat.size())});
+    // Walk all parents to find the (parent, child_index) of
+    // `target`. Same logic as the wrapper primitive; can be
+    // batched into the log later.
+    bool removed = false;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        auto v = flat.get(id);
+        if (v.children.empty())
+            continue;
+        const auto& children = flat.children(id);
+        for (std::size_t ci = 0; ci < children.size(); ++ci) {
+            if (children[ci] != target)
+                continue;
+            auto result = aura::ast::mutators::apply_mutation(
+                flat, id, aura::ast::mutators::RemoveChildMutator{
+                            static_cast<std::uint32_t>(ci)});
+            if (!result)
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    std::string("batch :remove-node: ") + std::string(result.error().message)});
+            flat.add_structural_mutation_log_entry(
+                id, static_cast<std::uint32_t>(ci), target,
+                aura::ast::NULL_NODE, "remove-node");
+            removed = true;
+            break;
+        }
+        if (removed) break;
+    }
+    if (!removed)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :remove-node: node " + std::to_string(target) +
+                " has no parent in the AST"});
+    return make_bool(true);
+}
+
+// Issue #396 Phase 2: lockless variant of (mutate:insert-child).
+// Replicates the inner logic but skips the guard + fiber-yield
+// + read-only check. Parses the code-string into the workspace
+// (so all existing IDs stay valid) then routes through
+// InsertChildMutator. Returns the parsed new-child NodeId.
+EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types::EvalValue> a) {
+    if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]))
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ArityMismatch,
+            "batch :insert-child requires parent-id, position, code-string"});
+    if (!workspace_flat_ || !workspace_pool_)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :insert-child: no workspace loaded"});
+    auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    auto pos = static_cast<std::uint32_t>(as_int(a[1]));
+    auto code_idx = as_string_idx(a[2]);
+    if (code_idx >= string_heap_.size())
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError, "batch :insert-child: string index out of range"});
+    auto& flat = *workspace_flat_;
+    auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+        std::string parse_err = "batch :insert-child: parse failed";
+        if (!pr.errors.empty()) {
+            for (auto& e : pr.errors) {
+                if (!parse_err.empty() && parse_err.back() != ':')
+                    parse_err += "; ";
+                parse_err += e.format();
+            }
+        } else if (!pr.error.empty()) {
+            parse_err += ": " + pr.error;
+        }
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
+                                                      parse_err});
+    }
+    auto result = aura::ast::mutators::apply_mutation(
+        flat, parent, aura::ast::mutators::InsertChildMutator{pos, pr.root});
+    if (!result)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            std::string("batch :insert-child: ") + std::string(result.error().message)});
+    std::string summary = (a.size() > 3 && is_string(a[3]))
+                              ? string_heap_[as_string_idx(a[3])]
+                              : "insert child at " + std::to_string(pos);
+    flat.add_structural_mutation_log_entry(
+        parent, pos, aura::ast::NULL_NODE, pr.root, "insert-child");
+    return make_int(static_cast<std::int64_t>(pr.root));
+}
+
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                 aura::ast::NodeId id, const Env& env) {

@@ -2042,6 +2042,15 @@ private:
     // sum of (saved per batch) across all successful batches.
     // Exposed via observability snapshot.
     std::atomic<std::uint64_t> atomic_batch_bumps_saved_total_{0};
+    // Issue #396 Phase 3: how many atomic-batch commits
+    // happened while the bridge fiber setter was active
+    // (i.e. we were in serve mode and a fiber context
+    // existed at batch commit). Heuristic for "ran under
+    // concurrent fiber pressure" — the hook is null in
+    // test-binary paths (no serve) so the counter stays 0
+    // in those. Exposed via (atomic-batch:stats) hash key
+    // "executed-under-concurrent-fiber".
+    std::atomic<std::uint64_t> atomic_batch_in_fiber_total_{0};
     // Issue #453: panic checkpoint lifecycle metrics. Bumped by
     // the bridge hooks (g_transfer_panic_checkpoint, etc.) when
     // a checkpoint transfer or GC defer happens across a fiber
@@ -3486,6 +3495,13 @@ public:
     [[nodiscard]] std::uint64_t atomic_batch_bumps_saved_total() const noexcept {
         return atomic_batch_bumps_saved_total_.load(std::memory_order_relaxed);
     }
+    // Issue #396 Phase 3: lifetime total of atomic-batch
+    // commits that ran while the bridge fiber setter was
+    // active (i.e. in serve mode with a fiber context).
+    // Heuristic for "ran under concurrent fiber pressure".
+    [[nodiscard]] std::uint64_t atomic_batch_in_fiber_total() const noexcept {
+        return atomic_batch_in_fiber_total_.load(std::memory_order_relaxed);
+    }
     // Issue #459: nested atomic-batch + suppressed-bump
     // observability. Bumped when:
     //   - atomic_batch_steal_violation_ — a fiber steal
@@ -3964,6 +3980,14 @@ public:
     EvalResult eval_flat_apply_mutate_rebind(std::span<const types::EvalValue> a);
     EvalResult eval_flat_apply_mutate_replace_value(std::span<const types::EvalValue> a);
     EvalResult eval_flat_apply_mutate_tweak_literal(std::span<const types::EvalValue> a);
+    // Issue #396 Phase 2: lockless variants for the two
+    // high-frequency mutate operations that previously fell
+    // back to error inside atomic-batch. Used by
+    // (mutate:atomic-batch) sub-op routing; the wrapper
+    // primitives (mutate:remove-node / mutate:insert-child)
+    // still use these internally too.
+    EvalResult eval_flat_apply_mutate_remove_node(std::span<const types::EvalValue> a);
+    EvalResult eval_flat_apply_mutate_insert_child(std::span<const types::EvalValue> a);
 
     // Issue #165 Phase 1B: post-mutation macro re-expansion.
     // Walks the affected subtree of a mutation record looking
