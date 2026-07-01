@@ -263,4 +263,81 @@ PostRestoreReport FlatAST::validate_post_restore(std::vector<ValidationError>* e
     return report;
 }
 
+// ── Issue #378: post-class free functions + non-template visitors ──────
+//
+// Scope-limited first cut: move the non-template post-class items from
+// ast.ixx to this impl unit. Templates (MutationVisitor / PureMutationFn
+// concepts, MutationFnWrap<F>, run_mutation_* templates) MUST stay in the
+// interface unit — templates with external linkage can't be defined in a
+// non-exported module implementation unit.
+//
+// All declarations stay `export` in ast.ixx (declarations only, no body);
+// the bodies below live here in module aura.core.ast (no `export`).
+
+// ── StableNodeRef + MutationRecord helpers ───────────────────
+FlatAST::StableNodeRef mutation_target_ref(const FlatAST& flat,
+                                            const MutationRecord& rec) noexcept {
+    return flat.make_ref(rec.target_node);
+}
+
+FlatAST::StableNodeRef mutation_parent_ref(const FlatAST& flat,
+                                            const MutationRecord& rec) noexcept {
+    return flat.make_ref(rec.parent_id);
+}
+
+bool is_mutation_target_valid(const FlatAST& flat,
+                               const MutationRecord& rec) noexcept {
+    return flat.is_valid(mutation_target_ref(flat, rec));
+}
+
+bool is_mutation_parent_valid(const FlatAST& flat,
+                              const MutationRecord& rec) noexcept {
+    return rec.parent_id == NULL_NODE || flat.is_valid(mutation_parent_ref(flat, rec));
+}
+
+// ── Example mutation visitors ──────────────────────────────────
+void MutationCountVisitor::visit_mutation(FlatAST&, const MutationRecord& rec) {
+    if (rec.status == MutationStatus::Committed)
+        ++committed_count_;
+    ++total_count_;
+}
+
+bool MutationCountVisitor::has_error() const { return false; }
+
+std::size_t MutationCountVisitor::total_count() const { return total_count_; }
+
+std::size_t MutationCountVisitor::committed_count() const { return committed_count_; }
+
+void MutationTargetValidityVisitor::visit_mutation(FlatAST& flat, const MutationRecord& rec) {
+    if (rec.status != MutationStatus::Committed)
+        return;
+    const bool has_target = rec.target_node != NULL_NODE;
+    const bool has_parent = rec.parent_id != NULL_NODE;
+    if (!has_target && !has_parent)
+        return;
+    if (has_target && !is_mutation_target_valid(flat, rec))
+        has_error_ = true;
+    if (has_parent && !is_mutation_parent_valid(flat, rec))
+        has_error_ = true;
+}
+
+bool MutationTargetValidityVisitor::has_error() const { return has_error_; }
+
+// Issue #276: resolve a captured stable ref across workspace layers.
+std::optional<FlatAST::StableNodeRef> resolve_across_layer(
+    const FlatAST& target_flat, const mutation::NodeIdRemapTable& layer_remap,
+    FlatAST::StableNodeRef captured, std::uint32_t captured_layer,
+    std::uint32_t target_layer) noexcept {
+    if (captured_layer == target_layer)
+        return target_flat.is_valid(captured) ? std::optional{captured} : std::nullopt;
+    NodeId mapped = captured.id;
+    if (captured_layer < target_layer)
+        mapped = layer_remap.resolve_from_parent(mapped);
+    else
+        mapped = layer_remap.resolve_to_parent(mapped);
+    if (!target_flat.is_live_node(mapped))
+        return std::nullopt;
+    return FlatAST::StableNodeRef{mapped, target_flat.generation()};
+}
+
 } // namespace aura::ast

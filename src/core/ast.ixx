@@ -5534,25 +5534,18 @@ private:
 };
 
 // ── StableNodeRef + MutationRecord helpers ───────────────────
+// Issue #378: bodies moved to ast_impl.cpp (non-template post-class
+// items). Templates above (MutationFnWrap / run_mutation_*) MUST stay
+// in this interface unit because templates with external visibility
+// can't be defined in a non-exported module implementation unit.
 export [[nodiscard]] FlatAST::StableNodeRef mutation_target_ref(const FlatAST& flat,
-                                                                const MutationRecord& rec) noexcept {
-    return flat.make_ref(rec.target_node);
-}
-
+                                                                const MutationRecord& rec) noexcept;
 export [[nodiscard]] FlatAST::StableNodeRef mutation_parent_ref(const FlatAST& flat,
-                                                                const MutationRecord& rec) noexcept {
-    return flat.make_ref(rec.parent_id);
-}
-
+                                                                const MutationRecord& rec) noexcept;
 export [[nodiscard]] bool is_mutation_target_valid(const FlatAST& flat,
-                                                   const MutationRecord& rec) noexcept {
-    return flat.is_valid(mutation_target_ref(flat, rec));
-}
-
+                                                   const MutationRecord& rec) noexcept;
 export [[nodiscard]] bool is_mutation_parent_valid(const FlatAST& flat,
-                                                  const MutationRecord& rec) noexcept {
-    return rec.parent_id == NULL_NODE || flat.is_valid(mutation_parent_ref(flat, rec));
-}
+                                                  const MutationRecord& rec) noexcept;
 
 // ── run_mutation_pipeline — fold over mutation log ───────────
 export template <MutationVisitor V>
@@ -5586,17 +5579,15 @@ bool run_mutation_pipeline(FlatAST& flat, std::span<const MutationRecord> record
 }
 
 // ── Example mutation visitors ──────────────────────────────────
+// Issue #378: bodies moved to ast_impl.cpp. These classes are non-template
+// and the bodies don't need to be in the interface unit for instantiation
+// — the impl unit provides the definitions.
 export class MutationCountVisitor {
 public:
-    void visit_mutation(FlatAST&, const MutationRecord& rec) {
-        if (rec.status == MutationStatus::Committed)
-            ++committed_count_;
-        ++total_count_;
-    }
-
-    bool has_error() const { return false; }
-    std::size_t total_count() const { return total_count_; }
-    std::size_t committed_count() const { return committed_count_; }
+    void visit_mutation(FlatAST&, const MutationRecord& rec);
+    bool has_error() const;
+    std::size_t total_count() const;
+    std::size_t committed_count() const;
 
 private:
     std::size_t total_count_ = 0;
@@ -5605,41 +5596,19 @@ private:
 
 export class MutationTargetValidityVisitor {
 public:
-    void visit_mutation(FlatAST& flat, const MutationRecord& rec) {
-        if (rec.status != MutationStatus::Committed)
-            return;
-        const bool has_target = rec.target_node != NULL_NODE;
-        const bool has_parent = rec.parent_id != NULL_NODE;
-        if (!has_target && !has_parent)
-            return;
-        if (has_target && !is_mutation_target_valid(flat, rec))
-            has_error_ = true;
-        if (has_parent && !is_mutation_parent_valid(flat, rec))
-            has_error_ = true;
-    }
-
-    bool has_error() const { return has_error_; }
+    void visit_mutation(FlatAST& flat, const MutationRecord& rec);
+    bool has_error() const;
 
 private:
     bool has_error_ = false;
 };
 
 // Issue #276: resolve a captured stable ref across workspace layers.
+// Issue #378: body moved to ast_impl.cpp (non-template free function).
 export [[nodiscard]] std::optional<FlatAST::StableNodeRef> resolve_across_layer(
     const FlatAST& target_flat, const mutation::NodeIdRemapTable& layer_remap,
     FlatAST::StableNodeRef captured, std::uint32_t captured_layer,
-    std::uint32_t target_layer) noexcept {
-    if (captured_layer == target_layer)
-        return target_flat.is_valid(captured) ? std::optional{captured} : std::nullopt;
-    NodeId mapped = captured.id;
-    if (captured_layer < target_layer)
-        mapped = layer_remap.resolve_from_parent(mapped);
-    else
-        mapped = layer_remap.resolve_to_parent(mapped);
-    if (!target_flat.is_live_node(mapped))
-        return std::nullopt;
-    return FlatAST::StableNodeRef{mapped, target_flat.generation()};
-}
+    std::uint32_t target_layer) noexcept;
 
 // ── Patch application ──────────────────────────────────────────
 export bool apply_patches(FlatAST& ast, std::span<const Patch> patches) pre(!patches.empty());
