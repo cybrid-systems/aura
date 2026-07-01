@@ -1513,6 +1513,107 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (compile:snapshot)
+    //   → hash
+    //   Issue #389 (follow-up #247): wraps CompilerService::snapshot()
+    //   and returns the workspace's CURRENT observability state as a
+    //   hash. Focuses on the SyntaxMarker distribution (the #247/#389
+    //   scope) plus the long-term-stability context fields that an
+    //   AI agent typically needs alongside marker counts. For deeper
+    //   diagnostics on individual categories (narrowing, typecheck
+    //   cache, dead-coercion, etc.), use the per-category
+    //   `compile:*-stats` primitives.
+    //
+    //   Fields:
+    //     marker-user-count           nodes written by user
+    //     marker-macro-introduced-count nodes inserted by hygienic macros
+    //     marker-bool-literal-count   auto-generated #t / #f nodes
+    //     marker-total-count          total nodes in marker column
+    //     current-generation          FlatAST generation_ (uint16_t, 1..65535)
+    //     current-wrap-epoch          wrap_epoch_ bumped per generation_ wrap
+    //     generation-wrap-count       lifetime uint16_t wrap-arounds
+    //     node-count                  total AST node count in workspace
+    //
+    //   The marker_* fields are the same numbers you'd get from
+    //   (query:marker-stats) but as a hash with named keys instead
+    //   of a positional 4-element list. Use this when you want to
+    //   pipe individual marker counts into (stats:get ...) /
+    //   (stats:contains?) without list-position gymnastics.
+    add("compile:snapshot", [&ev](const auto&) -> EvalValue {
+        // Local build_hash closure — same FNV-1a + open-addressing
+        // pattern as the other compile:*-stats primitives above.
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        if (!ev.compiler_service_)
+            return make_void();
+        auto* svc = static_cast<class CompilerService*>(
+            ev.compiler_service_);
+        auto snap = svc->snapshot();
+        // node-count is the workspace's total node count, not a
+        // snapshot field — read it directly from the FlatAST when
+        // available so the primitive is still useful even if the
+        // snapshot was taken before the workspace was set.
+        std::uint64_t node_count = 0;
+        if (ev.workspace_flat_)
+            node_count = ev.workspace_flat_->size();
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"marker-user-count",
+             make_int(static_cast<std::int64_t>(snap.marker_user_count))},
+            {"marker-macro-introduced-count",
+             make_int(static_cast<std::int64_t>(snap.marker_macro_introduced_count))},
+            {"marker-bool-literal-count",
+             make_int(static_cast<std::int64_t>(snap.marker_bool_literal_count))},
+            {"marker-total-count",
+             make_int(static_cast<std::int64_t>(snap.marker_total_count))},
+            {"current-generation",
+             make_int(static_cast<std::int64_t>(snap.current_generation))},
+            {"current-wrap-epoch",
+             make_int(static_cast<std::int64_t>(snap.current_wrap_epoch))},
+            {"generation-wrap-count",
+             make_int(static_cast<std::int64_t>(snap.generation_wrap_count))},
+            {"node-count",
+             make_int(static_cast<std::int64_t>(node_count))},
+        };
+        return build_hash(kv);
+    });
+
     // (compile:status)
     //   → ((:key value) ...)  association list
     //   Returns incremental compilation status:

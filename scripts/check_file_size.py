@@ -115,12 +115,10 @@ def main() -> int:
 
     # Sanity-check the thresholds.
     if args.warning <= 0 or args.blocker <= 0:
-        print(f"error: thresholds must be positive (warning={args.warning}, blocker={args.blocker})",
-              file=sys.stderr)
+        print(f"error: thresholds must be positive (warning={args.warning}, blocker={args.blocker})", file=sys.stderr)
         return 2
     if args.blocker < args.warning:
-        print(f"error: blocker ({args.blocker}) must be >= warning ({args.warning})",
-              file=sys.stderr)
+        print(f"error: blocker ({args.blocker}) must be >= warning ({args.warning})", file=sys.stderr)
         return 2
 
     src_root = Path(args.src)
@@ -142,8 +140,7 @@ def main() -> int:
         for f in files
     ]
     classified = [
-        FileReport(path=r.path, lines=r.lines, status=classify(r.lines, args.warning, args.blocker))
-        for r in reports
+        FileReport(path=r.path, lines=r.lines, status=classify(r.lines, args.warning, args.blocker)) for r in reports
     ]
 
     blockers = [r for r in classified if r.status == "blocker"]
@@ -159,10 +156,7 @@ def main() -> int:
                 "warning": len(warnings),
                 "blocker": len(blockers),
             },
-            "files": [
-                {"path": r.path, "lines": r.lines, "status": r.status}
-                for r in classified
-            ],
+            "files": [{"path": r.path, "lines": r.lines, "status": r.status} for r in classified],
         }
         print(json.dumps(out, indent=2))
     else:
