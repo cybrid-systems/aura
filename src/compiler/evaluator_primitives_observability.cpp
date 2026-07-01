@@ -482,6 +482,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:reflect-edsl-bridge-stats",
             // Issue #551 — Reflect post-mutate
             "query:reflect-postmutate-stats",
+            // Issue #594 — Static reflection self-mod validation hook
+            "query:reflection-selfmod-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
             // Issue #595 — Marker/dirty/epoch/Guard self-evo loop

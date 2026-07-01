@@ -1435,6 +1435,9 @@ aura_issue_test_link_llvm_jit(test_reflect_postmutate_guard_snapshot)
 # Non-duplicative with #218/#248/#551 (per-theme reflect tests).
 aura_add_issue_test(test_reflect_edsl_bridge_closed_loop_454)
 aura_issue_test_link_llvm_jit(test_reflect_edsl_bridge_closed_loop_454)
+# Issue #594: Static reflection self-mod validation hook (Task6).
+aura_add_issue_test(test_static_reflect_selfmod_validation_task6_594)
+aura_issue_test_link_llvm_jit(test_static_reflect_selfmod_validation_task6_594)
 # Issue #550: Dirty/Epoch Propagation + Incremental
 # solve_delta + Occurrence Re-Narrowing + Pass Short-Circuit
 # for reliable typed self-mod (P0). 9 scenarios validating:
