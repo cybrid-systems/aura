@@ -2178,3 +2178,29 @@ add_dependencies(all_test_issue_targets test_issue_222)
 add_dependencies(all_test_issue_targets test_issue_223)
 add_dependencies(all_test_issue_targets test_issue_237)
 
+
+# ── Issue #382: file size lint ──────────────────────────────────
+#
+# Custom target that runs scripts/check_file_size.py to enforce
+# the .ixx file size policy (see scripts/file_size_policy.md).
+#
+# Run on demand:
+#   cmake --build build --target lint_file_size
+#
+# Exits 1 if any .ixx file is over the blocker threshold (2000
+# lines by default). Exits 0 if everything is under the warning
+# threshold (800 lines by default).
+#
+# Not added to the default `all` target — it's a manual lint,
+# not an auto-build step. CI can invoke it via:
+#   cmake --build build --target lint_file_size
+# and check the exit code.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_custom_target(lint_file_size
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_file_size.py
+                --src ${CMAKE_SOURCE_DIR}/src
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Linting .ixx file sizes (Issue #382 policy)"
+        VERBATIM)
+endif()
