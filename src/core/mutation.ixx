@@ -113,6 +113,9 @@ export struct NarrowingRecord {
     // Sequence number so the consumer can iterate in
     // application order.
     std::uint64_t record_id = 0;
+    // Issue #537 / #518 Phase 2: mutation that triggered
+    // this record's (re-)capture. 0 = unknown / first-typecheck.
+    std::uint64_t source_mutation_id = 0;
 };
 
 export enum class MutationSoAField : std::uint32_t {

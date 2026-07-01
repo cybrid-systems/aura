@@ -14,6 +14,9 @@
 //   AC4: multi-round mutate + if-predicate still typechecks
 //   AC5: query:occurrence-stale-count decreases after re-narrow
 //   AC6: regression — existing eval still works
+//   AC7: query:occurrence-narrowing-stats > 0 after re-narrow (#537)
+//   AC8: narrowing log carries source_mutation_id (#537)
+//   AC9: snapshot occurrence_stale_refreshes_total bumped (#537)
 
 #include "test_harness.hpp"
 
@@ -213,6 +216,96 @@ bool test_occurrence_stale_count_decreases() {
     return true;
 }
 
+// ── AC7: query:occurrence-narrowing-stats after re-narrow
+bool test_query_occurrence_narrowing_stats() {
+    std::println("\n--- AC7: query:occurrence-narrowing-stats after re-narrow ---");
+    CompilerService cs;
+    if (!load_if_workspace(cs)) {
+        CHECK(false, "load if workspace");
+        return false;
+    }
+    auto stats0 = cs.eval("(query:occurrence-narrowing-stats)");
+    const auto v0 = stats0 && aura::compiler::types::is_int(*stats0)
+                        ? aura::compiler::types::as_int(*stats0)
+                        : 0;
+    (void)cs.eval(
+        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 7) 0))\" "
+        "\"issue-537-stats\")");
+    auto* ws = cs.workspace_flat();
+    if (!ws || ws->all_mutations().empty()) {
+        CHECK(false, "mutation log non-empty");
+        return false;
+    }
+    (void)cs.incremental_infer(ws->all_mutations().back());
+    auto stats1 = cs.eval("(query:occurrence-narrowing-stats)");
+    const auto v1 = stats1 && aura::compiler::types::is_int(*stats1)
+                        ? aura::compiler::types::as_int(*stats1)
+                        : v0;
+    std::println("  occurrence-narrowing-stats: {} -> {}", v0, v1);
+    CHECK(v1 > v0, "query:occurrence-narrowing-stats grew after re-narrow");
+    return true;
+}
+
+// ── AC8: narrowing log carries source_mutation_id ────────
+bool test_narrowing_log_source_mutation_id() {
+    std::println("\n--- AC8: narrowing log carries source_mutation_id ---");
+    CompilerService cs;
+    if (!load_if_workspace(cs)) {
+        CHECK(false, "load if workspace");
+        return false;
+    }
+    const auto count0 = cs.all_narrowings().size();
+    (void)cs.eval(
+        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 8) 0))\" "
+        "\"issue-537-prov\")");
+    auto* ws = cs.workspace_flat();
+    if (!ws || ws->all_mutations().empty()) {
+        CHECK(false, "mutation log non-empty");
+        return false;
+    }
+    const auto expected_mid = ws->all_mutations().back().mutation_id;
+    (void)cs.incremental_infer(ws->all_mutations().back());
+    const auto& log = cs.all_narrowings();
+    CHECK(log.size() > count0, "narrowing log grew after re-narrow");
+    bool found = false;
+    for (std::size_t i = count0; i < log.size(); ++i) {
+        if (log[i].source_mutation_id == expected_mid) {
+            found = true;
+            break;
+        }
+    }
+    CHECK(found, "new narrowing record has source_mutation_id from latest mutate");
+    return true;
+}
+
+// ── AC9: snapshot stale_refreshes_total bumped ───────────
+bool test_snapshot_stale_refreshes_bumped() {
+    std::println("\n--- AC9: snapshot occurrence_stale_refreshes_total bumped ---");
+    CompilerService cs;
+    if (!load_if_workspace(cs)) {
+        CHECK(false, "load if workspace");
+        return false;
+    }
+    const auto snap0 = cs.snapshot();
+    (void)cs.eval(
+        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 9) 0))\" "
+        "\"issue-537-snap\")");
+    auto* ws = cs.workspace_flat();
+    if (!ws || ws->all_mutations().empty()) {
+        CHECK(false, "mutation log non-empty");
+        return false;
+    }
+    (void)cs.incremental_infer(ws->all_mutations().back());
+    const auto snap1 = cs.snapshot();
+    std::println("  stale_refreshes: {} -> {}",
+                 snap0.occurrence_stale_refreshes_total,
+                 snap1.occurrence_stale_refreshes_total);
+    CHECK(snap1.occurrence_stale_refreshes_total >
+              snap0.occurrence_stale_refreshes_total,
+          "occurrence_stale_refreshes_total bumped after re-narrow");
+    return true;
+}
+
 // ── AC6: regression — eval still works ───────────────────
 bool test_regression_eval_works() {
     std::println("\n--- AC6: regression — eval still works ---");
@@ -233,6 +326,9 @@ int run_tests() {
     test_occurrence_stale_cleared();
     test_multi_round_mutate_typechecks();
     test_occurrence_stale_count_decreases();
+    test_query_occurrence_narrowing_stats();
+    test_narrowing_log_source_mutation_id();
+    test_snapshot_stale_refreshes_bumped();
     test_regression_eval_works();
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();

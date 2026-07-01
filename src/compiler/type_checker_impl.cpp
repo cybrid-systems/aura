@@ -2953,6 +2953,64 @@ static void collect_occurrence_dirty_if_exprs_in_subtree(
     }
 }
 
+// Issue #537 / #518 Phase 2: record refreshed narrowing
+// provenance after post-mutation re-narrow. Appends a new
+// NarrowingRecord with capture_epoch + source_mutation_id.
+static void record_refreshed_narrowing_provenance(
+    FlatAST& flat, StringPool& pool, TypeRegistry& reg, NodeId if_id, NodeId cond_id,
+    const OccurrenceInfoFlat& occ, std::uint32_t narrow_evidence, std::uint64_t cache_epoch,
+    void* metrics) {
+    if (occ.is_negation)
+        return;
+    std::string refined_str;
+    if (occ.refined_type.index != 0) {
+        auto name_opt = reg.name_of(occ.refined_type);
+        if (!name_opt.empty())
+            refined_str = std::string(name_opt);
+    }
+    std::string pred_src = occ.predicate_name.empty() ? "(...)" : occ.predicate_name;
+    if (pred_src == "(...)" && cond_id < flat.size()) {
+        auto cond_node = flat.get(cond_id);
+        if (cond_node.tag == NodeTag::Call && !cond_node.children.empty()) {
+            auto fn = flat.get(cond_node.child(0));
+            if (fn.tag == NodeTag::Variable) {
+                pred_src = std::string(pool.resolve(fn.sym_id));
+                if (cond_node.children.size() >= 2) {
+                    auto arg = flat.get(cond_node.child(1));
+                    if (arg.tag == NodeTag::Variable)
+                        pred_src += " " + std::string(pool.resolve(arg.sym_id));
+                }
+            }
+            if (pred_src.size() > 80)
+                pred_src.resize(80);
+        }
+    }
+    NarrowingRecord rec;
+    rec.var_name = occ.var_name;
+    rec.predicate_src = pred_src;
+    rec.refined_type_str = refined_str;
+    rec.if_node = if_id;
+    rec.cond_node = cond_id;
+    rec.is_negation = false;
+    rec.narrow_evidence = narrow_evidence;
+    rec.capture_epoch = cache_epoch;
+    if (!flat.all_mutations().empty())
+        rec.source_mutation_id = flat.all_mutations().back().mutation_id;
+    flat.record_narrowing(std::move(rec));
+
+    if (metrics) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics);
+        m->occurrence_stale_refreshes_total.fetch_add(1, std::memory_order_relaxed);
+        if (rec.source_mutation_id != 0 && !occ.predicate_name.empty() &&
+            occ.source_cond_id != 0) {
+            m->occurrence_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!occ.predicate_name.empty() && occ.source_cond_id != 0) {
+            m->narrowing_provenance_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+}
+
 // Issue #518 P0 Phase 1: refresh OccurrenceInfoFlat for dirty
 // if-contexts and clear per-node occurrence dirty/stale bits.
 std::size_t InferenceEngine::reanalyze_occurrence_contexts(
@@ -2992,6 +3050,15 @@ std::size_t InferenceEngine::reanalyze_occurrence_contexts(
 
         flat.clear_dirty_for(id, kOccurrenceBit);
         flat.clear_occurrence_stale(id);
+
+        // Issue #537 Phase 2: refresh narrowing provenance log.
+        std::uint32_t narrow_ev = 0;
+        if (occ)
+            narrow_ev = compute_narrowing_evidence(flat, pool, cond_id, reg_).value_or(0);
+        if (occ)
+            record_refreshed_narrowing_provenance(flat, pool, reg_, id, cond_id, *occ,
+                                                  narrow_ev, cache_epoch_, cs_.metrics_);
+
         ++refreshed;
 
         if (on_narrowing_refresh_)
@@ -4438,6 +4505,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     engine.declared_sigs_ = type_sigs_;
     engine.set_strict(strict_);           // Issue #79: plumb strict mode
     engine.set_cache_epoch(cache_epoch_); // Issue #168
+    engine.set_metrics(metrics_);         // Issue #537: provenance refresh metrics
     engine.bind_declared_sigs();
     engine.set_narrowing_observability_hooks(on_narrowing_refresh_, on_selective_recheck_);
 

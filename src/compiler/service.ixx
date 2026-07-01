@@ -4957,6 +4957,12 @@ public:
         s.narrowing_provenance_total =
             metrics_.narrowing_provenance_total.load(
                 std::memory_order_relaxed);
+        s.occurrence_stale_refreshes_total =
+            metrics_.occurrence_stale_refreshes_total.load(
+                std::memory_order_relaxed);
+        s.occurrence_blame_chain_complete_total =
+            metrics_.occurrence_blame_chain_complete_total.load(
+                std::memory_order_relaxed);
         // Issue #383: ConstraintSystem worklist +
         // consistent_unify observability. Mirror
         // the 3 lifetime counters in
