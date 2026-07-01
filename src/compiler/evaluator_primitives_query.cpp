@@ -2082,6 +2082,57 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             cov + ass + att + suc + cyc));
     });
 
+    // Issue #415: query:dirty-reason-propagation-stats. Returns
+    // the sum of 9 dirty-reason + propagation observability
+    // counters spanning the verification-category bitmask
+    // infrastructure (#344/#437/#469) and mark_dirty_upward
+    // propagation metrics (#256/#336):
+    //   - mark_dirty_upward_call_count_   (FlatAST, #256)
+    //   - mark_dirty_total_nodes_         (FlatAST, #256)
+    //   - dirty_upward_fast_fixed_point_hits_ (FlatAST, #336)
+    //   - verify_assertion_dirty_total_   (FlatAST, #437)
+    //   - verify_coverage_dirty_total_    (FlatAST, #437)
+    //   - verify_sva_dirty_total_         (FlatAST, #437)
+    //   - verify_formal_cex_dirty_total_  (FlatAST, #437)
+    //   - verification_coverage_feedback_total_ (FlatAST, #469)
+    //   - verification_assert_failure_total_  (FlatAST, #469)
+    //
+    // P0: returns an integer = sum of all 9 counters.
+    // Follow-up: returns a 9-tuple so the AI Agent can
+    // compute propagation_depth = total_nodes / call_count
+    // and verify_feedback_rate independently.
+    //
+    // Non-duplicative with #344 (compile:dirty-reason-counts
+    // per-node tallies + query:dirty-nodes subtree query),
+    // #437 (query:verify-dirty-stats 4-tuple only), and
+    // #469 (query:verification-loop-stats includes SV
+    // mutate + loop-cycle counters).
+    add("query:dirty-reason-propagation-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            if (!ws) return make_int(0);
+            const std::uint64_t upward_calls =
+                ws->mark_dirty_upward_call_count();
+            const std::uint64_t upward_nodes =
+                ws->mark_dirty_total_nodes();
+            const std::uint64_t fast_hits =
+                ws->dirty_upward_fast_fixed_point_count();
+            const std::uint64_t verify =
+                ws->verify_assertion_dirty_total() +
+                ws->verify_coverage_dirty_total() +
+                ws->verify_sva_dirty_total() +
+                ws->verify_formal_cex_dirty_total();
+            const std::uint64_t feedback =
+                ws->verification_coverage_feedback_total() +
+                ws->verification_assert_failure_total();
+            return make_int(static_cast<std::int64_t>(
+                upward_calls + upward_nodes + fast_hits +
+                verify + feedback));
+        });
+
     // Issue #448: query:mutation-coordination-stats.
     // Returns observability counters for the fiber /
     // scheduler / GC coordination layer:

@@ -1070,6 +1070,10 @@ aura_issue_test_link_llvm_jit(test_issue_266)
 # + regression. Non-duplicative with #266/#369/#553/#213.
 aura_add_issue_test(test_mutation_rollback_coverage_400)
 aura_issue_test_link_llvm_jit(test_mutation_rollback_coverage_400)
+# Issue #415: DirtyReason verification categories +
+# mark_dirty_upward propagation metrics synthesis.
+aura_add_issue_test(test_dirty_reason_verification_propagation_415)
+aura_issue_test_link_llvm_jit(test_dirty_reason_verification_propagation_415)
 aura_add_issue_test(test_issue_267)
 aura_add_issue_test(test_issue_484_minimal)
 aura_add_issue_test(test_issue_290)
