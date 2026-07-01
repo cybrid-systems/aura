@@ -1047,6 +1047,13 @@ aura_add_issue_test(test_issue_433)
 aura_issue_test_link_llvm_jit(test_issue_433)
 aura_add_issue_test(test_issue_508)
 aura_issue_test_link_llvm_jit(test_issue_508)
+# Issue #384: Bidirectional inference engine — first slice.
+# Additive check-mode plumbing in synthesize_flat_lambda (the
+# caller hands an expected function type when the arg is a
+# lambda, so params + return are constrained directly instead of
+# synthesizing fresh vars and unifying post-hoc at the call
+# site). No LLVM JIT needed — pure type-checker exercise.
+aura_add_issue_test(test_issue_384)
 # Issue #326: Hygienic macros + EDSL integration coverage.
 # 8 scenarios extending test_issue_120/121 to integration
 # (CompilerService path, not parser-only). See
