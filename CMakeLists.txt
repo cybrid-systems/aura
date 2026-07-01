@@ -1247,6 +1247,12 @@ aura_issue_test_link_llvm_jit(test_hardware_resource_linear_ownership)
 # Issue #610: linear ownership post-mutate validation + runtime
 aura_add_issue_test(test_linear_ownership_post_mutate_validation_runtime)
 aura_issue_test_link_llvm_jit(test_linear_ownership_post_mutate_validation_runtime)
+# Issue #638: Linear ownership + GuardShape runtime safety post-mutate.
+# 7 ACs: linear-ownership-safety-stats, leak violations, moved-linear
+# pass, mutate monotonicity, invalidate_shape + GuardShape refresh,
+# multi-round matrix + regression. Non-duplicative with #610/#575/#531.
+aura_add_issue_test(test_linear_ownership_guardshape_post_mutate)
+aura_issue_test_link_llvm_jit(test_linear_ownership_guardshape_post_mutate)
 # Issue #575: Task2 PerDefUse incremental linear ownership post-mutate.
 aura_add_issue_test(test_linear_ownership_incremental_post_mutate_task2)
 aura_issue_test_link_llvm_jit(test_linear_ownership_incremental_post_mutate_task2)

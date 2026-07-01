@@ -516,6 +516,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:closure-env-safety-stats",
             // Issue #610 — Linear ownership post-mutate validation
             "query:linear-ownership-mutation-stats",
+            // Issue #638 — Linear + GuardShape runtime safety post-mutate
+            "query:linear-ownership-safety-stats",
             // Issue #575 — Task2 PerDefUse incremental linear ownership
             "query:linear-ownership-incremental-stats",
             // Pre-existing (Issue #288, #391, #447, #457, #459)

@@ -936,6 +936,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 revalidations + violations + deopt + leaks));
         });
 
+    // Issue #638: query:linear-ownership-safety-stats. Returns the
+    // sum of 3 runtime linear + GuardShape post-mutation safety
+    // counters (non-duplicative with #610 mutation-stats,
+    // #575 incremental-stats, #306 hw linear-ownership-stats):
+    //   - violations_caught: linear_violations_caught_total
+    //   - deopt_on_linear_mismatch: linear_deopt_on_mismatch_total
+    //   - post_mutate_enforcements: linear_post_mutate_enforcements_total
+    add("query:linear-ownership-safety-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const auto* m = static_cast<const CompilerMetrics*>(
+                Evaluator::get_query_evaluator()->compiler_metrics());
+            if (!m) return make_int(0);
+            const std::uint64_t violations =
+                m->linear_violations_caught_total.load(std::memory_order_relaxed);
+            const std::uint64_t deopt_mismatch =
+                m->linear_deopt_on_mismatch_total.load(std::memory_order_relaxed);
+            const std::uint64_t enforcements =
+                m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed);
+            return make_int(static_cast<std::int64_t>(
+                violations + deopt_mismatch + enforcements));
+        });
+
     // Issue #454: query:reflect-edsl-bridge-stats. Returns the
     // sum of 4 reflection-to-EDSL bridge observability counters:
     //   - schema_validation_pass_count_  (auto_validate hook)

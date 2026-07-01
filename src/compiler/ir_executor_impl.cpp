@@ -35,6 +35,24 @@ using namespace aura::ir;
 using namespace aura::diag;
 using namespace types;
 
+// Issue #638: bump linear ownership + GuardShape runtime safety
+// counters when an instruction carries linear_ownership_state.
+static void record_linear_runtime_safety(CompilerMetrics* metrics, bool mismatch) {
+    if (!metrics)
+        return;
+    metrics->linear_post_mutate_enforcements_total.fetch_add(
+        1, std::memory_order_relaxed);
+    if (mismatch) {
+        metrics->linear_deopt_on_mismatch_total.fetch_add(
+            1, std::memory_order_relaxed);
+        metrics->linear_violations_caught_total.fetch_add(
+            1, std::memory_order_relaxed);
+    } else {
+        metrics->linear_check_pass_count_.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+}
+
 // Issue #61 Iter 4: deopt tracing switch. Off by default
 // (perf: avoid a printf on every guard). Enable by setting
 // AURA_DEOPT_TRACE=1 in the env before launching the process.
@@ -666,6 +684,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         break;
                     }
                     auto actual = runtime_shape_of(val);
+                    // Issue #638: enforce linear_ownership_state on
+                    // GuardShape when post-mutate shape may be stale.
+                    if (instr.linear_ownership_state != 0) {
+                        record_linear_runtime_safety(metrics_,
+                                                     actual != expected);
+                    }
                     if (actual != expected) {
                         // Issue #62 Iter 1: increment the global
                         // deopt counter so --evo-explain can report it.
@@ -1145,17 +1169,23 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (it != linear_heap_.end()) {
                             if (it->second.ref_count <= 0) {
                                 std::println(std::cerr, "error: double move — value already moved");
+                                if (instr.linear_ownership_state != 0)
+                                    record_linear_runtime_safety(metrics_, true);
                                 locals[ops[0]] = it->second.value;
                             } else {
                                 auto result = it->second.value;
                                 if (--it->second.ref_count == 0)
                                     linear_heap_.erase(it);
+                                if (instr.linear_ownership_state != 0)
+                                    record_linear_runtime_safety(metrics_, false);
                                 locals[ops[0]] = result;
                             }
                         } else {
                             // Already moved/consumed — error
                             std::println(std::cerr,
                                          "error: use after move — value already consumed");
+                            if (instr.linear_ownership_state != 0)
+                                record_linear_runtime_safety(metrics_, true);
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {
@@ -1176,14 +1206,20 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (it != linear_heap_.end()) {
                             if (it->second.ref_count <= 0) {
                                 std::println(std::cerr, "error: double move — value already moved");
+                                if (instr.linear_ownership_state != 0)
+                                    record_linear_runtime_safety(metrics_, true);
                                 locals[ops[0]] = it->second.value;
                             } else {
                                 it->second.ref_count++;
+                                if (instr.linear_ownership_state != 0)
+                                    record_linear_runtime_safety(metrics_, false);
                                 locals[ops[0]] = it->second.value;
                             }
                         } else {
                             std::println(std::cerr,
                                          "error: use after move — borrow of consumed value");
+                            if (instr.linear_ownership_state != 0)
+                                record_linear_runtime_safety(metrics_, true);
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {

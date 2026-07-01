@@ -695,6 +695,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_violations_caught_total{0};
     std::atomic<std::uint64_t> linear_deopt_on_invalidate_total{0};
     std::atomic<std::uint64_t> linear_leak_prevented_total{0};
+    // Issue #638: linear ownership + GuardShape runtime safety
+    // enforcement (interpreter/JIT hot path post-mutate).
+    // Exposed via (query:linear-ownership-safety-stats).
+    //   - linear_post_mutate_enforcements_total: GuardShape /
+    //     Linear* ops with non-zero linear_ownership_state
+    //   - linear_deopt_on_mismatch_total: shape/ownership
+    //     mismatch triggered deopt or hard error
+    std::atomic<std::uint64_t> linear_post_mutate_enforcements_total{0};
+    std::atomic<std::uint64_t> linear_deopt_on_mismatch_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
