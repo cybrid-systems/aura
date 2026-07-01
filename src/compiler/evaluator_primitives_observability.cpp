@@ -586,6 +586,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:mutation-log-stats",
             // Issue #529 — Atomic batch + Guard rollback closed loop
             "query:atomic-batch-rollback-stats",
+            // Issue #527 — StableNodeRef cross-COW/fiber closed loop
+            "query:stable-ref-cow-fiber-stats",
             // Issue #400 — sym_id/structural rollback coverage
             "query:mutation-rollback-coverage-stats",
             // Issue #554 — Pattern index timing (same name as #547; unified)
