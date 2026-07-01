@@ -805,6 +805,36 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             wire_borrows + reg_writes + mem_access + double_drive));
     });
 
+    // Issue #575: query:linear-ownership-incremental-stats. Returns
+    // the sum of 4 Task2 PerDefUse + ownership_dirty incremental
+    // linear ownership counters:
+    //   - ownership_revalidate_count: linear_post_mutate_revalidations_total
+    //   - dirty_linear_uses: per_defuse_index_visited_total
+    //     (O(uses) selective re-validation proxy)
+    //   - violation_caught_post_mutate: linear_violations_caught_total
+    //     + linear_leak_prevented_total
+    //   - escape_analysis_hits: linear_check_pass_count_
+    //     (runtime linear ownership_state fast-path checks)
+    add("query:linear-ownership-incremental-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const auto* m = static_cast<const CompilerMetrics*>(
+                Evaluator::get_query_evaluator()->compiler_metrics());
+            if (!m) return make_int(0);
+            const std::uint64_t revalidate =
+                m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed);
+            const std::uint64_t dirty_uses =
+                m->per_defuse_index_visited_total.load(std::memory_order_relaxed);
+            const std::uint64_t violations =
+                m->linear_violations_caught_total.load(std::memory_order_relaxed);
+            const std::uint64_t leaks =
+                m->linear_leak_prevented_total.load(std::memory_order_relaxed);
+            const std::uint64_t escape_hits =
+                m->linear_check_pass_count_.load(std::memory_order_relaxed);
+            return make_int(static_cast<std::int64_t>(
+                revalidate + dirty_uses + violations + leaks + escape_hits));
+        });
+
     // Issue #610: query:linear-ownership-mutation-stats. Returns
     // the sum of 4 post-mutation linear ownership observability
     // counters:
