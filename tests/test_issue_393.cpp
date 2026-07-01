@@ -41,6 +41,22 @@
 //   AC9: make_ref_from_gen is noexcept (no allocation, no
 //        throw) — verified by the [[nodiscard]] header spec
 //        and the test pattern (no try/catch needed)
+//
+//   Plus #347 follow-up #1 / #393: (query:ref-valid?) Aura
+//   primitive (the Aura-side inverse of (query:stable-ref)
+//   and (query:children-stable)). Takes a (id . gen) pair
+//   and uses FlatAST::is_valid_id_gen (flat-style, slot
+//   check) so it respects scoped invalidation:
+//   AC10: Basic behaviors — #t for valid ref, #f for bad
+//         id / bad gen / NULL_NODE-like args (returns #f
+//         rather than erroring on out-of-bounds), error
+//         pair for non-pair input.
+//   AC11: Scoped semantics — after (compile:subtree-bump y)
+//         in a 2-define workspace, (query:ref-valid? x-ref)
+//         stays #t (x's subtree not touched) while
+//         (ast:ref-valid? x-id x-gen) returns #f (global gen
+//         moved = false positive). This is the value prop
+//         of #392 + #393 exposed via Aura.
 
 #include "test_harness.hpp"
 
@@ -48,6 +64,9 @@ using aura::test::g_passed;
 using aura::test::g_failed;
 
 import aura.core.ast;
+import aura.compiler.value;
+import aura.compiler.evaluator;
+import aura.compiler.service;
 
 namespace aura_issue_393_detail {
 
@@ -284,6 +303,162 @@ bool test_stale_after_mutation() {
     return true;
 }
 
+// ════════════════════════════════════════════════════════
+// #347 follow-up #1 / #393: Aura primitive tests for
+// (query:ref-valid?). These need a CompilerService instance,
+// unlike the pure-FlatAST tests above.
+// ════════════════════════════════════════════════════════
+
+// Local helpers — mirrors test_issue_249.cpp's try_run +
+// set_source pattern.
+struct CS {
+    aura::compiler::CompilerService svc;
+
+    // Eval `src` and return whether it succeeded + the value.
+    struct EvalResult { bool ok = false; aura::compiler::types::EvalValue v{}; };
+
+    EvalResult try_run(std::string_view src) {
+        auto r = svc.eval(src);
+        if (!r) return {false, aura::compiler::types::make_void()};
+        return {true, *r};
+    }
+
+    bool set_source(const std::string& src) {
+        auto r = try_run(std::string("(set-code \"") + src + "\")");
+        return r.ok;
+    }
+};
+
+static bool check_eq_bool(CS::EvalResult& r, bool expected, const char* msg) {
+    if (!r.ok || !aura::compiler::types::is_bool(r.v)) {
+        ++g_failed; std::println("  FAIL: {} (result is not a bool)", msg);
+        return false;
+    }
+    bool got = aura::compiler::types::as_bool(r.v);
+    if (got != expected) {
+        ++g_failed; std::println("  FAIL: {} (got {} expected {})", msg, got, expected);
+        return false;
+    }
+    ++g_passed; std::println("  PASS: {}", msg);
+    return true;
+}
+
+// AC10: (query:ref-valid? '(id . gen)) — basic behaviors.
+// Captures a ref via (query:stable-ref x-id), validates it,
+// then tests bad-id / bad-gen / non-pair shapes.
+// ════════════════════════════════════════════════════════
+
+bool test_query_ref_valid_basic() {
+    std::println("\n--- AC10: (query:ref-valid?) basic behaviors ---");
+    CS cs;
+    if (!cs.set_source("(define x 42)")) {
+        ++g_failed; std::println("  FAIL: set-source failed");
+        return false;
+    }
+    // Capture a stable ref to define x via (query:stable-ref x-id).
+    auto r_capture = cs.try_run(
+        "(let* ((defs (query:defines-by-marker \"User\"))"
+        "       (x-id (car defs)))"
+        "  (query:stable-ref x-id))");
+    if (!r_capture.ok || !aura::compiler::types::is_pair(r_capture.v)) {
+        ++g_failed; std::println("  FAIL: (query:stable-ref) did not return a pair");
+        return false;
+    }
+    // AC10.1: passing the captured ref back returns #t.
+    {
+        auto r = cs.try_run(
+            "(let ((r (let* ((defs (query:defines-by-marker \"User\"))"
+            "                (x-id (car defs)))"
+            "             (query:stable-ref x-id))))"
+            "  (query:ref-valid? r))");
+        check_eq_bool(r, true, "valid ref → #t");
+    }
+    // AC10.2: bad id (999) returns #f, not an error.
+    {
+        auto r = cs.try_run("(query:ref-valid? (cons 999 (cons 1 ())))");
+        check_eq_bool(r, false, "out-of-bounds id → #f");
+    }
+    // AC10.3: bad gen (9999) returns #f, not an error.
+    {
+        auto r = cs.try_run(
+            "(let* ((defs (query:defines-by-marker \"User\"))"
+            "       (x-id (car defs)))"
+            "  (query:ref-valid? (cons x-id (cons 9999 ()))))");
+        check_eq_bool(r, false, "wrong gen → #f");
+    }
+    // AC10.4: non-pair arg returns error pair (per the
+    // 'bad-arg' error contract, not a crash).
+    {
+        auto r = cs.try_run("(if (pair? (query:ref-valid? 42)) 1 0)");
+        if (!r.ok || !aura::compiler::types::is_int(r.v)) {
+            ++g_failed; std::println("  FAIL: int-arg result is not an int"); return false;
+        }
+        if (aura::compiler::types::as_int(r.v) != 1) {
+            ++g_failed; std::println("  FAIL: int-arg did not return error pair"); return false;
+        }
+        ++g_passed; std::println("  PASS: int arg returns error pair (not crash)");
+    }
+    return true;
+}
+
+// AC11: (query:ref-valid?) respects scoped invalidation.
+// After (compile:subtree-bump y-id) in a 2-define workspace,
+// (query:ref-valid? x-ref) stays #t (x's subtree not touched)
+// while (ast:ref-valid? x-id x-gen) returns #f (global gen moved).
+// This is the #392 + #393 value prop exposed via Aura.
+// Implementation: 4 separate cs.try_run calls (one per check),
+// each returning a single value. We stash refs as globals so
+// the calls don't lose them between invocations.
+// ════════════════════════════════════════════════════════
+
+bool test_query_ref_valid_scoped() {
+    std::println("\n--- AC11: (query:ref-valid?) respects scoped invalidation ---");
+    CS cs;
+    if (!cs.set_source("(define x 1) (define y 2)")) {
+        ++g_failed; std::println("  FAIL: set-source failed");
+        return false;
+    }
+    // Stash globals + bump y's subtree in one eval; then
+    // run three independent checks (each returns 1 = #t, 0 = #f).
+    auto r_stash = cs.try_run(
+        "(let* ((defs (query:defines-by-marker \"User\"))"
+        "       (x-id (car defs))"
+        "       (y-id (car (cdr defs)))"
+        "       (x-ref (query:stable-ref x-id))"
+        "       (y-ref (query:stable-ref y-id))"
+        "       (x-gen (car (cdr x-ref))))"
+        "  (define stash (list x-ref y-ref x-id x-gen))"
+        "  (compile:subtree-bump y-id)"
+        "  1)");
+    if (!r_stash.ok) {
+        ++g_failed; std::println("  FAIL: setup (stash + subtree-bump) failed");
+        return false;
+    }
+    auto r_x_flat = cs.try_run(
+        "(if (query:ref-valid? (car stash)) 1 0)");
+    auto r_y_flat = cs.try_run(
+        "(if (query:ref-valid? (car (cdr stash))) 1 0)");
+    auto r_x_strict = cs.try_run(
+        "(let ((id  (car (cdr (cdr stash))))"
+        "      (gen (car (cdr (cdr (cdr stash))))))"
+        "  (if (ast:ref-valid? id gen) 1 0))");
+    auto expect_int = [&](CS::EvalResult& r, std::int64_t want, const char* tag) {
+        if (!r.ok || !aura::compiler::types::is_int(r.v)) {
+            ++g_failed; std::println("  FAIL: {} -- not an int", tag); return;
+        }
+        auto got = aura::compiler::types::as_int(r.v);
+        if (got != want) {
+            ++g_failed; std::println("  FAIL: {} -- got {} expected {}", tag, got, want);
+            return;
+        }
+        ++g_passed; std::println("  PASS: {} --> {}", tag, got ? "#t" : "#f");
+    };
+    expect_int(r_x_flat,   1, "x-ref after scoped-bump(y) -- flat (query:ref-valid?) = #t");
+    expect_int(r_y_flat,   0, "y-ref after scoped-bump(y) -- flat (query:ref-valid?) = #f");
+    expect_int(r_x_strict, 0, "x-ref after scoped-bump(y) -- strict (ast:ref-valid?) = #f (false positive demo)");
+    return true;
+}
+
 } // namespace aura_issue_393_detail
 
 int main() {
@@ -298,6 +473,8 @@ int main() {
     test_is_valid_id_gen_wrong_wrap_epoch();
     test_round_trip();
     test_stale_after_mutation();
+    test_query_ref_valid_basic();
+    test_query_ref_valid_scoped();
     std::println("\n=== Totals: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
