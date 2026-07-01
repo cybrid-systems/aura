@@ -824,6 +824,22 @@ target_compile_options(issue_307_bench PRIVATE -Wall
 target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-reflect)
 add_test(NAME issue_307_bench COMMAND ./issue_307_bench)
 
+# Issue #393 follow-up #249: StableNodeRef vs raw NodeId
+# 1000-round re-query benchmark. Compares the cost of
+# always re-querying (raw path) vs keeping StableNodeRef
+# handles and only re-querying on is_valid() == false
+# (stable path). AC: stable re-queries < 50% of raw OR
+# speedup >= 30%. Standalone TU that imports aura.core.ast
+# (no reflection) — same shape as issue_307_bench.
+add_executable(stable_ref_bench tests/bench/stable_ref_bench.cpp)
+set_property(TARGET stable_ref_bench PROPERTY CXX_MODULE_STD ON)
+target_include_directories(stable_ref_bench PRIVATE src)
+target_compile_options(stable_ref_bench PRIVATE -Wall
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter)
+target_link_libraries(stable_ref_bench PRIVATE stdc++ aura_test_objects aura-reflect)
+add_test(NAME stable_ref_bench COMMAND ./stable_ref_bench)
+
 # Issue #217 Cycle 14 P4: benchmark suite for the C++26 P2996
 # reflection + auto_serialize/auto_deserialize path. Measures
 # throughput across 4 dimensions (FlatAST SoA, NodeView
@@ -1068,6 +1084,15 @@ aura_issue_test_link_llvm_jit(test_issue_389)
 # (compile:subtree-bump-count)). Pure AST-level — no
 # compiler service or JIT linkage needed.
 aura_add_issue_test(test_issue_392)
+
+# Issue #393: C++ API for explicit (id, gen) pair
+# construction + flat-style validity check. Validates the
+# two new FlatAST helpers:
+#   - make_ref_from_gen(NodeId, uint16_t gen)
+#   - is_valid_id_gen(NodeId, uint16_t gen, uint32_t wrap_epoch = 0)
+# Pure AST-level — same shape as test_issue_392.
+aura_add_issue_test(test_issue_393)
+
 # Issue #326: Hygienic macros + EDSL integration coverage.
 # 8 scenarios extending test_issue_120/121 to integration
 # (CompilerService path, not parser-only). See

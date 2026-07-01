@@ -7,6 +7,34 @@ cycles. This document is the consolidated best-practices
 guide for AI agent developers writing long-running
 self-modification loops.
 
+## TL;DR — raw `query:children` / `query:parent` are deprecated
+
+> **DEPRECATION (Issue #393 follow-up #249)**: the raw
+> Aura primitives `(query:children <node-id>)` and
+> `(query:parent <node-id>)` return raw `NodeId` values
+> that may be invalidated by any structural mutation.
+> **Prefer the stable variants**:
+>
+> - `(query:children-stable <node-id>)` → list of
+>   `(id . gen)` pairs (the `(cons id gen)` encoding
+>   used by all `-stable` query primitives)
+> - `(query:parent-stable <node-id>)` → single
+>   `(id . gen)` pair (or `void` for root)
+>
+> In C++, the `FlatAST` C++26 modules also ship
+> `children_stable(NodeId)` and `parent_stable(NodeId)`
+> that return `std::vector<StableNodeRef>` /
+> `StableNodeRef` directly. New code should use these
+> APIs; existing call sites should migrate when the
+> node id is held across a `mutate:*` or `eval-current`
+> boundary.
+>
+> The raw variants are kept for backward compatibility
+> and one-shot inspection (see "When to use
+> StableNodeRef vs raw NodeId" below), but they should
+> NOT be the default for cross-mutate code paths. See
+> `docs/api-reference.md` for the canonical pointer.
+
 ## Why StableNodeRef exists
 
 A raw `NodeId` is just an index into the workspace's
@@ -30,7 +58,7 @@ ref was created.
 
 | Use case | Recommendation |
 |---|---|
-| One-shot query / inspection (e.g. `(query:node-type 0)`) | Raw `NodeId` is fine — the id is consumed in the same eval cycle |
+| One-shot query / inspection (e.g. `(query:node-type 0)`) | Raw `NodeId` is fine — the id is consumed in the same eval cycle. The raw `(query:children …)` / `(query:parent …)` variants are also fine for one-shot reads, but **prefer the `-stable` variants** (see "TL;DR" above) for any code that stores the result. |
 | Hold a node ref across a `mutate:*` call | **StableNodeRef** required — the id may be invalidated |
 | Hold a node ref across `eval-current` re-invocations | **StableNodeRef** required — eval may trigger compaction that recycles slots |
 | Hold a node ref across `(ast:snapshot / ast:restore)` | **StableNodeRef** required — restore rewrites the entire flat |
@@ -171,6 +199,99 @@ For a multi-fiber agent, the canonical pattern is
 **per-fiber ref table**: each fiber holds its own set
 of refs, and the ref validity is checked at every
 yield point.
+
+## Cross-mutate storage guidelines (Issue #393)
+
+The following rules summarize when and how to use
+`StableNodeRef` for **storage across mutating calls**.
+The previous sections cover when to use refs in
+general; this section is the storage-specific
+playbook.
+
+### Rule 1: prefer `-stable` query variants by default
+
+If the query result will be stored, returned, or
+passed across an eval boundary, use the `-stable`
+variant. The raw `(query:children <id>)` etc. variants
+should be reserved for one-shot inspection (read the
+result and discard it within the same `cs.eval`
+call). The cost difference is one extra integer
+(the `gen`) — the win is automatic invalidation
+detection.
+
+### Rule 2: pair storage with `is_valid_subtree` for scoped workloads
+
+For large workspaces where mutations target one
+subtree at a time (EDA RTL/SV, multi-define libraries,
+agent self-modification loops), pair `-stable` query
+results with `FlatAST::is_valid_subtree(ref)` rather
+than `is_valid(ref)`. The `-subtree` variant is the
+#392 relaxed check: it accepts refs in subtrees that
+were not scoped-bumped, even when other subtrees
+were mutated. This is the over-invalidation fix that
+matters for the >10k-node ASTs common in production.
+
+Bench data (`tests/bench/stable_ref_bench.cpp`):
+in a 100-define × 10-child workload with one
+subtree-bump every 7 rounds over 1000 rounds, the
+stable path does **143 re-queries** (only the bumped
+subtree) vs the raw path's **1,000,000 re-queries**
+(forced re-query every round for every node). The
+stable path is **2x faster** wall-clock (40 µs vs
+20 µs per round) and meets the #393 AC: stable
+re-queries < 50% of raw, AND speedup ≥ 30%.
+
+### Rule 3: explicit (id, gen) pair ↔ `StableNodeRef` round-trip
+
+The C++ API for working with stable refs as raw
+`(id, gen)` pairs (e.g. when persisting to a
+checkpoint file, or when crossing an FFI boundary
+that doesn't know about `StableNodeRef`):
+
+```cpp
+// Construct a StableNodeRef from a known (id, gen)
+// pair. Captures the current FlatAST state for all
+// other fields (mutation_id, wrap_epoch, etc.).
+auto ref = flat.make_ref_from_gen(id, gen);
+
+// Flat-style validity check for callers that have
+// the (id, gen) pair inline (e.g. in a hot loop that
+// reads thousands of pairs from a side-vector).
+// Returns true iff the slot is in-bounds AND its
+// stored generation matches AND the wrap_epoch
+// matches (when explicit).
+if (flat.is_valid_id_gen(id, gen)) { /* still valid */ }
+```
+
+The default `wrap_epoch_at_capture = 0` means "use
+the current wrap_epoch" — a fresh capture always
+passes. Pass an explicit non-zero value to check
+against a captured wrap_epoch (e.g. when the (id,
+gen) pair was deserialized from a checkpoint file
+written under a different wrap epoch).
+
+### Rule 4: scope the ref table to the mutation boundary
+
+For long-running agent loops, maintain a **per-loop
+ref table**: at the start of each loop iteration,
+capture fresh stable refs for the targets of this
+iteration's mutations. Discard them at the end.
+Don't accumulate refs across loop iterations — the
+re-capture cost is one `make_ref` call per target
+(negligible), and the alternative (checking `is_valid`
+on stale refs from prior iterations) is strictly
+worse because it forces the agent to handle the
+stale-ref case on every iteration.
+
+### Rule 5: store `gen` alongside `id` in any side-vector
+
+If you build a side-vector or index keyed by node
+id (e.g. an EDA netlist table, a marker→node map,
+a fiber-local query cache), **also store the `gen`**
+in the same record. This lets you run `is_valid_id_gen`
+on the pair without allocating a `StableNodeRef`
+wrapper, which matters for hot paths that read
+thousands of pairs per second.
 
 ## Anti-patterns to avoid
 
