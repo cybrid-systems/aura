@@ -674,3 +674,59 @@ Unknown return so call sites can decide what to do with garbage.
 
 **Verified:** test_shape 167/167 (was 0/166 + abort), test_issues_jit
 75/75 (no regression), ctest 41/41 (was 39/41), aura builds clean.
+
+## Issue #379 — scope-limited ast_stability.cpp (SHIPPED 2026-07-01)
+
+828a5367: new impl unit src/core/ast_stability.cpp (module
+aura.core.ast, no export). Follows the #378 pattern.
+
+**5 functions moved (~80 lines):**
+- FlatAST::serialize_stable_ref + deserialize_stable_ref (member fn,
+  public only)
+- FlatAST::StableNodeRef::is_valid_in (calls public ast.is_valid)
+- FlatAST::StableNodeRef::validate_with_provenance (uses public
+  ast.generation() instead of private ast.generation_ — same
+  uint16_t, no behavior change)
+- FlatAST::StableNodeRef::get_provenance (pure field read)
+
+**Numbers:** ast.ixx 5624 → 5583 (-41), ast_stability.cpp new at
+154 lines. CMakeLists.txt: 5 target_sources additions (aura,
+aura_test_objects, test_gc_evaluator_integration, issue_212_bench,
+and the JIT library target).
+
+**Hard constraint:** All 5 moved functions access FlatAST only
+through its public interface. Functions that read/write private
+SoA columns (bump_generation, mark_dirty_upward + variants,
+mark_dirty_defuse_entries, mark_tag_arity_index_dirty) would need
+friend declarations in FlatAST OR public accessors. Either is a
+larger change.
+
+**What stays in ast.ixx (deferred to follow-ups):**
+- StableNodeRef struct itself: nested in FlatAST, can't move
+  without breaking the public API. Promoting to top-level needs
+  its own deprecation path.
+- make_ref / make_ref_in_layer / make_safe_ref /
+  capture_for_fiber: coupled to FlatAST state.
+- kStableRefSerializedSize / kStableRefMagic: stay as class
+  statics (callers reference FlatAST::kStableRefSerializedSize).
+- bump_generation, mark_dirty_upward + variants: need friend
+  access.
+- bump_generation_on_rollback: couples to rollback state machine.
+
+**Verified at ship:** aura + test_issues_jit +
+test_gc_evaluator_integration + issue_212_bench all build clean.
+test_issues_jit 75/75, ctest 41/41 (100%), gc_evaluator_integration
+1/1.
+
+**#379 closed** state_reason=completed (scope-limited). Comment at
+https://github.com/cybrid-systems/aura/issues/379#issuecomment-4852582103.
+
+**3 follow-ups tracked:**
+1. Add friend declarations in FlatAST (or public accessors) and
+   move bump_generation / mark_dirty_upward + variants to
+   ast_stability.cpp.
+2. Move make_ref family to ast_stability.cpp (with friend access
+   for generation_ / next_mutation_id_ / wrap_epoch_ reads).
+3. Promote StableNodeRef to a top-level type in a new
+   ast_stability.ixx module with backward-compat type alias —
+   separate deprecation cycle, biggest payoff but biggest API risk.
