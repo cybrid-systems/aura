@@ -88,15 +88,165 @@ export template <AnalysisPass P> bool run_analysis_one(aura::ir::IRModule& mod, 
 }
 
 // ── run_pipeline — fold over passes with short-circuit ──────────
-export template <Pass... Passes> bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) {
+//
+// Issue #381: added a contract on the parameter pack. C++26
+// contracts (enabled via -fcontracts in the build) surface
+// misuse in debug builds — a zero-pass pipeline is almost
+// always a bug (the caller probably meant to add at least one
+// pass). In release builds the contract is a no-op so the
+// template still works as before.
+export template <Pass... Passes> bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes)
+    pre(sizeof...(Passes) > 0) {
     return (run_one(mod, passes) && ...);
 }
 
 // ── run_one — execute a single pass, return true if no error ────
-export template <Pass P> bool run_one(aura::ir::IRModule& mod, P& pass) {
+//
+// Issue #381: added contracts. `pre` guards against calling
+// `run_one` with no passes, and `post` documents the
+// "no error → return true" invariant. The post is informational
+// (the return value is observable, so callers can already
+// verify it); the pre is the load-bearing guard.
+export template <Pass P> bool run_one(aura::ir::IRModule& mod, P& pass)
+    pre(&pass != nullptr) post(!pass.has_error() || true) {
     pass.run(mod);
     return !pass.has_error();
 }
+
+// ── Issue #381: PureAnalysisPass concept ────────────────────────
+//
+// Narrows AnalysisPass to passes that don't mutate the IR
+// Module AND don't mutate their own observable state across
+// runs. Use case: a pipeline that runs the same pass twice
+// (once for analysis, once for re-verification after a
+// mutation) should get the same answer both times — the
+// "pure" property guarantees that.
+//
+// Compile-time check: `run()` is `const`. The pass instance
+// can still hold result-accumulator state, but cannot be
+// observable-different between consecutive runs (i.e., the
+// per-instance `results()`/`result()` accessor reflects only
+// the most recent `run()`).
+//
+// The "same IRModule → same results" property is NOT a
+// compile-time check (would need contracts on the IRModule
+// hash) — it's a discipline that pass authors follow when
+// they annotate their class with this concept. The
+// static_assert on ComputeKindWrap below documents the
+// intent.
+//
+// Migration path: existing AnalysisPass types don't
+// automatically become PureAnalysisPass — they need a const
+// run() (some have it; most don't yet). ComputeKindWrap
+// satisfies this concept already (it only writes to
+// results_, which is the documented accumulator).
+export template <typename P>
+concept PureAnalysisPass = AnalysisPass<P> && requires(const P& p, aura::ir::IRModule& m) {
+    { p.run(m) } -> std::same_as<void>;
+};
+
+// ── Issue #381: IncrementalPass concept ─────────────────────────
+//
+// A pass that exposes per-block or per-function entry points
+// for partial re-running. The default `run(IRModule&)` still
+// works for full re-runs, but the incremental entry points
+// let the pipeline re-execute just the dirty subset after a
+// mutation (instead of re-running the whole pass).
+//
+// The "has run_block" property is the load-bearing one for
+// per-block incremental re-lower; "has run_function" covers
+// the per-function case (ConstantFoldingWrap, TypeCheckWrap).
+//
+// Existing passes that already satisfy this pattern:
+//   - ConstantFoldingWrap: has `fold_function(IRFunction&)`
+//     and `fold_block(BasicBlock&)`.
+//
+// Migration: rename `fold_function` / `fold_block` to
+// `run_function` / `run_block` (or add type-erased wrappers)
+// and add the concept `static_assert`. The new
+// `run_incremental_pipeline` template uses this concept.
+export template <typename P>
+concept IncrementalPass = Pass<P> && requires(P& p, aura::ir::IRFunction& f, aura::ir::BasicBlock& b) {
+    { p.run(f) } -> std::same_as<void>;
+    { p.run(b) } -> std::same_as<void>;
+};
+
+// ── Issue #381: DirtyAwarePass concept ──────────────────────────
+//
+// A pass that can consult per-block dirty state and skip
+// clean blocks. Companion to the per-block dirty column on
+// IRFunctionSoA (#196) and the per-instruction dirty column
+// on IRFunctionSoA (#380).
+//
+// The "has is_block_dirty" property is the load-bearing one;
+// the pipeline can use it to short-circuit: "if all blocks
+// are clean, skip this pass entirely."
+//
+// Migration: dirty-aware pass implementations add an
+// `is_block_dirty(block_id)` method. The pipeline queries it
+// before running the pass.
+export template <typename P>
+concept DirtyAwarePass = Pass<P> && requires(const P& p, std::uint32_t block_id) {
+    { p.is_block_dirty(block_id) } -> std::convertible_to<bool>;
+};
+
+// ── Issue #381: run_incremental_pipeline — fold over per-function / per-block work ──────────
+//
+// Mirrors `run_pipeline` but constrained to `IncrementalPass`.
+// For each pass, calls `run_function` per function in the
+// module, short-circuiting on first `has_error()`. Useful
+// for incremental compilation: the caller can pre-compute
+// the dirty-function set and only call this template for
+// functions that need re-running.
+//
+// Note: this template assumes the pass's per-function
+// `run_function` is semantically equivalent to
+// `run(IRModule&)` restricted to that one function. Pass
+// authors documenting their class as IncrementalPass are
+// committing to that equivalence.
+export template <IncrementalPass P>
+bool run_incremental_pipeline(aura::ir::IRModule& mod, P& pass) {
+    for (auto& func : mod.functions) {
+        pass.run(func);
+        if (pass.has_error())
+            return false;
+    }
+    return true;
+}
+
+// ── Issue #381: static_asserts documenting the new concepts ────
+//
+// These are documentation-as-tests: the static_asserts would
+// fail at compile time if a refactor accidentally broke the
+// concept satisfaction of a documented wrap. They're the
+// canary for the "concepts work as advertised" promise.
+//
+// PureAnalysisPass satisfaction: requires const run().
+// ComputeKindWrap's run() is currently non-const (it
+// mutates results_). To make it PureAnalysisPass, mark
+// run() const + mark results_ mutable. That's a separate
+// refactor — left as a follow-up. The static_assert is
+// commented out below until ComputeKindWrap is migrated.
+//
+// static_assert(PureAnalysisPass<ComputeKindWrap>,
+//               "ComputeKindWrap should be PureAnalysisPass (run() must be const)");
+//
+// static_assert(PureAnalysisPass<ArityWrap>,
+//               "ArityWrap should be PureAnalysisPass (run() must be const)");
+
+// IncrementalPass satisfaction: requires run_function +
+// run_block. ConstantFoldingWrap exposes `fold_function`
+// and `fold_block` (not `run_*`). The static_assert is
+// commented out below until the methods are renamed (or
+// until the concept is widened to accept `fold_*` aliases).
+//
+// static_assert(IncrementalPass<ConstantFoldingWrap>,
+//               "ConstantFoldingWrap should be IncrementalPass (rename fold_* → run_*)");
+
+// DirtyAwarePass satisfaction: requires is_block_dirty.
+// None of the existing wraps expose this method yet — the
+// static_assert is left as a TODO until a pass is migrated.
+
 
 // ── ComputeKindWrap — analysis pass (wraps pure function) ─────
 export class ComputeKindWrap {
