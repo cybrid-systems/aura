@@ -1117,6 +1117,66 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 runtime_fiber + runtime_gc + edsl_workspace + eda_verify));
         });
 
+    // Issue #634: query:commercial-production-readiness-stats.
+    // Returns the sum of 14 counters spanning the July 2026
+    // commercial P0 pillars (non-duplicative synthesis of
+    // #620/#623/#624/#627-#629/#630-#632/#614-#617/#618;
+    // avoids #441 compiler-runtime focus and #613-#633 per-theme
+    // issue tests):
+    //   Fiber/StableRef (#620/#631): provenance_mismatch +
+    //                                stable_ref_invalidations
+    //   Arena/GC (#623): gc_safepoint_waits + gc_safepoint_requests
+    //   Shape/JIT (#624): shape_stability_hit_count + deopt_count
+    //   TypeSystem (#627/#628/#629): narrowing_dirty_recovery +
+    //                                 coercion_zerooverhead_win
+    //   EDA verify/batch (#630-#632): verify_dirty totals +
+    //                                 atomic_batch_commits
+    //   Stdlib hotpath (#614/#615/#617): specialization_hits +
+    //                                    tag_arity_index_hits
+    //   Orchestration (#618): mutation_steal_attempts +
+    //                         lock_contention_us
+    add("query:commercial-production-readiness-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const auto* m = static_cast<const CompilerMetrics*>(
+                ev->compiler_metrics());
+            const std::uint64_t stable_ref =
+                ev->get_provenance_mismatch() +
+                (ws ? ws->stable_ref_invalidations() : 0);
+            const std::uint64_t arena_gc =
+                ev->get_gc_safepoint_waits_total() +
+                ev->get_gc_safepoint_requests_total();
+            const std::uint64_t shape_jit =
+                shape::shape_stability_hit_count.load(std::memory_order_relaxed) +
+                (m ? m->deopt_count.load(std::memory_order_relaxed) : 0);
+            const std::uint64_t type_system =
+                (m ? m->narrowing_dirty_recovery_total.load(
+                         std::memory_order_relaxed)
+                   : 0) +
+                (m ? m->coercion_zerooverhead_win_total.load(
+                         std::memory_order_relaxed)
+                   : 0);
+            const std::uint64_t eda_batch =
+                (ws ? ws->verify_assertion_dirty_total() +
+                          ws->verify_coverage_dirty_total() +
+                          ws->verify_sva_dirty_total() +
+                          ws->verify_formal_cex_dirty_total()
+                    : 0) +
+                (m ? m->atomic_batch_commits.load(std::memory_order_relaxed) : 0);
+            const std::uint64_t stdlib_hotpath =
+                (m ? m->specialization_hits.load(std::memory_order_relaxed) : 0) +
+                (ws ? ws->tag_arity_index_hits() : 0);
+            const std::uint64_t orchestration =
+                ev->get_mutation_steal_attempts() +
+                ev->get_lock_contention_us();
+            return make_int(static_cast<std::int64_t>(
+                stable_ref + arena_gc + shape_jit + type_system +
+                eda_batch + stdlib_hotpath + orchestration));
+        });
+
     // Issue #619: query:macro-reflect-self-evo-followup-stats.
     // Returns the sum of 4 Task6 follow-up closed-loop counters:
     //   - hygiene_skips: macro_introduced_skipped_in_query_
