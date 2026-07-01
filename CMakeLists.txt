@@ -1433,6 +1433,9 @@ aura_issue_test_link_llvm_jit(test_bidirectional_check_occurrence_narrow_post_mu
 # Issue #609: occurrence typing blame + post-mutate recovery
 aura_add_issue_test(test_occurrence_typing_blame_post_mutate_recovery)
 aura_issue_test_link_llvm_jit(test_occurrence_typing_blame_post_mutate_recovery)
+# Issue #576: Task2 occurrence blame + provenance post-mutate.
+aura_add_issue_test(test_occurrence_typing_blame_post_mutate_task2)
+aura_issue_test_link_llvm_jit(test_occurrence_typing_blame_post_mutate_task2)
 # Issue #549: StableNodeRef + generation_ + mutation_log
 # provenance + COW/Fiber safety for long-running
 # self-evolution loops (P0). 9 scenarios validating: 4
