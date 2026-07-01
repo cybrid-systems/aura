@@ -536,6 +536,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "compile:dead-coercion-stats",
             // Issue #574 — coercion elimination summary
             "query:coercion-elim-stats",
+            // Issue #468 — DeadCoercionEliminationPass zero-overhead
+            "query:dead-coercion-zerooverhead-stats",
             "compile:per-defuse-index-stats",
             "compile:mutator-dispatch-stats",
             "compile:mutation-impact-stats",

@@ -1117,6 +1117,12 @@ aura_issue_test_link_llvm_jit(test_coercion_dead_elim_castop_flow_zerooverhead)
 # Issue #574: Task2 dead-coercion elimination + coercion-elim-stats.
 aura_add_issue_test(test_dead_coercion_elimination_task2)
 aura_issue_test_link_llvm_jit(test_dead_coercion_elimination_task2)
+# Issue #468: DeadCoercionEliminationPass zero-overhead closed loop.
+# 8 ACs: DCE >60% gradual reduction, identity elision, narrowing
+# preserved, typed mutate + stats monotonic, query primitive +
+# regression. Non-duplicative with #433/#538/#574/#629.
+aura_add_issue_test(test_dead_coercion_zerooverhead_closed_loop_468)
+aura_issue_test_link_llvm_jit(test_dead_coercion_zerooverhead_closed_loop_468)
 # Issue #495: Task2 refinement closed-loop integration matrix.
 aura_add_issue_test(test_task2_refinement_closed_loop_495)
 aura_issue_test_link_llvm_jit(test_task2_refinement_closed_loop_495)
