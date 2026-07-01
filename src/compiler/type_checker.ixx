@@ -119,6 +119,10 @@ export class ConstraintSystem {
     // clean constraints that may be invalidated by cross-delta
     // unifications.
     std::unordered_set<std::uint32_t> touched_roots_;
+    // Issue #536: optional hooks for Evaluator observability
+    // (touched_roots snapshot + cross-delta CONFLICT detection).
+    std::function<void(std::size_t)> on_touched_roots_snapshot_;
+    std::function<void()> on_cross_delta_conflict_;
     static constexpr std::size_t kReverifyCleanScanLimit = 256;
     void note_touched_var(aura::core::TypeId id);
     bool constraint_references_touched(const Constraint& c) const;
@@ -176,6 +180,14 @@ public:
     void* metrics_ = nullptr;
 
     void set_metrics(void* m) { metrics_ = m; }
+    // Issue #536: wire solve_delta touched_roots snapshot +
+    // cross-delta conflict hooks to Evaluator counters.
+    void set_solve_delta_observability_hooks(
+        std::function<void(std::size_t)> on_snapshot,
+        std::function<void()> on_conflict) {
+        on_touched_roots_snapshot_ = std::move(on_snapshot);
+        on_cross_delta_conflict_ = std::move(on_conflict);
+    }
     // Issue #466: enable constraint recording in consistent_unify
     // for incremental solve_delta paths (infer_flat_partial).
     void set_delta_record_mode(bool on) noexcept { delta_record_mode_ = on; }
@@ -441,6 +453,13 @@ public:
     // ConstraintSystem so solve_delta timing accumulates
     // into CompilerMetrics::delta_solve_time_us.
     void set_metrics(void* m) { cs_.set_metrics(m); }
+    // Issue #536: forward solve_delta observability hooks.
+    void set_solve_delta_observability_hooks(
+        std::function<void(std::size_t)> on_snapshot,
+        std::function<void()> on_conflict) {
+        cs_.set_solve_delta_observability_hooks(std::move(on_snapshot),
+                                                std::move(on_conflict));
+    }
     std::uint64_t epoch_invalidations() const { return epoch_invalidations_; }
 
     // Issue #283 follow-up #5: bidirectional-mode flag. When
@@ -1014,6 +1033,13 @@ export struct TypeChecker {
     void set_on_selective_recheck(std::function<void()> fn) {
         on_selective_recheck_ = std::move(fn);
     }
+    // Issue #536: solve_delta touched_roots + cross-delta conflict hooks.
+    void set_on_touched_roots_snapshot(std::function<void(std::size_t)> fn) {
+        on_touched_roots_snapshot_ = std::move(fn);
+    }
+    void set_on_cross_delta_conflict(std::function<void()> fn) {
+        on_cross_delta_conflict_ = std::move(fn);
+    }
 
     // Issue #518: number of if-contexts refreshed on the
     // most recent infer_flat_partial call (0 if none).
@@ -1162,6 +1188,8 @@ private:
     // count from infer_flat_partial.
     std::function<void()> on_narrowing_refresh_;
     std::function<void()> on_selective_recheck_;
+    std::function<void(std::size_t)> on_touched_roots_snapshot_;
+    std::function<void()> on_cross_delta_conflict_;
     std::uint64_t last_occurrence_refresh_count_ = 0;
 
     // Issue #283 follow-up #5 / #627: plumb bidirectional flag

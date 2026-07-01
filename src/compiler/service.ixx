@@ -2699,6 +2699,10 @@ public:
             [this]() { evaluator_.bump_narrowing_refresh_count(); });
         tc.set_on_selective_recheck(
             [this]() { evaluator_.bump_selective_recheck_count(); });
+        tc.set_on_touched_roots_snapshot(
+            [this](std::size_t n) { evaluator_.set_touched_roots_size(n); });
+        tc.set_on_cross_delta_conflict(
+            [this]() { evaluator_.bump_cross_delta_conflicts_caught(); });
         // Issue #411 fu1 follow-up #3: plumb the
         // per-DefUseIndex tracker so infer_flat_partial can
         // route through the O(uses) path when the sym is
@@ -5383,6 +5387,10 @@ public:
             [this]() { evaluator_.bump_narrowing_refresh_count(); });
         tc.set_on_selective_recheck(
             [this]() { evaluator_.bump_selective_recheck_count(); });
+        tc.set_on_touched_roots_snapshot(
+            [this](std::size_t n) { evaluator_.set_touched_roots_size(n); });
+        tc.set_on_cross_delta_conflict(
+            [this]() { evaluator_.bump_cross_delta_conflicts_caught(); });
         // Issue #411 fu1 follow-up #3: plumb the
         // per-DefUseIndex tracker (same as incremental_infer
         // above). When the tracker is non-null AND has

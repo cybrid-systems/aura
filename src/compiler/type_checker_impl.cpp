@@ -908,8 +908,11 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                 ok = unify(c.lhs, c.rhs);
             else
                 ok = consistent_unify(c.lhs, c.rhs);
-            if (!ok)
+            if (!ok) {
+                if (!touched_roots_.empty() && on_cross_delta_conflict_)
+                    on_cross_delta_conflict_();
                 return SolveResult::CONFLICT;
+            }
         }
         // Issue #383: worklist restart detection. If
         // the dirty set grew during the pass (new
@@ -953,7 +956,11 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     // Issue #466: lightweight re-verify of clean constraints
     // whose vars intersect touched_roots_. Catches cross-delta
     // conflicts that dirty-only processing can miss.
+    if (!touched_roots_.empty() && on_touched_roots_snapshot_)
+        on_touched_roots_snapshot_(touched_roots_.size());
     if (!reverify_clean_constraints_for_touched()) {
+        if (on_cross_delta_conflict_)
+            on_cross_delta_conflict_();
         clear_touched_roots();
         return SolveResult::CONFLICT;
     }
@@ -4661,6 +4668,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     engine.set_bidirectional_mode(bidirectional_mode_); // Issue #627
     engine.bind_declared_sigs();
     engine.set_narrowing_observability_hooks(on_narrowing_refresh_, on_selective_recheck_);
+    engine.set_solve_delta_observability_hooks(on_touched_roots_snapshot_,
+                                               on_cross_delta_conflict_);
 
     // Issue #518: re-narrow dirty if-contexts before the infer
     // loop, then propagate narrowed-variable use-sites into the
