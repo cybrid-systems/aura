@@ -508,6 +508,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "compile:jit-stats",
             "compile:arena-stats",
             "compile:dead-coercion-stats",
+            // Issue #574 — coercion elimination summary
+            "query:coercion-elim-stats",
             "compile:per-defuse-index-stats",
             "compile:mutator-dispatch-stats",
             "compile:mutation-impact-stats",

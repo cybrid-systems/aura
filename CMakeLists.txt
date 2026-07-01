@@ -1114,6 +1114,9 @@ aura_issue_test_link_llvm_jit(test_dead_coercion_elim)
 # Issue #611: CoercionMap deferred + DCE + CastOp type_tag zero-overhead flow
 aura_add_issue_test(test_coercion_dead_elim_castop_flow_zerooverhead)
 aura_issue_test_link_llvm_jit(test_coercion_dead_elim_castop_flow_zerooverhead)
+# Issue #574: Task2 dead-coercion elimination + coercion-elim-stats.
+aura_add_issue_test(test_dead_coercion_elimination_task2)
+aura_issue_test_link_llvm_jit(test_dead_coercion_elimination_task2)
 # Issue #384: Bidirectional inference engine — first slice.
 # Additive check-mode plumbing in synthesize_flat_lambda (the
 # caller hands an expected function type when the arg is a
