@@ -679,6 +679,31 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(castop + type_prop + narrow + win));
     });
 
+    // Issue #574: query:coercion-elim-stats. Returns the sum of
+    // 4 coercion elimination observability counters:
+    //   - coercion_castop_emitted_total (total CastOps from lowering)
+    //   - dead_coercion_eliminated_total (identity/no-op elisions)
+    //   - coercion_narrow_evidence_hits_total (runtime-check elisions
+    //     proved away by narrow_evidence Rule 6)
+    //   - narrowing_provenance_total (blame/provenance preserved on
+    //     occurrence-narrowing paths feeding coercion metadata)
+    add("query:coercion-elim-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t total_castop =
+            m->coercion_castop_emitted_total.load(std::memory_order_relaxed);
+        const std::uint64_t eliminated =
+            m->dead_coercion_eliminated_total.load(std::memory_order_relaxed);
+        const std::uint64_t runtime_check_elided =
+            m->coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed);
+        const std::uint64_t blame =
+            m->narrowing_provenance_total.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(
+            total_castop + eliminated + runtime_check_elided + blame));
+    });
+
     // Issue #306: query:linear-ownership-stats. Returns the
     // sum of 4 hardware resource linear-ownership observability
     // counters (EDA track — wire/reg/mem/port borrow + double-
