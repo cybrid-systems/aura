@@ -301,6 +301,23 @@ thousands of pairs per second. From Aura, use
 `(query:ref-valid? (cons <id> (cons <gen> nil)))`;
 from C++, use `flat.is_valid_id_gen(id, gen)`.
 
+### Rule 6: prefer the zero-alloc `for_each_stable_child` in hot paths (Issue #398)
+
+If you only need to *iterate* stable children of a
+node once (and not store them past the call), use
+`flat.for_each_stable_child(id, fn)` instead of
+`flat.children_stable(id)`. The callback version does
+NOT allocate a `std::vector<StableNodeRef>` per call —
+each non-NULL child is delivered inline to `fn` as
+a `StableNodeRef` (with the current `generation_`
+captured at call time). Bench data
+(`tests/bench/children_stable_bench.cpp`): the
+zero-alloc path is **2× faster** than the allocating
+path on a 1000-define × 10-child × 1000-round workload
+(156 µs vs 314 µs per round; 50% speedup). Use the
+allocating `children_stable()` only when you need to
+store the refs past the call boundary.
+
 ## Anti-patterns to avoid
 
 - **Don't cache raw `NodeId` across a `mutate` call**.

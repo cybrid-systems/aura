@@ -120,24 +120,50 @@ void register_workspace_query_primitives(
         if (node >= flat.size())
             return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
                                            std::to_string(flat.size()));
-        auto stable_children = flat.children_stable(node);
+        // Issue #398: truly zero-allocation path (no local
+        // vector). The result is a list of (id . gen) pairs
+        // — each child takes 3 entries in ws.pairs:
+        //   - (gen, nil)
+        //   - (id, ^prev)
+        //   - (pair_ev, ^next-list-node)
+        // We pre-allocate 3*N entries directly in ws.pairs
+        // (no temp vector), fill them via the callback, then
+        // thread the list-node cdrs in a second O(N) walk.
         auto gen = flat.generation();
-        // Build a list of (node-id . gen) pairs, in the same
-        // order as the underlying children span.
-        EvalValue result = make_void();
-        for (auto it = stable_children.rbegin(); it != stable_children.rend(); ++it) {
-            // Build (node-id . gen) pair
-            auto gen_pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(gen)), make_void()});
-            auto pair_pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(it->id)), make_pair(gen_pid)});
-            auto pair_ev = make_pair(pair_pid);
-            // Prepend to result
-            auto list_pid = ws.pairs.size();
-            ws.pairs.push_back({pair_ev, result});
-            result = make_pair(list_pid);
+        std::size_t n = flat.stable_child_count(node);
+        if (n == 0)
+            return make_void();
+        const auto base = ws.pairs.size();
+        // Pre-allocate 3*N slots with placeholder pairs. The
+        // exact car / cdr values are filled in below; the
+        // placeholders keep the indices stable.
+        for (std::size_t i = 0; i < 3 * n; ++i) {
+            ws.pairs.push_back({make_void(), make_void()});
         }
-        return result;
+        // Fill (gen, nil) and (id, ^gen-pair) for each child.
+        // The list-node cdr is filled in the second loop.
+        std::size_t i = 0;
+        flat.for_each_stable_child(node, [&](aura::ast::FlatAST::StableNodeRef ref) {
+            const auto gen_idx = static_cast<int>(base + 3 * i);
+            const auto pair_idx = static_cast<int>(base + 3 * i + 1);
+            const auto list_idx = static_cast<int>(base + 3 * i + 2);
+            ws.pairs[gen_idx] = {make_int(static_cast<std::int64_t>(gen)), make_void()};
+            ws.pairs[pair_idx] = {make_int(static_cast<std::int64_t>(ref.id)),
+                                  make_pair(gen_idx)};
+            // The list-node cdr is filled below (we don't know
+            // the next list-node index until the loop ends).
+            ws.pairs[list_idx] = {make_pair(pair_idx), make_void()};
+            ++i;
+        });
+        // Thread the list-node cdrs: list[i].cdr = list[i+1]
+        // for i in 0..N-2; list[N-1].cdr = nil (already set).
+        for (std::size_t j = 0; j + 1 < n; ++j) {
+            const auto list_idx = static_cast<int>(base + 3 * j + 2);
+            const auto next_idx = static_cast<int>(base + 3 * (j + 1) + 2);
+            ws.pairs[list_idx].cdr = make_pair(next_idx);
+        }
+        // The final result is the first list-node.
+        return make_pair(static_cast<int>(base + 2));
     });
 
     // Issue #249: (query:parent-stable node-id) — Get the
