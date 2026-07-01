@@ -1714,6 +1714,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             stale_caught + blame_attached + invalidation + provenance_hits + safe_fallbacks));
     });
 
+    // Issue #627: query:bidirectional-narrow-stats. Returns the sum
+    // of check-mode narrow hits, synthesize/check switches,
+    // post-mutate narrow consistency, and stale-check prevented.
+    add("query:bidirectional-narrow-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m)
+            return make_int(0);
+        const std::uint64_t check_hits =
+            m->check_mode_narrow_hits_total.load(std::memory_order_relaxed);
+        const std::uint64_t switches =
+            m->synthesize_check_switch_count_total.load(std::memory_order_relaxed);
+        const std::uint64_t consistency =
+            m->post_mutate_narrow_consistency_total.load(std::memory_order_relaxed);
+        const std::uint64_t stale_prevented =
+            m->stale_check_narrow_prevented_total.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(check_hits + switches + consistency +
+                                                  stale_prevented));
+    });
+
     // Issue #537 / #518 Phase 2: query:occurrence-narrowing-stats.
     // Returns the sum of stale-refresh + blame-chain-complete
     // counters from CompilerMetrics (post-mutation re-narrow

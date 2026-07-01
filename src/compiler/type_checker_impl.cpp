@@ -3170,6 +3170,113 @@ void InferenceEngine::propagate_narrowing_to_uses(
     }
 }
 
+std::uint32_t InferenceEngine::compute_if_narrowing_evidence_mask(
+    const FlatAST& flat, const StringPool& pool, NodeId cond_id,
+    const OccurrenceInfoFlat& occ) const {
+    if (occ.is_negation)
+        return 0;
+    auto cond = flat.get(cond_id);
+    if (cond.tag != NodeTag::Call || cond.children.empty())
+        return 0;
+    auto fn_id = cond.child(0);
+    auto fn = flat.get(fn_id);
+    if (fn.tag != NodeTag::Variable)
+        return 0;
+    std::string fname(pool.resolve(fn.sym_id));
+    if (fname == "or" || fname == "and") {
+        std::uint32_t combined = 0;
+        for (std::size_t i = 1; i < cond.children.size(); ++i) {
+            if (auto ev_bit = compute_narrowing_evidence(flat, pool, cond.child(i), reg_))
+                combined |= *ev_bit;
+        }
+        return combined;
+    }
+    auto c = cond;
+    std::string pred_name;
+    for (std::uint32_t depth = 0; depth < 4 && c.tag == NodeTag::Call; ++depth) {
+        if (c.children.empty())
+            break;
+        auto fn_id2 = c.child(0);
+        auto fn2 = flat.get(fn_id2);
+        if (fn2.tag != NodeTag::Variable)
+            break;
+        auto n = std::string(pool.resolve(fn2.sym_id));
+        if (n == "not") {
+            if (c.children.size() < 2)
+                break;
+            c = flat.get(c.child(1));
+            continue;
+        }
+        pred_name = n;
+        break;
+    }
+    return narrowing_bit_for(pred_name);
+}
+
+InferenceEngine::IfPredicateResolve InferenceEngine::resolve_if_predicate_occurrence(
+    FlatAST& flat, StringPool& pool, NodeId if_id, NodeId cond_id, bool check_mode) {
+    IfPredicateResolve out;
+    const std::uint8_t kOccurrenceBit =
+        static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);
+    out.stale_narrowing =
+        handle_stale_narrowing_at_if(flat, if_id, cache_epoch_, cs_, diag_, cur_loc_);
+    if (out.stale_narrowing)
+        predicate_memo_.erase(cond_id);
+
+    const bool force_reanalyze =
+        (if_id < flat.size() &&
+         (flat.is_dirty_for(if_id, kOccurrenceBit) || flat.is_occurrence_stale(if_id) != 0)) ||
+        (cond_id < flat.size() && flat.is_dirty(cond_id));
+    if (force_reanalyze)
+        predicate_memo_.erase(cond_id);
+
+    std::optional<OccurrenceInfoFlat> occ;
+    {
+        auto memo_it = predicate_memo_.find(cond_id);
+        if (!force_reanalyze && memo_it != predicate_memo_.end() &&
+            memo_it->second.epoch == cache_epoch_) {
+            occ = memo_it->second.result;
+            ++predicate_memo_hits_;
+        } else {
+            ++predicate_memo_misses_;
+            ++stats_.narrowing_reanalyzed;
+            if (if_id < flat.size() && flat.is_dirty(if_id))
+                ++stats_.narrowing_dirty_recovery;
+            bool meet_used = false;
+            bool join_used = false;
+            occ = analyze_predicate_flat(flat, pool, cond_id, reg_, meet_used, join_used);
+            stats_.and_or_meet_uses += meet_used ? 1 : 0;
+            stats_.and_or_join_uses += join_used ? 1 : 0;
+            predicate_memo_[cond_id] = PredicateMemoEntry{cond_id, cache_epoch_, occ};
+            if (predicate_memo_.size() > PREDICATE_MEMO_MAX_ENTRIES) {
+                ++predicate_memo_evictions_;
+                predicate_memo_.clear();
+            }
+        }
+    }
+
+    if (out.stale_narrowing && flat.is_occurrence_stale(if_id) && occ) {
+        occ = std::nullopt;
+        last_if_narrowing_ = 0;
+        if (cs_.metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+            m->narrow_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            if (check_mode)
+                m->stale_check_narrow_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else if (occ && !occ->is_negation) {
+        last_if_narrowing_ = compute_if_narrowing_evidence_mask(flat, pool, cond_id, *occ);
+        if (check_mode && cs_.metrics_)
+            static_cast<struct CompilerMetrics*>(cs_.metrics_)
+                ->check_mode_narrow_hits_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        last_if_narrowing_ = 0;
+    }
+
+    out.occ = occ;
+    return out;
+}
+
 TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, NodeId if_id, NodeView v) {
     // children: 0=condition, 1=then_branch, 2=else_branch (can be NULL_NODE)
     if (v.children.empty()) {
@@ -3195,141 +3302,11 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
     // below.
     last_if_narrowing_ = 0;
 
-    // Issue #639: stale narrowing invalidation — force memo
-    // miss + blame before applying cached narrowing.
-    const bool stale_narrowing =
-        handle_stale_narrowing_at_if(flat, if_id, cache_epoch_, cs_, diag_, cur_loc_);
-    if (stale_narrowing)
-        predicate_memo_.erase(cond_id);
-
-    // Issue #281: predicate memoization. Check the per-condition
-    // memo before calling analyze_predicate_flat. On hit, we
-    // return the cached OccurrenceInfoFlat without re-walking
-    // the predicate AST (which can be 10-50 instructions deep
-    // for nested and/or/not patterns). On miss, we compute
-    // + cache. On epoch change (handled below in infer_flat),
-    // the whole memo is cleared.
-    std::optional<OccurrenceInfoFlat> occ;
-    {
-        auto memo_it = predicate_memo_.find(cond_id);
-        if (memo_it != predicate_memo_.end() &&
-            memo_it->second.epoch == cache_epoch_) {
-            occ = memo_it->second.result;
-            ++predicate_memo_hits_;
-        } else {
-            ++predicate_memo_misses_;
-            // Issue #386: re-analysis signal. Bumped
-            // on every cache miss (a predicate that
-            // wasn't in the memo — either first time
-            // seen or epoch advanced). High
-            // re-analysis rate is a tuning signal:
-            // indicates the memo is dropping too
-            // eagerly.
-            ++stats_.narrowing_reanalyzed;
-            // Issue #434: per-node occurrence dirty
-            // recovery. Bumped when the If node is
-            // dirty (post-mutation re-inference) AND
-            // the predicate memo missed. This is the
-            // narrower signal — it measures only the
-            // recoveries that came from a dirty If
-            // (i.e. the post-mutation path triggered
-            // the re-analysis). Pre-#434 this was
-            // indistinguishable from the broader
-            // narrowing_reanalyzed counter.
-            if (if_id < flat.size() && flat.is_dirty(if_id)) {
-                ++stats_.narrowing_dirty_recovery;
-            }
-            bool m2, j2;
-            occ = analyze_predicate_flat(flat, pool, cond_id, reg_, m2, j2);
-            stats_.and_or_meet_uses += m2 ? 1 : 0;
-            stats_.and_or_join_uses += j2 ? 1 : 0;
-            predicate_memo_[cond_id] = PredicateMemoEntry{
-                cond_id, cache_epoch_, occ};
-            // Issue #281 follow-up #5: bound the memo. When
-            // the size exceeds the threshold, evict the
-            // entire map and let the next call repopulate.
-            // Wholesale eviction is cheaper than LRU
-            // (no extra bookkeeping) and the memo is hot for
-            // the current epoch anyway.
-            if (predicate_memo_.size() > PREDICATE_MEMO_MAX_ENTRIES) {
-                ++predicate_memo_evictions_;
-                predicate_memo_.clear();
-            }
-        }
-    }
-
-    // Issue #280: capture the narrowing bitmask from the predicate
-    // (or from the outermost not-wrapped predicate). Only positive
-    // (non-negated) predicates contribute — (not (string? x)) is a
-    // narrowing to non-String in the else-branch, but the Branch
-    // instruction's narrow_evidence is set by the THEN-branch only
-    // (the consumer's if-walker handles else-branch separately).
-    //
-    // The bitmask tells DeadCoercionEliminationPass / JIT which
-    // predicates statically guarantee a type at this branch.
-    //
-    // Issue #280 follow-up #1: for `(or p1 p2 ...)`, combine the
-    // bitmasks of all branch predicates (not first-match). The
-    // analyze_predicate_flat path in the `or` branch already
-    // computes per-branch bits; here we accumulate.
-    // Issue #639: conservative Dynamic fallback when occurrence
-    // context is still stale after invalidation (re-narrow not
-    // yet run). Skips narrowing application until refresh.
-    if (stale_narrowing && flat.is_occurrence_stale(if_id) && occ) {
-        occ = std::nullopt;
-        last_if_narrowing_ = 0;
-        if (cs_.metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
-            m->narrow_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-
-    if (occ && !occ->is_negation) {
-        auto cond = flat.get(cond_id);
-        if (cond.tag == NodeTag::Call && !cond.children.empty()) {
-            auto fn_id = cond.child(0);
-            auto fn = flat.get(fn_id);
-            if (fn.tag == NodeTag::Variable) {
-                std::string fname(pool.resolve(fn.sym_id));
-                if (fname == "or" || fname == "and") {
-                    // OR / AND: combine bits across all branch
-                    // predicates. The conservative LUB rules
-                    // (#279) pick the refined_type; the bitmask
-                    // records the union of evidence (any branch
-                    // predicate is a sufficient narrowing signal
-                    // for the then-branch to see the refinement).
-                    std::uint32_t combined = 0;
-                    for (std::size_t i = 1; i < cond.children.size(); ++i) {
-                        if (auto ev_bit = compute_narrowing_evidence(
-                                flat, pool, cond.child(i), reg_)) {
-                            combined |= *ev_bit;
-                        }
-                    }
-                    last_if_narrowing_ = combined;
-                } else {
-                    // Single predicate: use the same walk as
-                    // before (skip not-wrappers).
-                    auto c = cond;
-                    std::string pred_name;
-                    for (std::uint32_t depth = 0; depth < 4 && c.tag == NodeTag::Call; ++depth) {
-                        if (c.children.empty()) break;
-                        auto fn_id2 = c.child(0);
-                        auto fn2 = flat.get(fn_id2);
-                        if (fn2.tag != NodeTag::Variable) break;
-                        auto n = std::string(pool.resolve(fn2.sym_id));
-                        if (n == "not") {
-                            if (c.children.size() < 2) break;
-                            c = flat.get(c.child(1));
-                            continue;
-                        }
-                        pred_name = n;
-                        break;
-                    }
-                    last_if_narrowing_ = narrowing_bit_for(pred_name);
-                }
-            }
-        }
-    }
+    // Issue #627: shared predicate memo/epoch + narrow_evidence
+    // resolution (also used by check_flat).
+    const auto pred = resolve_if_predicate_occurrence(flat, pool, if_id, cond_id,
+                                                      /*check_mode=*/false);
+    auto occ = pred.occ;
 
     if (occ && !occ->is_negation) {
         // Then-branch: variable has refined type
@@ -3790,6 +3767,10 @@ TypeId InferenceEngine::synthesize_flat_annotation(FlatAST& flat, StringPool& po
 void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, TypeId expected) {
     if (id == NULL_NODE || id >= flat.size())
         return;
+    if (cs_.metrics_) {
+        static_cast<struct CompilerMetrics*>(cs_.metrics_)
+            ->synthesize_check_switch_count_total.fetch_add(1, std::memory_order_relaxed);
+    }
     auto v = flat.get(id);
     cur_loc_ = {v.line, v.col, 0};
 
@@ -3830,22 +3811,11 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
                 check_flat(flat, pool, v.child(2), expected);
         } else {
-            // Issue #639: stale narrowing detection in check-mode.
-            const bool stale_narrowing_check =
-                handle_stale_narrowing_at_if(flat, id, cache_epoch_, cs_, diag_, cur_loc_);
-            if (stale_narrowing_check)
-                predicate_memo_.erase(cond_id);
-            bool m2, j2;
-            auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_, m2, j2);
-            stats_.and_or_meet_uses += m2 ? 1 : 0;
-            stats_.and_or_join_uses += j2 ? 1 : 0;
-            if (stale_narrowing_check && flat.is_occurrence_stale(id) && occ) {
-                occ = std::nullopt;
-                if (cs_.metrics_) {
-                    auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
-                    m->narrow_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
-                }
-            }
+            // Issue #627: shared predicate memo/epoch + narrow_evidence
+            // (force re-analyze on dirty predicate nodes).
+            const auto pred = resolve_if_predicate_occurrence(flat, pool, id, cond_id,
+                                                              /*check_mode=*/true);
+            auto occ = pred.occ;
         if (occ && !occ->is_negation) {
             // Then-branch: variable has refined type
             env_.push_scope();
@@ -3884,11 +3854,6 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                         }
                     }
                 }
-                // Use compute_narrowing_evidence to set the
-                // bitmask consistently with synthesize path.
-                std::uint32_t ev_bit = 0;
-                if (auto info = compute_narrowing_evidence(flat, pool, cond_id, reg_))
-                    ev_bit = *info;
                 NarrowingRecord rec;
                 rec.var_name = occ->var_name;
                 rec.predicate_src = pred_src;
@@ -3896,7 +3861,7 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                 rec.if_node = id; // check_flat's id param
                 rec.cond_node = cond_id;
                 rec.is_negation = false;
-                rec.narrow_evidence = ev_bit;
+                rec.narrow_evidence = last_if_narrowing_;
                 rec.capture_epoch = cache_epoch_;
                 flat.record_narrowing(std::move(rec));
             }
@@ -4213,7 +4178,7 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     // inferred type, deferred coercions, and per-call stats so
     // we don't need to call back into the engine.
     auto r = type_check_flat_pure(flat, pool, node, types, diag, type_sigs_, type_module_src_,
-                                  strict_, cache_epoch_, metrics_, /*bidirectional_mode=*/true);
+                                  strict_, cache_epoch_, metrics_, bidirectional_mode_);
     stats_.cache_hits += r.cache_hits;
     stats_.cache_misses += r.cache_misses;
     stats_.stale_cache += r.stale_cache;
@@ -4571,6 +4536,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     engine.set_strict(strict_);           // Issue #79: plumb strict mode
     engine.set_cache_epoch(cache_epoch_); // Issue #168
     engine.set_metrics(metrics_);         // Issue #537: provenance refresh metrics
+    engine.set_bidirectional_mode(bidirectional_mode_); // Issue #627
     engine.bind_declared_sigs();
     engine.set_narrowing_observability_hooks(on_narrowing_refresh_, on_selective_recheck_);
 
@@ -4583,6 +4549,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     engine.propagate_narrowing_to_uses(flat, const_cast<StringPool&>(pool), affected);
 
     std::size_t re_inferred = 0;
+    std::uint32_t max_narrow_evidence = 0;
     for (aura::ast::NodeId id : affected) {
         if (id == aura::ast::NULL_NODE || id >= flat.size())
             continue;
@@ -4596,6 +4563,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // since we're scoping to the affected set, not
         // trying to batch across nodes.
         auto type = engine.infer_flat(flat, const_cast<aura::ast::StringPool&>(pool), id);
+        max_narrow_evidence =
+            std::max(max_narrow_evidence, engine.last_narrowing_evidence());
         if (type != types.dynamic_type()) {
             ++re_inferred;
         }
@@ -4624,6 +4593,14 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // call (at the top of the function). The per-call
     // engine doesn't carry the per_symbol / ancestor
     // counts; we accumulate them on stats_ directly here.
+
+    // Issue #627: capture narrowing evidence for post-mutate
+    // lowering freshness + consistency observability.
+    last_partial_narrowing_evidence_ = max_narrow_evidence;
+    if (last_occurrence_refresh_count_ > 0 && last_partial_narrowing_evidence_ != 0 && metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)
+            ->post_mutate_narrow_consistency_total.fetch_add(1, std::memory_order_relaxed);
+    }
 
     return re_inferred;
 }

@@ -384,8 +384,14 @@ public:
     std::size_t check_before_lowering(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                       aura::ast::NodeId root,
                                       aura::core::TypeRegistry& type_registry,
-                                      aura::diag::DiagnosticCollector& diag) {
+                                      aura::diag::DiagnosticCollector& diag,
+                                      std::uint64_t cache_epoch = 0,
+                                      void* metrics = nullptr) {
         aura::compiler::TypeChecker tc(type_registry);
+        tc.set_bidirectional_mode(bidirectional_mode_);
+        tc.set_cache_epoch(cache_epoch);
+        if (metrics)
+            tc.set_metrics(metrics);
         tc.infer_flat(flat, pool, root, diag);
         // Issue #280: run the pure typecheck variant to capture
         // narrowing evidence. The TypeChecker member function
@@ -393,11 +399,13 @@ public:
         // TypeCheckResult with the narrow_evidence field. We
         // call both — the member for diagnostics + coercions,
         // the pure for the narrowing capture.
+        // Issue #627: plumb cache_epoch + metrics so predicate
+        // memo/epoch and bidirectional narrow counters stay
+        // fresh post partial re-check / mutation.
         auto result = aura::compiler::type_check_flat_pure(flat, pool, root, type_registry, diag,
                                                     /*sigs=*/{}, /*module_src=*/{},
-                                                    /*strict=*/false, /*cache_epoch=*/0,
-                                                    /*metrics=*/nullptr,
-                                                    /*bidirectional_mode=*/bidirectional_mode_);
+                                                    /*strict=*/false, cache_epoch, metrics,
+                                                    bidirectional_mode_);
         last_narrowing_evidence_ = result.narrow_evidence;
         // Apply deferred coercions now, before lowering reads
         // the AST. apply_coercion_map is idempotent — calling

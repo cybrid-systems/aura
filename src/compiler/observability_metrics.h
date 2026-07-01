@@ -423,6 +423,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> narrow_blame_attached_total{0};
     std::atomic<std::uint64_t> narrow_invalidation_post_mutate_total{0};
     std::atomic<std::uint64_t> narrow_safe_fallback_total{0};
+    // Issue #627: bidirectional check-mode narrow robustness.
+    //   - check_mode_narrow_hits_total: Occurrence narrowing
+    //     applied in check_flat If branches
+    //   - synthesize_check_switch_count_total: transitions
+    //     into check_flat from bidirectional paths
+    //   - post_mutate_narrow_consistency_total: partial re-
+    //     infer refreshed narrowing evidence after mutation
+    //   - stale_check_narrow_prevented_total: stale narrowing
+    //     blocked in check-mode (Dynamic fallback)
+    std::atomic<std::uint64_t> check_mode_narrow_hits_total{0};
+    std::atomic<std::uint64_t> synthesize_check_switch_count_total{0};
+    std::atomic<std::uint64_t> post_mutate_narrow_consistency_total{0};
+    std::atomic<std::uint64_t> stale_check_narrow_prevented_total{0};
     // Issue #383: ConstraintSystem worklist + consistent_
     // unify observability. 3 lifetime counters:
     //   - consistent_unify_total: every call to

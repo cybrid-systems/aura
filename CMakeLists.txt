@@ -1389,6 +1389,8 @@ aura_issue_test_link_llvm_jit(test_occurrence_mutate_narrowing)
 # Issue #639: narrow blame + stale invalidation post-mutate
 aura_add_issue_test(test_occurrence_narrow_blame_stale_invalidation_post_mutate)
 aura_issue_test_link_llvm_jit(test_occurrence_narrow_blame_stale_invalidation_post_mutate)
+aura_add_issue_test(test_bidirectional_check_occurrence_narrow_post_mutate)
+aura_issue_test_link_llvm_jit(test_bidirectional_check_occurrence_narrow_post_mutate)
 # Issue #549: StableNodeRef + generation_ + mutation_log
 # provenance + COW/Fiber safety for long-running
 # self-evolution loops (P0). 9 scenarios validating: 4
