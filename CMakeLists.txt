@@ -1475,6 +1475,15 @@ aura_issue_test_link_llvm_jit(test_issue_388)
 # the std::shared_mutex discipline.
 aura_add_issue_test(test_issue_371)
 aura_issue_test_link_llvm_jit(test_issue_371)
+# Issue #372: cross-pool name-based Define lookup. 5 scenarios:
+# StringPool::find_by_name round-trip + grow, cross-pool SymId
+# mismatch (problem confirmation), cross-pool find_define_by_name
+# in parsed Flats, Aura primitive (workspace:find-define) round-trip,
+# COW clone + name re-resolve after (workspace:switch). Pairs with
+# the existing (workspace:resolve-stable-ref)/StableNodeRef/
+# NodeIdRemapTable foundation — name-based is the user-level API.
+aura_add_issue_test(test_issue_372)
+aura_issue_test_link_llvm_jit(test_issue_372)
 # Issue #301: C++26 std::meta migration audit + foundation.
 # 4 scenarios: call-site audit, auto_serialize validation
 # on StableNodeRef-like POD, serialize perf baseline,

@@ -2,12 +2,12 @@
 
 # Primitives (generated)
 
-**551** registrations scanned from `src/**/*.cpp`.
+**552** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 140 primitives (25%)
+- **mutation-safety**: 141 primitives (26%)
 - **core**: 174 primitives (32%)
 - **internal-observable**: 90 primitives (16%)
 - **convenience**: 147 primitives (27%)
@@ -170,7 +170,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `ast:validate-post-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:version` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 
-## Workspace: (20)
+## Workspace: (21)
 
 - `workspace:can-write?` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
@@ -179,6 +179,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:current` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:delete` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:discard` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:find-define` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:list` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:lock` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:memory-limit` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
@@ -660,7 +661,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (140)
+### Mutation safety (must remain primitive) (141)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -789,6 +790,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:current` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:delete` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:discard` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:find-define` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:list` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:lock` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`

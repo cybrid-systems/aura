@@ -202,6 +202,39 @@ public:
         return std::string_view(buf_.data() + id);
     }
 
+    // Issue #372: reverse name → SymId lookup.
+    //
+    // Reuses the existing hash_tbl_ probe loop (same FNV-1a
+    // hash + linear probe as `intern`) so we don't need a
+    // side-table — buf_ may grow/realloc, but the SymId
+    // offsets in hash_tbl_ stay valid, so we just walk the
+    // probe chain and compare names.
+    //
+    // Empty name maps to SymId 0 (the leading '\0' sentinel
+    // — matches `intern("")`). Names not present in the pool
+    // return std::nullopt; callers should distinguish "pool
+    // has no such name" from "pool has it at offset 0".
+    //
+    // Per-pool lookup is the foundation for cross-layer
+    // (cross-pool) queries: callers do `pool.intern(name)` (or
+    // the resolved SymId from a captured ref) → walk the AST
+    // of that pool's flat. We don't try to unify SymIds
+    // across pools (that's deferred — see #372 follow-ups).
+    [[nodiscard]] std::optional<SymId> find_by_name(std::string_view s) const noexcept {
+        if (s.empty())
+            return SymId{0};
+        auto hash = hash_str(s);
+        auto mask = hash_capacity_ - 1;
+        auto idx = hash & mask;
+        while (hash_tbl_[idx] != INVALID_SYM) {
+            auto existing = hash_tbl_[idx];
+            if (resolve(existing) == s)
+                return existing;
+            idx = (idx + 1) & mask;
+        }
+        return std::nullopt;
+    }
+
     // Total bytes used for string data
     std::size_t data_size() const { return buf_.size(); }
 
@@ -2353,6 +2386,40 @@ public:
                     && v.sym_id == sym;
             });
         return found.has_value();
+    }
+
+    // Issue #372: name-based Define lookup.
+    //
+    // Walks the AST subtree rooted at `root_` (or an explicit
+    // root override) and returns the first Define node whose
+    // sym_id matches the given name in the supplied pool.
+    //
+    // The pool is a separate argument (rather than a stored
+    // member) because FlatAST is the AST data, not the
+    // symbol-table — multiple Flats can share a single
+    // StringPool (e.g. parent layer → child layer after COW
+    // clone), or one Flat can be parsed against multiple
+    // pools across its lifetime. The caller is responsible
+    // for passing the pool that this Flat was parsed against
+    // (workspace_flat_'s companion workspace_pool_).
+    //
+    // Returns std::nullopt if the name isn't interned in the
+    // pool, the root is NULL_NODE, or no Define with that
+    // sym_id exists in the reachable subtree.
+    [[nodiscard]] std::optional<aura::ast::NodeId>
+    find_define_by_name(const StringPool& pool, std::string_view name,
+                        std::optional<aura::ast::NodeId> search_root = std::nullopt) const {
+        const auto sym = pool.find_by_name(name);
+        if (!sym)
+            return std::nullopt;
+        const auto start = search_root.value_or(root);
+        if (start == aura::ast::NULL_NODE || start >= size())
+            return std::nullopt;
+        return find_first_node_with<std::uint32_t>(
+            *this, start, [this, sym_id = *sym](aura::ast::NodeId id) {
+                auto v = this->get(id);
+                return v.tag == aura::ast::NodeTag::Define && v.sym_id == sym_id;
+            });
     }
 
     [[nodiscard]] NodeId add_define_type(SymId name, std::span<const SymId> params,
