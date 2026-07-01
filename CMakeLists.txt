@@ -1406,6 +1406,9 @@ aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_index_task1)
 # on Task1 EDSL primitives + Guard/fiber paths.
 aura_add_issue_test(test_atomic_batch_rollback_fiber_task1)
 aura_issue_test_link_llvm_jit(test_atomic_batch_rollback_fiber_task1)
+# Issue #529: Atomic batch + Guard rollback closed-loop observability.
+aura_add_issue_test(test_atomic_batch_rollback_closed_loop_529)
+aura_issue_test_link_llvm_jit(test_atomic_batch_rollback_closed_loop_529)
 # Issue #552: StableNodeRef + generation_ + COW/Fiber/
 # Provenance Safety for Reliable Long-Running AI
 # Multi-Round Query → Mutate → Eval Loops (P0). 9
