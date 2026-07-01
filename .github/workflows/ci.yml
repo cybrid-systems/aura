@@ -67,6 +67,19 @@ jobs:
       env:
         AURA_ISSUES_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
         AURA_GIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+        # Issue #374: explicit AURA_RUNTIME_DIR for the AOT path.
+        # find_runtime_c() (aura_jit_bridge.cpp) tries (1)
+        # $AURA_RUNTIME_DIR/runtime.c, (2) walk-up from the aura
+        # binary 8 levels looking for lib/runtime.c, (3) CWD-
+        # relative lib/../lib/runtime.c, (4) FHS install-path
+        # fallbacks (/usr/local/share/aura, /usr/share/aura,
+        # /opt/aura/share). On the v1.0.1 CI image the walk-up
+        # normally finds lib/runtime.c under the workspace; if
+        # it ever fails (e.g. custom Docker layer with stripped
+        # /proc, or a non-standard build tree depth > 8), the
+        # env var below forces the lookup to a known location.
+        # See docs/contributing.md §X "Runtime.c 查找策略".
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
       run: python3 build.py ci
 
   # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
