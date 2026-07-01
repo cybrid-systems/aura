@@ -96,6 +96,7 @@ target_sources(aura PRIVATE
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
     src/core/ast_impl.cpp
+    src/core/ast_stability.cpp
     src/core/mutation_impl.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
@@ -273,6 +274,7 @@ target_sources(test_ir PRIVATE
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
     src/core/ast_impl.cpp
+    src/core/ast_stability.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
@@ -401,6 +403,7 @@ file(MAKE_DIRECTORY ${AURA_MODULE_BMI_DIR})
 add_library(aura_test_objects STATIC
     src/core/contract_stub.cpp
     src/core/ast_impl.cpp
+    src/core/ast_stability.cpp
     src/core/contract_handler.cpp
     src/core/mutation_impl.cpp
     src/core/type_impl.cpp
@@ -525,6 +528,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
     src/core/ast_impl.cpp
+    src/core/ast_stability.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
@@ -856,6 +860,7 @@ add_test(NAME cycle221_pcv_bench COMMAND ./cycle221_pcv_bench)
 target_include_directories(issue_212_bench PRIVATE src)
 target_sources(issue_212_bench PRIVATE
     src/core/ast_impl.cpp
+    src/core/ast_stability.cpp
     src/core/type_impl.cpp
     src/compiler/value_impl.cpp
     src/compiler/constant_folding_impl.cpp
