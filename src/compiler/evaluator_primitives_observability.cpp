@@ -484,6 +484,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:reflect-postmutate-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop
             "query:macro-reflect-self-evo-stats",
+            // Issue #595 — Marker/dirty/epoch/Guard self-evo loop
+            "query:self-evolution-loop-stats",
             // Issue #514 — Task6 Top 3 production-readiness synthesis
             "query:ir-hygiene-stats",
             "query:pattern-marker-stats",
