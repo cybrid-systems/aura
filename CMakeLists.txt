@@ -1530,6 +1530,12 @@ aura_issue_test_link_llvm_jit(test_task6_production_readiness_closed_loop_514)
 # #437/#514 (per-theme tests).
 aura_add_issue_test(test_compiler_runtime_production_readiness_closed_loop_441)
 aura_issue_test_link_llvm_jit(test_compiler_runtime_production_readiness_closed_loop_441)
+# Issue #634: Commercial production readiness closed loop (meta).
+# 8 ACs: commercial-production-readiness-stats synthesis, stable-ref/gc/
+# shape/coercion/verify pillars, multi-round monotonic + regression.
+# Non-duplicative with #441/#595/#602/#607 and #620-#633 per-theme tests.
+aura_add_issue_test(test_commercial_production_readiness_closed_loop_634)
+aura_issue_test_link_llvm_jit(test_commercial_production_readiness_closed_loop_634)
 # Issue #602: Comprehensive fuzz + stress matrix for Prompt6
 # memory safety invariants (IRClosure/EnvFrame/bridge_epoch/
 # linear/GuardShape) under concurrent fiber + GC + multi-round
