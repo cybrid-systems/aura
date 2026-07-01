@@ -497,6 +497,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:compiler-runtime-production-readiness-stats",
             // Issue #634 — Commercial production readiness P0 synthesis
             "query:commercial-production-readiness-stats",
+            // Issue #635 — Macro+reflect+self-evo commercial closed-loop
+            "query:macro-reflect-self-evo-commercial-stats",
             // Issue #619 — Task6 macro+reflect+self-evo follow-up
             "query:macro-reflect-self-evo-followup-stats",
             // Issue #602 — Prompt6 memory-safety matrix
