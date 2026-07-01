@@ -2,12 +2,12 @@
 
 # Primitives (generated)
 
-**557** registrations scanned from `src/**/*.cpp`.
+**560** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 143 primitives (26%)
+- **mutation-safety**: 146 primitives (26%)
 - **core**: 177 primitives (32%)
 - **internal-observable**: 90 primitives (16%)
 - **convenience**: 147 primitives (26%)
@@ -211,7 +211,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `synthesize:optimize` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (62)
+## Compile: (65)
 
 - `compile:and-or-precision-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:ast-ops-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -271,6 +271,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:schema-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:status` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:subtree-bump-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:subtree-generation` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:type-cache-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:type-dep-graph-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:type-propagation-stats` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -669,7 +672,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (143)
+### Mutation safety (must remain primitive) (146)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -755,6 +758,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:schema-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:status` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:subtree-bump` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:subtree-bump-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:subtree-generation` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:type-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:type-dep-graph-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:type-propagation-stats` — `src/compiler/evaluator_primitives_compile.cpp`

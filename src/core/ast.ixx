@@ -1228,6 +1228,13 @@ std::pmr::vector<std::uint32_t> type_id_;
     mutable std::atomic<std::uint64_t> bump_generation_count_{0};
     mutable std::atomic<std::uint64_t> is_valid_check_count_{0};
     mutable std::atomic<std::uint64_t> stable_ref_invalidations_{0};
+    // Issue #392: scoped / per-subtree generation bumping for
+    // reduced StableRef over-invalidation. subtree_bump_count_
+    // tracks lifetime total of bump_generation_subtree() calls.
+    // subtree_gen_ is the per-top-level-Define generation map
+    // (only meaningful for Define roots; other slots stay at 0).
+    mutable std::atomic<std::uint64_t> subtree_bump_count_{0};
+    std::pmr::vector<std::uint16_t> subtree_gen_;
     // Issue #457: generation_ / node_gen_ lifecycle
     // observability counters. All stats-only (relaxed
     // ordering). Bumped in bump_generation() (wrap
@@ -4642,6 +4649,18 @@ public:
         // same numeric value (~130K mutates in). Captured at
         // make_ref() time. Default 0 = pre-#368 ref.
         std::uint32_t wrap_epoch = 0;
+        // Issue #392: subtree gen at capture time. The
+        // per-top-level-Define counter (subtree_gen_[T])
+        // captured at make_ref() time, for T = top-level Define
+        // ancestor of the ref's node. Used by
+        // is_valid_subtree() to accept refs from subtrees that
+        // were NOT scoped-bumped since capture (the over-
+        // invalidation fix for EDA / long-running workspaces).
+        // Default 0 means "no captured subtree gen" — pre-#392
+        // refs (and refs whose node has no enclosing Define)
+        // are still accepted by is_valid_subtree() because
+        // subtree_gen_[T] starts at 0.
+        std::uint16_t subtree_gen_at_capture = 0;
 
         // Issue #379: bodies of these methods moved to
         // src/core/ast_stability.cpp (impl unit of aura.core.ast).
@@ -4721,8 +4740,13 @@ public:
         // Issue #368: also capture wrap_epoch_ so is_valid()
         // can detect false positives from a second generation_
         // wrap returning to the original numeric value.
+        // Issue #392: also capture subtree_gen_at_capture
+        // (the subtree_gen_ counter for the top-level Define
+        // ancestor of `id`) so is_valid_subtree() can skip
+        // invalidating refs in untouched subtrees.
         return StableNodeRef{id, generation_, next_mutation_id_, 0,
-                             0, generation_, wrap_epoch_.load(std::memory_order_relaxed)};
+                             0, generation_, wrap_epoch_.load(std::memory_order_relaxed),
+                             subtree_generation(id)};
     }
 
     // Issue #291: make_ref variant that also tags the ref
@@ -4730,8 +4754,10 @@ public:
     // query/mutate primitives that operate on a child
     // workspace.
     [[nodiscard]] StableNodeRef make_ref_in_layer(NodeId id, std::uint32_t workspace_id) const noexcept {
+        // Issue #392: capture subtree_gen_at_capture too.
         return StableNodeRef{id, generation_, next_mutation_id_, workspace_id,
-                             0, generation_, wrap_epoch_.load(std::memory_order_relaxed)};
+                             0, generation_, wrap_epoch_.load(std::memory_order_relaxed),
+                             subtree_generation(id)};
     }
 
     // Issue #303: make_safe_ref records full provenance
@@ -4744,9 +4770,11 @@ public:
     [[nodiscard]] StableNodeRef make_safe_ref(NodeId id,
                                               std::uint32_t workspace_id = 0,
                                               std::uint32_t fiber_id = 0) const noexcept {
+        // Issue #392: capture subtree_gen_at_capture too.
         return StableNodeRef{id, generation_, next_mutation_id_,
                              workspace_id, fiber_id, generation_,
-                             wrap_epoch_.load(std::memory_order_relaxed)};
+                             wrap_epoch_.load(std::memory_order_relaxed),
+                             subtree_generation(id)};
     }
 
     // Issue #303: capture_for_fiber is a shorthand for
@@ -4787,6 +4815,50 @@ public:
             stable_ref_invalidations_.fetch_add(1, std::memory_order_relaxed);
         }
         return ok;
+    }
+
+    // Issue #392: subtree-aware StableRef validity check.
+    // Returns true when:
+    //   - ref.id is in-bounds,
+    //   - the slot has not been modified since capture
+    //     (node_gen_[ref.id] == ref.gen), AND
+    //   - the wrap epoch matches (no second-wrap false
+    //     positives), AND
+    //   - the top-level Define containing ref.id has not
+    //     been scoped-bumped since capture
+    //     (subtree_gen_[top_define_of(ref.id)] ==
+    //      ref.subtree_gen_at_capture).
+    //
+    // This RELAXED check is the value-prop of #392: refs in
+    // subtrees that were NOT touched by a scoped bump stay
+    // valid even when other subtrees get bumped. Use this in
+    // hot paths that hold many refs across long mutation
+    // sequences (AI agent loops, EDA RTL/SV workspaces).
+    //
+    // Backward compatibility: the strict is_valid() above is
+    // unchanged. Callers that don't capture the new
+    // subtree_gen_at_capture field (default 0) still work
+    // because subtree_gen_ defaults to 0 — the check accepts
+    // them as long as no scoped bump has touched their
+    // subtree.
+    [[nodiscard]] bool is_valid_subtree(const StableNodeRef& ref) const noexcept {
+        if (ref.id == NULL_NODE || ref.id >= tag_.size() || ref.id >= node_gen_.size())
+            return false;
+        if (node_gen_[ref.id] != ref.gen)
+            return false;
+        if (ref.wrap_epoch != wrap_epoch_.load(std::memory_order_relaxed))
+            return false;
+        // Subtree check: find the top-level Define ancestor
+        // and compare subtree_gen_[T] against the captured
+        // value. For nodes with no enclosing Define, top_define_of
+        // returns NULL_NODE → we treat them as "no subtree
+        // scoping" and accept (subtree_gen_ stays at 0).
+        auto top = top_define_of(ref.id);
+        if (top == NULL_NODE)
+            return true; // no enclosing Define → can't be scope-invalidated
+        if (top >= subtree_gen_.size())
+            return true; // subtree_gen_ not populated → no scoped bump yet
+        return subtree_gen_[top] == ref.subtree_gen_at_capture;
     }
     [[nodiscard]] std::optional<NodeView> get_safe(const StableNodeRef& ref) const noexcept
         post(r: !r.has_value() || is_valid(ref)) {
@@ -4891,6 +4963,112 @@ public:
         // Issue #255: only count actual bumps (suppressed
         // ones are accounted for via atomic_batch_commits_).
         bump_generation_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #392: scoped generation bumping for a single
+    // top-level Define subtree. Walks up from subtree_root to
+    // find the containing Define, then bumps that Define's
+    // subtree_gen_ counter. ALSO bumps the global generation_
+    // for backward compatibility with callers using the
+    // existing is_valid() path (which checks global gen).
+    //
+    // The benefit for callers using the new
+    // is_valid_subtree() path: refs to nodes in OTHER
+    // subtrees stay valid because their subtree_gen_ was not
+    // bumped. is_valid_subtree() compares the captured
+    // subtree_gen_at_capture against the current subtree_gen_
+    // for the top-level Define containing the ref's node.
+    //
+    // subtree_root must be a node inside the target subtree
+    // (the walk-up handles arbitrary nesting). Pass NULL_NODE
+    // to no-op safely.
+    void bump_generation_subtree(NodeId subtree_root) noexcept {
+        if (subtree_root == NULL_NODE || subtree_root >= size())
+            return;
+        auto top = top_define_of(subtree_root);
+        if (top == NULL_NODE)
+            return; // no enclosing Define → cannot scope
+        // Lazily grow the per-node subtree_gen_ vector.
+        if (subtree_gen_.size() < size())
+            subtree_gen_.resize(size(), 0);
+        // Bump the global generation_ so existing is_valid()
+        // continues to behave as before (backward compat).
+        bump_generation();
+        // Advance the per-subtree counter for this top-level
+        // Define. Same uint16_t wrap semantics as the global
+        // generation_ (1..65535, skip 0, bump wrap_count_
+        // + wrap_epoch_ on wrap).
+        std::uint16_t& sg = subtree_gen_[top];
+        ++sg;
+        if (sg == 0) {
+            sg = 1;
+            subtree_bump_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+        subtree_bump_count_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #392 fix: restamp node_gen_ for the entire
+        // subtree so that refs captured AFTER the bump can
+        // still pass is_valid_subtree() (which checks
+        // node_gen_[id] == ref.gen for the slot, not just
+        // the subtree counter). Without this, a ref captured
+        // immediately after bump_generation_subtree(T) would
+        // have ref.gen = new global gen, but node_gen_[N]
+        // for N in T's subtree would still be the OLD
+        // generation → slot check fails → ref is invalid
+        // even though the subtree counter matches. The
+        // restamp aligns node_gen_ with the new generation
+        // so the slot check passes for fresh captures in
+        // the bumped subtree.
+        restamp_subtree_generation(subtree_root);
+    }
+
+    // Issue #392: read the current per-subtree generation for
+    // the top-level Define containing subtree_root. Returns 0
+    // if there is no enclosing Define (flat AST root with no
+    // top-level Define) or if subtree_root is NULL/out-of-
+    // bounds. Pair with bump_generation_subtree() and
+    // is_valid_subtree() to build subtree-aware StableRef
+    // invalidation logic.
+    [[nodiscard]] std::uint16_t subtree_generation(NodeId subtree_root) const noexcept {
+        if (subtree_root == NULL_NODE || subtree_root >= size())
+            return 0;
+        auto top = top_define_of(subtree_root);
+        if (top == NULL_NODE || top >= subtree_gen_.size())
+            return 0;
+        return subtree_gen_[top];
+    }
+
+    // Issue #392: walk up the parent chain to find the
+    // top-level Define root that contains `node`. Returns
+    // NULL_NODE if there is no enclosing Define (e.g., the
+    // AST root is a bare expression, not wrapped in Define).
+    // The walk is bounded by AST depth — O(depth) per call.
+    // Callers that need O(1) lookup should cache the result
+    // (e.g., add a side-vector `top_define_of_[id]`).
+    [[nodiscard]] NodeId top_define_of(NodeId node) const noexcept {
+        if (node == NULL_NODE || node >= size())
+            return NULL_NODE;
+        NodeId cur = node;
+        std::uint32_t safety = 0;
+        while (cur != NULL_NODE && cur < size()) {
+            if (cur < tag_.size() && tag_[cur] == NodeTag::Define)
+                return cur;
+            auto parent = (cur < parent_.size()) ? parent_[cur] : NULL_NODE;
+            if (parent == NULL_NODE)
+                return NULL_NODE;
+            cur = parent;
+            if (++safety > 1000000) // cycle guard
+                return NULL_NODE;
+        }
+        return NULL_NODE;
+    }
+
+    // Issue #392: lifetime total of bump_generation_subtree()
+    // calls (excludes the no-op when subtree_root has no
+    // enclosing Define). Read via the
+    // (compile:subtree-bump-count) Aura primitive or
+    // directly from the compiler service metrics.
+    [[nodiscard]] std::uint64_t subtree_bump_count() const noexcept {
+        return subtree_bump_count_.load(std::memory_order_relaxed);
     }
 
     // Issue #250: atomic-batch API. When begin_atomic_batch()
