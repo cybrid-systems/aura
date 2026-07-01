@@ -1206,6 +1206,65 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 eda_batch + stdlib_hotpath + orchestration));
         });
 
+    // Issue #635: query:macro-reflect-self-evo-commercial-stats.
+    // Returns the sum of 10 counters spanning the July 2026
+    // macro + static reflection + self-evolution commercial
+    // closed-loop (non-duplicative synthesis of #597 Task6
+    // matrix, #619 follow-up, and #634 runtime pillars):
+    //   Macro (#290 clone_macro_body): macro_expansion_dirty +
+    //                                  macro_self_modify_dirty
+    //   Query hygiene (#547): macro_introduced_skipped_in_query +
+    //                          marker_macro_introduced_count
+    //   Reflect (#551/#454): schema_validation_pass +
+    //                        schema_validation_fail +
+    //                        impact_snapshot_count
+    //   Guard self-evo (#555): mutation_impact_count +
+    //                          guard_dirty_epoch_count
+    //   Dirty propagation (#415): mark_dirty_upward_call_count
+    //   Commercial safety (#620/#624): stable_ref_invalidations +
+    //                                  deopt_count
+    //
+    // P0: returns an integer = sum of all 10 counter groups.
+    // Follow-up: returns a 10-tuple so the AI Agent can compute
+    // macro_dirty_rate, reflect_pass_rate, and propagation_depth
+    // independently for commercial fleet dashboards.
+    add("query:macro-reflect-self-evo-commercial-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            if (!ws) return make_int(0);
+            const auto* m = static_cast<const CompilerMetrics*>(
+                ev->compiler_metrics());
+            const std::uint64_t macro_dirty =
+                ws->macro_expansion_dirty_total() +
+                ws->macro_self_modify_dirty_total();
+            const std::uint64_t query_hygiene =
+                ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t markers =
+                workspace_marker_macro_introduced(ev);
+            const std::uint64_t reflect_validate =
+                ev->get_schema_validation_pass_count() +
+                ev->get_schema_validation_fail_count();
+            const std::uint64_t reflect_snap =
+                ev->get_impact_snapshot_count();
+            const std::uint64_t guard_impact =
+                ev->get_mutation_impact_count();
+            const std::uint64_t guard_epoch =
+                ev->get_guard_dirty_epoch_count();
+            const std::uint64_t dirty_up =
+                ws->mark_dirty_upward_call_count();
+            const std::uint64_t stable_ref =
+                ws->stable_ref_invalidations();
+            const std::uint64_t deopt =
+                m ? m->deopt_count.load(std::memory_order_relaxed) : 0;
+            return make_int(static_cast<std::int64_t>(
+                macro_dirty + query_hygiene + markers +
+                reflect_validate + reflect_snap + guard_impact +
+                guard_epoch + dirty_up + stable_ref + deopt));
+        });
+
     // Issue #619: query:macro-reflect-self-evo-followup-stats.
     // Returns the sum of 4 Task6 follow-up closed-loop counters:
     //   - hygiene_skips: macro_introduced_skipped_in_query_
