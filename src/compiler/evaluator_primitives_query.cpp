@@ -590,6 +590,31 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             ev->get_touched_roots_size()));
     });
 
+    // Issue #608: query:type-incremental-stats. Returns the sum
+    // of 4 incremental type reliability counters from
+    // CompilerMetrics:
+    //   - delta_constraints_processed_total (dep-tracked solve_delta)
+    //   - narrowing_dirty_recovery_total (occurrence-dirty recoveries)
+    //   - post_mutate_narrow_consistency_total (narrow reliability)
+    //   - incremental_typecheck_auto_invocations_total (delta win vs full)
+    add("query:type-incremental-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t delta_processed =
+            m->delta_constraints_processed_total.load(std::memory_order_relaxed);
+        const std::uint64_t occ_recovery =
+            m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed);
+        const std::uint64_t narrow_hits =
+            m->post_mutate_narrow_consistency_total.load(std::memory_order_relaxed);
+        const std::uint64_t delta_win =
+            m->incremental_typecheck_auto_invocations_total.load(
+                std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(
+            delta_processed + occ_recovery + narrow_hits + delta_win));
+    });
+
     // Issue #305: query:type-propagation-stats. Returns the
     // sum of 4 TypeId/TypeScheme propagation observability
     // counters from the shared CompilerMetrics struct (EDA
