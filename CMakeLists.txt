@@ -1754,6 +1754,8 @@ aura_add_issue_test(test_issue_394)
 aura_issue_test_link_llvm_jit(test_issue_394)
 aura_add_issue_test(test_issue_409)
 aura_issue_test_link_llvm_jit(test_issue_409)
+# Issue #432 / #466: ConstraintSystem solve_delta cross-delta
+# soundness (touched-root reverify + conflict metrics).
 aura_add_issue_test(test_incremental_type_soundness)
 aura_issue_test_link_llvm_jit(test_incremental_type_soundness)
 aura_add_issue_test(test_issue_341)

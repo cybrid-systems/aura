@@ -141,14 +141,13 @@ public:
     // AC's ≥60% reduction comes from skipping the (M-N) clean
     // constraints in the worklist scan.
     //
-    // Edge case: a delta that introduces a NEW unification
-    // that conflicts with an existing clean constraint's
-    // bindings will NOT be caught by solve_delta alone — the
-    // clean constraint is not re-checked. Callers that need
-    // full correctness across deltas should follow up with a
-    // solve() pass. The benchmark in Phase 6 will measure
-    // when this matters; until then, solve_delta is a best-
-    // effort optimization.
+    // Issue #432 / #466: after the dirty worklist pass,
+    // solve_delta re-scans clean constraints whose vars
+    // intersect touched_roots_ (Union-Find roots rebound
+    // during unify). Cross-delta conflicts return
+    // SolveResult::CONFLICT without a full solve() fallback.
+    // Bounded scan (kReverifyCleanScanLimit); metrics:
+    // delta_conflict_reverify_total / delta_conflict_detected_total.
     void add_delta(Constraint c);
     // Issue #118: returns SolveResult. If the result is TIMEOUT,
     // `unresolved_out` (if non-null) is filled with the constraints

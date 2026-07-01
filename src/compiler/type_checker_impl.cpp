@@ -772,14 +772,10 @@ SolveResult ConstraintSystem::solve(std::vector<Constraint>* unresolved_out) {
 
 // Issue #148: incremental solve. Iterates only the dirty
 // subset of constraints_ (those added via add_delta since the
-// last mark_clean / clear). No dependency tracking: a delta
-// that introduces a new unification that conflicts with an
-// existing clean constraint's bindings will NOT be caught —
-// callers that need full correctness should follow up with
-// a solve() pass. The AC's ≥60% reduction target is the
-// best-case speedup when deltas are small relative to the
-// total constraint set; the benchmark in Phase 6 will
-// measure real-world numbers.
+// last mark_clean / clear). Issue #432 / #466: post-pass
+// reverify_clean_constraints_for_touched() catches cross-delta
+// unification conflicts against clean constraints (bounded scan
+// over var_to_constraints_ for touched Union-Find roots).
 SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_out) {
     // Issue #258: time the delta solve. The timer accumulates
     // into CompilerMetrics::delta_solve_time_us (lifetime total)

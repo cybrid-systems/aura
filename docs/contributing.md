@@ -257,6 +257,31 @@ cmake --preset tsan   && cmake --build --preset tsan
 - **ASan 与 LLVM JIT** 一起开可能 false positive 报告 `use-after-scope` 在 ORC 内部分配器。`--sanitizer=asan` 默认不启用 `AURA_HAVE_LLVM=1`，需要完整覆盖时手动 `cmake -DAURA_HAVE_LLVM=1 -B build_asan`。
 - 跑 TSan 必须设置 `TSAN_OPTIONS=halt_on_error=1`，否则报错只 warn 不退出。
 
+## §X Incremental ConstraintSystem soundness (Issue #432 / #466)
+
+`ConstraintSystem::solve_delta()`（`type_checker_impl.cpp`）是 `infer_flat_partial` 多节点增量推断的快路径：只处理 `add_delta` 标记的 dirty 约束子集。
+
+**跨 delta 冲突检测（#466）**：
+
+1. `unify` / `consistent_unify` 在 delta 求解期间通过 `note_touched_var` 记录被重绑的 Union-Find 根（`touched_roots_`）。
+2. dirty worklist 收敛后，`reverify_clean_constraints_for_touched()` 对引用这些根的 **clean** 约束做有界重放（上限 `kReverifyCleanScanLimit = 256`）。
+3. 重放失败 → `SolveResult::CONFLICT`（无需 fallback 到全量 `solve()`）。
+
+**观测**：
+
+- `(query:constraint-stats)` — `delta_conflict_reverify_total + delta_conflict_detected_total` 之和。
+- `(compile:constraint-delta-stats)` — 含 `conflict-reverify` / `conflict-detected` 字段。
+- `CompilerService::snapshot().delta_conflict_*` — lifetime 计数器。
+
+**回归测试**：`tests/test_incremental_type_soundness.cpp`（16 AC，含注入冲突矩阵 ≥50% 检出率 + 多轮 mutate smoke）。
+
+**修改 solve_delta 时的检查清单**：
+
+- [ ] 保持 touched-root 跟踪在 `unify` / `consistent_unify` 路径上完整。
+- [ ] 新冲突模式需在 `test_incremental_type_soundness.cpp` 加合成用例。
+- [ ] 有界扫描上限变更时更新 `kReverifyCleanScanLimit` 注释与测试预期。
+- [ ] 跑 `./build.py check` 或至少 `test_incremental_type_soundness`。
+
 ## §X Coercion elision guidelines (Issue #508)
 
 `DeadCoercionEliminationPass`（`pass_manager.ixx`）在 lowering 之后、IR 解释器/JIT 之前运行。它替换掉多余的 `CastOp`，是 gradual typing + typed mutation 零开销路径的关键。
