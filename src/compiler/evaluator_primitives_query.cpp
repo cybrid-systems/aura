@@ -1664,6 +1664,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_bool(ws->is_occurrence_stale(node_id) != 0);
     });
 
+    // Issue #537 / #518 Phase 2: query:occurrence-narrowing-stats.
+    // Returns the sum of stale-refresh + blame-chain-complete
+    // counters from CompilerMetrics (post-mutation re-narrow
+    // provenance observability).
+    add("query:occurrence-narrowing-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t stale_refreshes =
+            m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed);
+        const std::uint64_t blame_complete =
+            m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(stale_refreshes + blame_complete));
+    });
+
     // (query:occurrence-stale-count) — Issue #339:
     // returns the current count of stale occurrence
     // nodes in the workspace. Cheap O(n) walk; intended

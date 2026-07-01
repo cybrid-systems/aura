@@ -260,6 +260,9 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     // populated by analyze_predicate_flat
     // post-#342.
     std::uint64_t narrowing_provenance_total = 0;
+    // Issue #537 / #518 Phase 2: occurrence narrowing refresh.
+    std::uint64_t occurrence_stale_refreshes_total = 0;
+    std::uint64_t occurrence_blame_chain_complete_total = 0;
     // Issue #383: ConstraintSystem worklist + consistent_
     // unify observability. Mirrors the 3 lifetime
     // counters in CompilerMetrics.

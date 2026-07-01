@@ -386,6 +386,15 @@ struct CompilerMetrics {
     // narrowing_applied_total is a measure of how
     // complete the provenance is.
     std::atomic<std::uint64_t> narrowing_provenance_total{0};
+    // Issue #537 / #518 Phase 2: post-mutation occurrence
+    // narrowing provenance refresh observability.
+    //   - occurrence_stale_refreshes_total: NarrowingRecords
+    //     appended by reanalyze_occurrence_contexts
+    //   - occurrence_blame_chain_complete_total: refreshes
+    //     where source_mutation_id + predicate provenance
+    //     are both populated (auditable blame chain)
+    std::atomic<std::uint64_t> occurrence_stale_refreshes_total{0};
+    std::atomic<std::uint64_t> occurrence_blame_chain_complete_total{0};
     // Issue #383: ConstraintSystem worklist + consistent_
     // unify observability. 3 lifetime counters:
     //   - consistent_unify_total: every call to

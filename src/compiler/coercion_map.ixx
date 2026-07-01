@@ -67,6 +67,10 @@ export struct CoercionEntry {
     std::uint32_t type_id;
     std::uint32_t src_line;
     std::uint32_t src_col;
+    // Issue #537 / #518 Phase 2: optional occurrence-narrowing
+    // provenance carried into apply_coercion_map. 0 = unset.
+    std::uint32_t predicate_cond_node = 0;
+    std::uint64_t source_mutation_id = 0;
 };
 
 // ── CoercionMap — accumulated coercion intent ────────────
@@ -82,7 +86,18 @@ public:
              std::uint32_t src_col) {
         entries_.push_back(CoercionEntry{static_cast<std::uint32_t>(parent), child_index,
                                          static_cast<std::uint32_t>(original_child), type_tag,
-                                         type_id, src_line, src_col});
+                                         type_id, src_line, src_col, 0, 0});
+    }
+
+    // Issue #537: overload with occurrence-narrowing provenance.
+    void add(aura::ast::NodeId parent, std::uint32_t child_index, aura::ast::NodeId original_child,
+             std::uint32_t type_tag, std::uint32_t type_id, std::uint32_t src_line,
+             std::uint32_t src_col, std::uint32_t predicate_cond_node,
+             std::uint64_t source_mutation_id) {
+        entries_.push_back(CoercionEntry{static_cast<std::uint32_t>(parent), child_index,
+                                         static_cast<std::uint32_t>(original_child), type_tag,
+                                         type_id, src_line, src_col, predicate_cond_node,
+                                         source_mutation_id});
     }
 
     const std::vector<CoercionEntry>& entries() const { return entries_; }
@@ -149,6 +164,12 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         // Build the CoercionNode wrapping the original child.
         auto coercion_id = flat.add_coercion(e.original_child, e.type_tag, e.type_id);
         flat.set_loc(coercion_id, e.src_line, e.src_col);
+        // Issue #537: stamp provenance on the coercion node when
+        // the entry carries a mutation id (low 32 bits of the
+        // mutation id index into the provenance column).
+        if (e.source_mutation_id != 0)
+            flat.set_provenance(coercion_id,
+                                static_cast<std::uint32_t>(e.source_mutation_id & 0xFFFFFFFFu));
         // Rewrite the parent's child_index to point at the
         // new CoercionNode.
         flat.set_child(e.parent_id, e.child_index, coercion_id);
