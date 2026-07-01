@@ -468,6 +468,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:constraint-delta-stats",
             // Issue #628 — solve_delta clean-conflict safety
             "query:solve-delta-safety-stats",
+            // Issue #467 — Per-node occurrence-dirty + blame chain
+            "query:occurrence-stats",
             // Issue #609 — Occurrence narrow post-mutate recovery
             "query:occurrence-narrow-stats",
             // Issue #576 — Task2 occurrence blame + provenance
