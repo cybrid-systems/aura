@@ -1687,6 +1687,33 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_bool(ws->is_occurrence_stale(node_id) != 0);
     });
 
+    // Issue #639: query:narrow-blame-stats. Returns the sum of
+    // narrow stale-caught, blame-attached, invalidation-post-
+    // mutate, provenance-hits, and safe-fallback counters.
+    add("query:narrow-blame-stats", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        std::uint64_t stale_caught = 0;
+        std::uint64_t blame_attached = 0;
+        std::uint64_t invalidation = 0;
+        std::uint64_t provenance_hits = 0;
+        std::uint64_t safe_fallbacks = 0;
+        if (m) {
+            stale_caught = m->narrow_stale_caught_total.load(std::memory_order_relaxed);
+            blame_attached = m->narrow_blame_attached_total.load(std::memory_order_relaxed);
+            invalidation =
+                m->narrow_invalidation_post_mutate_total.load(std::memory_order_relaxed);
+            provenance_hits = m->narrowing_provenance_total.load(std::memory_order_relaxed);
+            safe_fallbacks = m->narrow_safe_fallback_total.load(std::memory_order_relaxed);
+        }
+        if (auto* ws = ev.workspace_flat()) {
+            invalidation += ws->narrow_invalidation_post_mutate_count();
+        }
+        return make_int(static_cast<std::int64_t>(
+            stale_caught + blame_attached + invalidation + provenance_hits + safe_fallbacks));
+    });
+
     // Issue #537 / #518 Phase 2: query:occurrence-narrowing-stats.
     // Returns the sum of stale-refresh + blame-chain-complete
     // counters from CompilerMetrics (post-mutation re-narrow

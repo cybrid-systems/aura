@@ -2921,6 +2921,40 @@ static std::optional<std::uint32_t> compute_narrowing_evidence(
     return narrowing_bit_for(pred_name);
 }
 
+// Issue #639: detect stale narrowing records at if-context use.
+// Invalidates predicate memo and emits blame diagnostic.
+static bool handle_stale_narrowing_at_if(aura::ast::FlatAST& flat, aura::ast::NodeId if_id,
+                                        std::uint64_t cache_epoch, ConstraintSystem& cs,
+                                        aura::diag::DiagnosticCollector& diag,
+                                        aura::diag::SourceLocation loc) {
+    if (!flat.has_stale_narrowing_for_if(if_id, cache_epoch))
+        return false;
+    if (cs.metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(cs.metrics_);
+        m->narrow_stale_caught_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    for (const auto& rec : flat.all_narrowings()) {
+        if (rec.if_node != if_id || !rec.stale)
+            continue;
+        diag.report(aura::diag::Diagnostic(
+                        aura::diag::ErrorKind::Warning,
+                        "stale occurrence narrowing at if-node " + std::to_string(if_id) +
+                            " — predicate '" + rec.predicate_src +
+                            "' invalidated by mutation (epoch " +
+                            std::to_string(rec.capture_epoch) + ")",
+                        loc)
+                        .with_blame(aura::diag::BlameInfo{aura::diag::BlameParty::System,
+                                                          rec.predicate_src, "narrow"})
+                        .with_suggestion("re-run typecheck; narrowing will be re-analyzed"));
+        if (cs.metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(cs.metrics_);
+            m->narrow_blame_attached_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        break;
+    }
+    return true;
+}
+
 // Issue #518: collect IfExpr nodes in `root`'s subtree that
 // carry kOccurrenceDirty or the occurrence-stale column.
 static void collect_occurrence_dirty_if_exprs_in_subtree(
@@ -3161,6 +3195,13 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
     // below.
     last_if_narrowing_ = 0;
 
+    // Issue #639: stale narrowing invalidation — force memo
+    // miss + blame before applying cached narrowing.
+    const bool stale_narrowing =
+        handle_stale_narrowing_at_if(flat, if_id, cache_epoch_, cs_, diag_, cur_loc_);
+    if (stale_narrowing)
+        predicate_memo_.erase(cond_id);
+
     // Issue #281: predicate memoization. Check the per-condition
     // memo before calling analyze_predicate_flat. On hit, we
     // return the cached OccurrenceInfoFlat without re-walking
@@ -3231,6 +3272,18 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
     // bitmasks of all branch predicates (not first-match). The
     // analyze_predicate_flat path in the `or` branch already
     // computes per-branch bits; here we accumulate.
+    // Issue #639: conservative Dynamic fallback when occurrence
+    // context is still stale after invalidation (re-narrow not
+    // yet run). Skips narrowing application until refresh.
+    if (stale_narrowing && flat.is_occurrence_stale(if_id) && occ) {
+        occ = std::nullopt;
+        last_if_narrowing_ = 0;
+        if (cs_.metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+            m->narrow_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
     if (occ && !occ->is_negation) {
         auto cond = flat.get(cond_id);
         if (cond.tag == NodeTag::Call && !cond.children.empty()) {
@@ -3777,10 +3830,22 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
                 check_flat(flat, pool, v.child(2), expected);
         } else {
-        bool m2, j2;
+            // Issue #639: stale narrowing detection in check-mode.
+            const bool stale_narrowing_check =
+                handle_stale_narrowing_at_if(flat, id, cache_epoch_, cs_, diag_, cur_loc_);
+            if (stale_narrowing_check)
+                predicate_memo_.erase(cond_id);
+            bool m2, j2;
             auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_, m2, j2);
             stats_.and_or_meet_uses += m2 ? 1 : 0;
             stats_.and_or_join_uses += j2 ? 1 : 0;
+            if (stale_narrowing_check && flat.is_occurrence_stale(id) && occ) {
+                occ = std::nullopt;
+                if (cs_.metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+                    m->narrow_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
         if (occ && !occ->is_negation) {
             // Then-branch: variable has refined type
             env_.push_scope();

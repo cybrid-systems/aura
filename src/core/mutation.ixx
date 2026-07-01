@@ -116,6 +116,11 @@ export struct NarrowingRecord {
     // Issue #537 / #518 Phase 2: mutation that triggered
     // this record's (re-)capture. 0 = unknown / first-typecheck.
     std::uint64_t source_mutation_id = 0;
+    // Issue #639: set when mark_dirty_upward /
+    // invalidate_narrowings_in_subtree invalidates this
+    // record after a structural mutation. Consumers must
+    // re-analyze before trusting the narrowing.
+    bool stale = false;
 };
 
 export enum class MutationSoAField : std::uint32_t {

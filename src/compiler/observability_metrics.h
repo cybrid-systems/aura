@@ -410,6 +410,19 @@ struct CompilerMetrics {
     //     are both populated (auditable blame chain)
     std::atomic<std::uint64_t> occurrence_stale_refreshes_total{0};
     std::atomic<std::uint64_t> occurrence_blame_chain_complete_total{0};
+    // Issue #639: occurrence narrowing blame + stale invalidation.
+    //   - narrow_stale_caught_total: stale narrowing detected
+    //     at use-site before re-analysis
+    //   - narrow_blame_attached_total: diagnostics emitted with
+    //     predicate provenance blame on stale narrow
+    //   - narrow_invalidation_post_mutate_total: records marked
+    //     stale by invalidate_narrowings_in_subtree
+    //   - narrow_safe_fallback_total: Dynamic fallback when
+    //     stale narrowing could not be refreshed
+    std::atomic<std::uint64_t> narrow_stale_caught_total{0};
+    std::atomic<std::uint64_t> narrow_blame_attached_total{0};
+    std::atomic<std::uint64_t> narrow_invalidation_post_mutate_total{0};
+    std::atomic<std::uint64_t> narrow_safe_fallback_total{0};
     // Issue #383: ConstraintSystem worklist + consistent_
     // unify observability. 3 lifetime counters:
     //   - consistent_unify_total: every call to
