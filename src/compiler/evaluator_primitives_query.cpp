@@ -1854,6 +1854,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                   stale_prevented));
     });
 
+    // Issue #576: query:occurrence-blame-stats. Returns the sum
+    // of 4 Task2 occurrence typing + blame/provenance counters:
+    //   - stale_narrowing_prevented: stale_check_narrow_prevented_total
+    //   - blame_chain_preserved: occurrence_blame_chain_complete_total
+    //   - narrowing_refresh_count: narrowing_refresh_count_ (Evaluator)
+    //   - provenance_mismatch: provenance_mismatch_ (Evaluator)
+    add("query:occurrence-blame-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t stale_prevented =
+            m ? m->stale_check_narrow_prevented_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t blame_preserved =
+            m ? m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
+        const std::uint64_t provenance = ev->get_provenance_mismatch();
+        return make_int(static_cast<std::int64_t>(
+            stale_prevented + blame_preserved + narrowing + provenance));
+    });
+
     // Issue #609: query:occurrence-narrow-stats. Returns the sum
     // of 4 post-mutation occurrence narrow recovery counters:
     //   - narrow_recoveries: occurrence_stale_refreshes_total +
