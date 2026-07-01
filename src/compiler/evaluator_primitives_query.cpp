@@ -1069,6 +1069,73 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             skips + violations + markers));
     });
 
+    // Issue #520: query:production-roadmap-stats. Returns the sum of
+    // 10 counter groups spanning the consolidated Top 5 production
+    // priorities (non-duplicative synthesis of #496/#510/#511/#505/
+    // #506/#413 themes; avoids #514 Task6, #634 commercial, #635
+    // macro-reflect, and the original #429/#430/#431 core tracks):
+    //   P1 EDA/SV closed-loop (#496/#510): verification_feedback +
+    //                                      sv_mutate_attempts/success
+    //   P2 Persistence (#511): panic_checkpoint_save/commit +
+    //                          generation_wrap_count
+    //   P3 Memory safety (#505/#516): bridge_epoch_hit +
+    //                                 closure_stale_refresh +
+    //                                 envframe_stale_refresh
+    //   P4 SoA hotpath (#506): passes_skipped_type_dirty +
+    //                          tag_arity_index_hits + specialization_hits
+    //   P5 Atomic batch/rollback (#413/#439): atomic_batch_commits +
+    //                                         batch_rollbacks +
+    //                                         mutation_log_rollbacks
+    //
+    // P0: returns an integer = sum of all 10 counter groups.
+    // Follow-up: returns a 10-tuple so fleet dashboards can track
+    // each north-star pillar independently.
+    add("query:production-roadmap-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const auto* m = static_cast<const CompilerMetrics*>(
+                ev->compiler_metrics());
+            const std::uint64_t eda_feedback =
+                ws ? ws->verification_coverage_feedback_total() +
+                         ws->verification_assert_failure_total()
+                   : 0;
+            const std::uint64_t eda_sv =
+                ws ? ws->sv_mutate_attempts_total() +
+                         ws->sv_mutate_success_total()
+                   : 0;
+            const std::uint64_t checkpoint =
+                ev->get_panic_checkpoint_save_count() +
+                ev->get_panic_checkpoint_commit_count();
+            const std::uint64_t gen_wrap =
+                ws ? ws->generation_wrap_count() : 0;
+            const std::uint64_t memory_bridge = m
+                ? m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) +
+                      m->closure_stale_refresh_count_.load(
+                          std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t memory_env =
+                ev->get_envframe_stale_refresh_count();
+            const std::uint64_t soa_skip =
+                ev->get_passes_skipped_type_dirty();
+            const std::uint64_t soa_hotpath =
+                (m ? m->specialization_hits.load(std::memory_order_relaxed)
+                   : 0) +
+                (ws ? ws->tag_arity_index_hits() : 0);
+            const std::uint64_t batch =
+                (ws ? ws->atomic_batch_commits() : 0) +
+                ev->atomic_batch_count();
+            const std::uint64_t rollback =
+                ev->atomic_batch_rollbacks() +
+                ev->get_mutation_log_rollback_count();
+            return make_int(static_cast<std::int64_t>(
+                eda_feedback + eda_sv + checkpoint + gen_wrap +
+                memory_bridge + memory_env + soa_skip + soa_hotpath +
+                batch + rollback));
+        });
+
     // Issue #514: query:task6-production-readiness-stats. Returns the
     // sum of 12 counters spanning the Task6 review Top 3 production
     // gaps (non-duplicative synthesis of #547/#551/#550 themes):

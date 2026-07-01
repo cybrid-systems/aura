@@ -489,6 +489,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #415 — DirtyReason verification categories +
             // mark_dirty_upward propagation synthesis
             "query:dirty-reason-propagation-stats",
+            // Issue #520 — Consolidated Top 5 production roadmap synthesis
+            "query:production-roadmap-stats",
             // Issue #514 — Task6 Top 3 production-readiness synthesis
             "query:ir-hygiene-stats",
             "query:pattern-marker-stats",
