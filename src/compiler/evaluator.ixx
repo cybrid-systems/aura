@@ -2956,6 +2956,10 @@ public:
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #583: registry observability for query:primitives-stats.
+    [[nodiscard]] std::size_t get_primitive_slot_count() const noexcept {
+        return primitives_.slot_count();
+    }
     // Issue #478: primitive error observability.
     [[nodiscard]] std::uint64_t get_primitive_error_count() const noexcept {
         return primitive_error_count_.load(std::memory_order_relaxed);

@@ -1585,6 +1585,42 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 hygiene + dirty + epoch + validation + rollback));
         });
 
+    // Issue #583: query:primitives-stats. Returns the sum of 6
+    // primitives registry + core hot-path observability counters
+    // spanning evaluator_primitives_registry.cpp registration
+    // and list/math/core builtins (non-duplicative with #478
+    // primitive-error-stats 2-tuple and stats:count meta):
+    //   - registry_slots: primitives_.slot_count() (ordered_names_)
+    //   - primitive_errors: primitive_error_count_ (make_primitive_error)
+    //   - error_values_stored: error_values_.size() proxy
+    //   - total_mutations_: AI Agent mutate-loop activity
+    //   - total_query_calls_: query:* hot-path activity
+    //   - specialization_hits_: compiled hot-path proxy
+    //
+    // P0: returns an integer = sum of all 6 counter groups.
+    // Follow-up: returns a 6-tuple so the Agent can compute
+    // error_rate = primitive_errors / (mutations + query_calls)
+    // and registry health independently.
+    add("query:primitives-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(
+                ev->compiler_metrics());
+        const std::uint64_t registry_slots = ev->get_primitive_slot_count();
+        const std::uint64_t errors = ev->get_primitive_error_count();
+        const std::uint64_t stored = ev->get_primitive_error_values_size();
+        const std::uint64_t mutations = ev->total_mutations();
+        const std::uint64_t queries = ev->get_total_query_calls();
+        const std::uint64_t hot_hits = m
+            ? m->specialization_hits.load(std::memory_order_relaxed)
+            : 0;
+        return make_int(static_cast<std::int64_t>(
+            registry_slots + errors + stored + mutations + queries +
+            hot_hits));
+    });
+
     // Issue #602: query:prompt6-violation-count. Returns
     // the sum of 7 Prompt6 memory-safety violation counters
     // that must stay at 0 under production load:

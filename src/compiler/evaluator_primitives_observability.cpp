@@ -575,6 +575,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "compile:dirty-impact-stats",
             // Primitive error (Issue #478)
             "query:primitive-error-stats",
+            // Issue #583 — Registry + core primitives hot-path stats
+            "query:primitives-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
