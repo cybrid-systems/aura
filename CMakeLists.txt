@@ -1517,6 +1517,20 @@ aura_issue_test_link_llvm_jit(test_issue_374)
 # has more instructions, no regression on existing eval.
 aura_add_issue_test(test_issue_375)
 aura_issue_test_link_llvm_jit(test_issue_375)
+# Issue #376: low-overhead unified apply_closure fast path
+# + integrated epoch/stale checks. Scope-limited close
+# ships the BASELINE capture on closure-heavy workloads
+# (map/filter/foldl) using the existing (closure:stats)
+# primitive from #252 — the actual fast-path refactor
+# (bypass callback for pure IR closures) is too
+# hot-path + epoch-sensitive for this session and
+# remains a follow-up. 7 ACs cover: zero counters on
+# fresh service, map/filter/foldl baseline, IR path
+# counter, bridge-fraction-pct computation, mutation
+# stress sanity, Aura primitive consistency, no
+# regression on tree-walker dispatch.
+aura_add_issue_test(test_issue_376)
+aura_issue_test_link_llvm_jit(test_issue_376)
 # Issue #301: C++26 std::meta migration audit + foundation.
 # 4 scenarios: call-site audit, auto_serialize validation
 # on StableNodeRef-like POD, serialize perf baseline,

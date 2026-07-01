@@ -345,3 +345,43 @@ AOT 路径需要一个能运行的 `lib/runtime.c` 源文件。`find_runtime_c()
 - [ ] 在 `tests/test_issue_375.cpp` 加一个 workload（fact / fib / hanoi-8 / map-fold 之一）+ 一个 AC（baseline 比 sum-to 大多少 / ratio 是否 ≥ AC）。
 - [ ] 更新本节 baseline 表。
 - [ ] 跑 `./build.py test issue` 全绿。
+
+## §X Closure dispatch paths (Issue #252 + #376)
+
+`Evaluator::apply_closure(ClosureId cid, args)`（`src/compiler/evaluator_eval_flat.cpp:65`）是 higher-order primitives（`map`/`filter`/`foldl`/`apply`）的中心分发。按 `cid` 类型分 4 条路径：
+
+| Path | When | Cost | Counter |
+|------|------|------|---------|
+| **FFI** | `cid < ffi_runtime_.func_count()` | 直接调 native 函数指针,无 env 构造 | `closure_ffi_calls` |
+| **Tree-walker** | `closures_` map hit（`cid → Closure`） | `materialize_call_env()` + `eval_flat()` | `closure_tw_calls` |
+| **IR bridge** | `closure_bridge_` callback set（service.ixx L1930 设） | callback 透传 + 重建 Env | `closure_bridge_calls` |
+| **IR direct** | IR interpreter 内部 `runtime_closures_` hit | 无 callback,直接 IR execute | `closure_ir_calls`（在 ir_executor_impl.cpp bump） |
+
+**Epoch / stale 检查**：tree-walker path 入口调 `is_bridge_stale(bridge_epoch, current_bridge_epoch())`（`evaluator_eval_flat.cpp:194`），如果闭包的 bridge 过期则 `closure_stale_returns` 计数 +1，return `nullopt`。这是唯一一个 stale 检查点；IR direct path 不需要（runtime_closures_ 是 per-evaluator，所有者同生命周期）。
+
+**当前 baseline**（`tests/test_issue_376.cpp` AC2/AC4 实测，2026-07-01）：
+
+| Workload | calls-total | bridge-calls | bridge-pct | 路径分布 |
+|----------|-------------|--------------|------------|---------|
+| map 50-elem | 153 | 50 | **32%** | tw 主导,1/3 走 bridge |
+| filter 50-elem | 153 | 50 | **32%** | tw 主导,1/3 走 bridge |
+| foldl 50-elem | 103 | 0 | **0%** | 已在 fast path（binary closure 直接 inlined） |
+
+**未来 fast path 目标**：把 map/filter 的 32% bridge-pct 降到 ~0%（bypass callback 走 IR direct path）。这需要：
+1. closure 的 captured flat/pool 跟 IR 端 bridge 共享
+2. bridge_epoch 检查保留为 fast path 入口的 lightweight check
+3. AC：map/filter 的 bridge-pct 降 30+% + 1000-cycle mutation stress 无 stale-returns regression
+
+**§376 完整拆解**（scope-limited close ship Slice A,defer Slice B）：
+- **A** ✅ shipped：本节描述的 baseline + observability test。
+- **B** deferred：fast path 重构（bypass `closure_bridge_` callback,对纯 IR 闭包直接调 `IRInterpreter::apply_closure`）。Hot-path 改动 + epoch 验证逻辑不能掉,需独立 session。先看本节 baseline 数据再 design。Pair with #375 Step C。
+
+**观测接口**：
+- C++：`cs.snapshot().closure_calls_total / closure_ffi_calls / closure_tw_calls / closure_ir_calls / closure_bridge_calls / closure_stale_returns`（来自 #252 ship 的 6 个 atomic counter）。
+- Aura：`(closure:stats)` primitive 返回 hash，7 个字段：`calls-total / ffi-calls / tw-calls / ir-calls / bridge-calls / stale-returns / bridge-fraction-pct`。Aura primitive 自身 eval 路径会 bump 1-2 次 calls-total，所以与 C++ snapshot 之间有 drift（一般 ≤ 5），见 `test_issue_376.cpp` AC6。
+
+**加新 closure 路径时**：
+- [ ] 在 `apply_closure` 入口 bump `closure_calls_total`
+- [ ] 在新路径 entry bump 对应的 path-specific counter
+- [ ] 加 epoch/stale 检查（如果新路径会跨 bridge）
+- [ ] 在 `tests/test_issue_376.cpp` 加 AC + 更新本节 baseline 表
