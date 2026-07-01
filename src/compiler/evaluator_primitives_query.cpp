@@ -1993,6 +1993,44 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             cross_cow + fiber_stale + wraps + rollback + provenance));
     });
 
+    // Issue #527: query:stable-ref-cow-fiber-stats. Returns the
+    // sum of 7 StableNodeRef cross-COW / fiber / workspace-gen
+    // counters spanning FlatAST + Evaluator closed loop
+    // (non-duplicative with #457 stable-ref-stats 3 FlatAST
+    // counters, #552 edsl-stability-stats 5-counter Task1
+    // slice, #549 self-evolution-stability-stats 4-counter
+    // Task6 slice):
+    //   - cross_cow_invalidations_        (Evaluator COW boundary)
+    //   - fiber_stale_ref_count_          (Evaluator fiber migration)
+    //   - provenance_mismatch_            (workspace_gen mismatch)
+    //   - generation_wrap_count_          (FlatAST uint16 wrap)
+    //   - stable_ref_invalidations_       (FlatAST ref rejections)
+    //   - node_gen_stale_access_count_    (FlatAST raw NodeId stale)
+    //   - mutation_log_rollback_count_    (Guard rollback path)
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:stable-ref-cow-fiber-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const std::uint64_t cross_cow = ev->get_cross_cow_invalidations();
+            const std::uint64_t fiber_stale = ev->get_fiber_stale_ref_count();
+            const std::uint64_t provenance = ev->get_provenance_mismatch();
+            const std::uint64_t wraps =
+                ws ? ws->generation_wrap_count() : 0;
+            const std::uint64_t invalidations =
+                ws ? ws->stable_ref_invalidations() : 0;
+            const std::uint64_t stale =
+                ws ? ws->node_gen_stale_access_count() : 0;
+            const std::uint64_t rollback =
+                ev->get_mutation_log_rollback_count();
+            return make_int(static_cast<std::int64_t>(
+                cross_cow + fiber_stale + provenance + wraps +
+                invalidations + stale + rollback));
+        });
+
     // Issue #529: query:atomic-batch-rollback-stats. Returns the
     // sum of 7 counters spanning the end-to-end atomic batch +
     // mutation_log_ rollback + Guard + fiber orchestration

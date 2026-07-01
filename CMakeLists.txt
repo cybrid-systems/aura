@@ -1496,6 +1496,9 @@ aura_issue_test_link_llvm_jit(test_occurrence_typing_blame_post_mutate_task2)
 # with #540/#527/#497/#457 (prior stable-ref work).
 aura_add_issue_test(test_stable_ref_provenance_fiber_cow)
 aura_issue_test_link_llvm_jit(test_stable_ref_provenance_fiber_cow)
+# Issue #527: StableNodeRef cross-COW/fiber closed-loop observability.
+aura_add_issue_test(test_stable_ref_cow_fiber_closed_loop_527)
+aura_issue_test_link_llvm_jit(test_stable_ref_cow_fiber_closed_loop_527)
 # Issue #548: MutationBoundaryGuard Panic Checkpoint +
 # Nested Mutation + Fiber Resume + Auto-Rollback Lifecycle
 # stress tests (P0). 11 scenarios complementing #546 with:
