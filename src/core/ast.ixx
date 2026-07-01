@@ -4643,24 +4643,15 @@ public:
         // make_ref() time. Default 0 = pre-#368 ref.
         std::uint32_t wrap_epoch = 0;
 
-        // Default-constructed refs are always invalid (id=NULL).
-        bool is_valid_in(const FlatAST& ast) const noexcept { return ast.is_valid(*this); }
-
-        // Issue #303: validate with provenance update. Refreshes
-        // last_validated_generation to the current FlatAST
-        // generation_ and returns the validation result. The
-        // side effect of updating the field is the audit trail:
-        // subsequent code can compare ref.last_validated_generation
-        // against ast.generation_() to detect "ref hasn't been
-        // re-checked in a while" (proxy for staleness without
-        // requiring a full re-validation).
-        bool validate_with_provenance(const FlatAST& ast) noexcept {
-            bool ok = ast.is_valid(*this);
-            if (ok) {
-                last_validated_generation = ast.generation_;
-            }
-            return ok;
-        }
+        // Issue #379: bodies of these methods moved to
+        // src/core/ast_stability.cpp (impl unit of aura.core.ast).
+        // The class declarations stay here so the public API is
+        // unchanged; only the definitions moved. All three methods
+        // access FlatAST only through its public interface
+        // (ast.is_valid() and ast.generation()), so no friend
+        // access is needed.
+        bool is_valid_in(const FlatAST& ast) const noexcept;
+        bool validate_with_provenance(const FlatAST& ast) noexcept;
 
         // Issue #303: get provenance snapshot. Returns a tuple
         // describing where the ref came from. Pure read — does
@@ -4673,11 +4664,7 @@ public:
             std::uint32_t fiber_id;
             std::uint16_t last_validated_generation;
         };
-        [[nodiscard]] Provenance get_provenance() const noexcept {
-            return Provenance{id, gen, mutation_id_at_capture,
-                              workspace_id, fiber_id,
-                              last_validated_generation};
-        }
+        [[nodiscard]] Provenance get_provenance() const noexcept;
     };
 
     // Issue #291: serialize a StableNodeRef to a compact
@@ -4696,56 +4683,28 @@ public:
     //     format starts with a 4-byte magic number
     //     (0x2901A17A) so readers can tell a #291+ serialized
     //     blob from a raw (id, gen) binary.
+    // Issue #379: kStableRefSerializedSize + kStableRefMagic stay
+    // as class statics (callers reference them as
+    // FlatAST::kStableRefSerializedSize). Moving them to a free
+    // constexpr would change the public API.
     static constexpr std::size_t kStableRefSerializedSize = 24;
     static constexpr std::uint32_t kStableRefMagic = 0x2901A17A;  // #291 + AURA tag
 
     // Issue #291: pack a StableNodeRef into a 20-byte buffer.
     // Returns the number of bytes written (= kStableRefSerializedSize).
+    // Issue #379: body moved to src/core/ast_stability.cpp.
     [[nodiscard]] std::size_t serialize_stable_ref(const StableNodeRef& ref,
-                                                  std::uint8_t* out) const noexcept {
-        // First 4 bytes: magic (high 16 bits = 0x2901, low 16
-        // bits = 0xA17A). Reader checks this to distinguish
-        // #291+ serialized refs from raw (id, gen) binary.
-        out[0] = static_cast<std::uint8_t>(kStableRefMagic & 0xFF);
-        out[1] = static_cast<std::uint8_t>((kStableRefMagic >> 8) & 0xFF);
-        out[2] = static_cast<std::uint8_t>((kStableRefMagic >> 16) & 0xFF);
-        out[3] = static_cast<std::uint8_t>((kStableRefMagic >> 24) & 0xFF);
-        // Next 4 bytes: id (NodeId)
-        std::memcpy(out + 4, &ref.id, sizeof(ref.id));
-        // Next 2 bytes: gen
-        std::memcpy(out + 8, &ref.gen, sizeof(ref.gen));
-        // 2 bytes padding
-        out[10] = 0;
-        out[11] = 0;
-        // 8 bytes: mutation_id_at_capture
-        std::memcpy(out + 12, &ref.mutation_id_at_capture, sizeof(ref.mutation_id_at_capture));
-        // 4 bytes: workspace_id
-        std::memcpy(out + 20, &ref.workspace_id, sizeof(ref.workspace_id));
-        // Final 4 bytes: reserved for future fields
-        out[16] = 0; out[17] = 0; out[18] = 0; out[19] = 0;
-        return kStableRefSerializedSize;
-    }
+                                                  std::uint8_t* out) const noexcept;
 
     // Issue #291: deserialize a 20-byte buffer back to a
     // StableNodeRef. Returns false if the magic doesn't match
     // or buffer is too small. The caller is responsible for
     // checking is_valid() AFTER deserializing to confirm the
     // ref still points to a live node in the current flat.
+    // Issue #379: body moved to src/core/ast_stability.cpp.
     [[nodiscard]] bool deserialize_stable_ref(const std::uint8_t* buf,
                                              std::size_t buf_size,
-                                             StableNodeRef& out) const noexcept {
-        if (buf_size < kStableRefSerializedSize) return false;
-        std::uint32_t magic = 0;
-        std::memcpy(&magic, buf, 4);
-        if (magic != kStableRefMagic) return false;
-        StableNodeRef r{};
-        std::memcpy(&r.id, buf + 4, sizeof(r.id));
-        std::memcpy(&r.gen, buf + 8, sizeof(r.gen));
-        std::memcpy(&r.mutation_id_at_capture, buf + 12, sizeof(r.mutation_id_at_capture));
-        std::memcpy(&r.workspace_id, buf + 20, sizeof(r.workspace_id));
-        out = r;
-        return true;
-    }
+                                             StableNodeRef& out) const noexcept;
 
     // Issue #191: make a StableNodeRef capturing the current
     // generation. Use this in EDSL / query / mutate primitives
