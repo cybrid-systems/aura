@@ -1343,6 +1343,14 @@ aura_issue_test_link_llvm_jit(test_reflect_postmutate_guard_snapshot)
 # Non-duplicative with #536/#537/#526/#509/#518 (impl).
 aura_add_issue_test(test_incremental_typed_selfmod_dirty_narrowing)
 aura_issue_test_link_llvm_jit(test_incremental_typed_selfmod_dirty_narrowing)
+# Issue #518 P0 Phase 1: Post-Mutation Occurrence Typing
+# Re-Narrowing (reanalyze_occurrence_contexts +
+# propagate_narrowing_to_uses in infer_flat_partial).
+# Per #537 test matrix: 6 ACs for re-narrow path,
+# dirty recovery counters, stale-bit clearing, multi-
+# round mutate, occurrence-stale-count query, regression.
+aura_add_issue_test(test_occurrence_mutate_narrowing)
+aura_issue_test_link_llvm_jit(test_occurrence_mutate_narrowing)
 # Issue #549: StableNodeRef + generation_ + mutation_log
 # provenance + COW/Fiber safety for long-running
 # self-evolution loops (P0). 9 scenarios validating: 4

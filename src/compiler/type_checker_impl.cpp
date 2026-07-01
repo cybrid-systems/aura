@@ -2921,6 +2921,154 @@ static std::optional<std::uint32_t> compute_narrowing_evidence(
     return narrowing_bit_for(pred_name);
 }
 
+// Issue #518: collect IfExpr nodes in `root`'s subtree that
+// carry kOccurrenceDirty or the occurrence-stale column.
+static void collect_occurrence_dirty_if_exprs_in_subtree(
+    const FlatAST& flat, NodeId root, std::vector<NodeId>& out,
+    std::unordered_set<NodeId>& seen) {
+    if (root == NULL_NODE || root >= flat.size())
+        return;
+    const std::uint8_t kOccurrenceBit =
+        static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);
+    std::vector<NodeId> stack;
+    stack.push_back(root);
+    while (!stack.empty()) {
+        const auto id = stack.back();
+        stack.pop_back();
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        const auto v = flat.get(id);
+        if (v.tag == NodeTag::IfExpr &&
+            (flat.is_dirty_for(id, kOccurrenceBit) || flat.is_occurrence_stale(id) != 0) &&
+            seen.insert(id).second) {
+            out.push_back(id);
+        }
+        if (!v.children.empty()) {
+            for (std::size_t i = v.children.size(); i-- > 0; ) {
+                const auto c = v.children[i];
+                if (c != NULL_NODE)
+                    stack.push_back(c);
+            }
+        }
+    }
+}
+
+// Issue #518 P0 Phase 1: refresh OccurrenceInfoFlat for dirty
+// if-contexts and clear per-node occurrence dirty/stale bits.
+std::size_t InferenceEngine::reanalyze_occurrence_contexts(
+    FlatAST& flat, StringPool& pool, const std::vector<NodeId>& affected_ids) {
+    const std::uint8_t kOccurrenceBit =
+        static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);
+    std::size_t refreshed = 0;
+    for (auto id : affected_ids) {
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        const auto v = flat.get(id);
+        if (v.tag != NodeTag::IfExpr)
+            continue;
+        if (!flat.is_dirty_for(id, kOccurrenceBit) && flat.is_occurrence_stale(id) == 0)
+            continue;
+        if (v.children.empty())
+            continue;
+        const auto cond_id = v.child(0);
+        if (cond_id == NULL_NODE)
+            continue;
+
+        // Force a fresh predicate walk (invalidate memo entry).
+        predicate_memo_.erase(cond_id);
+        ++stats_.narrowing_reanalyzed;
+        ++stats_.narrowing_dirty_recovery;
+
+        bool meet_used = false;
+        bool join_used = false;
+        auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_, meet_used, join_used);
+        stats_.and_or_meet_uses += meet_used ? 1 : 0;
+        stats_.and_or_join_uses += join_used ? 1 : 0;
+        predicate_memo_[cond_id] = PredicateMemoEntry{cond_id, cache_epoch_, occ};
+        if (predicate_memo_.size() > PREDICATE_MEMO_MAX_ENTRIES) {
+            ++predicate_memo_evictions_;
+            predicate_memo_.clear();
+        }
+
+        flat.clear_dirty_for(id, kOccurrenceBit);
+        flat.clear_occurrence_stale(id);
+        ++refreshed;
+
+        if (on_narrowing_refresh_)
+            on_narrowing_refresh_();
+        if (on_selective_recheck_)
+            on_selective_recheck_();
+    }
+    return refreshed;
+}
+
+// Issue #518 P0 Phase 1: after occurrence refresh, ensure
+// narrowed-variable use-sites in the if branches are in the
+// affected set for the subsequent infer loop.
+void InferenceEngine::propagate_narrowing_to_uses(
+    FlatAST& flat, StringPool& pool, std::vector<NodeId>& affected) {
+    std::unordered_set<NodeId> in_affected(affected.begin(), affected.end());
+    auto add_unique = [&](NodeId nid) {
+        if (nid == NULL_NODE || nid >= flat.size())
+            return;
+        if (in_affected.insert(nid).second)
+            affected.push_back(nid);
+    };
+
+    auto collect_var_uses = [&](NodeId root, SymId target_sym) {
+        if (root == NULL_NODE || root >= flat.size() || target_sym == INVALID_SYM)
+            return;
+        std::vector<NodeId> stack;
+        stack.push_back(root);
+        while (!stack.empty()) {
+            const auto nid = stack.back();
+            stack.pop_back();
+            if (nid == NULL_NODE || nid >= flat.size())
+                continue;
+            const auto nv = flat.get(nid);
+            if (nv.tag == NodeTag::Variable && nv.sym_id == target_sym)
+                add_unique(nid);
+            for (auto c : nv.children)
+                stack.push_back(c);
+        }
+    };
+
+    const auto snapshot = affected;
+    for (auto id : snapshot) {
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        if (flat.get(id).tag != NodeTag::IfExpr)
+            continue;
+        if (flat.get(id).children.empty())
+            continue;
+        const auto cond_id = flat.get(id).child(0);
+        if (cond_id == NULL_NODE)
+            continue;
+
+        std::optional<OccurrenceInfoFlat> occ;
+        if (auto memo_it = predicate_memo_.find(cond_id);
+            memo_it != predicate_memo_.end() && memo_it->second.epoch == cache_epoch_) {
+            occ = memo_it->second.result;
+        } else {
+            bool meet_used = false;
+            bool join_used = false;
+            occ = analyze_predicate_flat(flat, pool, cond_id, reg_, meet_used, join_used);
+        }
+        if (!occ || occ->is_negation)
+            continue;
+
+        const auto target_sym = pool.find_by_name(occ->var_name);
+        if (!target_sym || *target_sym == INVALID_SYM)
+            continue;
+
+        const auto& if_v = flat.get(id);
+        if (if_v.children.size() >= 2 && if_v.child(1) != NULL_NODE)
+            collect_var_uses(if_v.child(1), *target_sym);
+        if (if_v.children.size() >= 3 && if_v.child(2) != NULL_NODE)
+            collect_var_uses(if_v.child(2), *target_sym);
+    }
+}
+
 TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, NodeId if_id, NodeView v) {
     // children: 0=condition, 1=then_branch, 2=else_branch (can be NULL_NODE)
     if (v.children.empty()) {
@@ -4265,6 +4413,23 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         return 0;
     }
 
+    // Issue #518 P0 Phase 1: collect dirty if-contexts from the
+    // affected set plus the mutation target subtree (rebind
+    // auto-wires kOccurrenceDirty on if-nodes in the new body
+    // even when the per-symbol affected set is only use-sites).
+    std::vector<NodeId> occurrence_targets;
+    std::unordered_set<NodeId> occurrence_seen;
+    occurrence_targets.reserve(affected.size());
+    for (auto id : affected)
+        collect_occurrence_dirty_if_exprs_in_subtree(flat, id, occurrence_targets,
+                                                     occurrence_seen);
+    if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
+        collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.target_node,
+                                                     occurrence_targets, occurrence_seen);
+    if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
+        collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.parent_id,
+                                                     occurrence_targets, occurrence_seen);
+
     // Spin up a per-call engine. Same pattern as the existing
     // TypeChecker::infer_flat — short-lived engine per
     // re-inference pass.
@@ -4274,6 +4439,15 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     engine.set_strict(strict_);           // Issue #79: plumb strict mode
     engine.set_cache_epoch(cache_epoch_); // Issue #168
     engine.bind_declared_sigs();
+    engine.set_narrowing_observability_hooks(on_narrowing_refresh_, on_selective_recheck_);
+
+    // Issue #518: re-narrow dirty if-contexts before the infer
+    // loop, then propagate narrowed-variable use-sites into the
+    // affected set.
+    last_occurrence_refresh_count_ =
+        engine.reanalyze_occurrence_contexts(flat, const_cast<StringPool&>(pool),
+                                             occurrence_targets);
+    engine.propagate_narrowing_to_uses(flat, const_cast<StringPool&>(pool), affected);
 
     std::size_t re_inferred = 0;
     for (aura::ast::NodeId id : affected) {

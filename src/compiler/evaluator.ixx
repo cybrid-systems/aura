@@ -3261,13 +3261,10 @@ public:
         // We bump it even on rollback so dashboards can see
         // "the boundary attempted to mutate, then rolled back".
         total_mutations_.fetch_add(1, std::memory_order_relaxed);
-        // Issue #550: bump narrowing_refresh_count_ on
-        // every successful exit_mutation_boundary — the
-        // OccurrenceInfoFlat re-narrow the dirty propagation
-        // triggered. Stats-only (relaxed-ordering); doesn't
-        // affect control flow. The follow-up wires this to
-        // the actual TypeChecker / OccurrenceInfoFlat path.
-        bump_narrowing_refresh_count();
+        // Issue #550 / #518: narrowing_refresh_count_ is
+        // bumped from TypeChecker::infer_flat_partial's
+        // reanalyze_occurrence_contexts path (actual
+        // OccurrenceInfoFlat refresh), not here.
         // Issue #551: bump impact_snapshot_count_ on every
         // successful Guard exit — mirrors the post-mutate
         // impact snapshot the AI loop reads for adaptive
@@ -3284,11 +3281,9 @@ public:
         // propagation_ratio = dirty_propagation / guard_dirty_epoch
         // (close to 1.0 = every Guard exit propagates).
         bump_guard_dirty_epoch_count();
-        // Issue #555: bump selective_recheck_count_ on
-        // every successful Guard exit — mirrors the
-        // OccurrenceInfoFlat selective re-narrow the
-        // follow-up wires. Stats-only (relaxed-ordering).
-        bump_selective_recheck_count();
+        // Issue #555 / #518: selective_recheck_count_ is
+        // bumped from infer_flat_partial's
+        // reanalyze_occurrence_contexts path, not here.
         // Issue #456: record mutation-impact summary on
         // success only. Walk the workspace mutation log
         // from `mutation_log_size` (pre-mutation) to
