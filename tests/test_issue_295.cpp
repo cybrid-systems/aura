@@ -7,6 +7,7 @@
 //  - Rollback returns #f on failure
 //  - Coverage holes exclude signals that ARE asserted
 #include <unistd.h>
+#include <filesystem>
 #include "test_harness.hpp"
 
 import std;
@@ -31,13 +32,37 @@ static std::string run_aura(const std::string& src) {
     // references relative paths like (load "lib/std/eda.aura")
     // which only resolve from the repo root. From the
     // repo root the path to the binary is `./build/aura`.
+    //
+    // The previous hardcoded `repo_root = ".."` worked when
+    // the bundle was launched from build/ (the normal case)
+    // but broke when launched from the repo root directly
+    // (e.g. `./build/test_issues_jit` from /home/dev/code/aura).
+    // Now we walk up from cwd looking for the lib/std/eda.aura
+    // marker so the test works from either cwd. AURA_SRC_ROOT
+    // env var overrides (used by CI).
     static const std::string aura_bin = []() -> std::string {
         if (auto* env = std::getenv("AURA_BIN")) return env;
+        // Default: readlink /proc/self/exe → .../build/test_issue_NNN
+        // and resolve aura as the sibling binary at .../build/aura.
+        char buf[4096] = {0};
+        ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0) {
+            std::filesystem::path p(buf);
+            return (p.parent_path() / "aura").string();
+        }
         return "./build/aura";
     }();
-    // Compute the repo root: parent of build/.
+    // Compute the repo root: walk up from cwd looking for the
+    // lib/std/eda.aura marker (works from build/ or repo root).
     static const std::string repo_root = []() -> std::string {
         if (auto* env = std::getenv("AURA_SRC_ROOT")) return env;
+        namespace fs = std::filesystem;
+        fs::path p = fs::current_path();
+        while (!p.empty()) {
+            if (fs::exists(p / "lib/std/eda.aura")) return p.string();
+            if (p == p.root_path()) break;
+            p = p.parent_path();
+        }
         return "..";
     }();
     std::string cmd = std::string("(cd ") + repo_root + " && timeout 10 " +

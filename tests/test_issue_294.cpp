@@ -10,6 +10,7 @@
 // access to lib/std/eda.aura by default). The helpers are exercised
 // by piping Aura source to the build/aura binary.
 #include <unistd.h>
+#include <filesystem>
 #include "test_harness.hpp"
 
 import std;
@@ -37,12 +38,45 @@ static std::string run_aura(const std::string& src) {
     // references relative paths like (load "lib/std/eda.aura")
     // which only resolve from the repo root. From the
     // repo root the path to the binary is `./build/aura`.
+    //
+    // The previous hardcoded `repo_root = ".."` worked when
+    // the bundle was launched from build/ (the normal case)
+    // but broke when launched from the repo root directly
+    // (e.g. `./build/test_issues_jit` from /home/dev/code/aura).
+    // Now we walk up from cwd looking for the lib/std/eda.aura
+    // marker so the test works from either cwd. AURA_SRC_ROOT
+    // env var overrides (used by CI).
     static const std::string aura_bin = []() -> std::string {
         if (auto* env = std::getenv("AURA_BIN")) return env;
+        // Default: the aura binary lives in build/aura relative
+        // to the repo root. Use readlink("/proc/self/exe") for
+        // an absolute path so the (cd repo_root && ./build/aura)
+        // popen command works regardless of cwd.
+        char buf[4096] = {0};
+        ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0) {
+            std::filesystem::path p(buf);
+            // p is .../build/test_issue_NNN; the sibling aura
+            // binary is at .../build/aura.
+            return (p.parent_path() / "aura").string();
+        }
         return "./build/aura";
     }();
     static const std::string repo_root = []() -> std::string {
         if (auto* env = std::getenv("AURA_SRC_ROOT")) return env;
+        // Walk up from cwd looking for lib/std/eda.aura marker.
+        // This works whether the bundle was launched from
+        // build/ (.. = repo root) or directly from the repo
+        // root (cwd = repo root). Falls back to ".." if the
+        // marker isn't found in any ancestor (shouldn't happen
+        // in a normal checkout).
+        namespace fs = std::filesystem;
+        fs::path p = fs::current_path();
+        while (!p.empty()) {
+            if (fs::exists(p / "lib/std/eda.aura")) return p.string();
+            if (p == p.root_path()) break;
+            p = p.parent_path();
+        }
         return "..";
     }();
     std::string cmd = std::string("(cd ") + repo_root + " && timeout 10 " +
