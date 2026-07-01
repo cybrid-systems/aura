@@ -42,13 +42,11 @@ using aura::serve::Scheduler;
 using aura::serve::YieldReason;
 
 static int k_stress_iters() {
-    if (const char* e = std::getenv("AURA_588_STRESS")) return std::atoi(e);
-    return 200;
+    return k_int_env("AURA_STRESS_ITERS", 200);
 }
 
 static int k_concurrent_iters() {
-    if (const char* e = std::getenv("AURA_588_ITERS")) return std::atoi(e);
-    return 40;
+    return k_int_env("AURA_STRESS_ITERS", 40);
 }
 
 // ── AC1: per-fiber depth probe on victim fiber ─────────────

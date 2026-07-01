@@ -57,8 +57,7 @@ using aura::serve::Scheduler;
 using aura::serve::YieldReason;
 
 static int k_concurrent_iters() {
-    if (const char* e = std::getenv("AURA_556_ITERS")) return std::atoi(e);
-    return 100;  // 1000 too long; 100 is fast
+    return k_int_env("AURA_STRESS_ITERS", 100);
 }
 
 // ── AC1: 2 new Task1 concurrency counters reachable

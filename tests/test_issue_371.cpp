@@ -60,9 +60,9 @@
 // internals; this test binary completes in <1s.
 //
 // Tunable env knobs (mirrors #542 / #588 / #605 pattern):
-//   AURA_371_ITERS        default 200 — AC5 stress iters
-//   AURA_371_THREADS      default 4   — AC3 / AC4 / AC5 threads
-//   AURA_371_RACE_ITERS   default 200 — AC4 direct-lock races
+//   AURA_STRESS_ITERS        default 200 — AC5 stress iters
+//   AURA_STRESS_PARALLEL      default 4   — AC3 / AC4 / AC5 threads
+//   AURA_RACE_ITERS   default 200 — AC4 direct-lock races
 
 #include "test_harness.hpp"
 
@@ -90,18 +90,15 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static int k_iters() {
-    if (const char* e = std::getenv("AURA_371_ITERS")) return std::atoi(e);
-    return 200;
+    return k_int_env("AURA_STRESS_ITERS", 200);
 }
 
 static int k_threads() {
-    if (const char* e = std::getenv("AURA_371_THREADS")) return std::atoi(e);
-    return 4;
+    return k_int_env("AURA_STRESS_PARALLEL", 4);
 }
 
 static int k_race_iters() {
-    if (const char* e = std::getenv("AURA_371_RACE_ITERS")) return std::atoi(e);
-    return 200;
+    return k_int_env("AURA_RACE_ITERS", 200);
 }
 
 static std::int64_t eval_int(CompilerService& cs, std::string_view code) {

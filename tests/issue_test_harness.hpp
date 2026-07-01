@@ -112,4 +112,31 @@ RefStats validate_stable_refs(RefsT& refs, FlatT& flat) {
 
 }  // namespace aura_test_harness
 
+// ── Env-var knob helpers (Issue #371 follow-up) ───────────
+//
+// Mirrors the k_int_env helper in test_harness.hpp.
+// Issue-numbered env-var prefixes (AURA_NNN_*) are
+// deprecated; tests should use the 5 shared names:
+//
+//   AURA_STRESS_ITERS    main stress-loop iteration count
+//   AURA_STRESS_PARALLEL parallel-unit count (threads /
+//                        fibers / workers; default 4)
+//   AURA_RACE_ITERS      race-scenario iteration count
+//   AURA_FUZZ_ITERS      fuzz-scenario iteration count
+//   AURA_WARMUP_CALLS    JIT warmup call count
+//
+// Returns the env value as int, or `default_value` if the
+// env is unset / empty / unparseable / non-positive.
+[[nodiscard]] inline int k_int_env(const char* name,
+                                   int default_value) noexcept {
+    if (const char* v = std::getenv(name); v != nullptr && *v != '\0') {
+        char* end = nullptr;
+        const long parsed = std::strtol(v, &end, 10);
+        if (end != v && parsed > 0 && parsed <= 1'000'000'000) {
+            return static_cast<int>(parsed);
+        }
+    }
+    return default_value;
+}
+
 #endif  // AURA_ISSUE_TEST_HARNESS_HPP

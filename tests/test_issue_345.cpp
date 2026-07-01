@@ -7,7 +7,7 @@
 // workloads. Extends #330 (11 unit scenarios) with:
 //
 //   - 1000-iteration stress loop (configurable via env var
-//     AURA_345_ITERATIONS): each iter captures a StableNodeRef,
+//     AURA_STRESS_ITERS): each iter captures a StableNodeRef,
 //     mutates the workspace, validates the ref state, rolls back.
 //   - Concurrent fiber simulation: 4 std::thread workers
 //     reading refs + mutating; serialization via mutex
@@ -57,7 +57,7 @@ using aura::ast::FlatAST;
 
 // Configurable iteration count via env var, default 1000.
 static int stress_iterations() {
-    if (const char* env = std::getenv("AURA_345_ITERATIONS")) {
+    if (const char* env = std::getenv("AURA_STRESS_ITERS")) {
         try { return std::max(1, std::stoi(env)); }
         catch (...) { return 1000; }
     }

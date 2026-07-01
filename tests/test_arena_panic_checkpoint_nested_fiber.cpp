@@ -56,8 +56,7 @@ using aura::compiler::Evaluator;
 
 // ── Tunables (env-overridable) ────────────────────────────
 static int k_fuzz_iters() {
-    if (const char* e = std::getenv("AURA_546_FUZZ")) return std::atoi(e);
-    return 200;  // 1000 hung on panic-restore loop; 200 is fast
+    return k_int_env("AURA_FUZZ_ITERS", 200);
 }
 
 // ── AC1: panic-checkpoint + panic-restore + panic-safe-source

@@ -78,16 +78,13 @@ using aura::serve::YieldReason;
 
 // ── Tunables (env-overridable for stress scaling) ────────
 static int k_high_workers() {
-    if (const char* e = std::getenv("AURA_545_WORKERS")) return std::atoi(e);
-    return 16;
+    return k_int_env("AURA_STRESS_WORKERS", 16);
 }
 static int k_high_fibers() {
-    if (const char* e = std::getenv("AURA_545_FIBERS")) return std::atoi(e);
-    return 50;
+    return k_int_env("AURA_STRESS_FIBERS", 50);
 }
 static int k_high_iters() {
-    if (const char* e = std::getenv("AURA_545_ITERS")) return std::atoi(e);
-    return 100;  // 100 × 50 = 5000 yield ops
+    return k_int_env("AURA_STRESS_ITERS", 100);
 }
 
 // ── AC1: bump_steal_deferred_mutation_boundary accessor

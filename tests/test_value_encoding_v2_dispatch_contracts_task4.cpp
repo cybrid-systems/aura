@@ -63,18 +63,15 @@ using aura::serve::Scheduler;
 using aura::serve::YieldReason;
 
 static int k_fuzz_iters() {
-    if (const char* e = std::getenv("AURA_571_FUZZ")) return std::atoi(e);
-    return 50;
+    return k_int_env("AURA_FUZZ_ITERS", 50);
 }
 
 static int k_stress_iters() {
-    if (const char* e = std::getenv("AURA_571_STRESS")) return std::atoi(e);
-    return 100;
+    return k_int_env("AURA_STRESS_ITERS", 100);
 }
 
 static int k_concurrent_iters() {
-    if (const char* e = std::getenv("AURA_571_ITERS")) return std::atoi(e);
-    return 25;
+    return k_int_env("AURA_STRESS_ITERS", 25);
 }
 
 static std::int64_t eval_int(CompilerService& cs, std::string_view code) {

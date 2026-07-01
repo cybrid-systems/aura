@@ -52,8 +52,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 
 static int k_long_iters() {
-    if (const char* e = std::getenv("AURA_555_ITERS")) return std::atoi(e);
-    return 200;  // 5000 too long; 200 is fast
+    return k_int_env("AURA_STRESS_ITERS", 200);
 }
 
 // ── AC1: 4 new Task1 counters reachable + start at 0
