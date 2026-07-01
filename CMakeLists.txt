@@ -1484,6 +1484,18 @@ aura_issue_test_link_llvm_jit(test_issue_371)
 # NodeIdRemapTable foundation — name-based is the user-level API.
 aura_add_issue_test(test_issue_372)
 aura_issue_test_link_llvm_jit(test_issue_372)
+# Issue #373: Mutate guards for MacroIntroduced nodes +
+# workspace_flat_ marker plumbing. 5 scenarios: query:macro-
+# introduced returns cloned-body nodes (eval-current path),
+# query:by-marker "MacroIntroduced" returns the same set,
+# mutate:rebind on a MacroIntroduced Define returns
+# ("hygiene-protected" "...") by default, succeeds after
+# (hygiene:set-allow-macro-mutate! #t) global flag, and
+# succeeds with per-call :allow-macro? #t kwarg. Pairs with
+# the #244 SyntaxMarker query primitives + #190 macro
+# marker column.
+aura_add_issue_test(test_issue_373)
+aura_issue_test_link_llvm_jit(test_issue_373)
 # Issue #301: C++26 std::meta migration audit + foundation.
 # 4 scenarios: call-site audit, auto_serialize validation
 # on StableNodeRef-like POD, serialize perf baseline,

@@ -55,12 +55,95 @@ bool stable_match_still_attached(const aura::ast::FlatAST& flat,
     return parent_child_index_if_attached(flat, match_ref.id).has_value();
 }
 
+// Issue #373: MacroIntroduced hygiene guard helper.
+//
+// mutate:* primitives call this before any structural
+// change. If the target node(s) are MacroIntroduced (set
+// by clone_macro_body from a hygienic macro expansion)
+// AND the global `allow_macro_mutate_` flag is false AND
+// the call did NOT pass `:allow-macro? #t`, the helper
+// returns a tagged ("hygiene-protected" "...") error pair
+// via the supplied mev callable. The caller sets ok=false
+// (so MutationBoundaryGuard rolls back if anything else
+// was done before the guard) and propagates the error.
+//
+// Args:
+//   flat — workspace flat (must be non-null; we don't
+//          check here, caller already validated)
+//   target_ids — NodeIds to check (the actual mutate
+//                target; e.g. the Define node for
+//                mutate:rebind, the child node for
+//                mutate:tweak-literal, etc.)
+//   allow_macro_mutate — the Evaluator's global flag.
+//   per_call_opt_out — the caller-parsed `:allow-macro?`
+//                      boolean. #t bypasses the guard
+//                      without changing the global flag.
+//   mev — the error constructor.
+//
+// Returns:
+//   nullopt if the mutation is allowed (no hygiene guard
+//   triggered). A populated EvalValue (the error pair)
+//   if the mutation should be rejected.
+static std::optional<EvalValue> hygiene_protected_error(
+    const aura::ast::FlatAST& flat,
+    std::span<const aura::ast::NodeId> target_ids,
+    bool allow_macro_mutate,
+    bool per_call_opt_out,
+    const MakeErrorVal& mev) {
+    if (allow_macro_mutate || per_call_opt_out)
+        return std::nullopt;
+    for (auto id : target_ids) {
+        if (id == aura::ast::NULL_NODE || id >= flat.size())
+            continue;
+        if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+            return mev("hygiene-protected",
+                       "target node " + std::to_string(id) +
+                           " was produced by a hygienic macro expansion; "
+                           "pass :allow-macro? #t or call "
+                           "(hygiene:set-allow-macro-mutate! #t) to opt out");
+        }
+    }
+    return std::nullopt;
+}
+
+// Issue #373: parse `:allow-macro? #t` from a mutate:*
+// primitive's argument span. Returns the boolean value
+// if the kwarg is present (default #f if absent or the
+// value is not a bool). The kwarg may appear anywhere
+// in the arg list. Looks up the keyword name via the
+// Evaluator's keyword_table_ so callers don't have to
+// pre-intern the keyword index themselves.
+//
+// Format: `:allow-macro? <bool>`. If `<bool>` is
+// missing or not a boolean, the kwarg is treated as
+// absent (conservative — #f).
+static bool parse_allow_macro_opt_out(Evaluator& ev, std::span<const EvalValue> args) {
+    const auto& kt = ev.keyword_table();
+    // Find the index of ":allow-macro?" in the keyword table.
+    // Linear scan is fine — the table has ~10-30 entries and
+    // this runs once per mutate call (not on the hot path).
+    std::size_t target_idx = std::string::npos;
+    for (std::size_t i = 0; i < kt.size(); ++i) {
+        if (kt[i] == ":allow-macro?") {
+            target_idx = i;
+            break;
+        }
+    }
+    if (target_idx == std::string::npos)
+        return false;
+    for (std::size_t i = 0; i + 1 < args.size(); ++i) {
+        if (!is_keyword(args[i]))
+            continue;
+        if (as_keyword_idx(args[i]) != target_idx)
+            continue;
+        if (is_bool(args[i + 1]))
+            return as_bool(args[i + 1]);
+        return false;
+    }
+    return false;
+}
+
 // Issue #348: walk a subtree, collect all
-// (if pred then else) node ids, and mark each with
-// kOccurrenceDirty via the set_occurrence_dirty_fn_
-// hook. The walk is recursive over children; we
-// skip nullptr + free-slot nodes (the recycled
-// tombstone state from the free list).
 //
 // The walk is bounded: we visit each node at most
 // once (the visited set is the new_value's subtree
@@ -992,6 +1075,22 @@ void register_mutate_primitives(
                 break;
             }
         }
+        // Issue #373: hygiene guard. If old_define is a
+        // MacroIntroduced node (produced by clone_macro_body
+        // from a hygienic macro expansion), reject by default.
+        // The caller can opt out via the :allow-macro? #t
+        // kwarg or by setting the global
+        // (hygiene:set-allow-macro-mutate! #t) flag.
+        if (old_define != aura::ast::NULL_NODE) {
+            aura::ast::NodeId probe_arr[1] = {old_define};
+            if (auto err = hygiene_protected_error(flat, probe_arr,
+                                                   ev.get_allow_macro_mutate(),
+                                                   parse_allow_macro_opt_out(ev, a),
+                                                   mev)) {
+                ok = false;
+                return *err;
+            }
+        }
         // Issue #165 follow-up: when no matching Define exists, mutate:rebind
         // adds a brand-new top-level Define. This makes the primitive usable
         // for incrementally introducing a new top-level binding (a common
@@ -1653,6 +1752,19 @@ void register_mutate_primitives(
             ok = false;
             return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
                                            std::to_string(flat.size()));
+        }
+        // Issue #373: hygiene guard. If `node` is
+        // MacroIntroduced, reject by default. Same opt-out
+        // path as mutate:rebind.
+        {
+            aura::ast::NodeId probe_arr[1] = {node};
+            if (auto err = hygiene_protected_error(flat, probe_arr,
+                                                   ev.get_allow_macro_mutate(),
+                                                   parse_allow_macro_opt_out(ev, a),
+                                                   mev)) {
+                ok = false;
+                return *err;
+            }
         }
         auto v = flat.get(node);
         if (v.tag != aura::ast::NodeTag::LiteralInt) {

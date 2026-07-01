@@ -2,15 +2,15 @@
 
 # Primitives (generated)
 
-**552** registrations scanned from `src/**/*.cpp`.
+**555** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 141 primitives (26%)
-- **core**: 174 primitives (32%)
+- **mutation-safety**: 141 primitives (25%)
+- **core**: 177 primitives (32%)
 - **internal-observable**: 90 primitives (16%)
-- **convenience**: 147 primitives (27%)
+- **convenience**: 147 primitives (26%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
 
@@ -598,6 +598,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 - `hot-swap:fn` *[core]* — `src/compiler/evaluator_primitives_types.cpp`
 
+## Hygiene: (3)
+
+- `hygiene:allow-macro-mutate?` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:protected?` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:set-allow-macro-mutate!` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+
 ## Ir-Cache-V2: (2)
 
 - `ir-cache-v2:dependents` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -805,7 +811,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (174)
+### Core builtins (must remain primitive) (177)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -896,6 +902,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `hash` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash?` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hot-swap:fn` — `src/compiler/evaluator_primitives_types.cpp`
+- `hygiene:allow-macro-mutate?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:protected?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:set-allow-macro-mutate!` — `src/compiler/evaluator_primitives_compile.cpp`
 - `import` — `src/compiler/evaluator_primitives_module.cpp`
 - `integer?` — `src/compiler/evaluator_primitives_core.cpp`
 - `intend` — `src/compiler/evaluator_primitives_agent.cpp`
