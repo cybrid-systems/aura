@@ -1874,6 +1874,18 @@ private:
     // ── Workspace Tree (P13) ───────────────────────────────────
     void* workspace_tree_ = nullptr;   // WorkspaceTree*
     bool workspace_read_only_ = false; // quick lock flag for P6 mutations
+    // ── Issue #373: hygiene guard for mutate:* on MacroIntroduced
+    // nodes. When false (default), every mutate:* entry point
+    // pre-checks the target node's SyntaxMarker and returns a
+    // ("hygiene-protected" "...") error pair if the target was
+    // produced by clone_macro_body. Setter is exposed via the
+    // (hygiene:set-allow-macro-mutate!) Aura primitive so
+    // self-mod / AI-agent code can opt out globally. Per-mutate
+    // opt-out via :allow-macro? #t kwarg bypasses the flag
+    // without changing global state. Both opt-outs preserve the
+    // existing mutate:* behavior (no behavior change for tests
+    // that don't pass :allow-macro? or set the flag).
+    bool allow_macro_mutate_ = false;
     // ── CompilerService pointer (for messaging) ─────────────────
     void* compiler_service_ = nullptr; // CompilerService*
     WorkspaceAdtSyncFn workspace_adt_sync_fn_ = nullptr;
@@ -2483,6 +2495,17 @@ private:
     std::shared_mutex workspace_mtx_;
 
 public:
+    // Issue #373: hygiene guard accessors. The flag gates
+    // mutate:* operations on MacroIntroduced nodes (those
+    // produced by clone_macro_body from a hygienic macro
+    // expansion). Default = false (safe); AI-agent / self-mod
+    // code can opt in via (hygiene:set-allow-macro-mutate!).
+    [[nodiscard]] bool get_allow_macro_mutate() const noexcept {
+        return allow_macro_mutate_;
+    }
+    void set_allow_macro_mutate(bool v) noexcept {
+        allow_macro_mutate_ = v;
+    }
     // Issue #211: test accessors for the (tag, arity) index.
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
         // Issue #371: shared_lock for read parity with

@@ -3980,6 +3980,56 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(sidx);
     });
 
+    // ── Issue #373: MacroIntroduced hygiene guard primitives ──
+    //
+    // Three primitives that surface the hygiene guard added by
+    // #373 piece 2 (mutate guards):
+    //
+    //   (hygiene:protected? node-id)
+    //     Returns #t if the node has marker == MacroIntroduced
+    //     (i.e. was produced by clone_macro_body from a hygienic
+    //     macro expansion). #f otherwise (including when the
+    //     workspace or node id is invalid). Same marker column
+    //     that query:by-marker / query:macro-introduced reads.
+    //
+    //   (hygiene:allow-macro-mutate?) — read the global flag
+    //     (default #f). Mirrors the C++ side's allow_macro_mutate_
+    //     flag on Evaluator.
+    //
+    //   (hygiene:set-allow-macro-mutate! bool) — set the flag.
+    //     When #t, mutate:* operations on MacroIntroduced nodes
+    //     proceed without the "hygiene-protected" pre-check
+    //     rejection. The flag is per-Evaluator (process-local);
+    //     setting it does not affect other Compilers in the same
+    //     process.
+    //
+    // These three primitives don't touch the mutate:* path —
+    // they're for EDSL code / tests that need to read the
+    // protected state or opt-in globally. Per-call opt-out
+    // without changing the flag is the :allow-macro? #t kwarg
+    // on each mutate:* primitive.
+    add("hygiene:protected?", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0])) return make_bool(false);
+        if (!ev.workspace_flat_) return make_bool(false);
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (id >= ev.workspace_flat_->size()) return make_bool(false);
+        return make_bool(
+            ev.workspace_flat_->marker(id) == aura::ast::SyntaxMarker::MacroIntroduced);
+    });
+
+    add("hygiene:allow-macro-mutate?", [&ev](const auto&) -> EvalValue {
+        return make_bool(ev.get_allow_macro_mutate());
+    });
+
+    add("hygiene:set-allow-macro-mutate!", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_bool(a[0])) {
+            return ev.make_merr("bad-arg",
+                "usage: (hygiene:set-allow-macro-mutate! bool)");
+        }
+        ev.set_allow_macro_mutate(as_bool(a[0]));
+        return make_void();
+    });
+
 } // register_compile_primitives
 
 } // namespace aura::compiler::primitives_detail
