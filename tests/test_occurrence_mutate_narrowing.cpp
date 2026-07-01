@@ -17,6 +17,9 @@
 //   AC7: query:occurrence-narrowing-stats > 0 after re-narrow (#537)
 //   AC8: narrowing log carries source_mutation_id (#537)
 //   AC9: snapshot occurrence_stale_refreshes_total bumped (#537)
+//   AC10: mutate:rebind auto re-narrow (Eager, no manual
+//         incremental_infer) (#537)
+//   AC11: post-mutate provenance + eval fresh narrow (#537)
 
 #include "test_harness.hpp"
 
@@ -81,15 +84,13 @@ bool test_dirty_recovery_counters_bump() {
         return false;
     }
     const auto snap0 = cs.snapshot();
+    // Issue #526/#537: mutate:rebind auto-invokes
+    // run_post_mutate_typecheck_no_lock → infer_flat_partial
+    // re-narrow; counters bump on mutate, not only on a
+    // follow-up incremental_infer.
     (void)cs.eval(
         "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 3) 0))\" "
         "\"issue-518-dirty\")");
-    auto* ws = cs.workspace_flat();
-    if (!ws || ws->all_mutations().empty()) {
-        CHECK(false, "mutation log non-empty");
-        return false;
-    }
-    (void)cs.incremental_infer(ws->all_mutations().back());
     const auto snap1 = cs.snapshot();
     std::println("  dirty_recovery: {} -> {}",
                  snap0.narrowing_dirty_recovery_total,
@@ -99,9 +100,9 @@ bool test_dirty_recovery_counters_bump() {
                  snap1.narrowing_reanalyzed_total);
     CHECK(snap1.narrowing_dirty_recovery_total >
               snap0.narrowing_dirty_recovery_total,
-          "narrowing_dirty_recovery_total bumped after re-narrow");
+          "narrowing_dirty_recovery_total bumped on auto re-narrow");
     CHECK(snap1.narrowing_reanalyzed_total > snap0.narrowing_reanalyzed_total,
-          "narrowing_reanalyzed_total bumped after re-narrow");
+          "narrowing_reanalyzed_total bumped on auto re-narrow");
     return true;
 }
 
@@ -113,8 +114,10 @@ bool test_occurrence_stale_cleared() {
         CHECK(false, "load if workspace");
         return false;
     }
-    // Lazy mode: defer auto-invoke so stale bits survive until
-    // we explicitly call incremental_infer (#518).
+    // Issue #526/#537: mutate:rebind always runs selective
+    // post-mutate typecheck (even when CompilerService Lazy
+    // mode defers the post-eval guard). Stale bits clear on
+    // mutate itself.
     cs.set_incremental_typecheck_mode(
         aura::compiler::IncrementalTypecheckMode::Lazy);
     (void)cs.eval(
@@ -124,31 +127,14 @@ bool test_occurrence_stale_cleared() {
     CHECK(stale_after_mutate.has_value() &&
               aura::compiler::types::is_int(*stale_after_mutate),
           "(query:occurrence-stale-count) after mutate");
-    const auto stale_before =
+    const auto stale_after =
         stale_after_mutate && aura::compiler::types::is_int(*stale_after_mutate)
             ? aura::compiler::types::as_int(*stale_after_mutate)
-            : 0;
-    std::println("  stale_count after mutate: {}", stale_before);
-    CHECK(stale_before > 0,
-          "occurrence-stale-count > 0 after mutate marks if-context");
-
-    auto* ws = cs.workspace_flat();
-    if (!ws || ws->all_mutations().empty()) {
-        CHECK(false, "mutation log non-empty");
-        return false;
-    }
-    (void)cs.incremental_infer(ws->all_mutations().back());
-    auto stale_after_renarrow = cs.eval("(query:occurrence-stale-count)");
-    CHECK(stale_after_renarrow.has_value() &&
-              aura::compiler::types::is_int(*stale_after_renarrow),
-          "(query:occurrence-stale-count) after re-narrow");
-    const auto stale_after =
-        stale_after_renarrow && aura::compiler::types::is_int(*stale_after_renarrow)
-            ? aura::compiler::types::as_int(*stale_after_renarrow)
-            : stale_before;
-    std::println("  stale_count after re-narrow: {}", stale_after);
+            : -1;
+    std::println("  stale_count after auto re-narrow on mutate: {}",
+                 stale_after);
     CHECK(stale_after == 0,
-          "occurrence-stale-count == 0 after re-narrow");
+          "occurrence-stale-count == 0 after mutate auto re-narrow");
     return true;
 }
 
@@ -179,9 +165,9 @@ bool test_multi_round_mutate_typechecks() {
     return true;
 }
 
-// ── AC5: occurrence-stale-count decreases ────────────────
+// ── AC5: occurrence-stale-count stays zero post-mutate ───
 bool test_occurrence_stale_count_decreases() {
-    std::println("\n--- AC5: occurrence-stale-count decreases ---");
+    std::println("\n--- AC5: occurrence-stale-count zero post-mutate ---");
     CompilerService cs;
     if (!load_if_workspace(cs)) {
         CHECK(false, "load if workspace");
@@ -192,27 +178,14 @@ bool test_occurrence_stale_count_decreases() {
     (void)cs.eval(
         "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (- x 1) 0))\" "
         "\"issue-518-dec\")");
-    auto before = cs.eval("(query:occurrence-stale-count)");
-    const auto count_before =
-        before && aura::compiler::types::is_int(*before)
-            ? aura::compiler::types::as_int(*before)
-            : 0;
-    auto* ws = cs.workspace_flat();
-    if (!ws || ws->all_mutations().empty()) {
-        CHECK(false, "mutation log non-empty");
-        return false;
-    }
-    (void)cs.incremental_infer(ws->all_mutations().back());
     auto after = cs.eval("(query:occurrence-stale-count)");
     const auto count_after =
         after && aura::compiler::types::is_int(*after)
             ? aura::compiler::types::as_int(*after)
-            : count_before;
-    std::println("  stale_count: {} -> {}", count_before, count_after);
-    CHECK(count_after <= count_before,
-          "occurrence-stale-count decreases or stays 0");
+            : -1;
+    std::println("  stale_count after mutate auto re-narrow: {}", count_after);
     CHECK(count_after == 0,
-          "occurrence-stale-count is 0 after re-narrow");
+          "occurrence-stale-count is 0 after mutate auto re-narrow");
     return true;
 }
 
@@ -306,6 +279,68 @@ bool test_snapshot_stale_refreshes_bumped() {
     return true;
 }
 
+// ── AC10: mutate auto re-narrow without incremental_infer
+bool test_mutate_auto_renarrow_eager() {
+    std::println("\n--- AC10: mutate auto re-narrow (Eager, no incremental_infer) ---");
+    CompilerService cs;
+    if (!load_if_workspace(cs)) {
+        CHECK(false, "load if workspace");
+        return false;
+    }
+    CHECK(cs.incremental_typecheck_mode() ==
+              aura::compiler::IncrementalTypecheckMode::Eager,
+          "default incremental typecheck mode is Eager");
+    const auto n0 = cs.evaluator().get_narrowing_refresh_count();
+    const auto snap0 = cs.snapshot();
+    (void)cs.eval(
+        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 11) 0))\" "
+        "\"issue-537-auto\")");
+    const auto n1 = cs.evaluator().get_narrowing_refresh_count();
+    const auto snap1 = cs.snapshot();
+    auto stale = cs.eval("(query:occurrence-stale-count)");
+    const auto stale_count =
+        stale && aura::compiler::types::is_int(*stale)
+            ? aura::compiler::types::as_int(*stale)
+            : -1;
+    std::println("  narrowing_refresh: {} -> {}, stale_count={}",
+                 n0, n1, stale_count);
+    std::println("  stale_refreshes: {} -> {}",
+                 snap0.occurrence_stale_refreshes_total,
+                 snap1.occurrence_stale_refreshes_total);
+    CHECK(n1 > n0,
+          "mutate:rebind auto-invokes re-narrow via run_post_mutate_typecheck");
+    CHECK(stale_count == 0,
+          "occurrence-stale-count == 0 after auto re-narrow");
+    CHECK(snap1.occurrence_stale_refreshes_total >
+              snap0.occurrence_stale_refreshes_total,
+          "snapshot stale_refreshes bumped on auto path");
+    return true;
+}
+
+// ── AC11: post-mutate provenance + eval fresh narrow ─────
+bool test_post_mutate_provenance_and_eval() {
+    std::println("\n--- AC11: post-mutate provenance + eval fresh narrow ---");
+    CompilerService cs;
+    if (!load_if_workspace(cs)) {
+        CHECK(false, "load if workspace");
+        return false;
+    }
+    (void)cs.eval("(typecheck-current)");
+    (void)cs.eval(
+        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 12) 0))\" "
+        "\"issue-537-e2e\")");
+    auto prov = cs.eval("(query:provenance-of \"x\")");
+    CHECK(prov.has_value(), "query:provenance-of after predicate mutate");
+    auto r = cs.eval("(f 4)");
+    CHECK(r.has_value() && aura::compiler::types::is_int(*r),
+          "eval after auto re-narrow returns int");
+    if (r && aura::compiler::types::is_int(*r)) {
+        CHECK(aura::compiler::types::as_int(*r) == 16,
+              "fresh narrow-dependent (+ x 12) semantics correct");
+    }
+    return true;
+}
+
 // ── AC6: regression — eval still works ───────────────────
 bool test_regression_eval_works() {
     std::println("\n--- AC6: regression — eval still works ---");
@@ -329,6 +364,8 @@ int run_tests() {
     test_query_occurrence_narrowing_stats();
     test_narrowing_log_source_mutation_id();
     test_snapshot_stale_refreshes_bumped();
+    test_mutate_auto_renarrow_eager();
+    test_post_mutate_provenance_and_eval();
     test_regression_eval_works();
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();

@@ -3,6 +3,8 @@
 
 module;
 
+#include "observability_metrics.h"
+
 
 module aura.compiler.evaluator;
 
@@ -137,6 +139,25 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         const auto reinferred =
             tc.infer_flat_partial(*workspace_flat_, *workspace_pool_, log.back(), diag);
         (void)reinferred;
+        // Issue #537: mirror per-call TypeChecker narrowing stats
+        // into lifetime CompilerMetrics (same as CompilerService
+        // typecheck / incremental_infer paths).
+        if (compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            const auto& st = tc.stats();
+            m->narrowing_applied_total.fetch_add(st.narrowing_applied,
+                                                 std::memory_order_relaxed);
+            m->narrowing_skipped_total.fetch_add(st.narrowing_skipped,
+                                                 std::memory_order_relaxed);
+            m->narrowing_reanalyzed_total.fetch_add(st.narrowing_reanalyzed,
+                                                    std::memory_order_relaxed);
+            m->and_or_meet_uses_total.fetch_add(st.and_or_meet_uses,
+                                                std::memory_order_relaxed);
+            m->and_or_join_uses_total.fetch_add(st.and_or_join_uses,
+                                                std::memory_order_relaxed);
+            m->narrowing_dirty_recovery_total.fetch_add(st.narrowing_dirty_recovery,
+                                                        std::memory_order_relaxed);
+        }
     } else {
         tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, diag);
         workspace_flat_->clear_all_dirty();
