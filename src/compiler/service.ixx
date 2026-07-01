@@ -1618,6 +1618,28 @@ public:
             metrics_.dead_coercion_kept_for_debug_total.fetch_add(
                 dce.kept_for_debug_count(), std::memory_order_relaxed);
         }
+        // Issue #629: zero-overhead coercion path observability.
+        if (ts.castop_emitted() > 0) {
+            metrics_.coercion_castop_emitted_total.fetch_add(
+                ts.castop_emitted(), std::memory_order_relaxed);
+        }
+        if (dce.type_prop_hits() > 0) {
+            metrics_.coercion_type_prop_hits_total.fetch_add(
+                dce.type_prop_hits(), std::memory_order_relaxed);
+        }
+        const std::uint64_t narrow_hits_run =
+            dce.narrow_evidence_hits() + ts.narrow_evidence_skipped();
+        if (narrow_hits_run > 0) {
+            metrics_.coercion_narrow_evidence_hits_total.fetch_add(
+                narrow_hits_run, std::memory_order_relaxed);
+        }
+        const std::uint64_t zerooverhead_win_run =
+            dce.type_prop_hits() + dce.narrow_evidence_hits() +
+            ts.narrow_evidence_skipped();
+        if (zerooverhead_win_run > 0) {
+            metrics_.coercion_zerooverhead_win_total.fetch_add(
+                zerooverhead_win_run, std::memory_order_relaxed);
+        }
 
         if (ar.has_error()) {
             for (auto& d : ar.result().diagnostics) {
@@ -4708,6 +4730,15 @@ public:
             metrics_.dead_coercion_elapsed_us_total.load(std::memory_order_relaxed);
         s.dead_coercion_kept_for_debug_total =
             metrics_.dead_coercion_kept_for_debug_total.load(std::memory_order_relaxed);
+        // Issue #629: zero-overhead coercion path observability.
+        s.coercion_castop_emitted_total =
+            metrics_.coercion_castop_emitted_total.load(std::memory_order_relaxed);
+        s.coercion_type_prop_hits_total =
+            metrics_.coercion_type_prop_hits_total.load(std::memory_order_relaxed);
+        s.coercion_narrow_evidence_hits_total =
+            metrics_.coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed);
+        s.coercion_zerooverhead_win_total =
+            metrics_.coercion_zerooverhead_win_total.load(std::memory_order_relaxed);
         // Issue #487: dirty propagation + IR re-lower
         // observability. Mirror the 2 lifetime
         // counters and compute the derived trigger

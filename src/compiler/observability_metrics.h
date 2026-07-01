@@ -133,6 +133,21 @@ struct CompilerMetrics {
     // observability — lets the user see what the pass
     // would have done.
     std::atomic<std::uint64_t> dead_coercion_kept_for_debug_total{0};
+    // Issue #629: zero-overhead coercion path observability.
+    //   - coercion_castop_emitted_total: CastOps inserted by
+    //     TypeSpecializationWrap
+    //   - coercion_type_prop_hits_total: DCE Rule 1 elisions
+    //     (source type_id == target type_id)
+    //   - coercion_narrow_evidence_hits_total: DCE Rule 6
+    //     elisions, TypeSpec narrow_evidence branch skips,
+    //     and interpreter GuardShape narrow fast-path hits
+    //   - coercion_zerooverhead_win_total: per-pipeline-run
+    //     sum of type_prop_hits + narrow_evidence_hits (DCE)
+    //     + narrow_evidence_skipped (TypeSpec)
+    std::atomic<std::uint64_t> coercion_castop_emitted_total{0};
+    std::atomic<std::uint64_t> coercion_type_prop_hits_total{0};
+    std::atomic<std::uint64_t> coercion_narrow_evidence_hits_total{0};
+    std::atomic<std::uint64_t> coercion_zerooverhead_win_total{0};
     // Issue #487: dirty propagation + IR re-lower
     // observability. 2 lifetime counters:
     //   - should_relower_total: count of times

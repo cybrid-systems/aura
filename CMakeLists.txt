@@ -1078,6 +1078,10 @@ aura_add_issue_test(test_issue_433)
 aura_issue_test_link_llvm_jit(test_issue_433)
 aura_add_issue_test(test_issue_508)
 aura_issue_test_link_llvm_jit(test_issue_508)
+# Issue #629: zero-overhead coercion path — narrow_evidence DCE
+# Rule 6, TypeSpec skip, observability primitive, JIT pipeline.
+aura_add_issue_test(test_dead_coercion_elim_narrow_evidence_ir_jit_zerooverhead)
+aura_issue_test_link_llvm_jit(test_dead_coercion_elim_narrow_evidence_ir_jit_zerooverhead)
 # Issue #384: Bidirectional inference engine — first slice.
 # Additive check-mode plumbing in synthesize_flat_lambda (the
 # caller hands an expected function type when the arg is a

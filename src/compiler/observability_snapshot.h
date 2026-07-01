@@ -78,6 +78,12 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     // keep_for_debug was true. Lets users see what the pass
     // WOULD have eliminated.
     std::uint64_t dead_coercion_kept_for_debug_total = 0;
+    // Issue #629: zero-overhead coercion path observability.
+    // Mirrors the 4 lifetime counters in CompilerMetrics.
+    std::uint64_t coercion_castop_emitted_total = 0;
+    std::uint64_t coercion_type_prop_hits_total = 0;
+    std::uint64_t coercion_narrow_evidence_hits_total = 0;
+    std::uint64_t coercion_zerooverhead_win_total = 0;
     // Issue #487: dirty propagation + IR re-lower
     // observability. Mirrors the 2 lifetime
     // counters in CompilerMetrics. The derived
