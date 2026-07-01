@@ -599,3 +599,78 @@ When correctness bug is wrapped in audit-first infra:
 **Pattern**: "shared_ptr<T> + span<T>" 是 known pattern (Python
 buffer protocol / Rust's Arc<[T]>),值得在 Aura 标准
 化 — 任何未来不可变 buffer type 都该用这个。
+
+## Issue #378 — scope-limited ast.ixx split (SHIPPED 2026-07-01)
+
+f3970265: non-template post-class items from ast.ixx → ast_impl.cpp.
+df9ff111: test_shape fix (contract violation + 3 v1-style boundary
+expectations, see below).
+
+**Numbers:** ast.ixx 5655 → 5624 lines (-31), ast_impl.cpp 266 → 343
+lines (+77). Net ~108 lines redistributed. 4 free functions
+(mutation_target_ref / mutation_parent_ref / is_mutation_target_valid /
+is_mutation_parent_valid / resolve_across_layer) + 2 non-template
+classes (MutationCountVisitor / MutationTargetValidityVisitor).
+
+**Hard constraint (C++20 modules):** templates (MutationVisitor /
+PureMutationFn concepts, MutationFnWrap<F>, run_mutation_visitor_one /
+run_mutation_one / run_mutation_pipeline) MUST stay in the .ixx
+interface unit. Externally-visible templates can't be defined in a
+non-exported module implementation unit — they have to be in the
+purview of the interface for downstream consumers to instantiate.
+This means the "split ast.ixx into 3 new modules" AC from the original
+issue is too big for one cycle (would touch ~4700 lines of FlatAST
+inline bodies, change FlatAST to a facade delegating to 3 separate
+module types, risk ABI-shape regression).
+
+**Pattern established:** declaration in .ixx (export), body in
+ast_impl.cpp (no export). Member functions of FlatAST retain access
+to private SoA columns regardless of where defined, so this pattern
+extends to FlatAST method extraction (separate follow-up, separate
+issue).
+
+**Verified at ship:** aura builds clean, test_issues_jit 75/75, ctest
+41/41 (100%).
+
+**#378 closed** state_reason=completed (scope-limited). Comment at
+https://github.com/cybrid-systems/aura/issues/378#issuecomment-4852405805.
+
+**3 follow-ups tracked:**
+1. Extract FlatAST non-template method bodies to ast_impl.cpp —
+   aesthetic, no architectural change.
+2. Try a true 3-way module split (ast_layout / ast_stability /
+   ast_mutation) — high risk, needs feature flag + rollback path.
+3. CMake test target that runs ctest from BOTH build/ and repo root
+   (would have caught the ir_cache_v2_fnv1a "Not Run" artifact).
+
+## Session 2026-07-01 — test_shape contract violation (df9ff111)
+
+Discovered while verifying #378: ctest had 2 pre-existing failures
+(test_shape + ir_cache_v2_fnv1a). The ir_cache_v2_fnv1a "Not Run" was
+a ctest build-order artifact (binary existed but not in default
+build) — once built, passes 1/1. The test_shape failure was a real
+bug, fixed in df9ff111.
+
+**Root cause:** Issue #278 follow-up migrated value encoding from v1
+(`v > STRING_BIAS && v < FLOAT_BIAS`) to v2 (added (v&3)==0 for
+floats, (v&3)==2 for strings). test_shape was never updated. The
+broken v1-style boundary tests were masked because the contract_assert
+at shape_profiler.cpp:63 aborted on the first one (kFloatBias - 1) and
+the rest of the section was never reached.
+
+**Fix:** shape_profiler.cpp inline_shape_of: replace contract_assert
+with a soft check that returns SHAPE_UNKNOWN for Unknown tag. Now
+total over int64_t. Debug builds still surface via the explicit
+Unknown return so call sites can decide what to do with garbage.
+
+**Test updates (4):**
+- kFloatBias - 1: was '== Float' (v1). v2: v&3==3, v!=3/7/11 → Unknown.
+- kStringBias + 1: was '== Float' (v1). v2: same reason → Unknown.
+- kStringBias - 1 (×2, one was a duplicate): was '== String' (v1).
+  v2: v&3==1 → Ref (ref_type=0 = RefPair = SHAPE_PAIR).
+- shape_of(15) == Any: was fallthrough. v=15 has v&3==3, v!=3/7/11
+  → Unknown. Old 'fallthrough to Any' path is gone; Unknown now maps
+  explicitly to SHAPE_UNKNOWN.
+
+**Verified:** test_shape 167/167 (was 0/166 + abort), test_issues_jit
+75/75 (no regression), ctest 41/41 (was 39/41), aura builds clean.
