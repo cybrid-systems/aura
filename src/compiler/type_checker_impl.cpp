@@ -2603,7 +2603,20 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             std::min(ft.args.size(), v.children.size() > 1 ? v.children.size() - 1 : 0);
         for (std::size_t i = 0; i < n_expected; i++) {
             auto arg_id = v.child(i + 1);
-            TypeId arg_type = synthesize_flat(flat, pool, arg_id, flat.get(arg_id));
+            auto arg_v = flat.get(arg_id);
+            TypeId arg_type;
+            // Issue #384 (first slice): if this argument is itself a
+            // lambda, hand the expected argument type from the
+            // function signature directly to synthesize_flat_lambda
+            // so its params / return are constrained by the caller.
+            // For non-lambda args we keep the synthesize-only path
+            // (the existing arg/expected unification below still runs
+            // and produces the same end result — this is additive).
+            if (arg_v.tag == NodeTag::Lambda) {
+                arg_type = synthesize_flat_lambda(flat, pool, arg_v, ft.args[i]);
+            } else {
+                arg_type = synthesize_flat(flat, pool, arg_id, arg_v);
+            }
             // Issue #79: in strict mode, treat two ground types as a mismatch
             // unless they are equal (consistent_unify's gradual-core fallback
             // silently says Int ~ String is OK, which violates strict mode).
@@ -2748,10 +2761,40 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     return reg_.dynamic_type();
 }
 
-TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, NodeView v) {
+TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, NodeView v,
+                                                 TypeId expected_type) {
     // body = v.child(0), params = v.params (span of SymId)
     env_.push_scope();
     ownership_env_.push_scope();
+
+    // Issue #384 (first slice): bidirectional check-mode plumbing.
+    // If the caller passed a function-shaped expected type with the
+    // same arity as this lambda, extract its param / return types
+    // (after Union-Find normalization) so we can constrain the lambda's
+    // fresh vars directly. Dynamic / missing / wrong-arity expected
+    // types silently fall back to the synthesize-only path — the
+    // call-site unification in synthesize_flat_call will still run
+    // and produce the same end result, just via post-hoc constraint.
+    const FuncType* expected_ft = nullptr;
+    std::vector<TypeId> expected_args_norm;
+    TypeId expected_ret_norm{};
+    bool has_expected_ret = false;
+    if (expected_type.valid()) {
+        // Normalize first so we look through any Union-Find chains
+        // established by earlier synthesis in the same call.
+        auto norm = cs_.find(expected_type);
+        if (auto* ft = reg_.func_of(norm)) {
+            if (ft->args.size() == v.params.size()) {
+                expected_ft = ft;
+                expected_args_norm.reserve(ft->args.size());
+                for (auto a : ft->args)
+                    expected_args_norm.push_back(cs_.find(a));
+                expected_ret_norm = cs_.find(ft->ret);
+                has_expected_ret = true;
+            }
+        }
+    }
+
     std::vector<TypeId> param_types;
     for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
         auto sym = v.params[pi];
@@ -2783,6 +2826,20 @@ TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, 
                 } // compound type annotations (List :T) fall through to fresh_var
             }
         }
+        // No annotation: prefer the caller's expected arg type if it
+        // is concrete (not a fresh var and not Dynamic — those would
+        // collapse to Dynamic and lose polymorphism). Otherwise mint
+        // a fresh var as before. This is the additive plumbing
+        // described in issue #384 § "Strengthen check-mode propagation
+        // in Lambda branches".
+        if (!param_type.valid() && expected_ft != nullptr) {
+            auto exp = expected_args_norm[pi];
+            // Skip Dyn (would erase the boundary) and unresolved vars
+            // (those get constrained later via body / call unification
+            // — using a fresh var here keeps polymorphism alive).
+            if (exp != reg_.dynamic_type() && !reg_.is_var(exp))
+                param_type = exp;
+        }
         if (!param_type.valid())
             param_type = cs_.fresh_var_named(pname);
         param_types.push_back(param_type);
@@ -2792,6 +2849,13 @@ TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, 
     if (!v.children.empty()) {
         auto body_id = v.child(0);
         body_type = synthesize_flat(flat, pool, body_id, flat.get(body_id));
+    }
+    // Constrain the body's return against the caller's expected
+    // return type. Skip Dyn to preserve gradual boundaries; skip
+    // unresolved vars so we don't prematurely commit.
+    if (has_expected_ret && expected_ret_norm != reg_.dynamic_type() &&
+        !reg_.is_var(expected_ret_norm)) {
+        cs_.consistent_unify(body_type, expected_ret_norm);
     }
     env_.pop_scope();
     return reg_.register_func(std::move(param_types), body_type);

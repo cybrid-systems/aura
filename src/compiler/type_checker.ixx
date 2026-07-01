@@ -692,7 +692,17 @@ private:
     aura::core::TypeId synthesize_flat_call(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                             aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_lambda(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                              aura::ast::NodeView v);
+                                              aura::ast::NodeView v,
+                                              // Issue #384: bidirectional check-mode plumbing
+                                              // (first slice). When the caller of this lambda
+                                              // knows the expected function type (e.g. the
+                                              // argument position in a typed call), threading
+                                              // it here lets the lambda's params and body
+                                              // return be constrained directly, instead of
+                                              // synthesizing fresh vars and only unifying
+                                              // post-hoc at the call site. Default-invalid
+                                              // preserves the existing synthesize-only path.
+                                              aura::core::TypeId expected_type = {});
     aura::core::TypeId synthesize_flat_if(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                           aura::ast::NodeId if_id, aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_let(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
