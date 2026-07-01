@@ -1342,6 +1342,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             make_string(oidx), make_string(sidx)));
     });
 
+    // Issue #577: query:adt-exhaustiveness-stats. Returns the sum
+    // of 4 Task2 ADT/match exhaustiveness + narrowing counters:
+    //   - exhaustiveness_checks: adt_exhaust_rechecks_total
+    //   - narrowing_hits_on_match: adt_occurrence_narrow_in_match_total
+    //   - stale_exhaustiveness_prevented: adt_stale_exhaust_prevented_total
+    //   - mutation_impact_on_adt: adt_variant_mutate_impacts_total
+    add("query:adt-exhaustiveness-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t checks = m->adt_exhaust_rechecks_total.load(
+            std::memory_order_relaxed);
+        const std::uint64_t narrow = m->adt_occurrence_narrow_in_match_total.load(
+            std::memory_order_relaxed);
+        const std::uint64_t stale = m->adt_stale_exhaust_prevented_total.load(
+            std::memory_order_relaxed);
+        const std::uint64_t impact = m->adt_variant_mutate_impacts_total.load(
+            std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(checks + narrow + stale + impact));
+    });
+
     // Issue #612: query:adt-match-exhaust-stats. Returns the
     // sum of 4 ADT/match post-mutation reliability counters:
     //   - adt_exhaust_rechecks_total

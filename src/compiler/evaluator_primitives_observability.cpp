@@ -470,6 +470,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:occurrence-narrow-stats",
             // Issue #576 — Task2 occurrence blame + provenance
             "query:occurrence-blame-stats",
+            // Issue #577 — Task2 ADT exhaustiveness + match narrowing
+            "query:adt-exhaustiveness-stats",
             // Issue #551 — Reflect post-mutate
             "query:reflect-postmutate-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop

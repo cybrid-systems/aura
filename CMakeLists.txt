@@ -1970,6 +1970,9 @@ aura_issue_test_link_llvm_jit(test_issue_308)
 # Issue #612: ADT/match exhaustiveness post-mutation reliability.
 aura_add_issue_test(test_adt_match_exhaust_post_mutate_reliability)
 aura_issue_test_link_llvm_jit(test_adt_match_exhaust_post_mutate_reliability)
+# Issue #577: Task2 ADT exhaustiveness + incremental match matrix.
+aura_add_issue_test(test_adt_match_exhaustiveness_incremental_task2)
+aura_issue_test_link_llvm_jit(test_adt_match_exhaustiveness_incremental_task2)
 # Issue #309: hardware lossy-coercion diagnostics + 2 new
 # Aura primitives (compile:hw-coercion-lossy? +
 # -warning). Extends the #308 BitVector foundation with
