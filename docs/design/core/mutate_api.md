@@ -33,16 +33,21 @@ state.
 
 ## Supported sub-ops
 
-The Aura primitive currently routes only:
+The Aura primitive currently routes:
 
-| Sub-op | Lockless helper |
-|--------|-----------------|
-| `mutate:rebind` | `eval_flat_apply_mutate_rebind` |
-| `mutate:replace-value` | `eval_flat_apply_mutate_replace_value` |
-| `mutate:tweak-literal` | `eval_flat_apply_mutate_tweak_literal` |
+| Sub-op | Lockless helper | Status |
+|--------|-----------------|--------|
+| `mutate:rebind` | `eval_flat_apply_mutate_rebind` | #250 |
+| `mutate:replace-value` | `eval_flat_apply_mutate_replace_value` | #250 (stub: falls back to error) |
+| `mutate:tweak-literal` | `eval_flat_apply_mutate_tweak_literal` | #250 (stub: falls back to error) |
+| `mutate:remove-node` | `eval_flat_apply_mutate_remove_node` | **#396 Phase 2** |
+| `mutate:insert-child` | `eval_flat_apply_mutate_insert_child` | **#396 Phase 2** |
 
-Other mutate primitives return `batch-unsupported-op` rather than
-deadlocking on a nested guard.
+Other mutate primitives still return `batch-unsupported-op` rather than
+deadlocking on a nested guard. `mutate:replace-value` and
+`mutate:tweak-literal` are intentional stubs (would need lockless
+extraction from the wrapper primitives — the existing
+`eval_flat_apply_mutate_*` stubs are TODO and not part of #396 scope).
 
 ## Observability — `(atomic-batch:stats)`
 
@@ -55,6 +60,7 @@ deadlocking on a nested guard.
 | `rollback-count` | Rolled-back batches |
 | `ops-per-batch` | `ops-total / batch-count` (integer avg) |
 | `bumps-saved-total` | Per-op generation bumps suppressed by batching |
+| `executed-under-concurrent-fiber` | **#396 Phase 3** — commits that ran while the bridge fiber setter was active (heuristic for "ran under concurrent fiber pressure"). 0 in non-serve / test paths. |
 
 ### Reading `bumps-saved-total` for dashboards
 
@@ -93,6 +99,25 @@ Related integer shortcut (compiler snapshot): `(query:atomic-batch-stats)`.
 **When to prefer atomic batch:** AI multi-step self-edit loops where
 several mutations must appear together (rebind + replace + tweak) and
 downstream agents must not act on half-applied edits.
+
+## Fiber safety — Issue #396 Phase 1
+
+When a batch runs inside a fiber context, the bridge setter
+`g_fiber_set_yield_reason_mutation_boundary` is invoked on
+`MutationBoundaryGuard` entry. This sets the current fiber's
+`last_yield_reason_` to `MutationBoundary` (lightweight — does NOT
+actually yield), so work-stealing decisions (`Fiber::is_stealable()`)
+see the fiber as being at a mutation boundary.
+
+**Effect:** other fibers doing work-stealing during a batch will treat
+the batching fiber as stealable (the work-stealing scheduler
+distinguishes stealable `MutationBoundary` from non-stealable
+`BlockingIO` / `SchedulerSteal` reasons), which is the correct
+semantic — the batch's per-op mutations look like one atomic mutation
+boundary to the scheduler.
+
+In test-binary / non-serve paths, the bridge setter is null and the
+batch is a no-op for fiber state (no fiber scheduler running).
 
 **When weak per-op semantics still matter:** single mutations outside a
 batch still bump generation per op — use those when you want incremental

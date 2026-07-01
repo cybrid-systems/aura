@@ -1114,6 +1114,14 @@ aura_add_issue_test(test_issue_393)
 # pulls in JIT).
 aura_issue_test_link_llvm_jit_minimal(test_issue_393)
 
+# Issue #396: atomic-batch fiber safety + lockless helpers
+# (remove-node / insert-child) + new stats fields. Uses
+# CompilerService and the messaging bridge (for the
+# g_fiber_set_yield_reason_mutation_boundary mock setter in
+# AC1). Same link requirements as test_issue_393.
+aura_add_issue_test(test_issue_396)
+aura_issue_test_link_llvm_jit_minimal(test_issue_396)
+
 # Issue #326: Hygienic macros + EDSL integration coverage.
 # 8 scenarios extending test_issue_120/121 to integration
 # (CompilerService path, not parser-only). See

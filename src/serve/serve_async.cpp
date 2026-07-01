@@ -246,6 +246,20 @@ void run_serve_async(int num_workers) {
         }
     };
 
+    // Issue #396 Phase 1: lightweight yield-reason setter for
+    // (mutate:atomic-batch) Guard entry. Sets the current fiber's
+    // last_yield_reason_ to MutationBoundary WITHOUT actually
+    // yielding — this lets work-stealing decisions (is_stealable())
+    // see the fiber as being at a mutation boundary, but doesn't
+    // suspend it. Used by atomic-batch to make per-op mutations
+    // look like a single atomic mutation boundary to the scheduler.
+    aura::messaging::g_fiber_set_yield_reason_mutation_boundary = []() {
+        if (aura::serve::g_current_fiber) {
+            aura::serve::g_current_fiber->set_yield_reason(
+                aura::serve::YieldReason::MutationBoundary);
+        }
+    };
+
     // Register scheduler metrics callback (Issue #32):
     // Agents can call (orch:metrics) to get real-time scheduler stats.
     aura::messaging::g_get_scheduler_metrics = [&sched]() -> std::string {

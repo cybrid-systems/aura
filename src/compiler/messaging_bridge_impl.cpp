@@ -13,6 +13,9 @@ aura::messaging::FiberSpawnFn aura::messaging::g_fiber_spawn = nullptr;
 aura::messaging::FiberLookupFn aura::messaging::g_fiber_lookup = nullptr;
 aura::messaging::FiberYieldFn aura::messaging::g_fiber_yield = nullptr;
 aura::messaging::FiberYieldMutationFn aura::messaging::g_fiber_yield_mutation_boundary = nullptr;
+// Issue #396 Phase 1: lightweight yield-reason setter for
+// (mutate:atomic-batch) Guard entry.
+aura::messaging::FiberSetYieldReasonMutationFn aura::messaging::g_fiber_set_yield_reason_mutation_boundary = nullptr;
 aura::messaging::FiberJoinFn aura::messaging::g_fiber_join = nullptr;
 std::function<aura::messaging::SessionCreateFn>* aura::messaging::g_session_create = nullptr;
 aura::messaging::SessionListFn aura::messaging::g_session_list = nullptr;
