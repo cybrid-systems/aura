@@ -85,6 +85,27 @@ primitives_.add("my:primitive", [](std::span<const EvalValue> a) -> EvalValue {
 - 返回 `EvalValue`，用户错误用值通道（`make_merr` / `#f`），不要 throw
 - 构造器：`make_int` / `make_string` / `make_void` 等见 `value.ixx`
 
+### AI Agent Primitive Development Kit（Issue #480）
+
+注册时可附带 `PrimMeta`（`arity` / `pure` / `safety_flags` / `doc`），Agent 通过 `(primitive:describe name)` 与 `(query:primitive-list-with-meta)` 自省元数据。
+
+```cpp
+// 模板：lambda 骨架 + 参数校验 + 带 meta 注册
+primitives_.add(
+    "my:primitive",
+    [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() != 1 || !types::is_int(a[0]))
+            return make_void();
+        return make_int(types::as_int(a[0]) * 2);
+    },
+    PrimMeta{.arity = 1,
+             .pure = true,
+             .safety_flags = 0,
+             .doc = "Double an integer argument."});
+```
+
+`safety_flags`：`0x01` 修改 workspace、`0x02` IO 副作用、`0x04` fiber 敏感。`arity = 255` 表示可变参数。观测：`query:primitive-meta-stats`。
+
 ## §3 Mutate 锁协议
 
 `workspace_mtx_` 是 `std::shared_mutex`：

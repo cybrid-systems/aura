@@ -2055,6 +2055,9 @@ aura_add_issue_test(test_issue_478)
 aura_issue_test_link_llvm_jit(test_issue_478)
 # Issue #583: Primitives registry + core list/math consistency (stdlib).
 aura_add_issue_test(test_primitives_registry_core_consistency_583)
+# Issue #480: Self-describing primitive metadata + Agent extension kit.
+aura_add_issue_test(test_primitive_meta_self_describing_closed_loop_480)
+aura_issue_test_link_llvm_jit(test_primitive_meta_self_describing_closed_loop_480)
 aura_issue_test_link_llvm_jit(test_primitives_registry_core_consistency_583)
 # Issue #308: hardware BitVector type + 4 Aura primitives
 # (compile:hw-bitvec-register / -width / -signed? /

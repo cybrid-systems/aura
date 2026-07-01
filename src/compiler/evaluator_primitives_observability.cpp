@@ -22,6 +22,18 @@ using namespace types;
 
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
 
+    auto meta_to_pair = [&ev](const PrimMeta& m) -> EvalValue {
+        auto doc_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(m.doc);
+        auto pid1 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(m.safety_flags), make_string(doc_idx)});
+        auto pid2 = ev.pairs_.size();
+        ev.pairs_.push_back({make_bool(m.pure), make_pair(pid1)});
+        auto pid3 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(m.arity), make_pair(pid2)});
+        return make_pair(pid3);
+    };
+
     // (typecheck-status) — Returns the last mutate typecheck result.
     // Empty string = no errors, non-empty = last mutate caused type errors.
     add("typecheck-status", [&ev](const auto&) -> EvalValue {
@@ -69,6 +81,52 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         ev.string_heap_.push_back(ev.panic_safe_source_);
         return make_string(idx);
     });
+
+    // Issue #480: (primitive:describe name) — return PrimMeta as
+    // (arity . (pure . (safety-flags . doc-string))).
+    ev.primitives_.add(
+        "primitive:describe",
+        [&ev, meta_to_pair](const auto& a) -> EvalValue {
+            if (a.size() != 1 || !is_string(a[0]))
+                return make_void();
+            const auto& heap = ev.string_heap_;
+            const auto idx = as_string_idx(a[0]);
+            if (idx >= heap.size())
+                return make_void();
+            const auto& name = heap[idx];
+            const auto slot = ev.primitives_.slot_for_name(name);
+            if (slot >= ev.primitives_.slot_count())
+                return make_void();
+            ev.bump_primitive_describe_count();
+            return meta_to_pair(ev.primitives_.meta_for_slot(slot));
+        },
+        PrimMeta{.arity = 1,
+                 .pure = true,
+                 .doc = "Return metadata for a registered primitive by name."});
+
+    // Issue #480: (query:primitive-list-with-meta) — list of
+    // (name . meta-pair) for every registered primitive.
+    ev.primitives_.add(
+        "query:primitive-list-with-meta",
+        [&ev, meta_to_pair](const auto& a) -> EvalValue {
+            (void)a;
+            ev.bump_primitive_list_meta_count();
+            EvalValue result = make_void();
+            for (std::size_t slot = ev.primitives_.slot_count(); slot-- > 0;) {
+                const auto& name = ev.primitives_.name_for_slot(slot);
+                auto nidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(name);
+                auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(nidx), meta_to_pair(ev.primitives_.meta_for_slot(slot))});
+                auto wrap = ev.pairs_.size();
+                ev.pairs_.push_back({make_pair(pid), result});
+                result = make_pair(wrap);
+            }
+            return result;
+        },
+        PrimMeta{.arity = 0,
+                 .pure = true,
+                 .doc = "List every primitive with its PrimMeta pair."});
 
     // Issue #478: query:primitive-error-stats — returns a pair
     // (error-count . error-values-size) for Agent recovery loops.
@@ -579,6 +637,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:primitive-error-stats",
             // Issue #583 — Registry + core primitives hot-path stats
             "query:primitives-stats",
+            // Issue #480 — Self-describing primitive metadata closed loop
+            "query:primitive-meta-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
