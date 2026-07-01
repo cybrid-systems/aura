@@ -2,6 +2,16 @@
 
 **完整原语列表以代码为准**，不要依赖本页的静态枚举。
 
+> **Deprecation (Issue #393)**: 原始 `(query:children <id>)` /
+> `(query:parent <id>)` 返回裸 `NodeId`，跨 mutating 调用
+> 可能失效。AI agent 代码请改用
+> `(query:children-stable <id>)` /
+> `(query:parent-stable <id>)`（返回 `(id . gen)` pair）。
+> C++ 端请用 `FlatAST::children_stable()` / `parent_stable()`。
+> 详见 [design/core/stable_ref_best_practices.md](design/core/stable_ref_best_practices.md)
+> §“TL;DR — raw `query:children` / `query:parent` are deprecated”
+> 以及 §“Cross-mutate storage guidelines (Issue #393)”。
+
 ## 运行时查询
 
 ```scheme

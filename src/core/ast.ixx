@@ -4786,6 +4786,66 @@ public:
         return make_safe_ref(id, 0, fiber_id);
     }
 
+    // Issue #393: explicit (id, gen) pair construction. Use
+    // this when you have a `gen` value from an external
+    // source (a serialized StableNodeRef buffer, a
+    // cross-workspace handoff, or a manual annotation) and
+    // want to wrap it as a StableNodeRef without going
+    // through make_ref() / make_safe_ref(). Captures the
+    // current `mutation_id_at_capture`, `workspace_id`,
+    // `fiber_id`, `last_validated_generation`, and
+    // `wrap_epoch` from the FlatAST state — only the `id`
+    // and `gen` come from the caller's arguments.
+    //
+    // This is the C++ analog of `(query:children-stable)` /
+    // `(query:parent-stable)` for cases where the caller
+    // already knows the generation (e.g. a checkpoint file
+    // from a prior session, or a cross-workspace handoff).
+    [[nodiscard]] StableNodeRef make_ref_from_gen(NodeId id,
+                                                    std::uint16_t gen) const noexcept {
+        return StableNodeRef{id, gen, next_mutation_id_, 0, 0,
+                             gen, wrap_epoch_.load(std::memory_order_relaxed),
+                             subtree_generation(id)};
+    }
+
+    // Issue #393: flat-style validity check for callers that
+    // have an (id, gen) pair but don't want to allocate a
+    // StableNodeRef wrapper (e.g. in hot query primitives
+    // that read thousands of pairs from a side-vector).
+    // Returns true iff the slot at `id` is in-bounds AND its
+    // stored generation (node_gen_[id]) matches `gen` AND
+    // the FlatAST's wrap_epoch matches the captured epoch
+    // (passed as `wrap_epoch_at_capture`, default = current
+    // wrap_epoch_ which matches fresh captures).
+    //
+    // Does NOT consult generation_ — that's the whole
+    // point. The caller decides what gen counts as "valid"
+    // (typically the value they captured at, which may be
+    // older than the current global gen if they're using
+    // scoped ref tracking or a checkpoint file).
+    [[nodiscard]] bool is_valid_id_gen(NodeId id,
+                                        std::uint16_t gen,
+                                        std::uint32_t wrap_epoch_at_capture =
+                                            0 /* 0 = use current */) const noexcept {
+        if (id == NULL_NODE || id >= tag_.size() || id >= node_gen_.size())
+            return false;
+        if (node_gen_[id] != gen)
+            return false;
+        const auto we = (wrap_epoch_at_capture == 0)
+                            ? wrap_epoch_.load(std::memory_order_relaxed)
+                            : wrap_epoch_at_capture;
+        // Issue #368: catch second-wrap false positives. If
+        // the caller passed a specific wrap_epoch, check
+        // against the current one (mismatch = wrapped).
+        // If they passed 0 (default), use the current epoch
+        // (skip the check — fresh captures are always safe).
+        if (wrap_epoch_at_capture != 0
+            && wrap_epoch_at_capture != wrap_epoch_.load(std::memory_order_relaxed))
+            return false;
+        (void)we;
+        return true;
+    }
+
     // Issue #191: validation + safe get that take a StableNodeRef.
     // The ref's gen is compared to the FlatAST's current gen; if
     // they differ, the ref is stale (a structural mutation
