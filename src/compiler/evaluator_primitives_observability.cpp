@@ -511,6 +511,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:edsl-stability-stats",
             // Issue #553 — Atomic batch + mutation log
             "query:mutation-log-stats",
+            // Issue #400 — sym_id/structural rollback coverage
+            "query:mutation-rollback-coverage-stats",
             // Issue #554 — Pattern index timing (same name as #547; unified)
             // Issue #555 — Typed mutation Task1
             "query:typed-mutation-stats-task1",

@@ -1617,6 +1617,37 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             rollbacks + ws_commits + ws_bumps_saved + in_fiber_total));
     });
 
+    // Issue #400: query:mutation-rollback-coverage-stats. Returns
+    // the sum of 4 rollback-coverage observability counters
+    // spanning sym_id / structural / field-offset / batch paths
+    // (non-duplicative with #553 mutation-log-stats batch matrix
+    // and #369 per-theme structural tests):
+    //   - structural_success: structural_rollback_success
+    //     (children_/sym_id structural ops restored)
+    //   - structural_besteffort: structural_rollback_besteffort
+    //     (records needing full subtree restore)
+    //   - field_log_rollbacks: mutation_log_rollback_count_
+    //     (Guard boundary field_offset rollbacks incl. sym_id)
+    //   - batch_rollbacks: atomic_batch_rollbacks_
+    add("query:mutation-rollback-coverage-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const std::uint64_t structural_success =
+                ws ? ws->structural_rollback_success() : 0;
+            const std::uint64_t structural_besteffort =
+                ws ? ws->structural_rollback_besteffort() : 0;
+            const std::uint64_t field_log =
+                ev->get_mutation_log_rollback_count();
+            const std::uint64_t batch =
+                ev->atomic_batch_rollbacks();
+            return make_int(static_cast<std::int64_t>(
+                structural_success + structural_besteffort + field_log +
+                batch));
+        });
+
     // (query:mutation-log [n]) — Issue #346: returns
     // a pair-list of the most recent n mutations in
     // chronological order (oldest first). n defaults

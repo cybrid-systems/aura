@@ -1064,6 +1064,12 @@ aura_issue_test_link_llvm_jit_minimal(test_issue_264)
 aura_add_issue_test(test_issue_265)
 aura_add_issue_test(test_issue_266)
 aura_issue_test_link_llvm_jit(test_issue_266)
+# Issue #400: sym_id/structural rollback coverage closed loop.
+# 7 ACs: mutation-rollback-coverage-stats, sym_id + structural +
+# field_offset rollbacks, structural counter, multi-round monotonic
+# + regression. Non-duplicative with #266/#369/#553/#213.
+aura_add_issue_test(test_mutation_rollback_coverage_400)
+aura_issue_test_link_llvm_jit(test_mutation_rollback_coverage_400)
 aura_add_issue_test(test_issue_267)
 aura_add_issue_test(test_issue_484_minimal)
 aura_add_issue_test(test_issue_290)
