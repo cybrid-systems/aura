@@ -5369,6 +5369,28 @@ void refresh_adt_constructors_for_dirty_define_types(FlatAST& flat, const String
     refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, dirty_nodes, metrics);
 }
 
+void record_linear_ownership_mutation_metrics(void* metrics, bool revalidated,
+                                              const std::vector<OwnershipNote>& ownership_notes,
+                                              bool pass) {
+    if (!metrics)
+        return;
+    auto* m = static_cast<struct CompilerMetrics*>(metrics);
+    if (revalidated) {
+        m->linear_post_mutate_revalidations_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!pass) {
+        m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    for (const auto& note : ownership_notes) {
+        if (note.kind == "leaked-linear") {
+            m->linear_leak_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        } else if (note.kind == "use-after-move" || note.kind == "double-borrow" ||
+                   note.kind == "invalid-state") {
+            m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+}
+
 aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& flat,
                                                          const StringPool& pool, TypeRegistry& reg,
                                                          const aura::ast::MutationRecord& rec,
@@ -5413,10 +5435,16 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
     std::unordered_set<std::string> linear_bindings;
     discover_linear_bindings(flat, pool, dirty_nodes, linear_bindings);
     if (!linear_bindings.empty() && flat.root != NULL_NODE && flat.root < flat.size()) {
-        // The static function takes (flat, pool, root, dirty_bindings, notes).
-        // It walks the AST rooted at `root` and tracks state of every
-        // name in `dirty_bindings`. Notes are appended to notes_out.
-        OwnershipEnv::validate_ownership(flat, pool, flat.root, linear_bindings, notes_out);
+        const auto notes_before = notes_out.size();
+        const bool ownership_pass = OwnershipEnv::validate_ownership(
+            flat, pool, flat.root, linear_bindings, notes_out);
+        std::vector<OwnershipNote> ownership_notes;
+        if (notes_out.size() > notes_before) {
+            ownership_notes.assign(notes_out.begin() + static_cast<std::ptrdiff_t>(notes_before),
+                                 notes_out.end());
+        }
+        record_linear_ownership_mutation_metrics(metrics, true, ownership_notes,
+                                                 ownership_pass);
     }
 
     // ── Occurrence-narrowing re-check on dirty nodes ─────────────

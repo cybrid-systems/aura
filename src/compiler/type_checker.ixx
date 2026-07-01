@@ -1305,6 +1305,12 @@ post_mutation_invariant_check(aura::ast::FlatAST& flat, const aura::ast::StringP
                               aura::core::TypeRegistry& reg, const aura::ast::MutationRecord& rec,
                               std::vector<OwnershipNote>& notes_out, void* metrics = nullptr);
 
+// Issue #610: bump linear ownership post-mutate observability
+// counters (revalidation, violations, leaks) into CompilerMetrics.
+export void record_linear_ownership_mutation_metrics(
+    void* metrics, bool revalidated, const std::vector<OwnershipNote>& ownership_notes,
+    bool pass);
+
 // Issue #612: re-sync TypeRegistry ADT constructor lists from
 // DefineType nodes in the dirty scope and invalidate cached
 // match exhaustiveness for affected ADT subject types.

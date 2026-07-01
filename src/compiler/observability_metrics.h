@@ -675,6 +675,21 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> hw_resource_reg_writes_{0};
     std::atomic<std::uint64_t> hw_resource_mem_access_{0};
     std::atomic<std::uint64_t> hw_resource_double_drive_{0};
+    // Issue #610: linear ownership post-mutation validation +
+    // runtime enforcement observability. Exposed via
+    // (query:linear-ownership-mutation-stats) primitive.
+    //   - linear_post_mutate_revalidations_total: OwnershipEnv
+    //     re-validate runs on dirty linear bindings after mutate
+    //   - linear_violations_caught_total: use-after-move,
+    //     double-borrow, invalid-state notes from re-validate
+    //   - linear_deopt_on_invalidate_total: invalidate_function
+    //     forced JIT/closure refresh after linear-site mutate
+    //   - linear_leak_prevented_total: leaked-linear bindings
+    //     caught before eval (compile-time guard)
+    std::atomic<std::uint64_t> linear_post_mutate_revalidations_total{0};
+    std::atomic<std::uint64_t> linear_violations_caught_total{0};
+    std::atomic<std::uint64_t> linear_deopt_on_invalidate_total{0};
+    std::atomic<std::uint64_t> linear_leak_prevented_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
