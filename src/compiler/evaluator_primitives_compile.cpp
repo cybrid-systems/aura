@@ -4188,8 +4188,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.workspace_flat_) return make_bool(false);
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (id >= ev.workspace_flat_->size()) return make_bool(false);
-        return make_bool(
-            ev.workspace_flat_->marker(id) == aura::ast::SyntaxMarker::MacroIntroduced);
+        return make_bool(ev.workspace_flat_->is_macro_introduced(id));
     });
 
     add("hygiene:allow-macro-mutate?", [&ev](const auto&) -> EvalValue {

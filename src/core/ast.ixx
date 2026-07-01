@@ -3814,6 +3814,27 @@ public:
         return id < marker_.size() ? marker_[id] : SyntaxMarker::User;
     }
 
+    // Issue #397: centralized hygiene check. Returns true iff
+    // the node at `id` was introduced by macro expansion (or by
+    // a structural transformation that respects the hygiene
+    // contract, such as mutate:extract-function). Out-of-bounds
+    // ids default to false (the marker() accessor returns User
+    // for those). Used by query:pattern + mutate:replace-subtree
+    // (and other primitives that need to distinguish user-written
+    // from macro-introduced code).
+    //
+    // Hygiene contract:
+    //   - MacroIntroduced nodes are query-visible (they appear
+    //     in (query:defines), (query:children), etc.) so the user
+    //     can introspect the expanded body.
+    //   - MacroIntroduced nodes are mutation-protected by default
+    //     (mutate:replace-subtree returns a hygiene error if you
+    //     try to overwrite one). This is provenance tracking +
+    //     hygiene, not full α-renaming at expansion time.
+    [[nodiscard]] bool is_macro_introduced(NodeId id) const noexcept {
+        return marker(id) == SyntaxMarker::MacroIntroduced;
+    }
+
     // ── Dirty tracking (incremental compilation) ───────────────
     //
     // Issue #188: per-node dirty bitmask. The dirty_ column is

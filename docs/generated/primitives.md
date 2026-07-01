@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**561** registrations scanned from `src/**/*.cpp`.
+**563** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 146 primitives (26%)
-- **core**: 177 primitives (32%)
-- **internal-observable**: 91 primitives (16%)
+- **core**: 177 primitives (31%)
+- **internal-observable**: 93 primitives (17%)
 - **convenience**: 147 primitives (26%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (91)
+## Query: (93)
 
 - `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:atomic-batch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -32,6 +32,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:children` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:children-stable` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:closure-env-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:coercion-zerooverhead-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:compiler-cache-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:compiler-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:def-use` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -72,6 +73,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:node` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:occurrence-narrowing-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stale-count` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stale?` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:orchestration-metrics` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -1002,7 +1004,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (91)
+### Internal observable (stats/counters) (93)
 
 - `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
@@ -1013,6 +1015,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:children` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:children-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:closure-env-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:coercion-zerooverhead-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:compiler-cache-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:compiler-incremental-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:def-use` — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -1053,6 +1056,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:node` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:occurrence-narrowing-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stale-count` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:occurrence-stale?` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:orchestration-metrics` — `src/compiler/evaluator_primitives_query.cpp`

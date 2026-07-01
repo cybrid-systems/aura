@@ -49,7 +49,7 @@ void Evaluator::tag_arity_index_insert_node(const aura::ast::FlatAST& flat,
     // (test fixture scenario).
     if (flat.root != aura::ast::NULL_NODE &&
         id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE &&
-        flat.marker(id) != aura::ast::SyntaxMarker::MacroIntroduced)
+        !flat.is_macro_introduced(id))
         return;
     const auto node = flat.get(id);
     const auto key = tag_arity_key(node.tag, node.children.size());
