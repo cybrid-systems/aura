@@ -1060,6 +1060,14 @@ aura_add_issue_test(test_issue_384)
 # JIT-linked service object files.
 aura_add_issue_test(test_issue_389)
 aura_issue_test_link_llvm_jit(test_issue_389)
+# Issue #392: scoped / per-subtree generation bumping for
+# precise StableRef invalidation. The test exercises
+# FlatAST's per-top-level-Define subtree_gen_ tracking +
+# is_valid_subtree() + 3 Aura primitives
+# ((compile:subtree-bump), (compile:subtree-generation),
+# (compile:subtree-bump-count)). Pure AST-level — no
+# compiler service or JIT linkage needed.
+aura_add_issue_test(test_issue_392)
 # Issue #326: Hygienic macros + EDSL integration coverage.
 # 8 scenarios extending test_issue_120/121 to integration
 # (CompilerService path, not parser-only). See

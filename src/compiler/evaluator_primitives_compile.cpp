@@ -3746,6 +3746,79 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (compile:subtree-bump subtree-root-id)
+    //   → int (1 = bumped, 0 = no-op)
+    //   Issue #392: scoped / per-subtree generation bumping.
+    //   Walks up from subtree-root-id to find the enclosing
+    //   top-level Define, then bumps that subtree's
+    //   subtree_gen_ counter. Also bumps the global
+    //   generation_ for backward compatibility with the
+    //   existing is_valid() path (which checks global gen).
+    //
+    //   The benefit of the scoped approach shows up via the
+    //   C++ is_valid_subtree() method: refs in OTHER
+    //   subtrees stay valid because their subtree_gen_ was
+    //   not bumped. Use (compile:subtree-generation id) to
+    //   read the per-subtree counter; (compile:subtree-bump-count)
+    //   to read the lifetime total.
+    //
+    //   subtree-root-id must be a NodeId (integer). Returns
+    //   1 if the bump happened, 0 if the id was out-of-range
+    //   or had no enclosing Define. Use this in long-running
+    //   EDSL loops that hold many StableRefs across subtree
+    //   boundaries — AI agent iteration, RTL/SV verification
+    //   flows, large SoC designs with thousands of defines.
+    add("compile:subtree-bump", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return ev.make_merr("bad-arg",
+                "usage: (compile:subtree-bump subtree-root-id)");
+        const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        const auto before = ev.workspace_flat_->subtree_bump_count();
+        ev.workspace_flat_->bump_generation_subtree(id);
+        const auto after = ev.workspace_flat_->subtree_bump_count();
+        return make_int(after > before ? 1 : 0);
+    });
+
+    // (compile:subtree-generation subtree-root-id)
+    //   → int (subtree generation, 0 = never bumped)
+    //   Issue #392: read the per-top-level-Define subtree
+    //   generation counter for the Define ancestor of
+    //   subtree-root-id. Returns 0 if there is no enclosing
+    //   Define or the id is out-of-range.
+    //
+    //   The subtree generation is bumped by
+    //   (compile:subtree-bump subtree-root-id) and by
+    //   FlatAST::bump_generation_subtree(). is_valid_subtree()
+    //   (C++) compares the captured subtree_gen_at_capture
+    //   against this counter.
+    add("compile:subtree-generation", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return ev.make_merr("bad-arg",
+                "usage: (compile:subtree-generation subtree-root-id)");
+        const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(
+            ev.workspace_flat_->subtree_generation(id)));
+    });
+
+    // (compile:subtree-bump-count)
+    //   → int (lifetime total of subtree-bump calls)
+    //   Issue #392: observability for the scoped-bump path.
+    //   Mirrors the C++ accessor FlatAST::subtree_bump_count().
+    //   Increments each time (compile:subtree-bump id) or
+    //   FlatAST::bump_generation_subtree() actually bumps a
+    //   subtree (excludes the no-op when the id has no
+    //   enclosing Define).
+    add("compile:subtree-bump-count", [&ev](const auto&) -> EvalValue {
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(
+            ev.workspace_flat_->subtree_bump_count()));
+    });
+
     // (compile:mutator-dispatch-stats)
     //   — Issue #501 follow-up #4: snapshot of the
     //   MutatorDispatchStats counters from aura.core.mutators.
