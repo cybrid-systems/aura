@@ -3690,14 +3690,22 @@ public:
             // Lowering returned empty — fall back to full re-lower.
             return false;
         }
+        // Capture dirty-block mask before clearing (Issue #611).
+        std::span<const std::uint8_t> dirty_blocks;
+        std::vector<std::uint8_t> dirty_copy;
+        if (func_idx < entry.block_dirty_per_func_.size()) {
+            dirty_copy = entry.block_dirty_per_func_[func_idx];
+            dirty_blocks = dirty_copy;
+        }
         // Run per-function passes (mirrors cache_define).
         {
             aura::compiler::ComputeKindWrap ck_pass;
             aura::compiler::ConstantFoldingWrap cf_pass;
             ck_pass.compute_function(new_func);
             cf_pass.fold_function(new_func);
-            // Issue #538: DCE after per-function post-mutate re-lower.
-            run_coercion_elim_on_function(new_func);
+            // Issue #538 / #611: DCE after per-function post-mutate
+            // re-lower; scoped to dirty blocks when mask matches.
+            run_coercion_elim_on_function(new_func, dirty_blocks);
         }
         // Bump the per-function re-lower counter.
         metrics_.relower_per_function_called_count.fetch_add(1, std::memory_order_relaxed);
@@ -6029,14 +6037,25 @@ private:
 
     // Issue #538: TypeSpecialization + DCE on one function after
     // post-mutate re-lower (incremental path).
-    void run_coercion_elim_on_function(aura::ir::IRFunction& func) {
+    //
+    // Issue #611: when dirty_blocks matches func.blocks.size(),
+    // DCE runs only on dirty blocks (TypeSpec still runs on the
+    // full function so Branch/successor casts are inserted).
+    void run_coercion_elim_on_function(aura::ir::IRFunction& func,
+                                       std::span<const std::uint8_t> dirty_blocks = {}) {
         const auto saved_id = func.id;
         aura::ir::IRModule mod;
         mod.functions.push_back(func);
         aura::compiler::TypeSpecializationWrap ts(&type_registry_);
         aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
         ts.run(mod);
-        dce.run_function(mod.functions[0]);
+        const bool dirty_dce =
+            !dirty_blocks.empty() && dirty_blocks.size() == mod.functions[0].blocks.size();
+        if (dirty_dce) {
+            dce.run_function(mod.functions[0], dirty_blocks);
+        } else {
+            dce.run_function(mod.functions[0]);
+        }
         func = std::move(mod.functions[0]);
         func.id = saved_id;
         accumulate_coercion_pass_metrics(ts, dce);

@@ -932,10 +932,22 @@ public:
     // Issue #538: per-function entry for incremental post-mutate
     // re-lower. Semantically equivalent to run() restricted to
     // one function.
-    void run_function(aura::ir::IRFunction& func) {
+    //
+    // Issue #611: when dirty_blocks is non-empty and matches
+    // func.blocks.size(), only dirty blocks are processed.
+    // Empty span means "all blocks" (full-function DCE).
+    void run_function(aura::ir::IRFunction& func,
+                      std::span<const std::uint8_t> dirty_blocks = {}) {
         if (keep_for_debug_)
             return;
+        const bool dirty_only =
+            !dirty_blocks.empty() && dirty_blocks.size() == func.blocks.size();
         for (auto& block : func.blocks) {
+            if (dirty_only) {
+                const auto bid = block.id;
+                if (bid >= dirty_blocks.size() || dirty_blocks[bid] == 0)
+                    continue;
+            }
             run_on_block(block);
         }
     }
