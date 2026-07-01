@@ -95,7 +95,7 @@ static std::optional<EvalValue> hygiene_protected_error(
     for (auto id : target_ids) {
         if (id == aura::ast::NULL_NODE || id >= flat.size())
             continue;
-        if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+        if (flat.is_macro_introduced(id)) {
             return mev("hygiene-protected",
                        "target node " + std::to_string(id) +
                            " was produced by a hygienic macro expansion; "
@@ -2199,7 +2199,7 @@ void register_mutate_primitives(
         }
 
         // ── Hygiene gate (Issue #142 AC) ─────────────────────
-        if (flat.marker(target) == SyntaxMarker::MacroIntroduced) {
+        if (flat.is_macro_introduced(target)) {
             ok = false;
             return mev("hygiene", "cannot mutate macro-introduced node");
         }

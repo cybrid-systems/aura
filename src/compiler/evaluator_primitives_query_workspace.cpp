@@ -982,7 +982,7 @@ void register_workspace_query_primitives(
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             if (limit >= 0 && emitted >= limit)
                 break;
-            if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+            if (flat.is_macro_introduced(id)) {
                 auto pid = ws.pairs.size();
                 ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
                 result = make_pair(pid);
@@ -1469,8 +1469,7 @@ void register_workspace_query_primitives(
             for (aura::ast::NodeId id : bucket) {
                 if (id >= flat.size())
                     continue;
-                if (!include_macro_introduced &&
-                    flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+                if (!include_macro_introduced && flat.is_macro_introduced(id)) {
                     // Issue #458: hygiene-skip stats.
                     ev.bump_macro_introduced_skipped_in_query();
                     continue;
@@ -1509,8 +1508,7 @@ void register_workspace_query_primitives(
             // Full walk (Kleene + ellipsis, or wildcard root).
             ev.bump_total_query_calls();
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-                if (!include_macro_introduced &&
-                    flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+                if (!include_macro_introduced && flat.is_macro_introduced(id)) {
                     ev.bump_macro_introduced_skipped_in_query();
                     continue;
                 }
@@ -1544,7 +1542,7 @@ void register_workspace_query_primitives(
                 // nodes.
                 if (flat.root != aura::ast::NULL_NODE &&
                     id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE &&
-                    flat.marker(id) != aura::ast::SyntaxMarker::MacroIntroduced)
+                    !flat.is_macro_introduced(id))
                     continue;
                 matcher.state.captures.clear();
                 matcher.state.depth = 0;

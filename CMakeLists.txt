@@ -1126,6 +1126,14 @@ aura_issue_test_link_llvm_jit_minimal(test_issue_393)
 aura_add_issue_test(test_issue_396)
 aura_issue_test_link_llvm_jit_minimal(test_issue_396)
 
+# Issue #397: centralize SyntaxMarker::MacroIntroduced
+# checks behind FlatAST::is_macro_introduced helper. 8
+# inline call sites refactored. Pure CompilerService tests
+# (no JIT-specific paths). Same link requirements as
+# test_issue_393.
+aura_add_issue_test(test_issue_397)
+aura_issue_test_link_llvm_jit_minimal(test_issue_397)
+
 # Issue #326: Hygienic macros + EDSL integration coverage.
 # 8 scenarios extending test_issue_120/121 to integration
 # (CompilerService path, not parser-only). See
