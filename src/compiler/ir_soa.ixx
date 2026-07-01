@@ -92,6 +92,24 @@ export struct IRFunctionSoA {
     // skip blocks whose cached IR is still valid.
     std::pmr::vector<std::uint8_t> block_dirty_;
 
+    // Issue #380: per-instruction dirty bitmask. Parallel to
+    // opcodes_ (one byte per instruction, indexed by the
+    // instruction index). 0 = clean, 1 = dirty.
+    //
+    // Mirrors the FlatAST per-node dirty column (issue #240):
+    //   - Both use 1 byte per element
+    //   - Both track "is this element's cached derivation
+    //     still valid after a mutation?"
+    //   - Both expose mark / clear / query / count
+    //
+    // When mark_block_dirty(block_id) is called, the cascade
+    // also marks every instruction in the block dirty (the
+    // whole block's cached IR needs re-lower). The smarter
+    // re-lower (follow-up) will consult is_instruction_dirty
+    // to skip re-emitting clean instructions within an
+    // otherwise-dirty block.
+    std::pmr::vector<std::uint8_t> instruction_dirty_;
+
     // Number of instructions currently stored
     std::size_t size() const { return opcodes_.size(); }
 
@@ -119,25 +137,34 @@ export struct IRFunctionSoA {
     // is_block_dirty() to skip re-lowering clean blocks.
 
     // Mark a single block dirty. Resizes the bitmask if
-    // needed (lazy resize on first call).
-    void mark_block_dirty(std::uint32_t block_id) {
-        if (block_id >= block_dirty_.size()) {
-            block_dirty_.resize(block_id + 1, 1);
-            return;
-        }
-        block_dirty_[block_id] = 1;
-    }
+    // needed (lazy resize on first call). Cascades to mark
+    // every instruction in the block dirty (Issue #380).
+    // Body defined outside the class (after BasicBlockSoA is
+    // complete) because the cascade needs to read
+    // `block.start_idx` / `block.end_idx`.
+    void mark_block_dirty(std::uint32_t block_id);
 
     // Mark all blocks dirty (used by mark_define_dirty for
     // a full invalidate). Cheaper than a loop of individual
-    // mark_block_dirty() calls.
+    // mark_block_dirty() calls. Also marks all instructions
+    // dirty (cascade).
     void mark_all_blocks_dirty() {
         for (auto& b : block_dirty_)
             b = 1;
+        // Issue #380: cascade the all-blocks invalidate to all
+        // instructions too. Same byte-per-element representation
+        // as the block mask; both go to 0xFF... no wait, 0x01.
+        for (auto& i : instruction_dirty_)
+            i = 1;
     }
 
     // Clear a single block's dirty flag (called by the
     // smarter-re-lower after re-lowering the block).
+    // Does NOT cascade to instructions — clearing a block
+    // is the "I just re-lowered this block, you can re-use
+    // it" signal, but the per-instruction dirty bits are
+    // independent (the smarter re-lower can clear individual
+    // instructions as it re-emits them).
     void clear_block_dirty(std::uint32_t block_id) {
         if (block_id < block_dirty_.size()) {
             block_dirty_[block_id] = 0;
@@ -167,6 +194,64 @@ export struct IRFunctionSoA {
     [[nodiscard]] const std::pmr::vector<std::uint8_t>& block_dirty_column() const noexcept {
         return block_dirty_;
     }
+
+    // Issue #380: per-instruction dirty tracking. Mirrors the
+    // per-block API above but at instruction granularity.
+    // Same byte-per-element representation, same semantics.
+
+    // Mark a single instruction dirty. Lazy resize on first
+    // call (matches per-block behavior).
+    void mark_instruction_dirty(std::uint32_t idx) {
+        if (idx >= instruction_dirty_.size()) {
+            instruction_dirty_.resize(idx + 1, 1);
+            return;
+        }
+        instruction_dirty_[idx] = 1;
+    }
+
+    // Mark all instructions dirty (full invalidate of
+    // per-instruction state). Used when a single mutation
+    // invalidates the entire function's instruction cache.
+    void mark_all_instructions_dirty() {
+        for (auto& i : instruction_dirty_)
+            i = 1;
+    }
+
+    // Clear a single instruction's dirty flag (called by
+    // the smarter-re-lower after re-emitting that instruction).
+    void clear_instruction_dirty(std::uint32_t idx) {
+        if (idx < instruction_dirty_.size()) {
+            instruction_dirty_[idx] = 0;
+        }
+    }
+
+    // Query: is this instruction dirty? Returns 0 (clean) for
+    // out-of-range idx (treat unknown as clean — consistent
+    // with the per-block behavior).
+    bool is_instruction_dirty(std::uint32_t idx) const {
+        if (idx >= instruction_dirty_.size())
+            return false;
+        return instruction_dirty_[idx] != 0;
+    }
+
+    // Query: number of currently-dirty instructions. Used
+    // by the observability primitive to surface "how much
+    // of this function needs re-lower" without walking the
+    // full column.
+    std::size_t dirty_instruction_count() const {
+        std::size_t n = 0;
+        for (auto i : instruction_dirty_)
+            if (i)
+                ++n;
+        return n;
+    }
+
+    // Issue #380: public read-only view of the per-instruction
+    // dirty bitmask for the observability layer.
+    [[nodiscard]] const std::pmr::vector<std::uint8_t>&
+    instruction_dirty_column() const noexcept {
+        return instruction_dirty_;
+    }
 };
 
 // ── BasicBlockSoA ─────────────────────────────────────────────
@@ -193,6 +278,33 @@ export struct BasicBlockSoA {
     std::uint32_t end_idx = 0;             // exclusive
     std::vector<std::uint32_t> successors; // block indices in same function
 };
+
+// Issue #380: define IRFunctionSoA::mark_block_dirty here (after
+// BasicBlockSoA is complete) so the cascade can read
+// `block.start_idx` and `block.end_idx`. Marked `inline` so
+// downstream importers get the same definition without ODR
+// violations.
+inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
+    if (block_id >= block_dirty_.size()) {
+        block_dirty_.resize(block_id + 1, 1);
+    } else {
+        block_dirty_[block_id] = 1;
+    }
+    // Issue #380: cascade to all instructions in the block.
+    // If the block doesn't exist yet (block_id out of
+    // range for blocks_), the loop is a no-op — the block
+    // bit itself is now set, which is the safe default.
+    if (block_id < blocks_.size()) {
+        const auto& block = blocks_[block_id];
+        for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+            if (i >= instruction_dirty_.size()) {
+                instruction_dirty_.resize(i + 1, 1);
+            } else {
+                instruction_dirty_[i] = 1;
+            }
+        }
+    }
+}
 
 // ── IRInstructionView ─────────────────────────────────────────
 //
@@ -261,6 +373,9 @@ export struct IRModuleV2 {
     // Add an instruction to a function. Appends one element to
     // each SoA column. The function index must be in range.
     // Returns the index of the newly added instruction.
+    // Issue #380: the instruction_dirty_ column gets a 0 byte
+    // appended (new instructions are clean — they were just
+    // added, no cached derivation to invalidate).
     std::uint32_t add_instruction(std::size_t func_idx, aura::ir::IROpcode opcode,
                                   std::array<std::uint32_t, 4> operands = {},
                                   std::uint32_t source_node_id = 0, std::uint32_t type_id = 0,
@@ -280,6 +395,10 @@ export struct IRModuleV2 {
         func.linear_ownership_states_.push_back(linear_state);
         func.adt_variant_ids_.push_back(adt_variant_id);
         func.narrow_evidence_.push_back(narrow_evidence);
+        // Issue #380: new instruction starts clean. The mark_*_dirty
+        // call later will flip this to 1 if the cached IR for this
+        // instruction needs re-derivation.
+        func.instruction_dirty_.push_back(0);
         return idx;
     }
 

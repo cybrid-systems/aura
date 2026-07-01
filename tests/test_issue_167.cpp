@@ -206,6 +206,156 @@ bool test_full_metadata() {
     return true;
 }
 
+// ── Test 7: Issue #380 per-instruction dirty tracking ──
+//
+// Mirrors the per-node dirty column on FlatAST (issue #240).
+// Same byte-per-element representation, same mark / clear /
+// query / count API. add_instruction initializes a clean
+// (0) byte; mark_instruction_dirty flips to 1; the observability
+// helpers (is_instruction_dirty, dirty_instruction_count,
+// instruction_dirty_column) expose the state.
+bool test_instruction_dirty_basic() {
+    PRINTLN("\n--- Test 7: per-instruction dirty tracking (Issue #380) ---");
+    aura::compiler::IRModuleV2 mod;
+    aura::compiler::IRFunctionSoA fn;
+    mod.functions.push_back(std::move(fn));
+
+    // Add 4 instructions, all start clean.
+    for (int i = 0; i < 4; ++i) {
+        mod.add_instruction(0, aura::ir::IROpcode::Nop, {});
+    }
+    auto& f = mod.functions[0];
+    CHECK(f.size() == 4, "function has 4 instructions");
+    CHECK(f.instruction_dirty_.size() == 4,
+          "instruction_dirty_ column is parallel to opcodes_");
+    CHECK(f.dirty_instruction_count() == 0,
+          "all 4 new instructions start clean");
+    CHECK(!f.is_instruction_dirty(0), "instruction 0 is clean");
+    CHECK(!f.is_instruction_dirty(3), "instruction 3 is clean");
+
+    // Mark 1 and 2 dirty (selective invalidation).
+    f.mark_instruction_dirty(1);
+    f.mark_instruction_dirty(2);
+    CHECK(!f.is_instruction_dirty(0), "instruction 0 still clean");
+    CHECK(f.is_instruction_dirty(1), "instruction 1 is dirty");
+    CHECK(f.is_instruction_dirty(2), "instruction 2 is dirty");
+    CHECK(!f.is_instruction_dirty(3), "instruction 3 still clean");
+    CHECK(f.dirty_instruction_count() == 2,
+          "dirty_instruction_count = 2 after selective mark");
+
+    // Clear instruction 1 (re-emit happy path).
+    f.clear_instruction_dirty(1);
+    CHECK(!f.is_instruction_dirty(1),
+          "instruction 1 is clean after clear_instruction_dirty");
+    CHECK(f.dirty_instruction_count() == 1,
+          "dirty_instruction_count = 1 after clear");
+
+    // Out-of-range query is clean (consistent with per-block
+    // is_block_dirty behavior — unknown = clean).
+    CHECK(!f.is_instruction_dirty(100),
+          "out-of-range idx returns clean (safe default)");
+
+    // Lazy resize: marking idx 10 dirty (beyond current size 4)
+    // grows the column to 11, FILLED WITH 1s — so the new
+    // 7 slots (4 → 11) are dirty by default. The semantically-
+    // safe default is "if you didn't know about it, treat it as
+    // dirty" (caller will pay the re-lower cost once, then
+    // clear). Total dirty count: 1 (the orig clear of #1) + 7
+    // (new slots) + 1 (idx 10) = 9. (Idx 1 was cleared earlier;
+    // idx 2 is dirty; idx 0,3 are within the resized range
+    // so they're 1 too.) Wait, the resize fills 1s into the NEW
+    // range [4, 11), not over existing 0..3. So after resize:
+    // 0,3 = 0 (untouched, lazy resize doesn't change them);
+    // 2 = 1 (from earlier mark); 4..10 = 1 (lazy fill); idx 10
+    // explicitly set to 1. Total dirty: {2, 4, 5, 6, 7, 8, 9, 10}
+    // = 8 dirty bits.
+    f.mark_instruction_dirty(10);
+    CHECK(f.instruction_dirty_.size() == 11,
+          "instruction_dirty_ grew to 11 on out-of-range mark");
+    CHECK(f.is_instruction_dirty(10), "instruction 10 is dirty");
+    CHECK(f.dirty_instruction_count() == 8,
+          "dirty count = 1 (orig #2) + 7 (lazy-fill 4..10) = 8");
+
+    // mark_all_instructions_dirty flips everything to 1.
+    f.mark_all_instructions_dirty();
+    CHECK(f.dirty_instruction_count() == 11,
+          "all 11 instructions are dirty after mark_all_instructions_dirty");
+    CHECK(f.is_instruction_dirty(0), "instruction 0 dirty after all");
+    CHECK(f.is_instruction_dirty(10), "instruction 10 dirty after all");
+    return true;
+}
+
+// ── Test 8: Issue #380 mark_block_dirty cascades to instructions ──
+//
+// When a block is marked dirty, every instruction in that
+// block's range should also be marked dirty. Out-of-range
+// block_id is safe (resizes block_dirty_ to 1, no-op on
+// instructions since blocks_ is empty).
+bool test_block_dirty_cascade() {
+    PRINTLN("\n--- Test 8: mark_block_dirty cascades to instructions ---");
+    aura::compiler::IRModuleV2 mod;
+    aura::compiler::IRFunctionSoA fn;
+    mod.functions.push_back(std::move(fn));
+
+    // Block 0: instructions 0, 1, 2
+    mod.add_block(0);
+    mod.add_instruction(0, aura::ir::IROpcode::ConstI64, {0, 1, 0, 0});
+    mod.add_instruction(0, aura::ir::IROpcode::ConstI64, {1, 2, 0, 0});
+    mod.add_instruction(0, aura::ir::IROpcode::Add, {2, 0, 1, 0});
+    mod.seal_block(0, 0);
+
+    // Block 1: instructions 3, 4
+    mod.add_block(0);
+    mod.add_instruction(0, aura::ir::IROpcode::ConstI64, {3, 3, 0, 0});
+    mod.add_instruction(0, aura::ir::IROpcode::Return, {3, 0, 0, 0});
+    mod.seal_block(0, 1);
+
+    auto& f = mod.functions[0];
+    CHECK(f.dirty_instruction_count() == 0,
+          "all 5 instructions start clean");
+    CHECK(f.dirty_block_count() == 0, "both blocks start clean");
+
+    // Mark block 0 dirty — should cascade to instructions 0, 1, 2.
+    f.mark_block_dirty(0);
+    CHECK(f.is_block_dirty(0), "block 0 is dirty");
+    CHECK(f.is_instruction_dirty(0), "instruction 0 dirty (block 0 cascade)");
+    CHECK(f.is_instruction_dirty(1), "instruction 1 dirty (block 0 cascade)");
+    CHECK(f.is_instruction_dirty(2), "instruction 2 dirty (block 0 cascade)");
+    CHECK(!f.is_instruction_dirty(3),
+          "instruction 3 NOT dirty (block 1 untouched)");
+    CHECK(!f.is_instruction_dirty(4),
+          "instruction 4 NOT dirty (block 1 untouched)");
+    CHECK(f.dirty_instruction_count() == 3,
+          "dirty_instruction_count = 3 (block 0's 3 instructions)");
+
+    // mark_all_blocks_dirty also cascades to all instructions.
+    // mark_block_dirty(1) first to grow block_dirty_ to cover
+    // both blocks (lazy-grown; mark_all_blocks_dirty iterates
+    // the existing size, not blocks_.size()).
+    f.mark_block_dirty(1);
+    f.mark_all_blocks_dirty();
+    CHECK(f.dirty_block_count() == 2, "both blocks dirty");
+    CHECK(f.dirty_instruction_count() == 5,
+          "all 5 instructions dirty after mark_all_blocks_dirty");
+
+    // clear_block_dirty does NOT cascade (the per-instruction
+    // mask is independent — smarter re-lower manages it).
+    f.clear_block_dirty(0);
+    CHECK(!f.is_block_dirty(0), "block 0 clean after clear");
+    CHECK(f.is_instruction_dirty(0),
+          "instruction 0 still dirty (clear_block doesn't cascade)");
+
+    // Out-of-range block_id: resizes block_dirty_ to block_id+1
+    // with 1s, no-op on instructions since blocks_[block_id]
+    // doesn't exist.
+    auto& f2 = mod.functions.emplace_back();
+    f2.mark_block_dirty(7);
+    CHECK(f2.is_block_dirty(7), "block 7 marked dirty via lazy resize");
+    CHECK(f2.dirty_instruction_count() == 0,
+          "no instruction cascade for non-existent block (safe)");
+    return true;
+}
+
 int run_tests() {
     std::println("═══ Issue #167 — IR layer SoA/DOD migration (Phase 1) ═══");
 
@@ -215,6 +365,8 @@ int run_tests() {
     test_view_size();
     test_block_ranges();
     test_full_metadata();
+    test_instruction_dirty_basic();
+    test_block_dirty_cascade();
 
     std::println("\n──────────────────────────────────────");
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
