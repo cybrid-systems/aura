@@ -2630,8 +2630,10 @@ public:
     void bump_cross_delta_conflicts_caught() const noexcept {
         cross_delta_conflicts_caught_.fetch_add(1, std::memory_order_relaxed);
     }
-    void bump_passes_skipped_type_dirty() const noexcept {
-        passes_skipped_type_dirty_.fetch_add(1, std::memory_order_relaxed);
+    void bump_passes_skipped_type_dirty(std::size_t n = 1) const noexcept {
+        if (n > 0) {
+            passes_skipped_type_dirty_.fetch_add(n, std::memory_order_relaxed);
+        }
     }
     void set_touched_roots_size(std::uint64_t v) const noexcept {
         touched_roots_size_.store(v, std::memory_order_relaxed);
@@ -4028,6 +4030,10 @@ public:
     // themselves.
     std::string run_typecheck_no_lock();
     bool run_typecheck_no_lock_bool();
+    // Issue #526: selective infer_flat_partial on the latest
+    // MutationRecord when the log is non-empty; full infer_flat
+    // fallback otherwise. Applies CoercionMap before return.
+    bool run_post_mutate_typecheck_no_lock();
 };
 
 

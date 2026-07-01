@@ -6052,6 +6052,15 @@ private:
         const bool dirty_dce =
             !dirty_blocks.empty() && dirty_blocks.size() == mod.functions[0].blocks.size();
         if (dirty_dce) {
+            std::size_t clean_blocks = 0;
+            for (auto b : dirty_blocks) {
+                if (b == 0)
+                    ++clean_blocks;
+            }
+            if (clean_blocks > 0) {
+                // Issue #526: DirtyAwarePass short-circuit observability.
+                evaluator_.bump_passes_skipped_type_dirty(clean_blocks);
+            }
             dce.run_function(mod.functions[0], dirty_blocks);
         } else {
             dce.run_function(mod.functions[0]);

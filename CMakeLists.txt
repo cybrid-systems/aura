@@ -1399,6 +1399,10 @@ aura_issue_test_link_llvm_jit(test_reflect_postmutate_guard_snapshot)
 # Non-duplicative with #536/#537/#526/#509/#518 (impl).
 aura_add_issue_test(test_incremental_typed_selfmod_dirty_narrowing)
 aura_issue_test_link_llvm_jit(test_incremental_typed_selfmod_dirty_narrowing)
+# Issue #526: dirty/epoch → type_checker selective recheck +
+# Pass short-circuit for typed self-mod soundness.
+aura_add_issue_test(test_incremental_type_dirty)
+aura_issue_test_link_llvm_jit(test_incremental_type_dirty)
 # Issue #518 P0 Phase 1: Post-Mutation Occurrence Typing
 # Re-Narrowing (reanalyze_occurrence_contexts +
 # propagate_narrowing_to_uses in infer_flat_partial).
