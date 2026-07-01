@@ -249,6 +249,82 @@ static_assert(string_idx_raw_v2(make_string_raw_v2(42)) == 42, "v2 roundtrip bro
 static_assert(string_idx_raw_v2(make_string_raw_v2(0xFFFFFULL)) == 0xFFFFFULL,
               "v2 roundtrip broke for idx=0xFFFFF");
 
+// ═══════════════════════════════════════════════════════════════════
+// Issue #613 — Float v2 encoding (parallel to string v2 above).
+//
+// The pre-#613 float encoding was `FLOAT_BIAS_VAL - idx` (idx not
+// shifted). With the v2 dispatch table (#571), the resulting low-2
+// bits depend on `idx % 4`:
+//   idx=0 → (v&3)=0 → dispatched as Fixnum/Float by range
+//   idx=1 → (v&3)=3 → dispatched as Special (and missed since
+//                       the value is not 3/7/11) → Unknown
+//   idx=2 → (v&3)=2 → dispatched as StringV2 (catastrophic — pool
+//                       index gets used as a string index, display
+//                       prints "<unknown>")
+//   idx=3 → (v&3)=1 → dispatched as Ref
+//
+// This is the source of the bash/integ regression
+// (test `float`: `(/ 7.0 2)` → "<unknown>" instead of "3.5"; 2.0
+// at idx=1 misclassified as Unknown → "/ 7.0 2.0" → "division
+// by zero" path because coerce_one on the idx=1 float returns 0
+// after the tag check fails).
+//
+// Fix: mirror the v2 string encoding. Subtract `idx << 2` so the
+// low 2 bits are always 0 (no collision with StringV2's
+// (v&3)==2, Special's (v&3)==3, or Ref's (v&3)==1). Pool capacity
+// drops from 2^62 to 2^60 (still plenty for any practical float
+// pool). FLOAT_BIAS_VAL_2 = FLOAT_BIAS_VAL since -10^16 already
+// has low 2 bits == 0 — no bias shift needed (unlike strings,
+// where STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2 to put the tag
+// in the low 2 bits).
+//
+// All float values now satisfy (v & 3) == 0, disjoint from:
+//   Ref   (v&3)==1
+//   StringV2 (v&3)==2
+//   Special (v&3)==3
+// The remaining collision is with fixnums (also (v&3)==0); the
+// range check `v <= FLOAT_BIAS_VAL_2 && v > STRING_BIAS_VAL_2`
+// disambiguates them.
+inline constexpr std::int64_t FLOAT_BIAS_VAL_2 = FLOAT_BIAS_VAL; // -10^16, low-2-bits = 0
+
+inline constexpr std::int64_t make_float_raw_v2(std::uint64_t idx) noexcept {
+    return FLOAT_BIAS_VAL_2 - static_cast<std::int64_t>(idx << 2);
+}
+inline constexpr bool is_float_raw_v2(std::int64_t v) noexcept {
+    return (v & 3) == 0 && v <= FLOAT_BIAS_VAL_2 && v > STRING_BIAS_VAL_2;
+}
+inline constexpr std::uint64_t float_idx_raw_v2(std::int64_t v) noexcept {
+    return static_cast<std::uint64_t>(FLOAT_BIAS_VAL_2 - v) >> 2;
+}
+
+// Compile-time guard: v2 helpers must produce disjoint tags.
+// If this fires, FLOAT_BIAS_VAL_2 lost its low-2-bits == 0 property
+// (it has to be 0 because we want the float range to overlap
+// with fixnums on (v&3)==0 — the range check disambiguates).
+static_assert((make_float_raw_v2(0) & 3) == 0, "v2 float encoding broke tag bits (idx=0)");
+static_assert((make_float_raw_v2(1) & 3) == 0, "v2 float encoding broke tag bits (idx=1)");
+static_assert((make_float_raw_v2(2) & 3) == 0, "v2 float encoding broke tag bits (idx=2)");
+static_assert((make_float_raw_v2(3) & 3) == 0, "v2 float encoding broke tag bits (idx=3)");
+static_assert((make_float_raw_v2(0xFFFFULL) & 3) == 0, "v2 float encoding broke tag bits (idx=0xFFFF)");
+
+// Roundtrip check at compile time: make then decode returns the
+// same idx. (Sanity guard against off-by-one in the shift.)
+static_assert(float_idx_raw_v2(make_float_raw_v2(0)) == 0, "v2 float roundtrip broke for idx=0");
+static_assert(float_idx_raw_v2(make_float_raw_v2(42)) == 42, "v2 float roundtrip broke for idx=42");
+static_assert(float_idx_raw_v2(make_float_raw_v2(0xFFFFFULL)) == 0xFFFFFULL,
+              "v2 float roundtrip broke for idx=0xFFFFF");
+
+// Disjoint-tag guard between v2 string and v2 float. A string
+// and a float must never collide on (v&3). Strings: (v&3)==2;
+// floats: (v&3)==0. Sanity check via the range: floats at idx N
+// are always > STRING_BIAS_VAL_2 (so they can't accidentally
+// be in the string range) and < FLOAT_BIAS_VAL_2 (so they can't
+// be in the fixnum range above FLOAT_BIAS_VAL).
+static_assert(make_float_raw_v2(0) > STRING_BIAS_VAL_2,
+              "v2 float upper bound is in string range (collision)");
+static_assert(make_string_raw_v2(0) <= STRING_BIAS_VAL_2,
+              "v2 string lower bound is above string range (collision)");
+
 // Issue #571: full tagged-value classification with v2 string
 // range check + float/fixnum disambiguation. Bumps dispatch hit/
 // miss counters for observability via (query:value-dispatch-stats).
@@ -256,6 +332,12 @@ static_assert(string_idx_raw_v2(make_string_raw_v2(0xFFFFFULL)) == 0xFFFFFULL,
 // Order matters: fixnums use (v<<1) so val=2,6,10… have (v&3)==2
 // but are NOT strings — string-v2 requires (v&3)==2 AND
 // v <= STRING_BIAS_VAL_2 (the v2 range guard from #181).
+//
+// Floats (v2 encoding, Issue #613) have (v&3)==0 and live in
+// [STRING_BIAS_VAL_2, FLOAT_BIAS_VAL_2]. They share (v&3)==0
+// with fixnums but are disjoint on the range (fixnums are
+// v > FLOAT_BIAS_VAL_2). The float range check uses
+// is_float_raw_v2 for clarity.
 inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
     if ((v & 3) == 3) {
         if (v == 3 || v == 7 || v == 11) {
@@ -277,7 +359,7 @@ inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
         record_value_dispatch_hit();
         return EvalValueTag::Fixnum;
     }
-    if (v <= FLOAT_BIAS_VAL && v > STRING_BIAS_VAL_2) {
+    if (is_float_raw_v2(v)) {
         record_value_dispatch_hit();
         return EvalValueTag::Float;
     }

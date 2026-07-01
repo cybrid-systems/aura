@@ -555,7 +555,8 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
     int is_bool   = (val == 3 || val == 7);
     int is_string = (val <= (int64_t)-9000000000000000000LL);
     int is_fixnum = ((val & 1) == 0 && val > (int64_t)-10000000000000000LL);
-    int is_float  = (val <= (int64_t)-10000000000000000LL &&
+    // Issue #613: v2 float encoding — (v&3)==0 + range check.
+    int is_float  = (((val & 3) == 0) && val <= (int64_t)-10000000000000000LL &&
                      val > (int64_t)-9000000000000000000LL);
 
     switch (type_tag) {
@@ -630,14 +631,24 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
 static int g_prim_reg_count = 0;
 
 // ── Float pool operations ──────────────────────────────
-#define IS_FLOAT(v)  (((v) <= FLOAT_BIAS) && ((v) > STRING_BIAS_AREA))
-#define FLOAT_IDX(v) ((int)(-(int64_t)(v) - 10000000000000000LL))
+// Issue #613: v2 float encoding. Pre-#613 the encoding was
+// `FLOAT_BIAS - idx` (no shift), which interleaved (v&3) values
+// across all 4 tag slots once the v2 dispatch table (#571) was
+// introduced. With the v2 shift, every encoded float has (v&3)==0
+// (same shape as fixnums; the range check disambiguates). The
+// pool index is stored shifted left by 2, so the max idx drops
+// from 2^62 to 2^60 — still plenty.
+#define FLOAT_BIAS_V2  (-10000000000000000LL)  // low-2-bits == 0
+#define IS_FLOAT(v)  (((v) <= FLOAT_BIAS_V2) && ((v) > STRING_BIAS_AREA) && (((v) & 3) == 0))
+#define FLOAT_IDX(v) ((int)((-(int64_t)(v) - 10000000000000000LL) >> 2))
+#define MAKE_FLOAT_RAW(idx) (-10000000000000000LL - ((int64_t)(idx) << 2))
 
 static double* float_pool = NULL;
 static int float_count = 0;
 static int float_capacity = 0;
 
 double aura_float_ref(int64_t val) {
+    if (!IS_FLOAT(val)) return 0.0;
     int idx = FLOAT_IDX(val);
     if (idx >= 0 && idx < float_count)
         return float_pool[idx];
@@ -652,8 +663,9 @@ int64_t aura_alloc_float(double d) {
         float_pool = new_pool;
         float_capacity = new_cap;
     }
-    float_pool[float_count++] = d;
-    return -10000000000000000LL - (int64_t)(float_count - 1);
+    int idx = float_count++;
+    float_pool[idx] = d;
+    return MAKE_FLOAT_RAW(idx);
 }
 
 // Issue #136: Reset string and float pools for session isolation.
