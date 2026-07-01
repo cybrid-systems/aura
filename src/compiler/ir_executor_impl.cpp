@@ -1236,10 +1236,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (it != linear_heap_.end()) {
                             if (it->second.ref_count <= 0) {
                                 std::println(std::cerr, "error: mut-borrow of moved value");
+                                if (instr.linear_ownership_state != 0)
+                                    record_linear_runtime_safety(metrics_, true);
+                            } else {
+                                if (instr.linear_ownership_state != 0)
+                                    record_linear_runtime_safety(metrics_, false);
                             }
                             locals[ops[0]] = it->second.value;
                         } else {
                             std::println(std::cerr, "error: mut-borrow of consumed value");
+                            if (instr.linear_ownership_state != 0)
+                                record_linear_runtime_safety(metrics_, true);
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {

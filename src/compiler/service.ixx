@@ -3302,6 +3302,10 @@ public:
         if (it != ir_cache_v2_.end()) {
             it->second.dirty = true;
             it->second.mark_all_blocks_dirty();
+            // Issue #598: post-mutate linear runtime enforcement hook
+            // on mutate:rebind / set-body paths (ir_cache_v2 dirty).
+            metrics_.linear_post_mutate_enforcements_total.fetch_add(
+                1, std::memory_order_relaxed);
         }
         // Issue #225 cycle 3: invalidate the bridge data for
         // the mutated function. The bridge_epoch_ field is
@@ -6541,6 +6545,11 @@ private:
         // invalidate — pairs with closure_stale_refresh for the
         // post-mutate linear runtime contract path.
         metrics_.linear_deopt_on_invalidate_total.fetch_add(
+            1, std::memory_order_relaxed);
+        // Issue #598: post-mutate runtime enforcement hook on
+        // invalidate_function — pairs with linear_deopt_on_invalidate
+        // so GuardShape/linear state re-validates after re-lower.
+        metrics_.linear_post_mutate_enforcements_total.fetch_add(
             1, std::memory_order_relaxed);
         // Issue #638: invalidate ShapeProfiler profiles so
         // GuardShape + linear_ownership_state re-specialize

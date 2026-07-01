@@ -959,6 +959,35 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 violations + deopt_mismatch + enforcements));
         });
 
+    // Issue #598: query:linear-ownership-runtime-stats. Returns the
+    // sum of 4 runtime linear enforcement counters spanning
+    // Interpreter/JIT hot-path + invalidate_function integration
+    // (non-duplicative with #638 safety-stats which omits invalidate
+    // deopt; #610 mutation-stats which includes revalidations/leaks):
+    //   - violations_caught: linear_violations_caught_total
+    //   - deopt_on_linear_mismatch: linear_deopt_on_mismatch_total
+    //   - post_mutate_enforcement_hits:
+    //     linear_post_mutate_enforcements_total
+    //   - deopt_on_invalidate: linear_deopt_on_invalidate_total
+    add("query:linear-ownership-runtime-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const auto* m = static_cast<const CompilerMetrics*>(
+                Evaluator::get_query_evaluator()->compiler_metrics());
+            if (!m) return make_int(0);
+            const std::uint64_t violations =
+                m->linear_violations_caught_total.load(std::memory_order_relaxed);
+            const std::uint64_t deopt_mismatch =
+                m->linear_deopt_on_mismatch_total.load(std::memory_order_relaxed);
+            const std::uint64_t enforcement_hits =
+                m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed);
+            const std::uint64_t deopt_invalidate =
+                m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed);
+            return make_int(static_cast<std::int64_t>(
+                violations + deopt_mismatch + enforcement_hits +
+                deopt_invalidate));
+        });
+
     // Issue #454: query:reflect-edsl-bridge-stats. Returns the
     // sum of 4 reflection-to-EDSL bridge observability counters:
     //   - schema_validation_pass_count_  (auto_validate hook)

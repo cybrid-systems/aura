@@ -1259,6 +1259,12 @@ aura_issue_test_link_llvm_jit(test_linear_ownership_post_mutate_validation_runti
 # multi-round matrix + regression. Non-duplicative with #610/#575/#531.
 aura_add_issue_test(test_linear_ownership_guardshape_post_mutate)
 aura_issue_test_link_llvm_jit(test_linear_ownership_guardshape_post_mutate)
+# Issue #598: Runtime linear ownership enforcement + invalidate hook.
+# 7 ACs: linear-ownership-runtime-stats, moved-linear pass, invalidate
+# deopt/enforcement bumps, leak violations, gc-heap, multi-round monotonic
+# + regression. Non-duplicative with #638/#610/#575.
+aura_add_issue_test(test_linear_ownership_runtime_enforcement_post_mutate)
+aura_issue_test_link_llvm_jit(test_linear_ownership_runtime_enforcement_post_mutate)
 # Issue #575: Task2 PerDefUse incremental linear ownership post-mutate.
 aura_add_issue_test(test_linear_ownership_incremental_post_mutate_task2)
 aura_issue_test_link_llvm_jit(test_linear_ownership_incremental_post_mutate_task2)

@@ -524,6 +524,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:linear-ownership-mutation-stats",
             // Issue #638 — Linear + GuardShape runtime safety post-mutate
             "query:linear-ownership-safety-stats",
+            // Issue #598 — Runtime linear enforcement + invalidate hook
+            "query:linear-ownership-runtime-stats",
             // Issue #575 — Task2 PerDefUse incremental linear ownership
             "query:linear-ownership-incremental-stats",
             // Pre-existing (Issue #288, #391, #447, #457, #459)
