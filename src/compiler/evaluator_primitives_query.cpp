@@ -31,6 +31,27 @@ static bool validate_code_against_schema_simple(const std::string& code,
                                                 std::string& violation_reason,
                                                 std::string& violation_field);
 
+// Issue #514: count MacroIntroduced nodes in the workspace marker column.
+static std::uint64_t workspace_marker_macro_introduced(Evaluator* ev) {
+    if (!ev)
+        return 0;
+    auto* ws = ev->workspace_flat();
+    if (!ws)
+        return 0;
+    std::uint64_t count = 0;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_macro_introduced(id))
+            ++count;
+    }
+    return count;
+}
+
+static std::uint64_t ir_inline_hygiene_skipped(Evaluator* ev) {
+    if (!ev || !ev->get_macro_hygiene_skipped_fn_)
+        return 0;
+    return ev->get_macro_hygiene_skipped_fn_();
+}
+
 void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                std::pmr::vector<std::string>& string_heap, void*& type_registry,
                                ModulePathResolver resolve_module_path, Evaluator& ev) {
@@ -921,6 +942,69 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(
             snapshots + pass + fail + dirty));
     });
+
+    // Issue #514: query:ir-hygiene-stats. Returns the sum of IR-level
+    // macro-hygiene observability counters (Top 1 — AST→IR propagation):
+    //   - InlinePass macro_hygiene_skipped_ (call sites skipped because
+    //     source_marker == MacroIntroduced && respect_macro_hygiene_)
+    //   - marker_macro_introduced_count (workspace SyntaxMarker column)
+    add("query:ir-hygiene-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t inline_skipped = ir_inline_hygiene_skipped(ev);
+        const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+        return make_int(static_cast<std::int64_t>(inline_skipped + markers));
+    });
+
+    // Issue #514: query:pattern-marker-stats. Returns the sum of
+    // query-side marker/hygiene counters (Top 1 — query matcher):
+    //   - macro_introduced_skipped_in_query_  (default :respect-hygiene)
+    //   - hygiene_violation_count_
+    //   - marker_macro_introduced_count  (workspace subtree marker tally)
+    add("query:pattern-marker-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t skips = ev->get_macro_introduced_skipped_in_query();
+        const std::uint64_t violations = ev->get_hygiene_violation_count();
+        const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+        return make_int(static_cast<std::int64_t>(
+            skips + violations + markers));
+    });
+
+    // Issue #514: query:task6-production-readiness-stats. Returns the
+    // sum of 12 counters spanning the Task6 review Top 3 production
+    // gaps (non-duplicative synthesis of #547/#551/#550 themes):
+    //   Top1 hygiene/marker: skips + violations + inline_skipped + markers
+    //   Top2 Guard/reflect: mutation_impact + impact_snapshot + schema_pass
+    //                       + panic_commit
+    //   Top3 dirty/type: narrowing_refresh + passes_skipped + touched_roots
+    //                    + narrowing_dirty_recovery
+    add("query:task6-production-readiness-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t top1 =
+                ev->get_macro_introduced_skipped_in_query() +
+                ev->get_hygiene_violation_count() +
+                ir_inline_hygiene_skipped(ev) +
+                workspace_marker_macro_introduced(ev);
+            const std::uint64_t top2 =
+                ev->get_mutation_impact_count() +
+                ev->get_impact_snapshot_count() +
+                ev->get_schema_validation_pass_count() +
+                ev->get_panic_checkpoint_commit_count();
+            const std::uint64_t dirty_recovery =
+                m ? m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t top3 =
+                ev->get_narrowing_refresh_count() +
+                ev->get_passes_skipped_type_dirty() +
+                ev->get_touched_roots_size() + dirty_recovery;
+            return make_int(static_cast<std::int64_t>(top1 + top2 + top3));
+        });
 
     // Issue #619: query:macro-reflect-self-evo-followup-stats.
     // Returns the sum of 4 Task6 follow-up closed-loop counters:

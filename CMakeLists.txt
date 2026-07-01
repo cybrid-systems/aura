@@ -1492,6 +1492,13 @@ aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_full_matrix_task6)
 # Issue #619: Task6 macro+reflect+self-evo follow-up closed loop.
 aura_add_issue_test(test_macro_reflect_self_evo_closed_loop_task6_followup)
 aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_closed_loop_task6_followup)
+# Issue #514: Task6 Top 3 production-readiness closed loop (meta).
+# 8 ACs: ir-hygiene + pattern-marker + production-readiness stats,
+# macro→query hygiene → Guard mutate → dirty/type incremental,
+# multi-round monotonic + regression. Non-duplicative with #547/
+# #550/#551/#597/#619 (per-theme tests).
+aura_add_issue_test(test_task6_production_readiness_closed_loop_514)
+aura_issue_test_link_llvm_jit(test_task6_production_readiness_closed_loop_514)
 # Issue #602: Comprehensive fuzz + stress matrix for Prompt6
 # memory safety invariants (IRClosure/EnvFrame/bridge_epoch/
 # linear/GuardShape) under concurrent fiber + GC + multi-round
