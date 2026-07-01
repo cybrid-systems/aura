@@ -4867,8 +4867,14 @@ public:
         // (the subtree_gen_ counter for the top-level Define
         // ancestor of `id`) so is_valid_subtree() can skip
         // invalidating refs in untouched subtrees.
+        //
+        // Backward-compat (Issue #303 Scenario 1): fiber_id and
+        // last_validated_generation both default to 0 here.
+        // last_validated_generation == 0 means "no validation
+        // history" — make_ref() captures don't imply validation.
+        // Callers that want provenance should use make_safe_ref().
         return StableNodeRef{id, generation_, next_mutation_id_, 0,
-                             0, generation_, wrap_epoch_.load(std::memory_order_relaxed),
+                             0, 0, wrap_epoch_.load(std::memory_order_relaxed),
                              subtree_generation(id)};
     }
 
@@ -4878,8 +4884,11 @@ public:
     // workspace.
     [[nodiscard]] StableNodeRef make_ref_in_layer(NodeId id, std::uint32_t workspace_id) const noexcept {
         // Issue #392: capture subtree_gen_at_capture too.
+        // Backward-compat: fiber_id and last_validated_generation
+        // both default to 0 (no fiber context, no validation
+        // history). Same convention as make_ref().
         return StableNodeRef{id, generation_, next_mutation_id_, workspace_id,
-                             0, generation_, wrap_epoch_.load(std::memory_order_relaxed),
+                             0, 0, wrap_epoch_.load(std::memory_order_relaxed),
                              subtree_generation(id)};
     }
 
