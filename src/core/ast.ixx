@@ -856,6 +856,22 @@ private:
     }
 
     [[nodiscard]] NodeId add_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
+        // Issue #399: pre-reserve the per-node "dirty"
+        // side-table columns to the upcoming size. The
+        // push_back(0) calls below would otherwise trigger
+        // occasional 2x reallocations during AI-driven
+        // structural mutations; reserving up-front makes
+        // them O(1) size updates and keeps the mark_dirty
+        // hot path free of any dirty_.resize() call. Also
+        // keeps the invariant dirty_.size() == tag_.size()
+        // explicit (not just implicit from push_back
+        // ordering).
+        const auto upcoming_size = static_cast<std::size_t>(tag_.size()) + 1;
+        dirty_.reserve(upcoming_size);
+        ppa_dirty_.reserve(upcoming_size);
+        verify_dirty_.reserve(upcoming_size);
+        verification_dirty_.reserve(upcoming_size);
+        macro_dirty_.reserve(upcoming_size);
         if (!free_list_.empty()) {
             auto id = free_list_.back();
             free_list_.pop_back();
@@ -3925,6 +3941,29 @@ public:
     // The `kGeneralDirty` bit is set automatically so existing
     // is_dirty() callers still see "this node needs work".
     //
+    // Issue #399: pre-reserve capacity for all the per-node
+    // "dirty" side-table columns (dirty_, ppa_dirty_,
+    // verify_dirty_, verification_dirty_, macro_dirty_) so
+    // that mark_dirty's resize() fallback is a no-op in the
+    // hot path. The automatic reserve in add_node keeps
+    // dirty_ in lockstep with tag_ for the normal growth
+    // path; this public helper lets external code (workspace
+    // bulk-loaders, snapshot/clone paths) reserve up-front
+    // for known-large ASTs without paying the amortized
+    // 2x reallocations.
+    //
+    // Idempotent: a second call with a smaller n is a no-op
+    // (std::vector::reserve only grows). The reservation is
+    // amortized O(1) across N add_node calls when called
+    // once with the final size.
+    void reserve_dirty(std::size_t n) noexcept {
+        dirty_.reserve(n);
+        ppa_dirty_.reserve(n);
+        verify_dirty_.reserve(n);
+        verification_dirty_.reserve(n);
+        macro_dirty_.reserve(n);
+    }
+
     // Issue #302: pre-Contract added so a NodeId out-of-bounds for
     // the current tag_ column is caught at the boundary instead of
     // silently growing dirty_ to ~4G (which would happen for
