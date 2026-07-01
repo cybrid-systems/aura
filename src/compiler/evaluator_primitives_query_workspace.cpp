@@ -1641,6 +1641,7 @@ void register_workspace_query_primitives(
                 {"narrow-evidence", make_int(static_cast<std::int64_t>(rec.narrow_evidence))},
                 {"capture-epoch", make_int(static_cast<std::int64_t>(rec.capture_epoch))},
                 {"record-id", make_int(static_cast<std::int64_t>(rec.record_id))},
+                {"stale", make_bool(rec.stale)},
             };
             // Push the strings to the heap.
             ws.string_heap.push_back(rec.predicate_src);

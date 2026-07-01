@@ -4965,6 +4965,18 @@ public:
         s.occurrence_blame_chain_complete_total =
             metrics_.occurrence_blame_chain_complete_total.load(
                 std::memory_order_relaxed);
+        // Issue #639: narrow blame + stale invalidation.
+        s.narrow_stale_caught_total =
+            metrics_.narrow_stale_caught_total.load(std::memory_order_relaxed);
+        s.narrow_blame_attached_total =
+            metrics_.narrow_blame_attached_total.load(std::memory_order_relaxed);
+        s.narrow_invalidation_post_mutate_total =
+            metrics_.narrow_invalidation_post_mutate_total.load(std::memory_order_relaxed);
+        if (auto* ws = evaluator_.workspace_flat()) {
+            s.narrow_invalidation_post_mutate_total += ws->narrow_invalidation_post_mutate_count();
+        }
+        s.narrow_safe_fallback_total =
+            metrics_.narrow_safe_fallback_total.load(std::memory_order_relaxed);
         // Issue #383: ConstraintSystem worklist +
         // consistent_unify observability. Mirror
         // the 3 lifetime counters in

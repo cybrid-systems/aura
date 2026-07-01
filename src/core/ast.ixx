@@ -1182,6 +1182,9 @@ std::pmr::vector<std::uint32_t> type_id_;
     // narrowing_count() accessors. The log is cleared on
     // full FlatAST reset, same lifecycle as mutation_log_.
     std::pmr::vector<NarrowingRecord> narrowing_log_;
+    // Issue #639: count of narrowing records marked stale by
+    // invalidate_narrowings_in_subtree (post-mutate invalidation).
+    std::uint64_t narrow_invalidation_post_mutate_ = 0;
     std::pmr::vector<std::uint32_t> node_first_mutation_;
     // Issue #320: per-node epoch tracking. Records the
     // last mutation_epoch_ at which this node was
@@ -4253,6 +4256,11 @@ public:
                 }
             }
         }
+        // Issue #639: invalidate narrowing provenance in the
+        // mutated subtree. Any mark_dirty_upward may affect
+        // predicate/if-context bindings downstream.
+        (void)invalidate_narrowings_in_subtree(
+            id, type_cache_generation_.load(std::memory_order_relaxed));
     }
 
     // Issue #336: optimized variant of mark_dirty_upward.
@@ -4548,6 +4556,61 @@ public:
     void record_narrowing(NarrowingRecord rec) {
         rec.record_id = narrowing_log_.size() + 1;
         narrowing_log_.push_back(std::move(rec));
+    }
+
+    // Issue #639: mark narrowing records stale when a mutation
+    // affects their if/cond subtree or capture_epoch is behind
+    // the current type-cache generation.
+    std::size_t invalidate_narrowings_in_subtree(NodeId root, std::uint64_t current_epoch) {
+        if (root == NULL_NODE || root >= tag_.size())
+            return 0;
+        std::unordered_set<NodeId> in_subtree;
+        std::vector<NodeId> stack;
+        stack.push_back(root);
+        while (!stack.empty()) {
+            const auto id = stack.back();
+            stack.pop_back();
+            if (id == NULL_NODE || id >= tag_.size())
+                continue;
+            if (!in_subtree.insert(id).second)
+                continue;
+            const auto v = get(id);
+            for (auto c : v.children)
+                stack.push_back(c);
+        }
+        std::size_t count = 0;
+        for (auto& rec : narrowing_log_) {
+            if (rec.stale)
+                continue;
+            if (in_subtree.count(rec.if_node) || in_subtree.count(rec.cond_node) ||
+                rec.capture_epoch < current_epoch) {
+                rec.stale = true;
+                ++count;
+            }
+        }
+        narrow_invalidation_post_mutate_ += count;
+        return count;
+    }
+
+    [[nodiscard]] bool has_stale_narrowing_for_if(NodeId if_id,
+                                                std::uint64_t current_epoch) const {
+        for (const auto& rec : narrowing_log_) {
+            if (rec.if_node == if_id && (rec.stale || rec.capture_epoch < current_epoch))
+                return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] std::size_t stale_narrowing_record_count() const {
+        std::size_t n = 0;
+        for (const auto& rec : narrowing_log_)
+            if (rec.stale)
+                ++n;
+        return n;
+    }
+
+    [[nodiscard]] std::uint64_t narrow_invalidation_post_mutate_count() const {
+        return narrow_invalidation_post_mutate_;
     }
 
     // Rollback a mutation by ID. Returns true if successful.
