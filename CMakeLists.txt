@@ -1586,6 +1586,9 @@ aura_issue_test_link_llvm_jit(test_prompt6_full_memory_safety_fuzz_stress)
 # #602/#597/#547/#531/#254 (per-theme tests).
 aura_add_issue_test(test_task4_highperf_full_hotpath_matrix)
 aura_issue_test_link_llvm_jit(test_task4_highperf_full_hotpath_matrix)
+# Issue #506: IR SoA + dirty-aware Pass hotpath adoption observability.
+aura_add_issue_test(test_soa_hotpath_adoption_506)
+aura_issue_test_link_llvm_jit(test_soa_hotpath_adoption_506)
 # Issue #571: EvalValue v2 encoding dispatch table + hot-path
 # Contracts matrix under AI mutate → eval → shape-classify.
 # 12 scenarios validating: consteval table, classify roundtrip,

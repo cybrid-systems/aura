@@ -1605,6 +1605,60 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             gc_skipped + gc_walk_skips + gc_waits));
     });
 
+    // Issue #506: query:soa-hotpath-adoption-stats. Returns the sum
+    // of 8 IR SoA + dirty-aware Pass Pipeline adoption counters
+    // spanning evaluator/lowering hot paths (#463 scaffold →
+    // production adoption; non-duplicative with #607 Task4
+    // matrix and compile:ir-soa-stats hash primitive):
+    //   - ir_soa_instructions_emitted_   (IRFunctionSoA dual-emit)
+    //   - ir_soa_functions_emitted_      (IRFunctionSoA functions)
+    //   - passes_skipped_type_dirty_     (DirtyAwarePass short-circuit)
+    //   - relower_skipped_entirely_count_ (incremental re-lower win)
+    //   - relower_per_function_called_   (per-fn SoA re-lower path)
+    //   - module_dirty_skips_            (clean module skip)
+    //   - linear_elide_count_            (SoA column fast path in Pass)
+    //   - cascade_body_only_count_       (targeted dirty cascade)
+    //
+    // P0: returns an integer = sum of all 8 counters.
+    // Follow-up: returns an 8-tuple so the AI Agent can compute
+    // dirty_skip_rate = passes_skipped / (passes_skipped + relower_called)
+    // and SoA adoption_ratio independently.
+    add("query:soa-hotpath-adoption-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(
+                ev->compiler_metrics());
+        const std::uint64_t ir_instr = m
+            ? m->ir_soa_instructions_emitted.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t ir_funcs = m
+            ? m->ir_soa_functions_emitted.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t passes_skip = ev->get_passes_skipped_type_dirty();
+        const std::uint64_t relower_skip = m
+            ? m->relower_skipped_entirely_count.load(
+                  std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t relower_per_fn = m
+            ? m->relower_per_function_called_count.load(
+                  std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t mod_skip = m
+            ? m->module_dirty_skips.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t linear_elide = m
+            ? m->linear_elide_count.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t cascade = m
+            ? m->cascade_body_only_count.load(std::memory_order_relaxed)
+            : 0;
+        return make_int(static_cast<std::int64_t>(
+            ir_instr + ir_funcs + passes_skip + relower_skip +
+            relower_per_fn + mod_skip + linear_elide + cascade));
+    });
+
     // Issue #607: query:task4-hotpath-safety-score. Returns
     // the sum of 6 Task4 high-perf hot-path positive indicators:
     //   - specialization_hits_         (shape/JIT fast path)
