@@ -460,6 +460,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #550 — Typed mutation + dirty impact
             "query:typed-mutation-stats",
             "query:dirty-impact",
+            // Issue #573 — Task2 solve_delta + narrowing incremental
+            "query:typed-incremental-stats",
             // Issue #608 — Incremental type reliability
             "query:type-incremental-stats",
             // Issue #628 — solve_delta clean-conflict safety

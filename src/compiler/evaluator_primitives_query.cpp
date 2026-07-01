@@ -613,6 +613,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             clean_conflicts + full_fallbacks + consistency + prevented));
     });
 
+    // Issue #573: query:typed-incremental-stats. Returns the sum
+    // of 4 Task2 incremental typed self-mod reliability counters:
+    //   - delta_conflicts_caught: cross_delta_conflicts_caught_
+    //   - narrowing_refresh_count: narrowing_refresh_count_
+    //   - local_recheck_hit_rate: selective_recheck_count_
+    //     (proxy for selective local re-check vs full solve)
+    //   - solve_delta_time_us: delta_solve_time_us (CompilerMetrics)
+    add("query:typed-incremental-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t conflicts = ev->get_cross_delta_conflicts_caught();
+        const std::uint64_t narrowing = ev->get_narrowing_refresh_count();
+        const std::uint64_t local_recheck = ev->get_selective_recheck_count();
+        const std::uint64_t solve_us =
+            m ? m->delta_solve_time_us.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(
+            conflicts + narrowing + local_recheck + solve_us));
+    });
+
     // Issue #608: query:type-incremental-stats. Returns the sum
     // of 4 incremental type reliability counters from
     // CompilerMetrics:
