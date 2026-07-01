@@ -590,6 +590,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             ev->get_touched_roots_size()));
     });
 
+    // Issue #628: query:solve-delta-safety-stats. Returns the sum
+    // of 4 solve_delta clean-constraint safety counters:
+    //   - clean_conflicts_detected: delta_conflict_detected_total
+    //   - full_solve_fallbacks: solve_delta_full_solve_fallback_total
+    //   - delta_vs_full_consistency: delta_conflict_reverify_total
+    //   - missed_conflict_prevented: delta_constraints_processed_total
+    add("query:solve-delta-safety-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t clean_conflicts =
+            m->delta_conflict_detected_total.load(std::memory_order_relaxed);
+        const std::uint64_t full_fallbacks =
+            m->solve_delta_full_solve_fallback_total.load(std::memory_order_relaxed);
+        const std::uint64_t consistency =
+            m->delta_conflict_reverify_total.load(std::memory_order_relaxed);
+        const std::uint64_t prevented =
+            m->delta_constraints_processed_total.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(
+            clean_conflicts + full_fallbacks + consistency + prevented));
+    });
+
     // Issue #608: query:type-incremental-stats. Returns the sum
     // of 4 incremental type reliability counters from
     // CompilerMetrics:
