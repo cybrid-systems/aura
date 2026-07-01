@@ -840,6 +840,19 @@ target_compile_options(stable_ref_bench PRIVATE -Wall
 target_link_libraries(stable_ref_bench PRIVATE stdc++ aura_test_objects aura-reflect)
 add_test(NAME stable_ref_bench COMMAND ./stable_ref_bench)
 
+# Issue #398: bench for the new zero-alloc
+# for_each_stable_child callback vs the old allocating
+# children_stable. Same shape as stable_ref_bench
+# (no JIT, just C++ module imports).
+add_executable(children_stable_bench tests/bench/children_stable_bench.cpp)
+set_property(TARGET children_stable_bench PROPERTY CXX_MODULE_STD ON)
+target_include_directories(children_stable_bench PRIVATE src)
+target_compile_options(children_stable_bench PRIVATE -Wall
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter)
+target_link_libraries(children_stable_bench PRIVATE stdc++ aura_test_objects aura-reflect)
+add_test(NAME children_stable_bench COMMAND ./children_stable_bench)
+
 # Issue #393 follow-up #3: production-scale variant of
 # stable_ref_bench. Same shape as the 1k bench, but
 # 10x the defines (1k → 10k nodes total) to verify the
@@ -1136,6 +1149,13 @@ aura_issue_test_link_llvm_jit_minimal(test_issue_396)
 # test_issue_393.
 aura_add_issue_test(test_issue_397)
 aura_issue_test_link_llvm_jit_minimal(test_issue_397)
+
+# Issue #398: optimize children_stable via zero-alloc
+# callback. Pure FlatAST tests + a single CompilerService
+# regression test for the Aura primitive. Minimal LLVM
+# JIT link (uses aura.compiler.service in AC6).
+aura_add_issue_test(test_issue_398)
+aura_issue_test_link_llvm_jit_minimal(test_issue_398)
 
 # Issue #326: Hygienic macros + EDSL integration coverage.
 # 8 scenarios extending test_issue_120/121 to integration

@@ -5700,6 +5700,59 @@ public:
         return out;
     }
 
+    // Issue #398: zero-allocation iteration over stable
+    // children. Equivalent to children_stable() but does NOT
+    // allocate a vector — each non-NULL child is delivered to
+    // the callback as a `StableNodeRef` (with the current
+    // generation_ captured at call time). The callback may
+    // return any type (typically void or a count).
+    //
+    // Use this in hot paths (AI Agent multi-round loops,
+    // production EDSL navigation) where the caller only needs
+    // to iterate once. For callers that need to store the
+    // refs (e.g. across mutation boundaries), use the
+    // allocating `children_stable()` instead.
+    //
+    // The callback signature: `void(StableNodeRef)`. Order
+    // matches the underlying children span (left-to-right
+    // = first-to-last child). NULL_NODE children are
+    // filtered out (same as children_stable()).
+    //
+    // Out-of-range ids are silently a no-op (no callback
+    // invocation, same as the allocating version's empty
+    // vector).
+    template <typename Fn>
+    void for_each_stable_child(NodeId id, Fn&& fn) const {
+        if (id >= children_.size())
+            return;
+        const auto& pcv = children_[id];
+        for (std::size_t i = 0; i < pcv.size(); ++i) {
+            auto cid = pcv[i];
+            if (cid == NULL_NODE)
+                continue;
+            fn(StableNodeRef{cid, generation_});
+        }
+    }
+
+    // Issue #398: count of non-NULL stable children. O(N)
+    // in the children span. Use to size a pre-allocated
+    // buffer if the caller wants to use the allocating
+    // children_stable() but pre-allocate the right size
+    // (currently children_stable() already does this via
+    // reserve, but the count is useful for callers that
+    // need the size before allocating).
+    [[nodiscard]] std::size_t stable_child_count(NodeId id) const noexcept {
+        if (id >= children_.size())
+            return 0;
+        const auto& pcv = children_[id];
+        std::size_t n = 0;
+        for (std::size_t i = 0; i < pcv.size(); ++i) {
+            if (pcv[i] != NULL_NODE)
+                ++n;
+        }
+        return n;
+    }
+
     NodeId root = NULL_NODE;
 
     // Issue #250: atomic-batch state. Placed at the end of the
