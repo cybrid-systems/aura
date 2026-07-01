@@ -853,6 +853,19 @@ target_compile_options(children_stable_bench PRIVATE -Wall
 target_link_libraries(children_stable_bench PRIVATE stdc++ aura_test_objects aura-reflect)
 add_test(NAME children_stable_bench COMMAND ./children_stable_bench)
 
+# Issue #399: bench for the mark_dirty no-resize strategy.
+# Measures wall-time stability of the mark_dirty hot path
+# after add_node's pre-reserve of the dirty side-table
+# columns. Pure AST bench, no JIT.
+add_executable(mark_dirty_bench tests/bench/mark_dirty_bench.cpp)
+set_property(TARGET mark_dirty_bench PROPERTY CXX_MODULE_STD ON)
+target_include_directories(mark_dirty_bench PRIVATE src)
+target_compile_options(mark_dirty_bench PRIVATE -Wall
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter)
+target_link_libraries(mark_dirty_bench PRIVATE stdc++ aura_test_objects aura-reflect)
+add_test(NAME mark_dirty_bench COMMAND ./mark_dirty_bench)
+
 # Issue #393 follow-up #3: production-scale variant of
 # stable_ref_bench. Same shape as the 1k bench, but
 # 10x the defines (1k → 10k nodes total) to verify the
@@ -1156,6 +1169,11 @@ aura_issue_test_link_llvm_jit_minimal(test_issue_397)
 # JIT link (uses aura.compiler.service in AC6).
 aura_add_issue_test(test_issue_398)
 aura_issue_test_link_llvm_jit_minimal(test_issue_398)
+
+# Issue #399: pre-reserve dirty side-table columns in
+# add_node to avoid the resize() in mark_dirty's hot
+# path. Pure AST-level tests (no CompilerService).
+aura_add_issue_test(test_issue_399)
 
 # Issue #326: Hygienic macros + EDSL integration coverage.
 # 8 scenarios extending test_issue_120/121 to integration
