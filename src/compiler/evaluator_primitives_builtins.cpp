@@ -142,12 +142,21 @@ Primitives::Primitives() {
         (void)a;
         return make_int(static_cast<std::int64_t>(std::time(nullptr)));
     };
-    // Populate ordered_names_ with all primitives registered directly via table_[]
+    // Populate ordered_names_ + default meta_ for ctor-registered builtins.
     for (auto& [name, _] : table_) {
         if (std::find(ordered_names_.begin(), ordered_names_.end(), name) == ordered_names_.end()) {
             ordered_names_.push_back(name);
+            meta_.push_back(PrimMeta{});
         }
     }
+    auto set_meta = [this](const char* name, PrimMeta meta) {
+        auto slot = slot_for_name(name);
+        if (slot < meta_.size())
+            meta_[slot] = std::move(meta);
+    };
+    set_meta("+", {.arity = 255, .pure = true, .doc = "Variadic addition."});
+    set_meta("-", {.arity = 255, .pure = true, .doc = "Variadic subtraction."});
+    set_meta("not", {.arity = 1, .pure = true, .doc = "Boolean negation."});
 }
 std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
     // The pre (!n.empty()) is on the declaration in evaluator.ixx.

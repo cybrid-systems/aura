@@ -1621,6 +1621,34 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             hot_hits));
     });
 
+    // Issue #480: query:primitive-meta-stats. Returns the sum of
+    // 6 self-describing primitive metadata counters spanning
+    // PrimMeta storage + describe/list primitives (non-duplicative
+    // with #583 primitives-stats registry hot-path and #478
+    // primitive-error-stats 2-tuple):
+    //   - registry_slots: primitives_.slot_count()
+    //   - documented_meta: slots with non-empty doc string
+    //   - describe_calls: primitive_describe_count_
+    //   - list_meta_calls: primitive_list_meta_count_
+    //   - primitive_errors: primitive_error_count_
+    //   - total_query_calls_: Agent meta-inspection activity
+    //
+    // P0: returns an integer = sum of all 6 counter groups.
+    add("query:primitive-meta-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t registry_slots = ev->get_primitive_slot_count();
+        const std::uint64_t documented = ev->get_primitive_documented_meta_count();
+        const std::uint64_t describes = ev->get_primitive_describe_count();
+        const std::uint64_t list_meta = ev->get_primitive_list_meta_count();
+        const std::uint64_t errors = ev->get_primitive_error_count();
+        const std::uint64_t queries = ev->get_total_query_calls();
+        return make_int(static_cast<std::int64_t>(
+            registry_slots + documented + describes + list_meta + errors +
+            queries));
+    });
+
     // Issue #602: query:prompt6-violation-count. Returns
     // the sum of 7 Prompt6 memory-safety violation counters
     // that must stay at 0 under production load:

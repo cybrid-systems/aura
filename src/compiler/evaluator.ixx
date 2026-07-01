@@ -65,14 +65,25 @@ public:
     explicit operator bool() const noexcept { return static_cast<bool>(fn_); }
 };
 
+// Issue #480: lightweight metadata for self-describing primitives.
+export struct PrimMeta {
+    std::uint8_t arity = 255;  // 255 = variadic
+    bool pure = true;
+    std::uint8_t safety_flags = 0;  // 0x01=mutates, 0x02=io, 0x04=fiber
+    std::string doc;
+};
+
 export class Primitives {
 public:
     Primitives();
     std::optional<PrimFn> lookup(const std::string& n) const pre(!n.empty());
     void add(const std::string& name, PrimFn fn) {
-        auto slot = ordered_names_.size();
+        add(name, std::move(fn), PrimMeta{});
+    }
+    void add(const std::string& name, PrimFn fn, PrimMeta meta) {
         table_[name] = std::move(fn);
         ordered_names_.push_back(name);
+        meta_.push_back(std::move(meta));
     }
     void set_string_heap(std::pmr::vector<std::string>* h) { string_heap_ = h; }
     std::span<const std::string> string_heap() const { return *string_heap_; }
@@ -81,6 +92,17 @@ public:
     const std::string& name_for_slot(std::size_t slot) const { return ordered_names_[slot]; }
     std::size_t slot_for_name(const std::string& name) const;
     std::size_t slot_count() const { return ordered_names_.size(); }
+    // Issue #480: metadata accessors for primitive:describe.
+    [[nodiscard]] const PrimMeta& meta_for_slot(std::size_t slot) const {
+        return meta_[slot];
+    }
+    [[nodiscard]] std::size_t documented_meta_count() const noexcept {
+        std::size_t n = 0;
+        for (const auto& m : meta_)
+            if (!m.doc.empty())
+                ++n;
+        return n;
+    }
 
 private:
     std::unordered_map<std::string, PrimFn> table_;
@@ -91,6 +113,7 @@ private:
     // (Phase 2.4.1 will move string contents inline).
     std::pmr::vector<std::string>* string_heap_ = nullptr;
     std::vector<std::string> ordered_names_;
+    std::vector<PrimMeta> meta_;
 };
 
 // Forward declaration: Evaluator is defined below.
@@ -2292,6 +2315,9 @@ private:
     // primitives_detail::make_primitive_error when a hotspot
     // primitive returns an error_values_ entry.
     std::atomic<std::uint64_t> primitive_error_count_{0};
+    // Issue #480: primitive metadata query counters.
+    std::atomic<std::uint64_t> primitive_describe_count_{0};
+    std::atomic<std::uint64_t> primitive_list_meta_count_{0};
     // Issue #456: mutation-impact observability. Bumped in
     // exit_mutation_boundary (success path) when the outermost
     // guard flushes. The deltas track: how many nodes were
@@ -2972,6 +2998,22 @@ public:
     }
     [[nodiscard]] std::atomic<std::uint64_t>* primitive_error_counter_ptr() noexcept {
         return &primitive_error_count_;
+    }
+    // Issue #480: primitive metadata observability.
+    [[nodiscard]] std::uint64_t get_primitive_describe_count() const noexcept {
+        return primitive_describe_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_primitive_list_meta_count() const noexcept {
+        return primitive_list_meta_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::size_t get_primitive_documented_meta_count() const noexcept {
+        return primitives_.documented_meta_count();
+    }
+    void bump_primitive_describe_count() noexcept {
+        primitive_describe_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_primitive_list_meta_count() noexcept {
+        primitive_list_meta_count_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] const ast::FlatAST* tag_arity_index_workspace() const noexcept {
         return tag_arity_index_workspace_;
