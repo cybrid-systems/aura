@@ -1545,6 +1545,9 @@ aura_issue_test_link_llvm_jit(test_task6_production_readiness_closed_loop_514)
 # Issue #520: Consolidated Top 5 production roadmap closed loop (meta).
 aura_add_issue_test(test_production_roadmap_closed_loop_520)
 aura_issue_test_link_llvm_jit(test_production_roadmap_closed_loop_520)
+# Issue #517: Consolidated 3-pillar production priority meta tracker.
+aura_add_issue_test(test_consolidated_production_priority_517)
+aura_issue_test_link_llvm_jit(test_consolidated_production_priority_517)
 # Issue #441: Consolidated compiler/runtime production-readiness closed loop
 # (meta). 7 ACs: compiler-runtime-production-readiness-stats synthesis,
 # P0 #438 fiber + #439 gc-safepoint + #440 EDSL + #437 verify-dirty pillars,
