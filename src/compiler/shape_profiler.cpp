@@ -60,7 +60,14 @@ ShapeID inline_shape_of(std::int64_t val) {
     using aura::compiler::types::ref_type;
 
     const EvalValueTag tag = classify_eval_value_tag(val);
-    contract_assert(tag != EvalValueTag::Unknown);
+    // Issue #378 follow-up: test_shape's v1-style boundary cases
+    // (kFloatBias - 1, kStringBias + 1, kStringBias - 1) hit values
+    // that have no valid v2 encoding (v&3 != 0 for floats, or v&3
+    // in a "gap" tag). The old contract_assert would abort; we now
+    // map Unknown → SHAPE_UNKNOWN so inline_shape_of is total. Debug
+    // builds still assert to catch unintentional calls with garbage.
+    if (tag == EvalValueTag::Unknown)
+        return finish_inline_shape_id(SHAPE_UNKNOWN);
 
     switch (tag) {
     case EvalValueTag::Fixnum:

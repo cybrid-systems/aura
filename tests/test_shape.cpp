@@ -92,25 +92,33 @@ int main() {
     TEST("shape_of(0) != Void", inline_shape_of(0) != SHAPE_VOID);
 
     // ── 2d: Float ────────────────────────────────────────────
-    // Float range: <= FLOAT_BIAS && > STRING_BIAS
+    // Float range: <= FLOAT_BIAS && > STRING_BIAS (v2 also requires v&3 == 0)
     TEST("shape_of(kFloatBias) == Float",
          inline_shape_of(kFloatBias) == SHAPE_FLOAT);
-    TEST("shape_of(kFloatBias - 1) == Float",
-         inline_shape_of(kFloatBias - 1) == SHAPE_FLOAT);
+    // Issue #378 follow-up: v1 encoding didn't check tag bits. v2
+    // requires v&3 == 0 for floats; kFloatBias - 1 has v&3 == 3, which
+    // is neither a fixnum nor a valid float → Unknown.
+    TEST("shape_of(kFloatBias - 1) == Unknown (v2 invalid tag)",
+         inline_shape_of(kFloatBias - 1) == SHAPE_UNKNOWN);
     TEST("shape_of(-50000000000000000) == Float",
          inline_shape_of(-50000000000000000LL) == SHAPE_FLOAT);
-    // Just above STRING_BIAS
-    TEST("shape_of(kStringBias + 1) == Float",
-         inline_shape_of(kStringBias + 1) == SHAPE_FLOAT);
+    // Just above STRING_BIAS — v1 thought this was float; v2 sees
+    // v&3 == 3 (not 3/7/11) → Unknown.
+    TEST("shape_of(kStringBias + 1) == Unknown (v2 invalid tag)",
+         inline_shape_of(kStringBias + 1) == SHAPE_UNKNOWN);
 
     // ── 2e: String ────────────────────────────────────────────
-    // String range: <= STRING_BIAS
+    // String range: <= STRING_BIAS (v2 also requires v&3 == 2)
     TEST("shape_of(kStringBias) == String",
          inline_shape_of(kStringBias) == SHAPE_STRING);
-    TEST("shape_of(kStringBias - 1) == String",
-         inline_shape_of(kStringBias - 1) == SHAPE_STRING);
-    TEST("shape_of(kStringBias - 1) == String",
-         inline_shape_of(kStringBias - 1) == SHAPE_STRING);
+    // Issue #378 follow-up: v1 encoding had v <= STRING_BIAS as the
+    // string range. v2 has tighter rules: v must have v&3 == 2 AND
+    // v <= STRING_BIAS_VAL_2. kStringBias - 1 has v&3 == 1, so it's
+    // classified as Ref (ref_type=0 = RefPair = SHAPE_PAIR).
+    TEST("shape_of(kStringBias - 1) == Pair (v2 ref via tag bits)",
+         inline_shape_of(kStringBias - 1) == SHAPE_PAIR);
+    TEST("shape_of(kStringBias - 1) == Pair (v2 ref via tag bits, dup)",
+         inline_shape_of(kStringBias - 1) == SHAPE_PAIR);
     TEST("shape_of(kStringBias - 100) == String",
          inline_shape_of(kStringBias - 100) == SHAPE_STRING);
 
@@ -144,8 +152,11 @@ int main() {
     // ── 2g: Fallthrough (Any) ─────────────────────────────────
     // All-zero value should be Int (fixnum 0)
     TEST("shape_of(0) != Any", inline_shape_of(0) != SHAPE_ANY);
-    // Invalid tag that doesn't match any
-    TEST("shape_of(15) == Any", inline_shape_of(15) == SHAPE_ANY);  // Special 3|1 = 15, not bool
+    // Issue #378 follow-up: v=15 has v&3 == 3 but is not 3/7/11,
+    // so classify_eval_value_tag returns Unknown → inline_shape_of
+    // returns SHAPE_UNKNOWN (was contract_assert abort before).
+    TEST("shape_of(15) == Unknown (v2 invalid tag)",
+         inline_shape_of(15) == SHAPE_UNKNOWN);
 
     // ═══════════════════════════════════════════════════════════
     // Section 3: compute_shape_id
