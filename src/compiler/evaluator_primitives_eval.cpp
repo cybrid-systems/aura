@@ -809,6 +809,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
         aura::compiler::TypeChecker tc(treg);
+        if (ev.compiler_metrics())
+            tc.set_metrics(ev.compiler_metrics());
 
         // 注入 declare-type 声明的自定义类型签名
         if (!ev.declared_type_sigs_.empty()) {

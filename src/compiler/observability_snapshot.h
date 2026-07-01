@@ -274,6 +274,11 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     std::uint64_t narrow_blame_attached_total = 0;
     std::uint64_t narrow_invalidation_post_mutate_total = 0;
     std::uint64_t narrow_safe_fallback_total = 0;
+    // Issue #627: bidirectional check-mode narrow observability.
+    std::uint64_t check_mode_narrow_hits_total = 0;
+    std::uint64_t synthesize_check_switch_count_total = 0;
+    std::uint64_t post_mutate_narrow_consistency_total = 0;
+    std::uint64_t stale_check_narrow_prevented_total = 0;
     // Issue #383: ConstraintSystem worklist + consistent_
     // unify observability. Mirrors the 3 lifetime
     // counters in CompilerMetrics.

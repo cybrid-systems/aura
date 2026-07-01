@@ -1503,8 +1503,9 @@ public:
         aura::compiler::TypeCheckWrap tc_pass;
         aura::diag::DiagnosticCollector diags;
         tc_pass.set_bidirectional_mode(bidirectional_mode_);
-        tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_,
-                                      diags);
+        tc_pass.check_before_lowering(
+            *flat_ptr, *pool_ptr, expanded_root, type_registry_, diags,
+            mutation_epoch_.load(std::memory_order_relaxed), &metrics_);
         {
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
@@ -1852,8 +1853,10 @@ public:
         {
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
-            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
-                                          diags);
+            tc_pass.set_bidirectional_mode(bidirectional_mode_);
+            tc_pass.check_before_lowering(
+                *flat_ptr, *pool_ptr, flat_ptr->root, type_registry_, diags,
+                mutation_epoch_.load(std::memory_order_relaxed), &metrics_);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -2040,8 +2043,10 @@ public:
         {
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
-            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
-                                          diags);
+            tc_pass.set_bidirectional_mode(bidirectional_mode_);
+            tc_pass.check_before_lowering(
+                *flat_ptr, *pool_ptr, flat_ptr->root, type_registry_, diags,
+                mutation_epoch_.load(std::memory_order_relaxed), &metrics_);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -2687,6 +2692,7 @@ public:
         tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
         // Issue #258: plumb metrics for solve_delta timing.
         tc.set_metrics(&metrics_);
+        tc.set_bidirectional_mode(bidirectional_mode_);
         // Issue #518: wire Evaluator narrowing counters to the
         // actual re-narrow path in infer_flat_partial.
         tc.set_on_narrowing_refresh(
@@ -4468,7 +4474,10 @@ public:
         {
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
-            tc_pass.check_before_lowering(flat, pool, expanded_root, type_registry_, diags);
+            tc_pass.set_bidirectional_mode(bidirectional_mode_);
+            tc_pass.check_before_lowering(
+                flat, pool, expanded_root, type_registry_, diags,
+                mutation_epoch_.load(std::memory_order_relaxed), &metrics_);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -4977,6 +4986,15 @@ public:
         }
         s.narrow_safe_fallback_total =
             metrics_.narrow_safe_fallback_total.load(std::memory_order_relaxed);
+        // Issue #627: bidirectional check-mode narrow observability.
+        s.check_mode_narrow_hits_total =
+            metrics_.check_mode_narrow_hits_total.load(std::memory_order_relaxed);
+        s.synthesize_check_switch_count_total =
+            metrics_.synthesize_check_switch_count_total.load(std::memory_order_relaxed);
+        s.post_mutate_narrow_consistency_total =
+            metrics_.post_mutate_narrow_consistency_total.load(std::memory_order_relaxed);
+        s.stale_check_narrow_prevented_total =
+            metrics_.stale_check_narrow_prevented_total.load(std::memory_order_relaxed);
         // Issue #383: ConstraintSystem worklist +
         // consistent_unify observability. Mirror
         // the 3 lifetime counters in

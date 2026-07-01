@@ -734,6 +734,21 @@ private:
                                               aura::core::TypeId expected_type = {});
     aura::core::TypeId synthesize_flat_if(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                           aura::ast::NodeId if_id, aura::ast::NodeView v);
+    // Issue #627: shared predicate memo/epoch resolution for
+    // synthesize_flat_if and check_flat If branches.
+    struct IfPredicateResolve {
+        std::optional<OccurrenceInfoFlat> occ;
+        bool stale_narrowing = false;
+    };
+    IfPredicateResolve resolve_if_predicate_occurrence(aura::ast::FlatAST& flat,
+                                                     aura::ast::StringPool& pool,
+                                                     aura::ast::NodeId if_id,
+                                                     aura::ast::NodeId cond_id,
+                                                     bool check_mode);
+    std::uint32_t compute_if_narrowing_evidence_mask(const aura::ast::FlatAST& flat,
+                                                     const aura::ast::StringPool& pool,
+                                                     aura::ast::NodeId cond_id,
+                                                     const OccurrenceInfoFlat& occ) const;
     aura::core::TypeId synthesize_flat_let(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                            aura::ast::NodeId node_id, aura::ast::NodeView v,
                                            bool is_rec);
@@ -974,6 +989,17 @@ export struct TypeChecker {
         return last_occurrence_refresh_count_;
     }
 
+    // Issue #283 follow-up #5 / #627: bidirectional-mode opt-out.
+    // Forwarded to InferenceEngine in infer_flat / infer_flat_partial.
+    void set_bidirectional_mode(bool b) noexcept { bidirectional_mode_ = b; }
+    [[nodiscard]] bool bidirectional_mode() const noexcept { return bidirectional_mode_; }
+
+    // Issue #627: narrowing evidence captured by the most recent
+    // infer_flat_partial call (for post-mutate lowering freshness).
+    [[nodiscard]] std::uint32_t last_partial_narrowing_evidence() const noexcept {
+        return last_partial_narrowing_evidence_;
+    }
+
     // Issue #130: cache hit rate (0.0 .. 1.0). Computed
     // as hits / (hits + misses + stale). Returns 0.0 if
     // no incremental checks have been done. Useful for
@@ -1105,6 +1131,12 @@ private:
     std::function<void()> on_narrowing_refresh_;
     std::function<void()> on_selective_recheck_;
     std::uint64_t last_occurrence_refresh_count_ = 0;
+
+    // Issue #283 follow-up #5 / #627: plumb bidirectional flag
+    // from CompilerService into per-call InferenceEngine instances.
+    bool bidirectional_mode_ = true;
+    // Issue #627: last narrowing evidence from infer_flat_partial.
+    std::uint32_t last_partial_narrowing_evidence_ = 0;
 
     // Issue #116: see last_coercions() / take_coercions() above.
     CoercionMap last_coercions_;
