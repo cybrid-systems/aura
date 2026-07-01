@@ -462,6 +462,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:dirty-impact",
             // Issue #608 — Incremental type reliability
             "query:type-incremental-stats",
+            // Issue #609 — Occurrence narrow post-mutate recovery
+            "query:occurrence-narrow-stats",
             // Issue #551 — Reflect post-mutate
             "query:reflect-postmutate-stats",
             // Issue #597 — Macro+reflect+self-evo combined loop

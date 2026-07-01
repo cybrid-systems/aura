@@ -1785,6 +1785,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                   stale_prevented));
     });
 
+    // Issue #609: query:occurrence-narrow-stats. Returns the sum
+    // of 4 post-mutation occurrence narrow recovery counters:
+    //   - narrow_recoveries: occurrence_stale_refreshes_total +
+    //     narrowing_reanalyzed_total (predicate re-analysis)
+    //   - blame_attached: narrow_blame_attached_total
+    //   - post_mutate_correctness: post_mutate_narrow_consistency_total
+    //   - stale_narrow_prevented: stale_check_narrow_prevented_total
+    add("query:occurrence-narrow-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const auto* m = static_cast<const CompilerMetrics*>(
+            Evaluator::get_query_evaluator()->compiler_metrics());
+        if (!m) return make_int(0);
+        const std::uint64_t narrow_recoveries =
+            m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed) +
+            m->narrowing_reanalyzed_total.load(std::memory_order_relaxed);
+        const std::uint64_t blame_attached =
+            m->narrow_blame_attached_total.load(std::memory_order_relaxed);
+        const std::uint64_t post_mutate_correctness =
+            m->post_mutate_narrow_consistency_total.load(std::memory_order_relaxed);
+        const std::uint64_t stale_narrow_prevented =
+            m->stale_check_narrow_prevented_total.load(std::memory_order_relaxed);
+        return make_int(static_cast<std::int64_t>(
+            narrow_recoveries + blame_attached + post_mutate_correctness +
+            stale_narrow_prevented));
+    });
+
     // Issue #537 / #518 Phase 2: query:occurrence-narrowing-stats.
     // Returns the sum of stale-refresh + blame-chain-complete
     // counters from CompilerMetrics (post-mutation re-narrow
