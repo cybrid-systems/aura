@@ -28,10 +28,10 @@ namespace aura_388_detail {
 
 using aura::compiler::CompilerService;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+// CHECK is provided by issue_test_harness.hpp (included above).
+// Do not redefine it here — under -Werror the redefinition is
+// fatal and breaks the whole build (pre-existing bug from the
+// import std migration, 8d3e42b7).
 
 // Helper: extract int value from inline-pass-stats hash. The
 // hash comes back via (compile:inline-pass-stats); we re-eval

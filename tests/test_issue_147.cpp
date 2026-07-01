@@ -123,7 +123,7 @@ void test_post_mutation_function_callable() {
     // aura.compiler.type_checker, this translation unit won't build.
     using Fn = ast::InvariantStatus (*)(ast::FlatAST&, const ast::StringPool&,
                                         core::TypeRegistry&, const ast::MutationRecord&,
-                                        std::vector<compiler::OwnershipNote>&);
+                                        std::vector<compiler::OwnershipNote>&, void*);
     Fn fn = &compiler::post_mutation_invariant_check;
     CHECK(fn != nullptr, "post_mutation_invariant_check address is non-null");
 }
