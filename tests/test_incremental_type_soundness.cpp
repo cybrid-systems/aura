@@ -1,4 +1,4 @@
-// test_incremental_type_soundness.cpp — Issue #466:
+// test_incremental_type_soundness.cpp — Issue #432 / #466:
 // solve_delta touched-root conflict detection + re-verify.
 //
 // AC1: cross-delta EQUAL conflicts detected without full solve
