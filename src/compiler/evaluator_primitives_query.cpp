@@ -1039,6 +1039,34 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             snapshots + pass + fail + dirty));
     });
 
+    // Issue #594: query:reflection-selfmod-stats. Returns the sum of
+    // 5 static-reflection + self-mod validation observability counters
+    // spanning the Task6 Guard post-mutate validate hook (#551) and
+    // mutate:* self-evolution paths (non-duplicative with #551
+    // reflect-postmutate 4-tuple and #454 reflect-edsl-bridge):
+    //   - post_mutate_validate_pass: schema_validation_pass_count_
+    //   - schema_violations_prevented: schema_validation_fail_count_
+    //   - validations_run proxy: impact_snapshot_count_ (Guard hook
+    //     invocations — each successful mutate triggers validate)
+    //   - mutation_impact_count_  (successful Guard self-mod transforms)
+    //   - guard_dirty_epoch_count_  (Guard + schema/type integration)
+    //
+    // P0: returns an integer = sum of all 5 counter groups.
+    // validations_run (pass + fail) is derivable by the Agent;
+    // follow-up returns a 5-tuple for independent pass-rate tracking.
+    add("query:reflection-selfmod-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const std::uint64_t pass = ev->get_schema_validation_pass_count();
+        const std::uint64_t fail = ev->get_schema_validation_fail_count();
+        const std::uint64_t snapshots = ev->get_impact_snapshot_count();
+        const std::uint64_t impact = ev->get_mutation_impact_count();
+        const std::uint64_t guard_epoch = ev->get_guard_dirty_epoch_count();
+        return make_int(static_cast<std::int64_t>(
+            pass + fail + snapshots + impact + guard_epoch));
+    });
+
     // Issue #514: query:ir-hygiene-stats. Returns the sum of IR-level
     // macro-hygiene observability counters (Top 1 — AST→IR propagation):
     //   - InlinePass macro_hygiene_skipped_ (call sites skipped because
