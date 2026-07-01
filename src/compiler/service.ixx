@@ -6542,6 +6542,10 @@ private:
         // post-mutate linear runtime contract path.
         metrics_.linear_deopt_on_invalidate_total.fetch_add(
             1, std::memory_order_relaxed);
+        // Issue #638: invalidate ShapeProfiler profiles so
+        // GuardShape + linear_ownership_state re-specialize
+        // after post-mutate shape/ownership change.
+        invalidate_shape(name);
 
         // Issue #59 Iter 3: acquire the Mutation Lock in exclusive mode.
         // A mutate:* that triggers this must drain any in-flight compile
@@ -6684,6 +6688,10 @@ private:
             // Issue #272 Cycle 2: re-bind dependent env via IR after re-lower.
             (void)bind_function_define_via_ir(ir_mod, dep_name);
         }
+
+        // Issue #638: propagate shape invalidation to dependents.
+        for (auto& dep_name : dependents)
+            invalidate_shape(dep_name);
 
         // Mark dependent modules dirty
         mark_module_dirty(name);
