@@ -909,6 +909,11 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             else
                 ok = consistent_unify(c.lhs, c.rhs);
             if (!ok) {
+                if (metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                    m->delta_conflict_detected_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
                 if (!touched_roots_.empty() && on_cross_delta_conflict_)
                     on_cross_delta_conflict_();
                 return SolveResult::CONFLICT;
@@ -1915,6 +1920,11 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
     if (incremental_delta_solve_ && preserve_cs)
         solve_status = cs_.solve_delta(&unresolved);
     else {
+        if (cs_.metrics_ && incremental_delta_record_) {
+            static_cast<struct CompilerMetrics*>(cs_.metrics_)
+                ->solve_delta_full_solve_fallback_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
         solve_status = cs_.solve(&unresolved);
         if (incremental_delta_record_)
             cs_.mark_clean();

@@ -1775,6 +1775,10 @@ aura_issue_test_link_llvm_jit(test_issue_409)
 # soundness (touched-root reverify + conflict metrics).
 aura_add_issue_test(test_incremental_type_soundness)
 aura_issue_test_link_llvm_jit(test_incremental_type_soundness)
+# Issue #628: solve_delta clean-constraint conflict detection +
+# query:solve-delta-safety-stats matrix.
+aura_add_issue_test(test_constraintsystem_solve_delta_clean_conflict_detection)
+aura_issue_test_link_llvm_jit(test_constraintsystem_solve_delta_clean_conflict_detection)
 aura_add_issue_test(test_issue_341)
 aura_issue_test_link_llvm_jit(test_issue_341)
 aura_add_issue_test(test_issue_342)

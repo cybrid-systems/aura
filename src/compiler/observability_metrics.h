@@ -367,6 +367,11 @@ struct CompilerMetrics {
     //     unify) detected a cross-delta CONFLICT
     std::atomic<std::uint64_t> delta_conflict_reverify_total{0};
     std::atomic<std::uint64_t> delta_conflict_detected_total{0};
+    // Issue #628: solve_delta safety observability.
+    //   - solve_delta_full_solve_fallback_total: infer_flat
+    //     used full solve() instead of solve_delta in an
+    //     incremental delta-record context
+    std::atomic<std::uint64_t> solve_delta_full_solve_fallback_total{0};
     // Issue #341: match + Occurrence Typing
     // integration observability. 2 lifetime counters:
     //   - match_subject_narrowed_total: count of
