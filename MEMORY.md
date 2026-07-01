@@ -730,3 +730,64 @@ https://github.com/cybrid-systems/aura/issues/379#issuecomment-4852582103.
 3. Promote StableNodeRef to a top-level type in a new
    ast_stability.ixx module with backward-compat type alias —
    separate deprecation cycle, biggest payoff but biggest API risk.
+
+## Issue #380 — per-instruction dirty on IRFunctionSoA (SHIPPED 2026-07-01)
+
+3b8f6fd2: per-instruction dirty bitmask on IRFunctionSoA, mirroring
+the per-block dirty column from #196 and the per-node dirty column
+on FlatAST from #240. Same byte-per-element representation.
+
+**What landed:**
+- `std::pmr::vector<std::uint8_t> instruction_dirty_` parallel to
+  opcodes_ (1 byte per instruction).
+- 5 helper methods: mark_instruction_dirty, mark_all_instructions_dirty,
+  clear_instruction_dirty, is_instruction_dirty, dirty_instruction_count.
+  Plus `instruction_dirty_column()` observability view.
+- `mark_block_dirty(block_id)` cascade: every instruction in
+  [block.start_idx, block.end_idx) is also marked dirty. Body
+  of mark_block_dirty defined OUTSIDE the class (after
+  BasicBlockSoA is complete) so the cascade can read
+  block.start_idx / block.end_idx.
+- `mark_all_blocks_dirty` cascades to all instructions.
+- `add_instruction` initializes dirty bit to 0.
+- `clear_block_dirty` does NOT cascade (per-instruction mask is
+  independent; smarter re-lower manages it).
+
+**Numbers:** ir_soa.ixx 319 → 446 lines (+127, 90% new code in the
+existing IRFunctionSoA struct + BasicBlockSoA area). test_issue_167:
+32 → 34 tests (2 new: Test 7 basic dirty API, Test 8 cascade).
+
+**Why per-instruction is useful:**
+The smarter re-lower (Phase 2 follow-up) will iterate blocks and
+within each dirty block, skip re-emitting clean instructions. The
+existing per-block mask only knows "this block is dirty"; the
+new per-instruction mask lets the re-lower stop earlier when
+only a few instructions in a large block are dirty (common for
+type-specialization patches that touch one ConstI64 / shape_id).
+
+**Scope-limited first cut rationale:**
+The full AC proposes promoting SoA to primary (kill dual_emit_soa),
+aligning dirty with FlatAST occurrence-dirty, porting lowering +
+passes + executor to use SoA, and updating ir_soa_migration.md.
+That requires touching ~10000+ lines of compiler code that
+currently consume the AoS IRModule. This first cut lands the ONE
+clean sub-feature (per-instruction dirty) that can ship without
+touching ir.ixx, ir_executor, or passes.
+
+**Verified at ship:** aura + test_issues_jit + test_issues_light
+all build clean. test_issue_167: 34/34. test_issues_jit: 75/75.
+ctest: 41/41 (100%).
+
+**#380 closed** state_reason=completed (scope-limited). Comment at
+https://github.com/cybrid-systems/aura/issues/380#issuecomment-4852732829.
+
+**5 follow-ups tracked:**
+1. Migrate ir_executor to read from SoA when present.
+2. Add SoA-aware pass interface so passes can opt into SoA
+   traversal.
+3. Add 5cc Aura primitives: (compile:instr-dirty-count),
+   (compile:instr-dirty?), (compile:mark-instr-dirty!),
+   (compile:clear-instr-dirty!), (compile:func-dirty-instr-count).
+4. Write ir_soa_migration.md documenting the full migration plan.
+5. Make dual_emit_soa the default (kill the flag once every
+   consumer reads from SoA).
