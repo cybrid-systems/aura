@@ -1602,44 +1602,8 @@ public:
         // lifetime total is readable via snapshot()
         // and the new (compile:dead-coercion-stats)
         // Aura primitive.
-        if (dce.eliminated_count() > 0) {
-            metrics_.dead_coercion_eliminated_total.fetch_add(
-                dce.eliminated_count(), std::memory_order_relaxed);
-        }
-        // Issue #508: accumulate the per-call elapsed time and
-        // the kept_for_debug count into lifetime totals. These
-        // are observable via (compile:dead-coercion-elapsed)
-        // and the new kept_for_debug snapshot field.
-        if (dce.elapsed_us() > 0) {
-            metrics_.dead_coercion_elapsed_us_total.fetch_add(dce.elapsed_us(),
-                                                              std::memory_order_relaxed);
-        }
-        if (dce.kept_for_debug_count() > 0) {
-            metrics_.dead_coercion_kept_for_debug_total.fetch_add(
-                dce.kept_for_debug_count(), std::memory_order_relaxed);
-        }
-        // Issue #629: zero-overhead coercion path observability.
-        if (ts.castop_emitted() > 0) {
-            metrics_.coercion_castop_emitted_total.fetch_add(
-                ts.castop_emitted(), std::memory_order_relaxed);
-        }
-        if (dce.type_prop_hits() > 0) {
-            metrics_.coercion_type_prop_hits_total.fetch_add(
-                dce.type_prop_hits(), std::memory_order_relaxed);
-        }
-        const std::uint64_t narrow_hits_run =
-            dce.narrow_evidence_hits() + ts.narrow_evidence_skipped();
-        if (narrow_hits_run > 0) {
-            metrics_.coercion_narrow_evidence_hits_total.fetch_add(
-                narrow_hits_run, std::memory_order_relaxed);
-        }
-        const std::uint64_t zerooverhead_win_run =
-            dce.type_prop_hits() + dce.narrow_evidence_hits() +
-            ts.narrow_evidence_skipped();
-        if (zerooverhead_win_run > 0) {
-            metrics_.coercion_zerooverhead_win_total.fetch_add(
-                zerooverhead_win_run, std::memory_order_relaxed);
-        }
+        // Issue #508 / #629 / #538: coercion elimination observability.
+        accumulate_coercion_pass_metrics(ts, dce);
 
         if (ar.has_error()) {
             for (auto& d : ar.result().diagnostics) {
@@ -2161,10 +2125,11 @@ public:
                         if (precomputed_shape && instr.operands[0] < ir_fn.local_count) {
                             shape = precomputed_shape[instr.operands[0]];
                         }
-                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
-                                                   {instr.operands[0], instr.operands[1],
-                                                    instr.operands[2], instr.operands[3]},
-                                                   shape});
+                        flat_instrs[bi].push_back(
+                            {static_cast<std::uint32_t>(instr.opcode),
+                             {instr.operands[0], instr.operands[1], instr.operands[2],
+                              instr.operands[3]},
+                             shape, instr.narrow_evidence, instr.type_id});
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
@@ -3621,6 +3586,8 @@ public:
                     continue;
                 ck_pass.compute_function(func);
                 cf_pass.fold_function(func);
+                // Issue #538: DCE after post-mutate re-lower.
+                run_coercion_elim_on_function(func);
             }
         }
         // Extract the non-entry functions as the bundle.
@@ -3723,6 +3690,8 @@ public:
             aura::compiler::ConstantFoldingWrap cf_pass;
             ck_pass.compute_function(new_func);
             cf_pass.fold_function(new_func);
+            // Issue #538: DCE after per-function post-mutate re-lower.
+            run_coercion_elim_on_function(new_func);
         }
         // Bump the per-function re-lower counter.
         metrics_.relower_per_function_called_count.fetch_add(1, std::memory_order_relaxed);
@@ -4603,6 +4572,8 @@ public:
                     continue;
                 ck_pass.compute_function(func);
                 cf_pass.fold_function(func);
+                // Issue #538: DCE after define cache lower.
+                run_coercion_elim_on_function(func);
             }
         }
 
@@ -5983,6 +5954,60 @@ public:
     }
 
 private:
+    // Issue #538: accumulate coercion zero-overhead metrics from a
+    // TypeSpecializationWrap + DeadCoercionEliminationPass run.
+    void accumulate_coercion_pass_metrics(
+        const aura::compiler::TypeSpecializationWrap& ts,
+        const aura::compiler::DeadCoercionEliminationPass& dce) {
+        if (dce.eliminated_count() > 0) {
+            metrics_.dead_coercion_eliminated_total.fetch_add(dce.eliminated_count(),
+                                                                std::memory_order_relaxed);
+        }
+        if (dce.elapsed_us() > 0) {
+            metrics_.dead_coercion_elapsed_us_total.fetch_add(dce.elapsed_us(),
+                                                              std::memory_order_relaxed);
+        }
+        if (dce.kept_for_debug_count() > 0) {
+            metrics_.dead_coercion_kept_for_debug_total.fetch_add(
+                dce.kept_for_debug_count(), std::memory_order_relaxed);
+        }
+        if (ts.castop_emitted() > 0) {
+            metrics_.coercion_castop_emitted_total.fetch_add(ts.castop_emitted(),
+                                                             std::memory_order_relaxed);
+        }
+        if (dce.type_prop_hits() > 0) {
+            metrics_.coercion_type_prop_hits_total.fetch_add(dce.type_prop_hits(),
+                                                             std::memory_order_relaxed);
+        }
+        const std::uint64_t narrow_hits_run =
+            dce.narrow_evidence_hits() + ts.narrow_evidence_skipped();
+        if (narrow_hits_run > 0) {
+            metrics_.coercion_narrow_evidence_hits_total.fetch_add(narrow_hits_run,
+                                                                   std::memory_order_relaxed);
+        }
+        const std::uint64_t zerooverhead_win_run =
+            dce.type_prop_hits() + dce.narrow_evidence_hits() + ts.narrow_evidence_skipped();
+        if (zerooverhead_win_run > 0) {
+            metrics_.coercion_zerooverhead_win_total.fetch_add(zerooverhead_win_run,
+                                                               std::memory_order_relaxed);
+        }
+    }
+
+    // Issue #538: TypeSpecialization + DCE on one function after
+    // post-mutate re-lower (incremental path).
+    void run_coercion_elim_on_function(aura::ir::IRFunction& func) {
+        const auto saved_id = func.id;
+        aura::ir::IRModule mod;
+        mod.functions.push_back(func);
+        aura::compiler::TypeSpecializationWrap ts(&type_registry_);
+        aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
+        ts.run(mod);
+        dce.run_function(mod.functions[0]);
+        func = std::move(mod.functions[0]);
+        func.id = saved_id;
+        accumulate_coercion_pass_metrics(ts, dce);
+    }
+
     // Fast eval for primitive literal args inside the workspace-aware
     // call dispatch. Parses just enough to recognize integers/floats/
     // booleans/strings/void and returns the corresponding EvalValue
@@ -7013,10 +7038,11 @@ public:
                         if (final_shape_map && instr.operands[0] < ir_fn.local_count) {
                             shape = final_shape_map[instr.operands[0]];
                         }
-                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
-                                                   {instr.operands[0], instr.operands[1],
-                                                    instr.operands[2], instr.operands[3]},
-                                                   shape});
+                        flat_instrs[bi].push_back(
+                            {static_cast<std::uint32_t>(instr.opcode),
+                             {instr.operands[0], instr.operands[1], instr.operands[2],
+                              instr.operands[3]},
+                             shape, instr.narrow_evidence, instr.type_id});
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
