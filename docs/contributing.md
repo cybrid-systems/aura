@@ -309,3 +309,39 @@ AOT 路径需要一个能运行的 `lib/runtime.c` 源文件。`find_runtime_c()
 - 走 install path 时 `ls /usr/local/share/aura/runtime.c` / `ls /usr/share/aura/runtime.c` / `ls /opt/aura/share/runtime.c`。
 - 找到路径后 `head -3 <path>` 确认是 C 源码不是空文件或 binary。
 - 仍找不到就在 aura stderr 提示的位置加 `export AURA_RUNTIME_DIR=...` 显式覆盖。
+
+## §X IR encoding baseline（Issue #375）
+
+`IRInstruction`（`src/compiler/ir.ixx:141`）是 AoS layout：1 字节 opcode + 16 字节 fixed `array<uint32_t, 4>` operands + 9 个 metadata/字段。总计 **40 字节**（编译器验证：3 字节 padding 在 `linear_ownership_state`（1B）和 `adt_variant_id`（4B）之间）。大多数 instruction 用 1–3 个 operand,固定 4-slot 数组平均浪费 ~7.7 字节（按 2.08 operand/instr,sum-to baseline）。
+
+**当前 baseline（sum-to 10, 2026-07-01）**：
+
+| Field | Value |
+|-------|-------|
+| total-instructions | 46 |
+| avg-operands-used | 2.08 |
+| AoS bytes | 1840 |
+| padding bytes | 138 (3 × 46) |
+| unused-operand bytes | 232 |
+| **compact projection (variable-length)** | **568 字节** |
+| **compact ratio (vs AoS)** | **30.86%** → **69% reduction** ✅ |
+
+**Compact 编码**（2 字节 header + 4 字节 per used operand,4 字节对齐）：opcode 8 位 + operand_count 4 位 + reserved 4 位。Metadata（type_id, shape_id, adt_variant_id, narrow_evidence, source_marker, linear_state）不进 hot-path encoding,作为 sidecar 留给 pass。
+
+**观测接口**：
+- C++：`aura::ir::compute_ir_stats(const IRModule&)` + `CompilerService::last_ir_stats()` （`service.ixx` snapshot,`last_ir_mod_` 赋值时同步算）。
+- Aura：`(compile:ir-stats)` primitive 返回 hash。**限制**：primitive 自己 lower 会 clobber `last_ir_mod_`,所以从 `.aura` 调时看到的是 primitive 自己的 IR;从 C++ test API 调（`cs.last_ir_stats()`）看到的是上一个 workload。
+
+**Pair with**：SoA skeleton `src/compiler/ir_soa.ixx`（#167 Phase 1,无 consumer）+ 测试 `tests/test_issue_375.cpp`（5 ACs / 23 tests）。
+
+**§375 完整拆解**（scope-limited close ship Step A,defer Step B/C/D + 新 Step E）：
+- **A** ✅ shipped：本节描述的 baseline + observability。
+- **B** deferred：dual representation — `IRFunctionSoA` 加 `instructions_compact_` column（16-byte 紧凑 layout）+ `view_at_compact()` accessor。AoS 路径不变（pass 继续吃 AoS）,compact view 只读。需 1 session。
+- **C** deferred：interpreter switch `ir_executor_impl.cpp:331` 改读 compact view。需先 B,1 session。
+- **D** deferred：JIT lowering `aura_jit.cpp` / `aura_jit_bridge.cpp` 读 compact view 而非 AoS decode。1 session。
+- **E** deferred：computed-goto dispatch,依赖 C 的 compact view。
+
+**加新 baseline 任务时的检查清单**：
+- [ ] 在 `tests/test_issue_375.cpp` 加一个 workload（fact / fib / hanoi-8 / map-fold 之一）+ 一个 AC（baseline 比 sum-to 大多少 / ratio 是否 ≥ AC）。
+- [ ] 更新本节 baseline 表。
+- [ ] 跑 `./build.py test issue` 全绿。

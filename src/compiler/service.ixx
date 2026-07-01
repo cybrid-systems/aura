@@ -1626,6 +1626,7 @@ public:
         escape_pass.run(ir_mod);
 
         last_ir_mod_ = ir_mod;
+        last_ir_stats_ = aura::ir::compute_ir_stats(*last_ir_mod_);
         last_escape_maps_ = escape_pass.take_maps();
 
 // ── Try JIT execution when LLVM available ──────────────
@@ -1929,6 +1930,7 @@ public:
         escape_pass.run(ir_mod);
 
         last_ir_mod_ = ir_mod;
+        last_ir_stats_ = aura::ir::compute_ir_stats(*last_ir_mod_);
         last_escape_maps_ = escape_pass.take_maps();
 
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
@@ -5908,6 +5910,14 @@ public:
 
     // Get last compiled IR module (for --inspect dump).
     const std::optional<aura::ir::IRModule>& last_ir_module() const { return last_ir_mod_; }
+    // Issue #375: snapshot of the encoding stats computed when
+    // last_ir_mod_ was set. Read by (compile:ir-stats) Aura
+    // primitive + by C++ tests that need AoS-vs-compact numbers
+    // without going through the primitive (which would clobber
+    // last_ir_mod_ on its own compilation).
+    const aura::ir::IRStatsSnapshot& last_ir_stats() const noexcept {
+        return last_ir_stats_;
+    }
 
 private:
     // Fast eval for primitive literal args inside the workspace-aware
@@ -6525,6 +6535,7 @@ private:
     std::vector<aura::compiler::ClosureSnapshot> last_closures_;
     std::vector<aura::compiler::CellSnapshot> last_cells_;
     std::optional<aura::ir::IRModule> last_ir_mod_;
+    aura::ir::IRStatsSnapshot last_ir_stats_; // Issue #375: snapshot taken on last_ir_mod_ assignment
     std::vector<std::vector<std::uint8_t>> last_escape_maps_;
 
     // Set of loaded module names (for ArenaGroup tracking).

@@ -13,6 +13,7 @@ import std;
 import aura.core.ast;
 import aura.core.mutators;  // Phase 4 follow-up #4: (compile:mutator-dispatch-stats)
 import aura.core.type;
+import aura.compiler.ir;     // Issue #375: (compile:ir-stats) needs IROpcode + IRModule
 import aura.compiler.value;
 import aura.compiler.service;
 import aura.compiler.type_checker;
@@ -4028,6 +4029,167 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         ev.set_allow_macro_mutate(as_bool(a[0]));
         return make_void();
+    });
+
+    // ── Issue #375: IR encoding observability primitive ──
+    //
+    // `(compile:ir-stats)` — returns a hash describing the
+    // current IRModule's encoding characteristics. The point
+    // of #375 is to identify how much padding + unused
+    // operand-space the AoS IRInstruction layout wastes, and
+    // to project a compact encoding size so we can decide
+    // whether the ≥30% size-reduction AC is achievable.
+    //
+    // Fields returned:
+    //   - total-instructions       — total IRInstruction count
+    //                                 across all functions in the
+    //                                 last compiled module.
+    //   - total-functions          — function count.
+    //   - total-blocks             — basic block count.
+    //   - avg-instructions-per-block — float (total-instr / blocks).
+    //   - opcode-histogram         — hash {opcode-name -> count},
+    //                                 so we know which opcodes
+    //                                 dominate the hot path.
+    //   - operand-count-distribution — hash {0..4 -> count} of how
+    //                                 many instructions actually
+    //                                 use 0/1/2/3/4 operand slots.
+    //   - avg-operands-used-x100  — avg operands * 100 (integer
+    //                                 to keep the hash type-safe;
+    //                                 divide by 100 for the float).
+    //   - aos-bytes-total         — total bytes assuming 40 bytes
+    //                                 per IRInstruction (sizeof
+    //                                 layout: 1 opcode + 16 ops +
+    //                                 4 + 4 + 4 + 1 + 3 pad + 4 +
+    //                                 4 + 1 = 40).
+    //   - unused-operand-bytes-total — bytes wasted on unused
+    //                                 operand slots: (4 - avg_ops) *
+    //                                 4 * total_instr.
+    //   - padding-bytes-total     — bytes wasted on struct
+    //                                 alignment: 3 bytes per
+    //                                 instruction (between
+    //                                 linear_ownership_state and
+    //                                 adt_variant_id).
+    //   - compact-bytes-projection — projected bytes under a
+    //                                 variable-length compact
+    //                                 encoding: 2 bytes header
+    //                                 (opcode 8 bits + operand
+    //                                 count 4 bits + reserved 4
+    //                                 bits) + 4 bytes per used
+    //                                 operand, rounded up to
+    //                                 4-byte alignment. Hot-path
+    //                                 friendly, no per-instruction
+    //                                 metadata sidecar.
+    //   - compact-ratio-bp        — compact_bytes / aos_bytes in
+    //                                 basis points (0-10000). 3000
+    //                                 bp = compact is 30% of aos.
+    //                                 The #375 AC is "≥30% size
+    //                                 reduction" so a ratio ≤ 7000
+    //                                 bp is a pass.
+    //
+    // This primitive does NOT modify IR — it's a read-only
+    // measurement. Multiple calls during a session return
+    // fresh stats from the last compiled module (set by
+    // CompilerService::last_ir_module()).
+    add("compile:ir-stats", [&ev](const auto&) -> EvalValue {
+        if (!ev.compiler_service_) {
+            return make_void();
+        }
+        auto* svc = static_cast<class aura::compiler::CompilerService*>(
+            ev.compiler_service_);
+        // Read the snapshot, not last_ir_module(). The snapshot
+        // was computed when last_ir_mod_ was last assigned, so
+        // it reflects the WORKLOAD's IR, not the IR of the
+        // current stats-call expression (which would clobber
+        // last_ir_mod_ on its own lowering).
+        const auto& s = svc->last_ir_stats();
+        if (s.total_instructions == 0 && s.total_functions == 0) {
+            // No module compiled yet — return void.
+            return make_void();
+        }
+        // Local build_hash helper — same open-addressing pattern as
+        // compile:type-propagation-stats.
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv,
+                              std::size_t min_cap = 8) -> EvalValue {
+            std::size_t cap = 8;
+            while (cap < std::max(min_cap, kv.size() * 2)) cap *= 2;
+            auto* ht = FlatHashTable::create(cap);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        // Opcode histogram (nested hash, only non-zero opcodes).
+        std::vector<std::pair<std::string, EvalValue>> op_kv;
+        for (std::size_t i = 0; i < s.opcode_histogram.size(); ++i) {
+            if (s.opcode_histogram[i] == 0) continue;
+            std::string name = (i < 54)
+                ? std::string(aura::ir::kOpcodeInfo[i].name)
+                : std::string("?");
+            op_kv.emplace_back(
+                std::move(name),
+                make_int(static_cast<std::int64_t>(s.opcode_histogram[i])));
+        }
+        EvalValue opcode_hist_ev = build_hash(op_kv, 16);
+        // Operand-count distribution (nested hash, 0..4).
+        std::vector<std::pair<std::string, EvalValue>> dist_kv;
+        for (std::size_t i = 0; i < 5; ++i) {
+            dist_kv.emplace_back(
+                std::string(1, static_cast<char>('0' + i)),
+                make_int(static_cast<std::int64_t>(s.operand_count_distribution[i])));
+        }
+        EvalValue dist_ev = build_hash(dist_kv, 8);
+        // Top-level hash with all scalar fields + the 2 nested hashes.
+        const std::uint64_t avg_ops_x100 = s.total_instructions
+            ? (s.operands_used_sum * 100u / s.total_instructions)
+            : 0;
+        std::vector<std::pair<std::string, EvalValue>> top_kv = {
+            {"total-instructions", make_int(static_cast<std::int64_t>(s.total_instructions))},
+            {"total-functions", make_int(static_cast<std::int64_t>(s.total_functions))},
+            {"total-blocks", make_int(static_cast<std::int64_t>(s.total_blocks))},
+            {"avg-instructions-per-block-x100", make_int(static_cast<std::int64_t>(
+                s.total_blocks ? (s.total_instructions * 100u / s.total_blocks) : 0))},
+            {"avg-operands-used-x100", make_int(static_cast<std::int64_t>(avg_ops_x100))},
+            {"aos-bytes-total", make_int(static_cast<std::int64_t>(s.aos_bytes_total))},
+            {"padding-bytes-total", make_int(static_cast<std::int64_t>(s.padding_bytes_total))},
+            {"unused-operand-bytes-total",
+             make_int(static_cast<std::int64_t>(s.unused_operand_bytes_total))},
+            {"compact-bytes-projection",
+             make_int(static_cast<std::int64_t>(s.compact_bytes_projection))},
+            {"compact-ratio-bp", make_int(static_cast<std::int64_t>(s.compact_ratio_bp))},
+            {"opcode-histogram", opcode_hist_ev},
+            {"operand-count-distribution", dist_ev},
+        };
+        return build_hash(top_kv, 16);
     });
 
 } // register_compile_primitives

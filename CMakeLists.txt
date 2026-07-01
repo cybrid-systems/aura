@@ -1506,6 +1506,17 @@ aura_issue_test_link_llvm_jit(test_issue_373)
 # against future short-circuits). Pairs with #237 v4 + #360.
 aura_add_issue_test(test_issue_374)
 aura_issue_test_link_llvm_jit(test_issue_374)
+# Issue #375: IRInstruction compact encoding + SoA execution
+# view observability. Scope-limited close ships the foundation
+# (aura::ir::IRStatsSnapshot + compute_ir_stats() in ir.ixx +
+# CompilerService::last_ir_stats() + (compile:ir-stats) Aura
+# primitive) so the B/C follow-ups (dual representation +
+# interpreter switch → compact view) have baseline numbers to
+# design against. 5 ACs cover: zero-on-fresh-service, snapshot
+# populates after eval, ratio in valid range, heavier workload
+# has more instructions, no regression on existing eval.
+aura_add_issue_test(test_issue_375)
+aura_issue_test_link_llvm_jit(test_issue_375)
 # Issue #301: C++26 std::meta migration audit + foundation.
 # 4 scenarios: call-site audit, auto_serialize validation
 # on StableNodeRef-like POD, serialize perf baseline,
