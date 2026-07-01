@@ -677,7 +677,36 @@ public:
 public:
     bool is_coercible(aura::core::TypeId from, aura::core::TypeId to);
 
+    // Issue #518 P0 Phase 1: post-mutation occurrence typing
+    // re-narrowing. Re-runs analyze_predicate_flat on dirty
+    // if-contexts in `affected_ids`, clears kOccurrenceDirty
+    // + occurrence-stale bits, and bumps narrowing observability
+    // counters. Returns the number of if-contexts refreshed.
+    std::size_t reanalyze_occurrence_contexts(aura::ast::FlatAST& flat,
+                                              aura::ast::StringPool& pool,
+                                              const std::vector<aura::ast::NodeId>& affected_ids);
+
+    // Issue #518 P0 Phase 1: expand `affected` with Variable
+    // use-sites of narrowed bindings inside dirty if-contexts
+    // so the subsequent infer loop re-checks them under the
+    // refreshed OccurrenceInfoFlat.
+    void propagate_narrowing_to_uses(aura::ast::FlatAST& flat,
+                                     aura::ast::StringPool& pool,
+                                     std::vector<aura::ast::NodeId>& affected);
+
+    // Issue #518: optional hooks for Evaluator observability
+    // counters (narrowing_refresh_count_,
+    // selective_recheck_count_). Invoked once per refreshed
+    // if-context in reanalyze_occurrence_contexts.
+    void set_narrowing_observability_hooks(std::function<void()> on_refresh,
+                                           std::function<void()> on_selective) {
+        on_narrowing_refresh_ = std::move(on_refresh);
+        on_selective_recheck_ = std::move(on_selective);
+    }
+
 private:
+    std::function<void()> on_narrowing_refresh_;
+    std::function<void()> on_selective_recheck_;
     // FlatAST per-node-type inference
     aura::core::TypeId synthesize_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                        aura::ast::NodeId id, aura::ast::NodeView v);
@@ -929,6 +958,22 @@ export struct TypeChecker {
     void set_metrics(void* m) { metrics_ = m; }
     void* metrics_ = nullptr;
 
+    // Issue #518: wire Evaluator narrowing observability
+    // counters to the actual re-narrow path in
+    // infer_flat_partial (not Guard stub bumps).
+    void set_on_narrowing_refresh(std::function<void()> fn) {
+        on_narrowing_refresh_ = std::move(fn);
+    }
+    void set_on_selective_recheck(std::function<void()> fn) {
+        on_selective_recheck_ = std::move(fn);
+    }
+
+    // Issue #518: number of if-contexts refreshed on the
+    // most recent infer_flat_partial call (0 if none).
+    std::uint64_t last_occurrence_refresh_count() const noexcept {
+        return last_occurrence_refresh_count_;
+    }
+
     // Issue #130: cache hit rate (0.0 .. 1.0). Computed
     // as hits / (hits + misses + stale). Returns 0.0 if
     // no incremental checks have been done. Useful for
@@ -1054,6 +1099,12 @@ private:
     // call. Forwarded to the per-call InferenceEngine, which
     // invalidates its cache on epoch advance.
     std::uint64_t cache_epoch_ = 0;
+
+    // Issue #518: Evaluator observability hooks + last refresh
+    // count from infer_flat_partial.
+    std::function<void()> on_narrowing_refresh_;
+    std::function<void()> on_selective_recheck_;
+    std::uint64_t last_occurrence_refresh_count_ = 0;
 
     // Issue #116: see last_coercions() / take_coercions() above.
     CoercionMap last_coercions_;

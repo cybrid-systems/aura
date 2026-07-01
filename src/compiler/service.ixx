@@ -680,6 +680,10 @@ public:
             if (set) {
                 ws->mark_dirty(node_id, static_cast<std::uint8_t>(
                                             aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
+                // Issue #518: mirror kOccurrenceDirty into the
+                // occurrence-stale column for observability
+                // (query:occurrence-stale-count) and re-narrow.
+                ws->mark_occurrence_stale(node_id);
             } else {
                 ws->clear_dirty_for(
                     node_id,
@@ -2675,7 +2679,18 @@ public:
     // via the underlying TypeChecker (not exposed at the
     // CompilerService level yet — Phase 5b).
     std::size_t incremental_infer(const aura::ast::MutationRecord& rec) {
-        if (!current_ast_ || !current_pool_)
+        // Issue #518: (set-code ...) via cs.eval routes through
+        // workspace_flat_; cs.set_code() uses current_ast_. Prefer
+        // the workspace when it carries mutations so infer_flat_partial
+        // re-narrows the same flat the mutate primitive edited.
+        aura::ast::FlatAST* flat = current_ast_;
+        aura::ast::StringPool* pool = current_pool_;
+        if (auto* ws_flat = evaluator_.workspace_flat();
+            ws_flat != nullptr && !ws_flat->all_mutations().empty()) {
+            flat = ws_flat;
+            pool = evaluator_.workspace_pool();
+        }
+        if (!flat || !pool)
             return 0;
         aura::compiler::TypeChecker tc(type_registry_);
         aura::diag::DiagnosticCollector diag;
@@ -2685,6 +2700,12 @@ public:
         tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
         // Issue #258: plumb metrics for solve_delta timing.
         tc.set_metrics(&metrics_);
+        // Issue #518: wire Evaluator narrowing counters to the
+        // actual re-narrow path in infer_flat_partial.
+        tc.set_on_narrowing_refresh(
+            [this]() { evaluator_.bump_narrowing_refresh_count(); });
+        tc.set_on_selective_recheck(
+            [this]() { evaluator_.bump_selective_recheck_count(); });
         // Issue #411 fu1 follow-up #3: plumb the
         // per-DefUseIndex tracker so infer_flat_partial can
         // route through the O(uses) path when the sym is
@@ -2698,8 +2719,7 @@ public:
         auto* tracker_ptr = per_defuse_index_tracker_.index_count() > 0
                                 ? static_cast<void*>(&per_defuse_index_tracker_)
                                 : nullptr;
-        auto n = tc.infer_flat_partial(*current_ast_, *current_pool_, rec, diag,
-                                       tracker_ptr);
+        auto n = tc.infer_flat_partial(*flat, *pool, rec, diag, tracker_ptr);
         metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
                                                     std::memory_order_relaxed);
         // Issue #387: Type Dependency Graph observability.
@@ -5307,6 +5327,12 @@ public:
         // accumulate into the lifetime totals (Issue #258 /
         // #411 wiring).
         tc.set_metrics(&metrics_);
+        // Issue #518: wire Evaluator narrowing counters to the
+        // actual re-narrow path in infer_flat_partial.
+        tc.set_on_narrowing_refresh(
+            [this]() { evaluator_.bump_narrowing_refresh_count(); });
+        tc.set_on_selective_recheck(
+            [this]() { evaluator_.bump_selective_recheck_count(); });
         // Issue #411 fu1 follow-up #3: plumb the
         // per-DefUseIndex tracker (same as incremental_infer
         // above). When the tracker is non-null AND has
