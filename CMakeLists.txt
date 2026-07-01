@@ -1511,6 +1511,13 @@ aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_closed_loop_task6_foll
 # #550/#551/#597/#619 (per-theme tests).
 aura_add_issue_test(test_task6_production_readiness_closed_loop_514)
 aura_issue_test_link_llvm_jit(test_task6_production_readiness_closed_loop_514)
+# Issue #441: Consolidated compiler/runtime production-readiness closed loop
+# (meta). 7 ACs: compiler-runtime-production-readiness-stats synthesis,
+# P0 #438 fiber + #439 gc-safepoint + #440 EDSL + #437 verify-dirty pillars,
+# multi-round monotonic + regression. Non-duplicative with #438/#439/#454/
+# #437/#514 (per-theme tests).
+aura_add_issue_test(test_compiler_runtime_production_readiness_closed_loop_441)
+aura_issue_test_link_llvm_jit(test_compiler_runtime_production_readiness_closed_loop_441)
 # Issue #602: Comprehensive fuzz + stress matrix for Prompt6
 # memory safety invariants (IRClosure/EnvFrame/bridge_epoch/
 # linear/GuardShape) under concurrent fiber + GC + multi-round
