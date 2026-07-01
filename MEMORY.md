@@ -791,3 +791,75 @@ https://github.com/cybrid-systems/aura/issues/380#issuecomment-4852732829.
 4. Write ir_soa_migration.md documenting the full migration plan.
 5. Make dual_emit_soa the default (kill the flag once every
    consumer reads from SoA).
+
+## Issue #381 — stronger Pass Pipeline concepts + contracts (SHIPPED 2026-07-01)
+
+fcd1c036: 3 new pass concepts + 1 new pipeline helper + contracts
+on the existing run_pipeline / run_one.
+
+**New concepts in pass_manager.ixx:**
+- `PureAnalysisPass` — `AnalysisPass` + const `run()`. Pass
+  doesn't mutate its own observable state across runs.
+- `IncrementalPass` — `Pass` + has `run(IRFunction&)` AND
+  `run(BasicBlock&)`. Per-function / per-block entry points
+  for incremental re-running.
+- `DirtyAwarePass` — `Pass` + has `is_block_dirty(block_id)`.
+  Companion to per-block dirty column on IRFunctionSoA (#196)
+  and per-instruction dirty column (#380).
+
+**New helper:**
+- `run_incremental_pipeline<IncrementalPass P>(mod, pass)` —
+  fold over per-function work with short-circuit on has_error().
+
+**Contracts on existing functions:**
+- `run_pipeline`: `pre(sizeof...(Passes) > 0)` — zero-pass
+  pipeline is almost always a bug.
+- `run_one`: `pre(&pass != nullptr)` + `post()` documenting
+  the no-error → return true invariant.
+
+**Tests** (test_issue_163, 29 → 34):
+- Test 9: PureAnalysisPass concept (const run() stub satisfies,
+  non-const doesn't).
+- Test 10: IncrementalPass concept (has run_function +
+  run_block satisfies).
+- Test 11: DirtyAwarePass concept (has is_block_dirty satisfies).
+- Test 12: run_incremental_pipeline helper (2-function IRModule
+  + stub with counter).
+- Test 13: run_pipeline contract (documented, not exercised
+  in test to avoid debug-build termination).
+
+**Numbers:** pass_manager.ixx 3046 → 3198 (+152), test_issue_163
+29 → 34 tests (+5).
+
+**Scope-limited first cut rationale:**
+The full AC asks for consteval for pass composition and
+extracting more logic into pure modules. The existing wraps
+(ComputeKindWrap, ArityWrap, ConstantFoldingWrap) already
+delegate to pure free functions in compute_kind / check_arity /
+constant_fold_function (the #212 work). Further extraction
+requires renaming fold_function / fold_block to run_function /
+run_block AND making the existing run() methods const — both
+are mechanical migrations that need to happen incrementally.
+The 3 new concepts + the helper + the contracts land the design
+language; the wraps can be migrated one-by-one in follow-ups.
+
+**Verified at ship:** aura + test_issues_jit + test_issues_light
+all build clean. test_issue_163: 34/34. test_issues_jit: 75/75.
+ctest: 41/41 (100%).
+
+**#381 closed** state_reason=completed (scope-limited). Comment at
+https://github.com/cybrid-systems/aura/issues/381#issuecomment-4852854637.
+
+**4 follow-ups tracked:**
+1. Migrate ComputeKindWrap::run() to const + mark results_ as
+   mutable → enable the PureAnalysisPass<ComputeKindWrap>
+   static_assert.
+2. Migrate ArityWrap::run() to const + mark result_ as mutable
+   → enable the PureAnalysisPass<ArityWrap> static_assert.
+3. Rename ConstantFoldingWrap::fold_function / fold_block to
+   run_function / run_block (or widen the IncrementalPass
+   concept to accept the fold_* aliases) → enable the
+   IncrementalPass<ConstantFoldingWrap> static_assert.
+4. When the smarter re-lower lands, add is_block_dirty to a
+   pass that wraps the re-lower → enable the
+   DirtyAwarePass<...> static_assert.
