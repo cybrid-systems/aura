@@ -243,6 +243,9 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     // the filter is doing useful work.
     std::uint64_t delta_constraints_processed_total = 0;
     std::uint64_t delta_constraints_total = 0;
+    // Issue #466: solve_delta cross-delta conflict observability.
+    std::uint64_t delta_conflict_reverify_total = 0;
+    std::uint64_t delta_conflict_detected_total = 0;
     std::uint64_t delta_solve_constraints_ratio_bp = 0;
     // Issue #341: match + Occurrence Typing
     // observability. Mirrors the 2 lifetime counters

@@ -360,6 +360,13 @@ struct CompilerMetrics {
     //     pruning effectively.
     std::atomic<std::uint64_t> delta_constraints_processed_total{0};
     std::atomic<std::uint64_t> delta_constraints_total{0};
+    // Issue #466: solve_delta cross-delta conflict re-verify.
+    //   - delta_conflict_reverify_total: clean-constraint
+    //     re-verify scans after touched-root delta solves
+    //   - delta_conflict_detected_total: re-verify (or delta
+    //     unify) detected a cross-delta CONFLICT
+    std::atomic<std::uint64_t> delta_conflict_reverify_total{0};
+    std::atomic<std::uint64_t> delta_conflict_detected_total{0};
     // Issue #341: match + Occurrence Typing
     // integration observability. 2 lifetime counters:
     //   - match_subject_narrowed_total: count of
