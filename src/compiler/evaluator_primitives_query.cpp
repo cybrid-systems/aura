@@ -1786,6 +1786,61 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             relower_per_fn + mod_skip + linear_elide + cascade));
     });
 
+    // Issue #404: query:ir-soa-incremental-stats. Returns the sum
+    // of 7 IR SoA Phase 3 block_dirty_-driven incremental lowering
+    // counters (non-duplicative with #506 soa-hotpath-adoption
+    // 8-counter slice that includes passes_skipped + linear_elide,
+    // #607 task4-cache-locality-win tag_arity slice, and #254
+    // compile:ir-soa-stats hash primitive):
+    //   - ir_soa_instructions_emitted   (IRFunctionSoA dual-emit)
+    //   - ir_soa_functions_emitted      (IRFunctionSoA functions)
+    //   - relower_skipped_entirely      (skip clean re-lower win)
+    //   - relower_per_function_called   (per-fn incremental path)
+    //   - module_dirty_skips            (clean module skip)
+    //   - module_dirty_recompiles       (dirty module recompile)
+    //   - cascade_body_only             (block_dirty cascade)
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:ir-soa-incremental-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(
+                    ev->compiler_metrics());
+            const std::uint64_t ir_instr = m
+                ? m->ir_soa_instructions_emitted.load(
+                      std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t ir_funcs = m
+                ? m->ir_soa_functions_emitted.load(
+                      std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t relower_skip = m
+                ? m->relower_skipped_entirely_count.load(
+                      std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t relower_per_fn = m
+                ? m->relower_per_function_called_count.load(
+                      std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t mod_skip = m
+                ? m->module_dirty_skips.load(std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t mod_recompile = m
+                ? m->module_dirty_recompiles.load(
+                      std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t cascade = m
+                ? m->cascade_body_only_count.load(
+                      std::memory_order_relaxed)
+                : 0;
+            return make_int(static_cast<std::int64_t>(
+                ir_instr + ir_funcs + relower_skip + relower_per_fn +
+                mod_skip + mod_recompile + cascade));
+        });
+
     // Issue #403: query:ir-metadata-stats. Returns the sum of
     // 7 IRInstruction rich-metadata consumption counters spanning
     // IRInterpreter + JIT paths (non-duplicative with #506 SoA
