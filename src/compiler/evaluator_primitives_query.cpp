@@ -1945,6 +1945,50 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 boundary + defuse + depth));
         });
 
+    // Issue #418: query:envframe-dualpath-stale-stats. Returns the
+    // sum of 7 EnvFrame SoA dual-path + stale-policy observability
+    // counters spanning evaluator_env.cpp hot paths
+    // (non-duplicative with #543 envframe-dualpath-stats 4-counter
+    // core slice, #602 prompt6-safety-score aggregated matrix,
+    // and pre-registered envframe-stale-stats / envframe-bump-stats
+    // stats:list aliases without dedicated sum primitives):
+    //   - desync: envframe_desync_detected_ (length mismatch)
+    //   - stale_refresh: envframe_stale_refresh_count_ (AutoRefresh)
+    //   - post_rollback: envframe_post_rollback_invalidations_
+    //   - version_mismatch: envframe_version_mismatch_in_walk_
+    //   - gc_walk_skips: envframe_gc_walk_safe_skips_
+    //   - gc_stale_skipped: gc_envframe_stale_skipped_ (GC policy)
+    //   - defuse_epoch: defuse_version_ (stale epoch snapshot)
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:envframe-dualpath-stale-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(
+                    ev->compiler_metrics());
+            const std::uint64_t desync =
+                ev->get_envframe_desync_detected();
+            const std::uint64_t stale =
+                ev->get_envframe_stale_refresh_count();
+            const std::uint64_t rollback =
+                ev->get_envframe_post_rollback_invalidations();
+            const std::uint64_t mismatch =
+                ev->get_envframe_version_mismatch_in_walk();
+            const std::uint64_t gc_skips =
+                ev->get_envframe_gc_walk_safe_skips();
+            const std::uint64_t gc_stale = m
+                ? m->gc_envframe_stale_skipped_.load(
+                      std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t defuse = ev->get_defuse_version();
+            return make_int(static_cast<std::int64_t>(
+                desync + stale + rollback + mismatch + gc_skips +
+                gc_stale + defuse));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning

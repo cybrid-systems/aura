@@ -425,7 +425,15 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     fr.bindings_.assign(bs.begin(), bs.end());
     auto bss = e.bindings_symid();
     fr.bindings_symid_.assign(bss.begin(), bss.end());
+    ensure_envframe_dual_path_consistency(fr);
     return id;
+}
+
+void Evaluator::ensure_envframe_dual_path_consistency(
+    const EnvFrame& fr) const noexcept {
+    if (fr.bindings_.size() != fr.bindings_symid_.size()) {
+        bump_envframe_desync_detected();
+    }
 }
 
 // Evaluator::materialize_call_env — Issue #145 Phase 2.3.
@@ -478,6 +486,8 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // materialize_call_env) is reading.
     std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
     const EnvFrame& fr = env_frame(cl.env_id);
+    // Issue #418: dual-path consistency probe on materialize.
+    ensure_envframe_dual_path_consistency(fr);
     // Issue #242: detect a stale frame (captured before the
     // current mutation epoch). The frame's bindings might be
     // inconsistent with the post-mutation state — log a

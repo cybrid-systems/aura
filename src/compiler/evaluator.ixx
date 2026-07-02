@@ -3667,6 +3667,10 @@ public:
     void bump_envframe_post_rollback_invalidations(std::uint64_t n = 1) const noexcept {
         envframe_post_rollback_invalidations_.fetch_add(n, std::memory_order_relaxed);
     }
+    // Issue #418: bindings_ vs bindings_symid_ length consistency
+    // probe for EnvFrame SoA dual-path + stale policy paths.
+    void ensure_envframe_dual_path_consistency(
+        const EnvFrame& fr) const noexcept;
 
 
     // ── Issue #184: MutationBoundaryGuard (RAII) ─────────────
