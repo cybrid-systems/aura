@@ -669,6 +669,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:pattern-macro-filter-stats",
             // Issue #422 — Mutate-path hygiene violation detection
             "query:hygiene-violation-stats",
+            // Issue #423 — query:pattern structural pre-index
+            "query:pattern-structural-index-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();

@@ -1567,9 +1567,11 @@ void register_workspace_query_primitives(
             if (it == ws.tag_arity_index.end()) {
                 // No nodes match the pattern's (tag, arity).
                 // Skip the full walk.
+                ev.bump_pattern_structural_index_miss();
                 return make_void();
             }
             const auto& bucket = it->second;
+            ev.bump_pattern_structural_index_hit();
             ev.bump_total_query_calls();
             for (aura::ast::NodeId id : bucket) {
                 if (id >= flat.size())

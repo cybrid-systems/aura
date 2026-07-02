@@ -2380,6 +2380,11 @@ private:
     // observability (post query-split hygiene contract).
     std::atomic<std::uint64_t> pattern_recursive_macro_skipped_{0};
     mutable std::atomic<std::uint64_t> pattern_macro_filter_violations_{0};
+    // Issue #423: query:pattern structural (tag, arity) pre-index
+    // fast-path observability on the Evaluator-side index.
+    std::atomic<std::uint64_t> pattern_structural_index_hits_{0};
+    std::atomic<std::uint64_t> pattern_structural_index_misses_{0};
+    mutable std::atomic<std::uint64_t> pattern_index_consistency_violations_{0};
     // Issue #354: set by outermost MutationBoundaryGuard
     // ctor; cleared by dtor. The Fiber::yield path
     // checks this flag to detect "yield while holding
@@ -3507,6 +3512,24 @@ public:
         const aura::ast::FlatAST& flat) const noexcept;
     [[nodiscard]] std::uint64_t get_pattern_macro_filter_violations() const noexcept {
         return pattern_macro_filter_violations_.load(std::memory_order_relaxed);
+    }
+    // Issue #423: structural pre-index fast-path + consistency probe.
+    void bump_pattern_structural_index_hit(std::uint64_t n = 1) noexcept {
+        pattern_structural_index_hits_.fetch_add(n, std::memory_order_relaxed);
+    }
+    void bump_pattern_structural_index_miss(std::uint64_t n = 1) noexcept {
+        pattern_structural_index_misses_.fetch_add(n, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_pattern_structural_index_hits() const noexcept {
+        return pattern_structural_index_hits_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_pattern_structural_index_misses() const noexcept {
+        return pattern_structural_index_misses_.load(std::memory_order_relaxed);
+    }
+    void ensure_pattern_index_consistency(
+        const aura::ast::FlatAST& flat) const noexcept;
+    [[nodiscard]] std::uint64_t get_pattern_index_consistency_violations() const noexcept {
+        return pattern_index_consistency_violations_.load(std::memory_order_relaxed);
     }
     std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack();
     static std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack_static();
