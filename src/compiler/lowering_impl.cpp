@@ -158,11 +158,15 @@ static std::uint32_t lower_flat_expr(
                                                 state.module.add_string(str_pool[inst.operands[1]]);
                             }
                         }
+                        // Issue #660: find the user-defined lambda by NAME.
+                        // The cache key (the 'name' variable) is what the user
+                        // is looking up. The user-defined lambda has a name of
+                        // the form "<name>#0" (set by cache_define). Match by name.
+                        bool is_user_lambda = copy.name == std::string(name) + std::string("#0");
                         auto new_fid = state.module.add_function(std::move(copy));
-                        // The first function in the bundle is the user-defined lambda
-                        // (outermost function for the define). Inner lambdas follow.
-                        if (ci == 0)
+                        if (is_user_lambda) {
                             lambda_fid = new_fid;
+                        }
                         // Copy bridge data from cache bridge if available
                         if (state.cache_bridge) {
                             auto bridge_it = state.cache_bridge->find(std::string(name));
