@@ -1786,6 +1786,40 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             relower_per_fn + mod_skip + linear_elide + cascade));
     });
 
+    // Issue #405: query:arena-compaction-stats. Returns the sum of
+    // 7 arena automatic compaction + fragmentation orchestration
+    // counters for AI multi-round mutation workloads
+    // (non-duplicative with #187 compile:arena-stats / arena:*
+    // primitives, #335 arena:adaptive-stats 2-tuple, and #300
+    // arena:defrag-stats 5-tuple):
+    //   - auto_compact_triggers: ArenaGroup trigger count
+    //   - auto_compact_skips: ArenaGroup skip count (below threshold)
+    //   - compaction_count: lifetime compact() calls (all modules)
+    //   - compaction_saved: lifetime bytes reclaimed
+    //   - compaction_paused: deferred at MutationBoundary
+    //   - mutation_volume: total_mutations_ (orchestration signal)
+    //   - dirty_propagation: mark_dirty_upward activity
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:arena-compaction-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const auto& group = ev->arena_group();
+            const auto stats = group.total_stats();
+            const std::uint64_t triggers = group.auto_compact_trigger_count();
+            const std::uint64_t skips = group.auto_compact_skip_count();
+            const std::uint64_t compacts = stats.compaction_count;
+            const std::uint64_t saved = stats.total_compaction_saved;
+            const std::uint64_t paused = ev->compaction_paused_by_boundary();
+            const std::uint64_t mutations = ev->total_mutations();
+            const std::uint64_t dirty = ev->get_dirty_propagation_count();
+            return make_int(static_cast<std::int64_t>(
+                triggers + skips + compacts + saved + paused + mutations +
+                dirty));
+        });
+
     // Issue #404: query:ir-soa-incremental-stats. Returns the sum
     // of 7 IR SoA Phase 3 block_dirty_-driven incremental lowering
     // counters (non-duplicative with #506 soa-hotpath-adoption
