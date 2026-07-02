@@ -127,14 +127,37 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         auto to_layer = wt->active_idx();
         if (a.size() >= 4 && is_int(a[3]))
             to_layer = static_cast<std::uint32_t>(as_int(a[3]));
-        auto resolved = wt->resolve_stable_ref(
-            from_layer, aura::ast::FlatAST::StableNodeRef{node_id, gen}, to_layer);
-        if (!resolved)
+        aura::ast::FlatAST::StableNodeRef src_ref{
+            node_id,
+            gen,
+            0,
+            from_layer,
+            0,
+            0,
+            0,
+            0};
+        if (a.size() >= 5 && is_int(a[4])) {
+            src_ref.workspace_id =
+                static_cast<std::uint32_t>(as_int(a[4]));
+            if (src_ref.workspace_id != from_layer)
+                ev.bump_provenance_mismatch();
+        }
+        auto resolved = wt->resolve_stable_ref(from_layer, src_ref, to_layer);
+        if (!resolved) {
+            ev.bump_stable_ref_workspace_resolve_miss();
             return make_void();
-        std::size_t pid = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(resolved->id)),
-                             make_int(static_cast<std::int64_t>(resolved->gen))});
-        return make_pair(pid);
+        }
+        ev.bump_stable_ref_workspace_resolve();
+        // Issue #424: return (id . (gen . nil)) — same stable-ref
+        // pair shape as (query:stable-ref) so (query:ref-valid?)
+        // accepts cross-layer resolved refs.
+        auto gen_pid = ev.pairs_.size();
+        ev.pairs_.push_back(
+            {make_int(static_cast<std::int64_t>(resolved->gen)), make_void()});
+        auto pair_pid = ev.pairs_.size();
+        ev.pairs_.push_back(
+            {make_int(static_cast<std::int64_t>(resolved->id)), make_pair(gen_pid)});
+        return make_pair(pair_pid);
     });
 
     // Issue #372: (workspace:find-define name)

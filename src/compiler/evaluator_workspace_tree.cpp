@@ -280,6 +280,48 @@ void Evaluator::update_shared_tree_root() {
     }
 }
 
+void Evaluator::ensure_stable_ref_workspace_consistency() const noexcept {
+    // Issue #424: verify WorkspaceTree layer flat/pool pointers
+    // stay aligned with the evaluator's active workspace after
+    // COW clones, workspace:switch, and update_shared_tree_root.
+    if (!workspace_tree_)
+        return;
+
+    auto bump_violation = [&]() noexcept {
+        stable_ref_workspace_tree_violations_.fetch_add(
+            1, std::memory_order_relaxed);
+    };
+
+    auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+    if (wt->active_idx() >= wt->size())
+        bump_violation();
+
+    const auto active = wt->active_idx();
+    if (active < wt->size()) {
+        const auto& node = wt->nodes_[active];
+        if (node.flat != workspace_flat_)
+            bump_violation();
+        if (node.pool != workspace_pool_)
+            bump_violation();
+    }
+
+    if (!wt->nodes_.empty()) {
+        const auto& root = wt->nodes_[0];
+        if (root.is_root && root.flat != nullptr && workspace_flat_ != nullptr &&
+            active == 0 && root.flat != workspace_flat_) {
+            bump_violation();
+        }
+    }
+
+    for (std::uint32_t idx = 1; idx < wt->size(); ++idx) {
+        const auto& node = wt->nodes_[idx];
+        if (node.has_own_flat && node.flat == nullptr)
+            bump_violation();
+        if (node.has_own_flat && node.pool == nullptr)
+            bump_violation();
+    }
+}
+
 Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
     contract_assert(arena_ != nullptr);
     auto* ar = target ? target : arena_;

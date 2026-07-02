@@ -671,6 +671,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:hygiene-violation-stats",
             // Issue #423 — query:pattern structural pre-index
             "query:pattern-structural-index-stats",
+            // Issue #424 — StableNodeRef WorkspaceTree COW safety
+            "query:stable-ref-workspace-tree-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();

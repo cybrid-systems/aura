@@ -2385,6 +2385,11 @@ private:
     std::atomic<std::uint64_t> pattern_structural_index_hits_{0};
     std::atomic<std::uint64_t> pattern_structural_index_misses_{0};
     mutable std::atomic<std::uint64_t> pattern_index_consistency_violations_{0};
+    // Issue #424: StableNodeRef / WorkspaceTree cross-layer
+    // COW consistency observability.
+    std::atomic<std::uint64_t> stable_ref_workspace_resolves_{0};
+    std::atomic<std::uint64_t> stable_ref_workspace_resolve_misses_{0};
+    mutable std::atomic<std::uint64_t> stable_ref_workspace_tree_violations_{0};
     // Issue #354: set by outermost MutationBoundaryGuard
     // ctor; cleared by dtor. The Fiber::yield path
     // checks this flag to detect "yield while holding
@@ -3531,6 +3536,23 @@ public:
     [[nodiscard]] std::uint64_t get_pattern_index_consistency_violations() const noexcept {
         return pattern_index_consistency_violations_.load(std::memory_order_relaxed);
     }
+    // Issue #424: WorkspaceTree / cross-layer StableRef probe.
+    void bump_stable_ref_workspace_resolve(std::uint64_t n = 1) noexcept {
+        stable_ref_workspace_resolves_.fetch_add(n, std::memory_order_relaxed);
+    }
+    void bump_stable_ref_workspace_resolve_miss(std::uint64_t n = 1) noexcept {
+        stable_ref_workspace_resolve_misses_.fetch_add(n, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_stable_ref_workspace_resolves() const noexcept {
+        return stable_ref_workspace_resolves_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_stable_ref_workspace_resolve_misses() const noexcept {
+        return stable_ref_workspace_resolve_misses_.load(std::memory_order_relaxed);
+    }
+    void ensure_stable_ref_workspace_consistency() const noexcept;
+    [[nodiscard]] std::uint64_t get_stable_ref_workspace_tree_violations() const noexcept {
+        return stable_ref_workspace_tree_violations_.load(std::memory_order_relaxed);
+    }
     std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack();
     static std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack_static();
     void bind_yield_hook_evaluator();
@@ -4430,12 +4452,26 @@ inline std::optional<ast::FlatAST::StableNodeRef> WorkspaceTree::resolve_stable_
     const auto* target_flat = nodes_[to_layer].flat;
     if (!target_flat)
         return std::nullopt;
-    if (from_layer == to_layer)
-        return target_flat->is_valid(ref) ? std::optional{ref} : std::nullopt;
+    if (from_layer == to_layer) {
+        if (!target_flat->is_valid(ref))
+            return std::nullopt;
+        auto out = ref;
+        out.workspace_id = to_layer;
+        return out;
+    }
     const auto mapped = remap_node_id(from_layer, ref.id, to_layer);
     if (!target_flat->is_live_node(mapped))
         return std::nullopt;
-    return ast::FlatAST::StableNodeRef{mapped, target_flat->generation()};
+    ast::FlatAST::StableNodeRef out{
+        mapped,
+        target_flat->generation(),
+        ref.mutation_id_at_capture,
+        to_layer,
+        ref.fiber_id,
+        ref.last_validated_generation,
+        ref.wrap_epoch,
+        ref.subtree_gen_at_capture};
+    return out;
 }
 
 inline std::uint32_t WorkspaceTree::create_child(const std::string& name,
