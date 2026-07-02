@@ -1410,7 +1410,8 @@ void register_workspace_query_primitives(
         aura::compiler::QueryMatcher matcher(
             ws.workspace_flat, ws.workspace_pool,
             pat_flat, pat_pool,
-            wildcard_sym, nested_arity);
+            wildcard_sym, nested_arity,
+            !include_macro_introduced);
 
         // ─── Per-match state (Issue #289, refactored in #482) ───────
         // Captures are stored as an insertion-ordered vector (linear
@@ -1671,6 +1672,16 @@ void register_workspace_query_primitives(
             }
         }
 
+        // Issue #421: sync recursive hygiene skips + verify
+        // default-hygiene results never surface MacroIntroduced
+        // node ids (post query-split contract).
+        if (matcher.recursive_macro_skipped() > 0) {
+            ev.bump_pattern_recursive_macro_skipped(
+                matcher.recursive_macro_skipped());
+        }
+        if (!include_macro_introduced) {
+            ev.verify_pattern_result_hygiene(flat, result, with_markers);
+        }
         return result;
     });
 

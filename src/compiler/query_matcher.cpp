@@ -21,10 +21,12 @@ QueryMatcher::QueryMatcher(FlatAST* ws_flat,
                            FlatAST* pat_flat,
                            StringPool* pat_pool,
                            SymId wildcard_sym,
-                           bool nested_arity)
+                           bool nested_arity,
+                           bool skip_macro_introduced)
     : ws_flat_(ws_flat), ws_pool_(ws_pool),
       pat_flat_(pat_flat), pat_pool_(pat_pool),
-      wildcard_sym_(wildcard_sym) {
+      wildcard_sym_(wildcard_sym),
+      skip_macro_introduced_(skip_macro_introduced) {
     state.nested_arity = nested_arity;
     // Issue #292: intern ":guard" so the matcher can detect
     // (:guard <sub-pat> "expr") forms in the pattern.
@@ -74,6 +76,14 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
         return ws_id >= ws_flat_->size();
     if (ws_id >= ws_flat_->size() || pat_id == NULL_NODE)
         return (pat_id == NULL_NODE) ? (ws_id == NULL_NODE) : false;
+
+    // Issue #421: recursive hygiene — refuse to descend into
+    // MacroIntroduced subtrees when the caller opted out of
+    // :include-macro-introduced / :respect-hygiene #t.
+    if (skip_macro_introduced_ && ws_flat_->is_macro_introduced(ws_id)) {
+        ++recursive_macro_skipped_;
+        return false;
+    }
 
     auto ws_node = ws_flat_->get(ws_id);
     auto pat_node = pat_flat_->get(pat_id);

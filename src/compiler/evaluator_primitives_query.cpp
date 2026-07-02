@@ -2073,6 +2073,46 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 queries + contract + macro_dirty));
         });
 
+    // Issue #421: query:pattern-macro-filter-stats. Returns the
+    // sum of 7 query:pattern recursive MacroIntroduced filter
+    // observability counters (non-duplicative with #547
+    // pattern-hygiene-stats 2-counter root-skip slice, #514
+    // pattern-marker-stats 3-counter slice, and #420
+    // macro-hygiene-contract-stats end-to-end bundle):
+    //   - root_skips: macro_introduced_skipped_in_query_
+    //   - recursive_skips: pattern_recursive_macro_skipped_
+    //   - filter_violations: pattern_macro_filter_violations_
+    //   - markers: workspace MacroIntroduced marker tally
+    //   - queries: total_query_calls_
+    //   - index_hits: tag_arity_index_hits (fast-path)
+    //   - hygiene_violations: hygiene_violation_count_
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:pattern-macro-filter-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const std::uint64_t root_skips =
+                ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t recursive =
+                ev->get_pattern_recursive_macro_skipped();
+            const std::uint64_t violations =
+                ev->get_pattern_macro_filter_violations();
+            const std::uint64_t markers =
+                workspace_marker_macro_introduced(ev);
+            const std::uint64_t queries = ev->get_total_query_calls();
+            const std::uint64_t index_hits = ws
+                ? ws->tag_arity_index_hits()
+                : 0;
+            const std::uint64_t hygiene =
+                ev->get_hygiene_violation_count();
+            return make_int(static_cast<std::int64_t>(
+                root_skips + recursive + violations + markers +
+                queries + index_hits + hygiene));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning
