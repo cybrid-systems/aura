@@ -1869,6 +1869,43 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 defuse + rollback));
         });
 
+    // Issue #416: query:ast-column-compaction-stats. Returns the sum
+    // of 7 FlatAST SoA column compaction + fragmentation
+    // observability counters for long-lived workspace profiling
+    // (non-duplicative with #405 arena-compaction-stats ArenaGroup
+    // slice, #261 ast:node-lifecycle-stats per-field hash,
+    // ast:recycle-nodes / ast:compact-nodes action primitives,
+    // and #430 arena live-object moving theme):
+    //   - recycle_total: node_recycle_total_ (dead slot reuse)
+    //   - compact_total: node_compact_total_ (densify reclaimed)
+    //   - slot_reuse: node_slot_reuse_count_ (free_list hits)
+    //   - live_nodes: node_lifecycle_stats live count snapshot
+    //   - free_slots: node_lifecycle_stats free_list size
+    //   - total_slots: node_lifecycle_stats SoA column size
+    //   - fragmentation_bp: dead/total ratio in basis points
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:ast-column-compaction-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            if (!ws) return make_int(0);
+            const auto snap = ws->node_lifecycle_stats();
+            const std::uint64_t recycle = ws->node_recycle_total();
+            const std::uint64_t compact = ws->node_compact_total();
+            const std::uint64_t reuse = ws->node_slot_reuse_count();
+            const std::uint64_t live = snap.live_nodes;
+            const std::uint64_t free = snap.free_slots;
+            const std::uint64_t total = snap.total_slots;
+            const std::uint64_t frag_bp = static_cast<std::uint64_t>(
+                snap.fragmentation_ratio * 10000.0);
+            return make_int(static_cast<std::int64_t>(
+                recycle + compact + reuse + live + free + total +
+                frag_bp));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning
