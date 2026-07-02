@@ -576,6 +576,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:value-dispatch-stats",
             // Issue #506 — IR SoA + dirty-aware Pass hotpath adoption
             "query:soa-hotpath-adoption-stats",
+            // Issue #403 — IRInstruction rich metadata interpreter/JIT
+            "query:ir-metadata-stats",
             // Issue #607 — Task4 high-perf hot-path matrix
             "query:task4-hotpath-safety-score",
             "query:task4-cache-locality-win",
