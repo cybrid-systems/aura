@@ -1626,6 +1626,9 @@ aura_issue_test_link_llvm_jit(test_dirty_propagation_cost_closed_loop_408)
 # Issue #414: generation_/epoch long-running session closed loop.
 aura_add_issue_test(test_generation_epoch_closed_loop_414)
 aura_issue_test_link_llvm_jit(test_generation_epoch_closed_loop_414)
+# Issue #416: AST column compaction closed loop.
+aura_add_issue_test(test_ast_column_compaction_closed_loop_416)
+aura_issue_test_link_llvm_jit(test_ast_column_compaction_closed_loop_416)
 # Issue #571: EvalValue v2 encoding dispatch table + hot-path
 # Contracts matrix under AI mutate → eval → shape-classify.
 # 12 scenarios validating: consteval table, classify roundtrip,
