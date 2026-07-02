@@ -1786,6 +1786,54 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             relower_per_fn + mod_skip + linear_elide + cascade));
     });
 
+    // Issue #406: query:pass-contracts-stats. Returns the sum of
+    // 7 Pass Pipeline + Contracts + zero-overhead hot-path counters
+    // spanning AnalysisPass/DirtyAwarePass concepts and cheap-view
+    // dispatch (non-duplicative with #571 value-dispatch-stats
+    // 4-tuple, #506 soa-hotpath-adoption 8-counter slice, and
+    // #381 per-concept unit tests in test_issue_163):
+    //   - contract_violations: value_contract_violation_count
+    //   - dispatch_hits: value_dispatch_hit_count (cheap-view fast path)
+    //   - passes_skipped: passes_skipped_type_dirty_ (DirtyAwarePass)
+    //   - relower_skipped: relower_skipped_entirely_count
+    //   - relower_per_fn: relower_per_function_called_count
+    //   - module_dirty_skips: clean module incremental skip
+    //   - zerooverhead_wins: coercion_zerooverhead_win_total
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:pass-contracts-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(
+                ev->compiler_metrics());
+        const std::uint64_t violations =
+            types::value_contract_violation_count.load(
+                std::memory_order_relaxed);
+        const std::uint64_t dispatch_hits =
+            types::value_dispatch_hit_count.load(std::memory_order_relaxed);
+        const std::uint64_t passes_skip = ev->get_passes_skipped_type_dirty();
+        const std::uint64_t relower_skip = m
+            ? m->relower_skipped_entirely_count.load(
+                  std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t relower_per_fn = m
+            ? m->relower_per_function_called_count.load(
+                  std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t mod_skip = m
+            ? m->module_dirty_skips.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t zero_wins = m
+            ? m->coercion_zerooverhead_win_total.load(
+                  std::memory_order_relaxed)
+            : 0;
+        return make_int(static_cast<std::int64_t>(
+            violations + dispatch_hits + passes_skip + relower_skip +
+            relower_per_fn + mod_skip + zero_wins));
+    });
+
     // Issue #405: query:arena-compaction-stats. Returns the sum of
     // 7 arena automatic compaction + fragmentation orchestration
     // counters for AI multi-round mutation workloads
