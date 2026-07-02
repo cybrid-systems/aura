@@ -4458,11 +4458,26 @@ public:
 
             // Cache bundle
             std::vector<aura::ir::IRFunction> bundle;
+            std::vector<aura::ir::ClosureBridgeData> bridge_bundle;
+            std::size_t own_pos = 0;
             for (auto& func : ir_mod.functions) {
-                if (func.id != ir_mod.entry_function_id)
-                    bundle.push_back(std::move(func));
+                if (func.id == ir_mod.entry_function_id)
+                    continue;
+                // Issue #660: assign a unique stable name (same pattern as cache_define)
+                // so cross-module closure identity is preserved when the cache bundle
+                // is loaded into a fresh module.
+                if (func.name.empty() || func.name == "__lambda__") {
+                    func.name = name + std::string("#") + std::to_string(own_pos++);
+                }
+                bundle.push_back(std::move(func));
+                // Save bridge data
+                if (func.id < ir_mod.closure_bridge.size())
+                    bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
+                else
+                    bridge_bundle.emplace_back();
             }
             ir_cache_[name] = std::move(bundle);
+            ir_cache_bridge_[name] = std::move(bridge_bundle);
             // Self-referencing cached functions need tree-walker fallback
             user_bindings_.insert(name);
             function_sources_[name] = content;
@@ -4813,6 +4828,18 @@ public:
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, &name_str, &type_registry_, value_cells_for_lowering());
+        // Issue #660 debug: dump IR after lowering
+        if (name_str.empty()) {
+            for (auto& func : ir_mod.functions) {
+                std::println(std::cerr, "[IR-DUMP] func id={} name='{}' blocks={}", func.id, func.name, func.blocks.size());
+                for (auto& blk : func.blocks) {
+                    for (auto& inst : blk.instructions) {
+                        std::println(std::cerr, "  inst op={} ops=[{},{},{},{}]", static_cast<int>(inst.opcode),
+                                     inst.operands[0], inst.operands[1], inst.operands[2], inst.operands[3]);
+                    }
+                }
+            }
+        }
 
         // Run passes per-function on the new function bundle
         {
@@ -4840,7 +4867,7 @@ public:
             // Override the default "__lambda__" name (or empty name) with
             // a unique stable name for cross-module closure identity.
             if (func.name.empty() || func.name == "__lambda__") {
-                func.name = name_str + std::string("#") + std::to_string(own_pos++);
+func.name = name_str + std::string("#") + std::to_string(own_pos++);
             }
             bundle.push_back(std::move(func));
             // Also save bridge data
