@@ -1638,6 +1638,9 @@ aura_issue_test_link_llvm_jit(test_envframe_dualpath_stale_closed_loop_418)
 # Issue #419: defuse_version modular API + AOT dispatch closed loop.
 aura_add_issue_test(test_defuse_version_closed_loop_419)
 aura_issue_test_link_llvm_jit(test_defuse_version_closed_loop_419)
+# Issue #420: MacroIntroduced end-to-end hygiene contract closed loop.
+aura_add_issue_test(test_macro_hygiene_contract_closed_loop_420)
+aura_issue_test_link_llvm_jit(test_macro_hygiene_contract_closed_loop_420)
 # Issue #571: EvalValue v2 encoding dispatch table + hot-path
 # Contracts matrix under AI mutate → eval → shape-classify.
 # 12 scenarios validating: consteval table, classify roundtrip,

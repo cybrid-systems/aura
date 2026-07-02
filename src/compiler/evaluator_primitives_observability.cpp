@@ -663,6 +663,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:envframe-dualpath-stale-stats",
             // Issue #419 — Modular defuse_version + AOT dispatch stats
             "query:defuse-version-stats",
+            // Issue #420 — MacroIntroduced end-to-end hygiene contract
+            "query:macro-hygiene-contract-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();

@@ -2368,6 +2368,11 @@ private:
     // ensure_mutation_invariants() on Guard dtor and
     // materialize_call_env hot paths.
     mutable std::atomic<std::uint64_t> total_invariant_violations_{0};
+    // Issue #420: MacroIntroduced marker vs macro_dirty_
+    // (kMacroExpansion) end-to-end contract drift. Bumped by
+    // ensure_macro_hygiene_contract() on eval-current and
+    // query-side probes.
+    mutable std::atomic<std::uint64_t> macro_hygiene_contract_violations_{0};
     // Issue #354: set by outermost MutationBoundaryGuard
     // ctor; cleared by dtor. The Fiber::yield path
     // checks this flag to detect "yield while holding
@@ -3462,6 +3467,15 @@ public:
     // Issue #417: lightweight cross-TU invariant check for
     // active_mutation_stack() vs mutation_boundary_depth_slot.
     void ensure_mutation_invariants() noexcept;
+    // Issue #420: clone/expand → query → mutate → IR
+    // MacroIntroduced hygiene contract probe. Verifies
+    // SyntaxMarker::MacroIntroduced nodes carry the
+    // kMacroExpansion macro_dirty_ bit set by
+    // clone_macro_body / expand_inner_macros.
+    void ensure_macro_hygiene_contract() const noexcept;
+    [[nodiscard]] std::uint64_t get_macro_hygiene_contract_violations() const noexcept {
+        return macro_hygiene_contract_violations_.load(std::memory_order_relaxed);
+    }
     std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack();
     static std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack_static();
     void bind_yield_hook_evaluator();

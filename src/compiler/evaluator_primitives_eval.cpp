@@ -569,6 +569,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (result)
             ev.last_eval_current_result_ = *result;
 
+        // Issue #420: post-expand hygiene contract probe.
+        ev.ensure_macro_hygiene_contract();
+
         // Clear dirty flags after successful eval
         ev.workspace_flat_->clear_all_dirty();
         if (!result) {
