@@ -4869,7 +4869,8 @@ public:
             if (func.name.empty() || func.name == "__lambda__") {
 func.name = name_str + std::string("#") + std::to_string(own_pos++);
             }
-            bundle.push_back(std::move(func));
+            // Issue #660 follow-up: COPY instead of move (preserves ir_mod for binding)
+            bundle.push_back(func);
             // Also save bridge data
             if (func.id < ir_mod.closure_bridge.size())
                 bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
