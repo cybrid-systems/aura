@@ -1650,6 +1650,9 @@ aura_issue_test_link_llvm_jit(test_hygiene_violation_closed_loop_422)
 # Issue #423: query:pattern structural pre-index closed loop.
 aura_add_issue_test(test_pattern_structural_index_closed_loop_423)
 aura_issue_test_link_llvm_jit(test_pattern_structural_index_closed_loop_423)
+# Issue #424: StableNodeRef WorkspaceTree COW closed loop.
+aura_add_issue_test(test_stable_ref_workspace_tree_closed_loop_424)
+aura_issue_test_link_llvm_jit(test_stable_ref_workspace_tree_closed_loop_424)
 # Issue #571: EvalValue v2 encoding dispatch table + hot-path
 # Contracts matrix under AI mutate → eval → shape-classify.
 # 12 scenarios validating: consteval table, classify roundtrip,

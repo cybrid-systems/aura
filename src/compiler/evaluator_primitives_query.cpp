@@ -2185,6 +2185,46 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 synced_gen + violations));
         });
 
+    // Issue #424: query:stable-ref-workspace-tree-stats. Returns the
+    // sum of 7 WorkspaceTree / cross-layer StableNodeRef
+    // observability counters (non-duplicative with #457
+    // stable-ref-stats 3 FlatAST counters, #527
+    // stable-ref-cow-fiber-stats COW/fiber bundle):
+    //   - workspace_resolves: stable_ref_workspace_resolves_
+    //   - workspace_resolve_misses: stable_ref_workspace_resolve_misses_
+    //   - tree_violations: stable_ref_workspace_tree_violations_
+    //   - tree_layers: WorkspaceTree::size()
+    //   - active_idx: WorkspaceTree::active_idx()
+    //   - cow_epoch: WorkspaceTree::cow_epoch_
+    //   - is_valid_checks: FlatAST is_valid_check_count()
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:stable-ref-workspace-tree-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const std::uint64_t resolves =
+                ev->get_stable_ref_workspace_resolves();
+            const std::uint64_t misses =
+                ev->get_stable_ref_workspace_resolve_misses();
+            const std::uint64_t violations =
+                ev->get_stable_ref_workspace_tree_violations();
+            std::uint64_t layers = 0;
+            std::uint64_t active = 0;
+            std::uint64_t cow_epoch = 0;
+            if (auto* wt = static_cast<WorkspaceTree*>(ev->workspace_tree())) {
+                layers = wt->size();
+                active = wt->active_idx();
+                cow_epoch = wt->cow_epoch_;
+            }
+            const std::uint64_t checks = ws ? ws->is_valid_check_count() : 0;
+            return make_int(static_cast<std::int64_t>(
+                resolves + misses + violations + layers + active +
+                cow_epoch + checks));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning
