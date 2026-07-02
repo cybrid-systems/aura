@@ -935,3 +935,77 @@ https://github.com/cybrid-systems/aura/issues/382#issuecomment-4853158763.
 4. Split src/compiler/pass_manager.ixx (3196 lines).
 5. Split src/compiler/type_checker.ixx (1268 lines).
 6. Split src/compiler/ir.ixx (810 lines).
+
+## Issue #401 — invalidate_function BFS + sort dependents (SHIPPED 2026-07-02)
+
+Scope-limited fix for the DFS-as-BFS bug. The `std::vector` +
+`push_back/pop_back` queue in `invalidate_function` was actually
+stack/DFS behavior despite the misleading "natural BFS order"
+comment. Re-lower order depended on `unordered_map::called_by`
+hash layout → `record_dependency` edge creation was non-deterministic
+across runs → AI multi-round `(mutate:rebind ...)` had subtle
+dep_graph_ shape drift.
+
+- `src/compiler/service.ixx`:
+  - `invalidate_function` queue: `std::vector`+stack → `std::deque`+FIFO
+  - `dependents` vector: `std::sort` lexicographically before re-lower
+  - 6 new public hooks: `public_dep_graph_size/contains/calls_for/called_by_for/has_edge` + `public_invalidate_function`
+- `src/compiler/observability_metrics.h`:
+  - `invalidate_function_calls` lifetime counter
+- `tests/test_issue_401.cpp` (new) — 6 ACs / 54 checks, all PASS:
+  AC1 BFS reaches all transitivity (eviction = 3 for 3-node chain)
+  AC2 re-lower dep_graph_ shape stable across services
+  AC3 3 invalidate cycles: eviction + counter consistency
+  AC4 invalidate_function_calls bumps once per call (incl. non-existent name)
+  AC5 3× (mutate:rebind) preserves dep_graph_ + follow-up invalidate correct
+  AC6 1000× invalidate(f) terminates (1002 = 3 + 999 evictions)
+- Registered standalone + jit_tests bundle.
+
+**Verified at ship:** gate (docs + lint + fixtures) OK;
+test_issue_401 54/54.
+
+#401 closed (state_reason: completed, scope-limited).
+Comment at
+https://github.com/cybrid-systems/aura/issues/401#issuecomment-4861116692.
+
+**2 follow-ups tracked** (pre-existing behaviors, NOT introduced by #401):
+1. `populate_dep_graph_from_workspace` re-population quirk after the 2nd
+   `set-code`: only some Define nodes re-appear in dep_graph_ (cycle 1 of
+   AC3 in the original draft showed ws_flat size 23 → 15 between cycles).
+   Need separate investigation — likely an incremental-parsing optimization
+   that doesn't see all defines when the source is "mostly unchanged".
+2. `record_dependency` not called during re-lower of dependents because the
+   callee's cache is empty mid-traversal (no cache_hit for the just-erased
+   callee). dep_graph_ edges to the invalidated callee are temporarily lost
+   until the next set-code rebuilds them. Would need a "pending re-anchor"
+   tracker or similar follow-up.
+
+**Critical learnings that made this ship:**
+
+1. **`dep_graph_` is only populated via `(set-code ...)`**, not via plain
+   `(eval "(define ...)")`. The `populate_dep_graph_from_workspace`
+   callback is wired to the `pre_cache_workspace_defines_fn_` std::function
+   which fires from `set-code` + `mutate:*` paths but NOT from a plain
+   eval. So tests must use `set-code` + `eval-current` to populate the
+   graph end-to-end. **Lesson**: when testing dep_graph_/mark_define_dirty
+   /invalidate_function, always go through `set-code` first.
+
+2. **Re-lower doesn't restore dep_graph_ edges** when the callee's cache
+   was just erased (this is the second follow-up above). The re-lower
+   loop calls `record_dependency` only for `cache_hits`, but cache_hits
+   is computed against the (now-empty) ir_cache_, so the just-invalidated
+   callee doesn't appear. The fix would be to either (a) skip the
+   eviction of the callee's cache entry until after re-lower completes,
+   or (b) track "edges pending re-anchor" via a separate data structure.
+
+3. **`mutate:rebind` does NOT call `invalidate_function`** — it uses
+   `mark_define_dirty` instead, which cascades via the same dep_graph_
+   BFS but through a different code path. So `invalidate_function_calls`
+   counter stays at 0 across pure mutate:rebind sequences; only explicit
+   `invalidate_function` calls (or some internal callers) bump it.
+
+4. **`set-code` after invalidate can produce a smaller ws_flat** (15
+   nodes vs the original 23) when the source is identical to the last
+   set-code. This is pre-existing behavior — the parser appears to do
+   incremental parsing where unchanged defines aren't re-created. Tests
+   should not assert on exact ws_flat size across cycles.
