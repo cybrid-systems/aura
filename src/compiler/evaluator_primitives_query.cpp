@@ -1786,6 +1786,60 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             relower_per_fn + mod_skip + linear_elide + cascade));
     });
 
+    // Issue #403: query:ir-metadata-stats. Returns the sum of
+    // 7 IRInstruction rich-metadata consumption counters spanning
+    // IRInterpreter + JIT paths (non-duplicative with #506 SoA
+    // adoption 8-counter slice, #570 shape-stability-stats,
+    // #598 linear-ownership-runtime-stats 4-tuple):
+    //   - narrow_evidence_hits: coercion_narrow_evidence_hits_total
+    //     (GuardShape narrow fast-path — interpreter + JIT)
+    //   - linear_elide: linear_elide_count (linear_ownership_state
+    //     elision in TypeSpecializationWrap)
+    //   - linear_enforce: linear_post_mutate_enforcements_total
+    //     (interpreter GuardShape linear enforcement)
+    //   - linear_pass: linear_check_pass_count_ (interpreter linear
+    //     ownership fast-path checks)
+    //   - jit_shape_hits: specialization_hits (JIT shape_id fast path)
+    //   - deopt_total: deopt_count (shape mismatch — consistency signal)
+    //   - adt_variant_impacts: adt_variant_mutate_impacts_total
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:ir-metadata-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(
+                ev->compiler_metrics());
+        const std::uint64_t narrow = m
+            ? m->coercion_narrow_evidence_hits_total.load(
+                  std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t linear_elide = m
+            ? m->linear_elide_count.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t linear_enforce = m
+            ? m->linear_post_mutate_enforcements_total.load(
+                  std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t linear_pass = m
+            ? m->linear_check_pass_count_.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t jit_hits = m
+            ? m->specialization_hits.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t deopt = m
+            ? m->deopt_count.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t adt_impacts = m
+            ? m->adt_variant_mutate_impacts_total.load(
+                  std::memory_order_relaxed)
+            : 0;
+        return make_int(static_cast<std::int64_t>(
+            narrow + linear_elide + linear_enforce + linear_pass +
+            jit_hits + deopt + adt_impacts));
+    });
+
     // Issue #607: query:task4-hotpath-safety-score. Returns
     // the sum of 6 Task4 high-perf hot-path positive indicators:
     //   - specialization_hits_         (shape/JIT fast path)
