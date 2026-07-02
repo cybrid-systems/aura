@@ -982,7 +982,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
 
                 case IROpcode::MakeClosure: {
                     auto id = next_closure_id_++;
-                    IRClosure ircl{ops[1], std::vector<EvalValue>(ops[2], make_void())};
+                    IRClosure ircl;
+                    ircl.func_id = ops[1];
+                    ircl.env = std::vector<EvalValue>(ops[2], make_void());
                     // Copy bridge data from IRModule if available.
                     // Issue #224 Cycle 2: shared_ptr-based bridge.
                     // The copy bumps the refcount, so the closure
