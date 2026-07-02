@@ -221,4 +221,44 @@ void Evaluator::ensure_pattern_macro_filter_consistency(
     // to assert the post-split filter contract is wired.
 }
 
+void Evaluator::ensure_pattern_index_consistency(
+    const aura::ast::FlatAST& flat) const noexcept {
+    // Issue #423: verify Evaluator-side tag_arity_index_
+    // stays in sync with the workspace flat after
+    // query:pattern fast-path builds and incremental sync.
+    std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_);
+    if (tag_arity_index_.empty())
+        return;
+
+    auto bump_violation = [&]() noexcept {
+        pattern_index_consistency_violations_.fetch_add(
+            1, std::memory_order_relaxed);
+    };
+
+    if (tag_arity_index_workspace_ != workspace_flat_)
+        bump_violation();
+    if (tag_arity_index_synced_size_ != flat.size())
+        bump_violation();
+    if (tag_arity_index_synced_gen_ != flat.generation())
+        bump_violation();
+
+    for (const auto& [key, bucket] : tag_arity_index_) {
+        const auto expected_tag =
+            static_cast<aura::ast::NodeTag>(key >> 32);
+        const auto expected_arity =
+            static_cast<std::size_t>(key & 0xFFFFFFFFu);
+        for (aura::ast::NodeId id : bucket) {
+            if (id >= flat.size()) {
+                bump_violation();
+                continue;
+            }
+            const auto node = flat.get(id);
+            if (node.tag != expected_tag ||
+                node.children.size() != expected_arity) {
+                bump_violation();
+            }
+        }
+    }
+}
+
 }  // namespace aura::compiler

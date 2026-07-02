@@ -1647,6 +1647,9 @@ aura_issue_test_link_llvm_jit(test_pattern_macro_filter_closed_loop_421)
 # Issue #422: Hygiene violation detection in mutate/Guard paths.
 aura_add_issue_test(test_hygiene_violation_closed_loop_422)
 aura_issue_test_link_llvm_jit(test_hygiene_violation_closed_loop_422)
+# Issue #423: query:pattern structural pre-index closed loop.
+aura_add_issue_test(test_pattern_structural_index_closed_loop_423)
+aura_issue_test_link_llvm_jit(test_pattern_structural_index_closed_loop_423)
 # Issue #571: EvalValue v2 encoding dispatch table + hot-path
 # Contracts matrix under AI mutate → eval → shape-classify.
 # 12 scenarios validating: consteval table, classify roundtrip,

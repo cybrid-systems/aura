@@ -2149,6 +2149,42 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 mutations + markers + guard_epoch));
         });
 
+    // Issue #423: query:pattern-structural-index-stats. Returns the
+    // sum of 7 Evaluator-side structural pre-index observability
+    // counters (non-duplicative with #547/#554 query:pattern-index-stats
+    // FlatAST workspace slice):
+    //   - structural_hits: pattern_structural_index_hits_
+    //   - structural_misses: pattern_structural_index_misses_
+    //   - index_buckets: tag_arity_index_size()
+    //   - index_entries: tag_arity_index_entry_count()
+    //   - synced_size: tag_arity_index_synced_size()
+    //   - synced_gen: tag_arity_index_synced_gen()
+    //   - consistency_violations: pattern_index_consistency_violations_
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:pattern-structural-index-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const std::uint64_t hits =
+                ev->get_pattern_structural_index_hits();
+            const std::uint64_t misses =
+                ev->get_pattern_structural_index_misses();
+            const std::uint64_t buckets = ev->tag_arity_index_size();
+            const std::uint64_t entries =
+                ev->tag_arity_index_entry_count();
+            const std::uint64_t synced_size =
+                ev->tag_arity_index_synced_size();
+            const std::uint64_t synced_gen =
+                ev->tag_arity_index_synced_gen();
+            const std::uint64_t violations =
+                ev->get_pattern_index_consistency_violations();
+            return make_int(static_cast<std::int64_t>(
+                hits + misses + buckets + entries + synced_size +
+                synced_gen + violations));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning
