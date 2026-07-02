@@ -1786,6 +1786,49 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             relower_per_fn + mod_skip + linear_elide + cascade));
     });
 
+    // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
+    // 7 ShapeProfiler bursty-mutation + deopt-storm observability
+    // counters for AI orchestration workload tuning
+    // (non-duplicative with #570 shape-stability-stats 6-counter
+    // slice emphasizing stable_hits/fiber_refresh, #605 JIT mutate
+    // matrix, and #403 ir-metadata-stats deopt-only slice):
+    //   - shape_churn: mutation_shape_churn_count (burst detect)
+    //   - shape_changes: shape_changes_observed (change frequency)
+    //   - deopt_storm: deopt_count (GuardShape mismatch total)
+    //   - jit_recompile: jit_shape_miss_count (cache version miss)
+    //   - deopt_hooks: shape_deopt_hook_fire_count (invalidate hook)
+    //   - version_bumps: shape_version_bump_count (profile invalidate)
+    //   - spec_hits: specialization_hits (steady-state contrast)
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:shape-deopt-burst-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(
+                ev->compiler_metrics());
+        const std::uint64_t churn =
+            shape::mutation_shape_churn_count.load(std::memory_order_relaxed);
+        const std::uint64_t changes = m
+            ? m->shape_changes_observed.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t deopt = m
+            ? m->deopt_count.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t jit_miss =
+            shape::jit_shape_miss_count.load(std::memory_order_relaxed);
+        const std::uint64_t hooks =
+            shape::shape_deopt_hook_fire_count.load(std::memory_order_relaxed);
+        const std::uint64_t bumps =
+            shape::shape_version_bump_count.load(std::memory_order_relaxed);
+        const std::uint64_t spec_hits = m
+            ? m->specialization_hits.load(std::memory_order_relaxed)
+            : 0;
+        return make_int(static_cast<std::int64_t>(
+            churn + changes + deopt + jit_miss + hooks + bumps + spec_hits));
+    });
+
     // Issue #406: query:pass-contracts-stats. Returns the sum of
     // 7 Pass Pipeline + Contracts + zero-overhead hot-path counters
     // spanning AnalysisPass/DirtyAwarePass concepts and cheap-view
