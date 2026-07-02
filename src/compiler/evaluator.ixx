@@ -3596,6 +3596,12 @@ public:
     [[nodiscard]] std::uint64_t get_defuse_version() const noexcept {
         return defuse_version_.load(std::memory_order_acquire);
     }
+    // Issue #419: modular public alias for AOT bridge, runtime
+    // closure dispatch, and scheduler version reads. Equivalent
+    // to get_defuse_version() / defuse_version_snapshot().
+    [[nodiscard]] std::uint64_t current_defuse_version() const noexcept {
+        return get_defuse_version();
+    }
     [[nodiscard]] std::uint64_t get_last_queried_epoch() const noexcept {
         return last_queried_epoch_.load(std::memory_order_acquire);
     }
