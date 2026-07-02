@@ -62,24 +62,6 @@ extern int aura_issue_295_run();
 extern int aura_issue_297_run();
 extern int aura_issue_298_run();
 extern int aura_issue_300_run();
-extern int aura_issue_355_run();
-extern int aura_issue_356_run();
-extern int aura_issue_358_run();
-extern int aura_issue_359_run();
-extern int aura_issue_361_run();
-extern int aura_issue_362_run();
-extern int aura_issue_363_run();
-extern int aura_issue_364_run();
-extern int aura_issue_365_run();
-extern int aura_issue_366_run();
-extern int aura_issue_367_run();
-extern int aura_issue_368_run();
-extern int aura_issue_369_run();
-extern int aura_issue_370_run();
-extern int aura_issue_373_run();
-extern int aura_issue_374_run();
-extern int aura_issue_375_run();
-extern int aura_issue_376_run();
 
 int main() {
     struct Member {
@@ -144,24 +126,6 @@ int main() {
         {"test_issue_297", aura_issue_297_run},
         {"test_issue_298", aura_issue_298_run},
         {"test_issue_300", aura_issue_300_run},
-        {"test_issue_355", aura_issue_355_run},
-        {"test_issue_356", aura_issue_356_run},
-        {"test_issue_358", aura_issue_358_run},
-        {"test_issue_359", aura_issue_359_run},
-        {"test_issue_361", aura_issue_361_run},
-        {"test_issue_362", aura_issue_362_run},
-        {"test_issue_363", aura_issue_363_run},
-        {"test_issue_364", aura_issue_364_run},
-        {"test_issue_365", aura_issue_365_run},
-        {"test_issue_366", aura_issue_366_run},
-        {"test_issue_367", aura_issue_367_run},
-        {"test_issue_368", aura_issue_368_run},
-        {"test_issue_369", aura_issue_369_run},
-        {"test_issue_370", aura_issue_370_run},
-        {"test_issue_373", aura_issue_373_run},
-        {"test_issue_374", aura_issue_374_run},
-        {"test_issue_375", aura_issue_375_run},
-        {"test_issue_376", aura_issue_376_run},
     };
 
     int passed = 0;

@@ -71,6 +71,16 @@ struct CompilerMetrics {
     // (jit_cache_evictions - invalidate_function_calls) / invalidate_function_calls
     // tells you the average dependent fan-out per invalidation.
     std::atomic<std::uint64_t> invalidate_function_calls{0};
+    // Issue #402: needs_tree_walker_fallback counters. The
+    // (call) counter is bumped on every invocation (incl.
+    // early returns). The (fast_path) counter bumps when
+    // summary_flags_ == 0 AND the subtree walk decides. The
+    // (slow_path) counter bumps when summary_flags_ != 0 and
+    // we fall back to the O(flat.size()) scan. fast_path /
+    // (fast_path + slow_path) gives the fast-path hit ratio.
+    std::atomic<std::uint64_t> needs_tree_walker_fallback_calls{0};
+    std::atomic<std::uint64_t> needs_tree_walker_fast_path_hits{0};
+    std::atomic<std::uint64_t> needs_tree_walker_slow_path_hits{0};
     // Issue #224 cycle 4: dep_graph_-aware cascade. When
     // mark_define_dirty cascades a mutation to a dependent,
     // it tries to mark only the body function's blocks dirty

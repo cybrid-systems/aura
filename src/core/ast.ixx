@@ -142,6 +142,31 @@ export enum class NodeTag : std::uint32_t {
     Modport = 0x1C,
 };
 
+// Issue #402: FlatAST summary flags. Bit-set computed eagerly
+// in add_node (O(1) per add) so needs_tree_walker_fallback
+// can fast-path trivial expressions (all bits == 0) without
+// scanning every node. The full scan remains as the slow
+// path for expressions that touch at least one of these flags.
+//
+// Each bit corresponds to ONE node-tag class (or
+// node-int_value / node-sym_id pattern) that the slow-path
+// scan looks for. Bits are OR-ed into summary_flags_ on
+// add_node; reset() / clear() clears the whole field.
+export enum class SummaryFlag : std::uint32_t {
+    None              = 0,
+    HasMacroDef       = 1u << 0,  // NodeTag::MacroDef → tree-walker fallback
+    HasDefineType     = 1u << 1,  // NodeTag::DefineType → tree-walker fallback
+    HasDefineModule   = 1u << 2,  // NodeTag::DefineModule → tree-walker fallback
+    HasLambdaDotted   = 1u << 3,  // Lambda with int_value!=0 (dotted rest param)
+    HasTypeAnnotVar   = 1u << 4,  // TypeAnnotation with int_value!=0 (3-arg form)
+    HasSet            = 1u << 5,  // NodeTag::Set (set! special form)
+    HasKeywordVar     = 1u << 6,  // Variable with sym_id starting with ':'
+    HasQueryOrMutateCall = 1u << 7,  // Call with callee sym_id starts_with "query:" / "mutate:"
+    HasTreeWalkerCall = 1u << 8,  // Call with callee sym_id in tree_walker_only set (slow-path only)
+    HasUserBindingVar = 1u << 9,  // Variable sym_id in user_bindings_ (cross-cutting with state)
+    HasUnresolvedVar  = 1u << 10, // Variable sym_id not in primitives + not in ir_cache_
+};
+
 
 // ── StringPool — arena-backed string interner ──────────────────
 //
@@ -855,7 +880,118 @@ private:
         return live;
     }
 
+    // Issue #402: compute the summary-flag bits set by adding
+    // a node of the given tag with default int_value=0 and
+    // INVALID_SYM. Bits that depend on int_value (Lambda dotted
+    // / TypeAnnotation var-form) or sym_id (keyword Variable,
+    // query: / mutate: Call, user-binding Variable) are set
+    // lazily when those values are written (see set_int_value,
+    // set_sym_id) — this helper covers the tag-only path that
+    // add_node takes for fresh nodes.
+    [[nodiscard]] static constexpr std::uint32_t
+    summary_flags_for_tag(NodeTag tag) noexcept {
+        switch (tag) {
+        case NodeTag::MacroDef:     return static_cast<std::uint32_t>(SummaryFlag::HasMacroDef);
+        case NodeTag::DefineType:   return static_cast<std::uint32_t>(SummaryFlag::HasDefineType);
+        case NodeTag::DefineModule: return static_cast<std::uint32_t>(SummaryFlag::HasDefineModule);
+        case NodeTag::Set:          return static_cast<std::uint32_t>(SummaryFlag::HasSet);
+        default:                    return 0;
+        }
+    }
+
+    // Issue #402: lazy bits set by set_int_value when the
+    // value is non-zero (Lambda dotted / TypeAnnotation
+    // var-form). Returns the bit(s) to OR-in, or 0 if the
+    // tag + int_value combination doesn't trigger any flag.
+    [[nodiscard]] static constexpr std::uint32_t
+    summary_flags_for_int_value(NodeTag tag, std::int64_t v) noexcept {
+        if (v == 0)
+            return 0;
+        switch (tag) {
+        case NodeTag::Lambda:          return static_cast<std::uint32_t>(SummaryFlag::HasLambdaDotted);
+        case NodeTag::TypeAnnotation:  return static_cast<std::uint32_t>(SummaryFlag::HasTypeAnnotVar);
+        default:                       return 0;
+        }
+    }
+
+    // Issue #402: lazy bits set by set_sym_id when the sym_id
+    // is non-empty. Covers keyword Variables (':foo'),
+    // query:/mutate: Call callees, and unresolved Variables
+    // (root-level bare references). The user-binding /
+    // tree-walker-only bits depend on cross-cutting state
+    // (user_bindings_, ir_cache_) and are NOT set here — the
+    // caller (needs_tree_walker_fallback) handles those via
+    // the slow-path scan if it must.
+    [[nodiscard]] static std::uint32_t
+    summary_flags_for_sym_id(NodeTag tag, const std::string_view& name) noexcept {
+        if (name.empty())
+            return 0;
+        switch (tag) {
+        case NodeTag::Variable:
+            if (name[0] == ':')
+                return static_cast<std::uint32_t>(SummaryFlag::HasKeywordVar);
+            // Unresolved bare variables depend on runtime state
+            // (primitives / ir_cache_), so we don't flag here.
+            return 0;
+        case NodeTag::Call: {
+            if (name.starts_with("query:") || name.starts_with("mutate:"))
+                return static_cast<std::uint32_t>(SummaryFlag::HasQueryOrMutateCall);
+            return 0;
+        }
+        default:
+            return 0;
+        }
+    }
+
+    // Issue #402: public accessors + mutator for the summary
+    // bit-set. The fast-path in needs_tree_walker_fallback
+    // calls summary_has() once per expression; the slow-path
+    // scan calls summary_recompute() after every structural
+    // mutation to keep the bit-set in sync.
+public:
+    [[nodiscard]] std::uint32_t summary_flags() const noexcept {
+        return summary_flags_;
+    }
+    [[nodiscard]] bool summary_has(SummaryFlag flag) const noexcept {
+        return (summary_flags_ & static_cast<std::uint32_t>(flag)) != 0;
+    }
+    // OR-in additional bits (used by add_node + the lazy
+    // set_int_value / set_sym_id sites).
+    void summary_add_flags(std::uint32_t bits) noexcept {
+        summary_flags_ |= bits;
+    }
+    // Clear (used by reset() and the heavy recompute path).
+    void summary_clear() noexcept {
+        summary_flags_ = 0;
+    }
+    // Issue #402: rebuild the bit-set from scratch by walking
+    // the entire tag_ column. O(n) but only called from test
+    // code or after heavy structural mutations that may have
+    // invalidated the eager-update assumptions. NEVER call
+    // this on the fast path of every eval — the whole point
+    // of #402 is to avoid that.
+    void summary_recompute() {
+        std::uint32_t f = 0;
+        for (std::size_t i = 0; i < tag_.size(); ++i) {
+            if (i < node_gen_.size() && node_gen_[i] == 0)
+                continue; // free slot, skip
+            const auto t = tag_[i];
+            f |= summary_flags_for_tag(t);
+            f |= summary_flags_for_int_value(t, int_val_[i]);
+            // Note: sym_id-based bits (keyword / query: /
+            // mutate:) require pool resolution and are NOT
+            // recomputed here. They are caught by the
+            // fast-path subtree walk (which has the pool via
+            // its caller).
+        }
+        summary_flags_ = f;
+    }
+
     [[nodiscard]] NodeId add_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
+        // Issue #402: tag-based summary flags. Update eagerly
+        // before allocation so a fast-path consumer (next
+        // add_node's caller) sees the correct bit-set.
+        summary_flags_ |= summary_flags_for_tag(tag);
         // Issue #399: pre-reserve the per-node "dirty"
         // side-table columns to the upcoming size. The
         // push_back(0) calls below would otherwise trigger
@@ -1201,6 +1337,17 @@ std::pmr::vector<std::uint32_t> type_id_;
     // Issue #639: count of narrowing records marked stale by
     // invalidate_narrowings_in_subtree (post-mutate invalidation).
     std::uint64_t narrow_invalidation_post_mutate_ = 0;
+    // Issue #402: bit-set of fallback-relevant node tags.
+    // Computed eagerly in add_node so the fast-path in
+    // needs_tree_walker_fallback can skip the O(n)
+    // scan when no fallback-relevant tag is present
+    // (the common case for `(+ 1 2)`-style expressions).
+    // The bit-set is conservative: a 0 means "no tag
+    // in the slow-scan set is present", but unresolved
+    // Variables / query:/mutate: Calls still need
+    // verification — those are caught by the subtree
+    // walk (also added in #402).
+    std::uint32_t summary_flags_ = 0;
     std::pmr::vector<std::uint32_t> node_first_mutation_;
     // Issue #320: per-node epoch tracking. Records the
     // last mutation_epoch_ at which this node was
@@ -2235,6 +2382,8 @@ public:
     [[nodiscard]] NodeId add_literal(std::int64_t val) {
         auto id = add_node(NodeTag::LiteralInt);
         int_val_[id] = val;
+        // Issue #402: literal int doesn't trigger any
+        // fallback-relevant flag (LiteralInt is IR-native).
         link_children(id);
         return id;
     }
@@ -2242,6 +2391,14 @@ public:
     [[nodiscard]] NodeId add_variable(SymId name) {
         auto id = add_node(NodeTag::Variable);
         sym_id_[id] = name;
+        // Issue #402: lazy sym_id bit deferred. Keyword
+        // Variables (':foo') need tree-walker fallback, but
+        // resolving the sym_id requires the pool, which is
+        // out of scope here. The fast-path's subtree walk
+        // covers the keyword check (it walks the root
+        // subtree and applies the existing per-NodeTag /
+        // per-sym_id logic without paying the full-flat
+        // iteration cost).
         link_children(id);
         return id;
     }
@@ -3396,6 +3553,10 @@ public:
         line_.clear();
         col_.clear();
         marker_.clear();
+        // Issue #402: clear summary flags alongside the
+        // per-node columns. The next add_node will rebuild
+        // the bit-set from scratch.
+        summary_flags_ = 0;
         dirty_.clear();
         ppa_dirty_.clear();
         // Issue #437: clear verify_dirty_ alongside ppa_dirty_
@@ -3430,6 +3591,46 @@ public:
 
     std::size_t size() const { return tag_.size(); }
     bool empty() const { return tag_.empty(); }
+
+    // Issue #402: walk only the root subtree (iterative
+    // DFS, bounded by max_nodes as a safety net). Returns
+    // the number of nodes visited. The visitor is called
+    // for every node in the subtree, in pre-order.
+    //
+    // Why subtree-only: needs_tree_walker_fallback was
+    // iterating over the ENTIRE flat (all historical
+    // defines, macros, etc.) on every eval. For typical
+    // expressions like `(+ 1 2)`, the root subtree has 4
+    // nodes vs flat.size() of 100+ — a 25x+ reduction in
+    // loop iterations per eval. Historical nodes that
+    // contain MacroDef / DefineType / etc. don't affect
+    // the current eval's fallback decision; only the
+    // reachable-from-root subgraph does.
+    template <typename Visitor>
+    std::size_t walk_subtree(NodeId root, Visitor&& visit,
+                             std::size_t max_nodes = 1024) const {
+        if (root == NULL_NODE || root >= tag_.size())
+            return 0;
+        std::size_t visited = 0;
+        // Iterative DFS using an explicit stack (avoids
+        // recursion blow-up for deep ASTs).
+        std::vector<NodeId> stack;
+        stack.push_back(root);
+        while (!stack.empty() && visited < max_nodes) {
+            auto id = stack.back();
+            stack.pop_back();
+            if (id == NULL_NODE || id >= tag_.size())
+                continue;
+            if (is_free_slot(id))
+                continue;
+            visit(id);
+            ++visited;
+            auto v = get(id);
+            for (auto c : v.children)
+                stack.push_back(c);
+        }
+        return visited;
+    }
 
     // ── Issue #217 Cycle 14 (P2): FlatAST SoA custom serialize ─
     //

@@ -487,6 +487,6 @@ int run_tests() {
 
 int aura_issue_401_run() { return aura_issue_401_detail::run_tests(); }
 
-int main() {
-    return aura_issue_401_run();
-}
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+int main() { return aura_issue_401_run(); }
+#endif

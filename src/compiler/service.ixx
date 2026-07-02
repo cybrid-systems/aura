@@ -970,8 +970,55 @@ public:
     bool needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
                                     const aura::ast::StringPool& pool,
                                     aura::ast::NodeId root) const {
+        // Issue #402 observability: bump the call counter
+        // first so callers see every invocation (incl. early
+        // returns for NULL_NODE / out-of-range root).
+        metrics_.needs_tree_walker_fallback_calls.fetch_add(
+            1, std::memory_order_relaxed);
         if (root == aura::ast::NULL_NODE || root >= flat.size())
             return false;
+
+        // Issue #402: FAST PATH. When summary_flags_ == 0,
+        // no MacroDef / DefineType / DefineModule / Set /
+        // Lambda-dotted / TypeAnnotation-var is present ANY
+        // in the flat. The fast path walks only the root
+        // subtree (typically 4-10 nodes for arithmetic /
+        // primitive calls) instead of the entire flat, and
+        // applies the same Variable / Call resolution logic
+        // as the slow path. For the common case (`(+ 1 2)`,
+        // `(* x 3)` with x in ir_cache_, etc.) the fast path
+        // returns false without paying the O(flat.size())
+        // scan cost.
+        if (flat.summary_flags() == 0) {
+            metrics_.needs_tree_walker_fast_path_hits.fetch_add(
+                1, std::memory_order_relaxed);
+            // Issue #402: top-level defines need a body-aware
+            // check (params + function name are NOT free vars,
+            // even though walk_subtree would see them as such).
+            // Delegate to define_body_needs_tree_walker_fallback
+            // when root is a Define so the slow path's logic
+            // is reused verbatim — same answer for the same AST.
+            auto fast_root_v = flat.get(root);
+            if (fast_root_v.tag == aura::ast::NodeTag::Define &&
+                !fast_root_v.children.empty()) {
+                auto fast_body_id = fast_root_v.child(0);
+                if (fast_body_id < flat.size()) {
+                    auto fast_name = std::string(
+                        pool.resolve(fast_root_v.sym_id));
+                    return define_body_needs_tree_walker_fallback(
+                        flat, pool, fast_body_id, fast_name);
+                }
+            }
+            return subtree_needs_tree_walker_fallback(flat, pool, root);
+        }
+
+        // Issue #402: SLOW PATH. summary_flags_ != 0 means
+        // at least one fallback-relevant tag is present
+        // somewhere in the flat. Fall back to the original
+        // O(flat.size()) scan, which has the same logic as
+        // before #402.
+        metrics_.needs_tree_walker_slow_path_hits.fetch_add(
+            1, std::memory_order_relaxed);
 
         // Issue #272: top-level defines are IR-native when the body only
         // references params, self, primitives, cached functions, or IR value cells.
@@ -1172,6 +1219,179 @@ public:
             }
         }
         return false;
+    }
+
+    // Issue #402: subtree-walked fallback check. Used by
+    // the fast path in needs_tree_walker_fallback when
+    // summary_flags_ == 0 (no MacroDef/DefineType/etc.
+    // anywhere). Walks only the root subtree (typically
+    // a handful of nodes for arithmetic / primitive-call
+    // expressions) instead of the entire flat. Applies the
+    // SAME per-node logic as the slow-path scan — Variable
+    // keyword check, Call query:/mutate: prefix, primitive
+    // slot lookup, etc. — but bounded by root size.
+    bool subtree_needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
+                                             const aura::ast::StringPool& pool,
+                                             aura::ast::NodeId root) const {
+        if (root == aura::ast::NULL_NODE || root >= flat.size())
+            return false;
+
+        // Reuse the same known-names sets as the slow path.
+        // They're already lazily-initialized static — no
+        // allocation per call.
+        static const std::unordered_set<std::string> tree_walker_only = {
+            // EDSL / AI agent primitives
+            "define-type",
+            "set-code",
+            "eval-current",
+            "apply",
+            "typecheck-current",
+            "typed-mutate",
+            "rollback",
+            "mutation-log",
+            "query-mutation-log",
+            "mutate:rebind",
+            "mutate:set-body",
+            "mutate:remove-node",
+            "mutate:move-node",
+            "intend",
+            "fiber:spawn",
+            "fiber:join",
+            "define-strategy",
+            "register-strategy!",
+            "intend-history",
+            "intend-analytics",
+            "strategy-field",
+            "strategy-set-field!",
+            "strategy-inspect",
+            "coverage-report",
+            "c-func",
+            "c-load",
+            "send",
+            "recv",
+            "my-id",
+            "json-encode",
+            "json-get-string",
+            "json-parse",
+            "orch:metrics",
+            "orch:reset-metrics",
+            "when",
+            "set!",
+            "load",
+            "equal?",
+            "unless",
+            "export",
+            "and",
+            "or",
+            "cond",
+            "case",
+            "with-capability",
+            "check-capability",
+            "capability-stack",
+        };
+        static const std::unordered_set<std::string> lowering_known = {
+            "try",
+            "catch",
+            "raise",
+            "require",
+            "import",
+            "use",
+            "with-arena",
+            "performance-region",
+            "evolution-region",
+        };
+
+        bool needs = false;
+        const std::size_t visited = flat.walk_subtree(root,
+            [&](aura::ast::NodeId id) {
+                if (needs) return; // short-circuit
+                const auto v = flat.get(id);
+                // Tag-only early-returns (mirrors slow path).
+                switch (v.tag) {
+                case aura::ast::NodeTag::MacroDef:
+                case aura::ast::NodeTag::DefineType:
+                case aura::ast::NodeTag::DefineModule:
+                    needs = true;
+                    return;
+                case aura::ast::NodeTag::Lambda:
+                    if (v.int_value != 0) { needs = true; return; }
+                    break;
+                case aura::ast::NodeTag::TypeAnnotation:
+                    if (v.int_value != 0) { needs = true; return; }
+                    break;
+                case aura::ast::NodeTag::Set:
+                    needs = true;
+                    return;
+                default: break;
+                }
+                if (v.tag == aura::ast::NodeTag::Variable) {
+                    auto var_name = pool.resolve(v.sym_id);
+                    if (!var_name.empty() && var_name[0] == ':') {
+                        needs = true;
+                        return;
+                    }
+                    if (user_bindings_.count(std::string(var_name))) {
+                        if (ir_cache_.count(std::string(var_name)) == 0 &&
+                            ir_value_cell_bindings_.count(std::string(var_name)) == 0) {
+                            needs = true;
+                            return;
+                        }
+                    }
+                    auto vn = std::string(var_name);
+                    if (ir_value_cell_bindings_.count(vn)) return;
+                    if (!vn.empty() &&
+                        evaluator_.primitives().slot_for_name(vn) >=
+                            evaluator_.primitives().slot_count() &&
+                        ir_cache_.count(vn) == 0 && !lowering_known.count(vn)) {
+                        needs = true;
+                        return;
+                    }
+                }
+                if (v.tag == aura::ast::NodeTag::Call && v.children.empty() == false) {
+                    auto callee = v.child(0);
+                    if (callee != aura::ast::NULL_NODE && callee < flat.size()) {
+                        const auto callee_v = flat.get(callee);
+                        if (callee_v.tag == aura::ast::NodeTag::Variable) {
+                            auto name = std::string(pool.resolve(callee_v.sym_id));
+                            if (name.starts_with("query:") || name.starts_with("mutate:")) {
+                                needs = true;
+                                return;
+                            }
+                            if (tree_walker_only.count(name)) {
+                                needs = true;
+                                return;
+                            }
+                            if (name == "catch") return;
+                            if (evaluator_.primitives().slot_for_name(name) >=
+                                    evaluator_.primitives().slot_count() &&
+                                ir_cache_.count(name) == 0 && !lowering_known.count(name)) {
+                                needs = true;
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+        // Issue #402 observability: record visited-node count
+        // for the fast path. If visited < flat.size() (i.e.
+        // subtree was smaller than flat), the fast path saved
+        // the iteration cost.
+        (void)visited;
+        return needs;
+    }
+
+    // Issue #402: public counter accessor for tests.
+    [[nodiscard]] std::uint64_t get_needs_tree_walker_fallback_calls() const noexcept {
+        return metrics_.needs_tree_walker_fallback_calls.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_needs_tree_walker_fast_path_hits() const noexcept {
+        return metrics_.needs_tree_walker_fast_path_hits.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_needs_tree_walker_slow_path_hits() const noexcept {
+        return metrics_.needs_tree_walker_slow_path_hits.load(
+            std::memory_order_relaxed);
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
@@ -7572,7 +7792,14 @@ public:
     // Issue #62 Iter 1: observability counters. Thread-safe
     // (atomics). Surfaced via `metrics()` accessor for --evo-explain
     // and AuraQuery (:deopt-count, :arena, etc.).
-    CompilerMetrics metrics_;
+    //
+    // Issue #402: `mutable` so const methods (e.g.
+    // needs_tree_walker_fallback) can bump atomics for
+    // observability. The metrics_ struct is observability-only
+    // and doesn't represent logical compiler state — callers
+    // that read it via get_*_count() accept that the value
+    // may change under them.
+    mutable CompilerMetrics metrics_;
     // ── Speculative JIT controller (Phase 2, #53) ──────────────
     shape::SpecJITController spec_jit_{jit_};
 
