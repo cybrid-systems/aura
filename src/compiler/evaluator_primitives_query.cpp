@@ -1828,6 +1828,47 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 passes_skip + selective + cascade));
         });
 
+    // Issue #414: query:generation-epoch-stats. Returns the sum of
+    // 7 long-running generation_ + composite wrap_epoch_ +
+    // mutation-epoch observability counters for AI multi-round
+    // session profiling (non-duplicative with #456 epoch-stats
+    // single defuse_version return, #457 stable-ref-stats
+    // 3-counter invalidation slice, #368 ast:generation-stats
+    // per-field hash, #527 stable-ref-cow-fiber-stats COW/fiber
+    // slice, and #552 edsl-stability-stats Task1 slice):
+    //   - bump_generation: bump_generation_count_ (FlatAST churn)
+    //   - generation_wrap: generation_wrap_count_ (uint16 wrap)
+    //   - wrap_epoch: wrap_epoch_ (composite epoch, #368)
+    //   - is_valid_checks: is_valid_check_count_ (validity load)
+    //   - guard_epoch: guard_dirty_epoch_count_ (boundary epoch)
+    //   - defuse_epoch: defuse_version_ (global mutation epoch)
+    //   - rollback_ok: structural_rollback_success_ (mutate/rollback)
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:generation-epoch-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const std::uint64_t bumps =
+                ws ? ws->bump_generation_count() : 0;
+            const std::uint64_t wraps =
+                ws ? ws->generation_wrap_count() : 0;
+            const std::uint64_t wrap_ep =
+                ws ? ws->wrap_epoch() : 0;
+            const std::uint64_t checks =
+                ws ? ws->is_valid_check_count() : 0;
+            const std::uint64_t guard_epoch =
+                ev->get_guard_dirty_epoch_count();
+            const std::uint64_t defuse = ev->get_defuse_version();
+            const std::uint64_t rollback =
+                ws ? ws->structural_rollback_success() : 0;
+            return make_int(static_cast<std::int64_t>(
+                bumps + wraps + wrap_ep + checks + guard_epoch +
+                defuse + rollback));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning

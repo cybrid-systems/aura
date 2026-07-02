@@ -1623,6 +1623,9 @@ aura_issue_test_link_llvm_jit(test_shape_profiler_burst_closed_loop_407)
 # Issue #408: EDSL dirty propagation cost closed loop.
 aura_add_issue_test(test_dirty_propagation_cost_closed_loop_408)
 aura_issue_test_link_llvm_jit(test_dirty_propagation_cost_closed_loop_408)
+# Issue #414: generation_/epoch long-running session closed loop.
+aura_add_issue_test(test_generation_epoch_closed_loop_414)
+aura_issue_test_link_llvm_jit(test_generation_epoch_closed_loop_414)
 # Issue #571: EvalValue v2 encoding dispatch table + hot-path
 # Contracts matrix under AI mutate → eval → shape-classify.
 # 12 scenarios validating: consteval table, classify roundtrip,
