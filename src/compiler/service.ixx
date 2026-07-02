@@ -2568,9 +2568,14 @@ public:
                 }
             }
 
-            // Register with runtime for closure calls
+            // Register with runtime for closure calls.
+            // Issue #660 Option 1: pass ir_fn.name so the runtime can
+            // register the function by name (for cross-module closure
+            // identity). The name is assigned by cache_define as
+            // <user_define_name>#<bundle_position>.
             jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr, ir_fn.local_count,
-                                   ir_fn.arg_count, env_count);
+                                   ir_fn.arg_count, env_count,
+                                   ir_fn.name.empty() ? nullptr : ir_fn.name.c_str());
         }
 
         // Find entry function and execute it
@@ -4823,18 +4828,26 @@ public:
             }
         }
 
-        // Cache all non-entry functions as a bundle (preserving func id ordering)
+        // Issue #660 Option 1: assign each function a unique stable name
+        // (user'''s define name + "#" + position). This name is used by
+        // the runtime for cross-module closure identity when the closure'''s
+        // func_id is out of bounds in the current module.
         std::vector<aura::ir::IRFunction> bundle;
         std::vector<aura::ir::ClosureBridgeData> bridge_bundle;
+        std::size_t own_pos = 0;
         for (auto& func : ir_mod.functions) {
-            if (func.id != ir_mod.entry_function_id) {
-                bundle.push_back(std::move(func));
-                // Also save bridge data
-                if (func.id < ir_mod.closure_bridge.size())
-                    bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
-                else
-                    bridge_bundle.emplace_back();
+            if (func.id == ir_mod.entry_function_id) continue;
+            // Override the default "__lambda__" name (or empty name) with
+            // a unique stable name for cross-module closure identity.
+            if (func.name.empty() || func.name == "__lambda__") {
+                func.name = name_str + std::string("#") + std::to_string(own_pos++);
             }
+            bundle.push_back(std::move(func));
+            // Also save bridge data
+            if (func.id < ir_mod.closure_bridge.size())
+                bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
+            else
+                bridge_bundle.emplace_back();
         }
         // Issue #272 Cycle 4: snapshot before move + IR env bind for disk serialize.
         ir_disk_snapshots_[name_str] = bundle;
