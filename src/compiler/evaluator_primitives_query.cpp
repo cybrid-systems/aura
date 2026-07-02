@@ -1989,6 +1989,48 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 gc_stale + defuse));
         });
 
+    // Issue #419: query:defuse-version-stats. Returns the sum of
+    // 7 modular defuse_version_ + AOT/runtime dispatch
+    // observability counters for hot-update stale detection
+    // (non-duplicative with #456 epoch-stats single-version return,
+    // #456 epoch-delta-since-last-query delta-only primitive,
+    // #189 concurrency:version-snapshot pair, and #414/#417/#418
+    // slices that include defuse_version as one of seven groups):
+    //   - defuse_epoch: current_defuse_version() (live epoch)
+    //   - last_queried: last_queried_epoch_ (epoch-stats stamp)
+    //   - total_mutations: total_mutations_ (lifetime bump count)
+    //   - mutation_impact: mutation_impact_count_ (boundary flush)
+    //   - guard_epoch: guard_dirty_epoch_count_ (boundary coord)
+    //   - aot_emits: CompilerMetrics::aot_emits (emit events)
+    //   - bridge_hits: bridge_epoch_hit_count_ (fresh bridge)
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:defuse-version-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(
+                    ev->compiler_metrics());
+            const std::uint64_t defuse = ev->current_defuse_version();
+            const std::uint64_t last = ev->get_last_queried_epoch();
+            const std::uint64_t mutations = ev->total_mutations();
+            const std::uint64_t impact = ev->get_mutation_impact_count();
+            const std::uint64_t guard_epoch =
+                ev->get_guard_dirty_epoch_count();
+            const std::uint64_t aot = m
+                ? m->aot_emits.load(std::memory_order_relaxed)
+                : 0;
+            const std::uint64_t bridge = m
+                ? m->bridge_epoch_hit_count_.load(
+                      std::memory_order_relaxed)
+                : 0;
+            return make_int(static_cast<std::int64_t>(
+                defuse + last + mutations + impact + guard_epoch +
+                aot + bridge));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning
