@@ -1560,7 +1560,8 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         // Local build_hash closure — same FNV-1a + open-addressing
         // pattern as the other compile:*-stats primitives above.
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
+            // Issue #422: 9 keys after hygiene-violation-attempts.
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1627,6 +1628,10 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(snap.generation_wrap_count))},
             {"node-count",
              make_int(static_cast<std::int64_t>(node_count))},
+            // Issue #422: live evaluator hygiene violation attempts.
+            {"hygiene-violation-attempts",
+             make_int(static_cast<std::int64_t>(
+                 ev.get_hygiene_violation_attempts()))},
         };
         return build_hash(kv);
     });

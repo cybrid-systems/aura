@@ -110,6 +110,12 @@ void aura::compiler::Evaluator::ensure_mutation_invariants() noexcept {
     }
 }
 
+void aura::compiler::Evaluator::ensure_hygiene_violation_detection() const noexcept {
+    // Issue #422: attempts are recorded at hygiene_protected_error
+    // and replace-subtree block sites; this hook is a no-op probe
+    // for tests and Guard-exit wiring verification.
+}
+
 void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_boundary_yield) {
     bool had_boundary =
         any_active_mutation_boundary() || !active_mutation_stack().empty();

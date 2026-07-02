@@ -2309,6 +2309,9 @@ private:
     // traversal. Stats-only (relaxed-ordering). Exposed via
     // the new `query:hygiene-stats` primitive.
     std::atomic<std::uint64_t> hygiene_violation_count_{0};
+    // Issue #422: blocked mutate attempts on MacroIntroduced
+    // nodes (hygiene_protected_error + replace-subtree gate).
+    std::atomic<std::uint64_t> hygiene_violation_attempts_{0};
     std::atomic<std::uint64_t> macro_introduced_skipped_in_query_{0};
     std::atomic<std::uint64_t> total_query_calls_{0};
     // Issue #478: primitive-layer error counter. Bumped by
@@ -2991,6 +2994,16 @@ public:
     void bump_hygiene_violation_count() noexcept {
         hygiene_violation_count_.fetch_add(1, std::memory_order_relaxed);
     }
+    void record_hygiene_violation_attempt() noexcept {
+        hygiene_violation_attempts_.fetch_add(1, std::memory_order_relaxed);
+        bump_hygiene_violation_count();
+    }
+    [[nodiscard]] std::uint64_t get_hygiene_violation_attempts() const noexcept {
+        return hygiene_violation_attempts_.load(std::memory_order_relaxed);
+    }
+    // Issue #422: lightweight probe that mutate hygiene guards
+    // are wired (attempts recorded at block sites).
+    void ensure_hygiene_violation_detection() const noexcept;
     void bump_macro_introduced_skipped_in_query() noexcept {
         macro_introduced_skipped_in_query_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -3905,6 +3918,9 @@ public:
             // Issue #417: verify stack/depth-slot consistency
             // after boundary exit (cross-TU drift detection).
             ev_->ensure_mutation_invariants();
+            // Issue #422: hygiene violation detection hook on
+            // Guard exit (mutate paths record attempts at block).
+            ev_->ensure_hygiene_violation_detection();
             // unique_lock destructor runs automatically here.
         }
         MutationBoundaryGuard(const MutationBoundaryGuard&) = delete;

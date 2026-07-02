@@ -2113,6 +2113,42 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 queries + index_hits + hygiene));
         });
 
+    // Issue #422: query:hygiene-violation-stats. Returns the sum of
+    // 7 mutate-path hygiene violation observability counters
+    // (non-duplicative with #458 hygiene-stats skip-only slice,
+    // #547 pattern-hygiene-stats query slice, and #420/#421
+    // macro-hygiene bundles):
+    //   - violation_attempts: hygiene_violation_attempts_
+    //   - violation_count: hygiene_violation_count_
+    //   - query_skips: macro_introduced_skipped_in_query_
+    //   - mutation_impact: mutation_impact_count_
+    //   - total_mutations: total_mutations_ (lifetime)
+    //   - markers: workspace MacroIntroduced marker tally
+    //   - guard_epoch: guard_dirty_epoch_count_
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:hygiene-violation-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const std::uint64_t attempts =
+                ev->get_hygiene_violation_attempts();
+            const std::uint64_t violations =
+                ev->get_hygiene_violation_count();
+            const std::uint64_t query_skips =
+                ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t impact = ev->get_mutation_impact_count();
+            const std::uint64_t mutations = ev->total_mutations();
+            const std::uint64_t markers =
+                workspace_marker_macro_introduced(ev);
+            const std::uint64_t guard_epoch =
+                ev->get_guard_dirty_epoch_count();
+            return make_int(static_cast<std::int64_t>(
+                attempts + violations + query_skips + impact +
+                mutations + markers + guard_epoch));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning
