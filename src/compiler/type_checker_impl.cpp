@@ -4695,6 +4695,40 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         const auto id = affected[ai];
         if (id == aura::ast::NULL_NODE || id >= flat.size())
             continue;
+        // Issue #656: dedupe. If `id` has an ancestor in the affected
+        // set, the ancestor's recursive walk will re-check `id` with
+        // the correct env_/scope context. Without this dedupe, every
+        // descendant node is processed as a SEPARATE engine.infer_flat
+        // call, and the env_ (which is popped back to empty after each
+        // Lambda scope exits) doesn't have the new Lambda's params
+        // bound — so Variables in the new body get reported as
+        // unbound. Symptom: test_issue_166 Test 3 fails on
+        // `(mutate:set-body "g" "(lambda (x) (+ x 100))")` because
+        // the selective recheck visits the new Lambda's body Variable
+        // `x` without x being in env_. Fix: skip `id` if any ancestor
+        // is also in the affected set.
+        bool ancestor_in_affected = false;
+        for (std::size_t bi = 0; bi < affected.size(); ++bi) {
+            if (bi == ai) continue;
+            auto other = affected[bi];
+            // Walk up from `id` toward root and check if any step
+            // is `other` (also in the affected set). Bounded by
+            // flat.size() for the (impossible-but-safe) cycle case.
+            NodeId cur = flat.parent_of(id);
+            std::size_t safety = 0;
+            while (cur != aura::ast::NULL_NODE && cur < flat.size() &&
+                   safety++ < flat.size()) {
+                if (cur == other) {
+                    ancestor_in_affected = true;
+                    break;
+                }
+                cur = flat.parent_of(cur);
+            }
+            if (ancestor_in_affected) break;
+        }
+        if (ancestor_in_affected) {
+            continue;  // ancestor's recursive walk will cover us
+        }
         // Issue #466: preserve ConstraintSystem across affected
         // nodes; first node full-solves + mark_clean, subsequent
         // nodes add_delta + solve_delta with touched-root reverify.
