@@ -3765,4 +3765,32 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
     return re_expanded;
 }
 
+// Issue #420: end-to-end MacroIntroduced hygiene contract.
+// clone_macro_body / expand_inner_macros stamp both
+// SyntaxMarker::MacroIntroduced and kMacroExpansion on
+// every node in an expanded subtree. Drift between the
+// marker column and macro_dirty_ signals a post-split
+// regression on the clone/expand → query/mutate/IR path.
+void Evaluator::ensure_macro_hygiene_contract() const noexcept {
+    auto* ws = workspace_flat_;
+    if (!ws)
+        return;
+    using aura::ast::FlatAST;
+    using aura::ast::NodeId;
+    using aura::ast::SyntaxMarker;
+    constexpr auto kExpansion =
+        static_cast<std::uint8_t>(FlatAST::MacroDirtyReason::kMacroExpansion);
+    for (NodeId id = 0; id < ws->size(); ++id) {
+        if (!ws->is_macro_introduced(id))
+            continue;
+        // Caller-arg substitution slots stay User-marked but
+        // may inherit kMacroExpansion from the subtree walk;
+        // only verify the clone_macro_body stamp direction.
+        if ((ws->macro_dirty(id) & kExpansion) == 0) {
+            macro_hygiene_contract_violations_.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+}
+
 } // namespace aura::compiler

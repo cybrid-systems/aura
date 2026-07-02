@@ -2031,6 +2031,48 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 aot + bridge));
         });
 
+    // Issue #420: query:macro-hygiene-contract-stats. Returns the
+    // sum of 7 end-to-end MacroIntroduced hygiene contract
+    // observability counters spanning clone/expand → query:pattern
+    // → mutate guards → IR InlinePass (non-duplicative with #458
+    // hygiene-stats 1-counter skip-only slice, #547
+    // pattern-hygiene-stats 2-counter query slice, #514
+    // ir-hygiene-stats / pattern-marker-stats 2–3 counter slices,
+    // and #597 macro-reflect-self-evo-stats 8-counter bundle):
+    //   - query_skips: macro_introduced_skipped_in_query_
+    //   - violations: hygiene_violation_count_
+    //   - markers: workspace MacroIntroduced marker column tally
+    //   - ir_skips: InlinePass macro_hygiene_skipped_
+    //   - queries: total_query_calls_
+    //   - contract_violations: macro_hygiene_contract_violations_
+    //   - macro_dirty: macro_expansion_dirty_total_ (clone path)
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:macro-hygiene-contract-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const std::uint64_t query_skips =
+                ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t violations =
+                ev->get_hygiene_violation_count();
+            const std::uint64_t markers =
+                workspace_marker_macro_introduced(ev);
+            const std::uint64_t ir_skips =
+                ir_inline_hygiene_skipped(ev);
+            const std::uint64_t queries = ev->get_total_query_calls();
+            const std::uint64_t contract =
+                ev->get_macro_hygiene_contract_violations();
+            const std::uint64_t macro_dirty = ws
+                ? ws->macro_expansion_dirty_total()
+                : 0;
+            return make_int(static_cast<std::int64_t>(
+                query_skips + violations + markers + ir_skips +
+                queries + contract + macro_dirty));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning
