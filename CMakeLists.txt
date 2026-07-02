@@ -1114,6 +1114,13 @@ aura_add_issue_test(test_issue_433)
 aura_issue_test_link_llvm_jit(test_issue_433)
 aura_add_issue_test(test_issue_508)
 aura_issue_test_link_llvm_jit(test_issue_508)
+# Issue #401: invalidate_function BFS determinism + dep_graph_
+# integrity (vector-as-stack → std::deque, sort dependents).
+# Uses CompilerService::public_invalidate_function +
+# public_dep_graph_* hooks. Same link profile as test_issue_225
+# / test_issue_226 (jit_tests bundle).
+aura_add_issue_test(test_issue_401)
+aura_issue_test_link_llvm_jit_tests(test_issue_401)
 # Issue #629: zero-overhead coercion path — narrow_evidence DCE
 # Rule 6, TypeSpec skip, observability primitive, JIT pipeline.
 aura_add_issue_test(test_dead_coercion_elim_narrow_evidence_ir_jit_zerooverhead)

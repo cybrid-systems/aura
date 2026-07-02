@@ -64,6 +64,13 @@ struct CompilerMetrics {
     // of the bundle. Bumped when per-function re-lower is
     // actually performed (replaces the full re-lower path).
     std::atomic<std::uint64_t> relower_per_function_called_count{0};
+    // Issue #401: invalidate_function call counter. Bumped once per
+    // invalidate_function entry (post-mutex-acquire, so the count
+    // reflects only completed traversals). Pairs with jit_cache_evictions
+    // (which counts evictions for the root + each dependent): the ratio
+    // (jit_cache_evictions - invalidate_function_calls) / invalidate_function_calls
+    // tells you the average dependent fan-out per invalidation.
+    std::atomic<std::uint64_t> invalidate_function_calls{0};
     // Issue #224 cycle 4: dep_graph_-aware cascade. When
     // mark_define_dirty cascades a mutation to a dependent,
     // it tries to mark only the body function's blocks dirty
