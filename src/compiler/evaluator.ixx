@@ -2362,6 +2362,12 @@ private:
     std::atomic<std::uint64_t> mutation_yield_count_{0};
     std::atomic<std::uint64_t> compaction_paused_by_boundary_{0};
     std::atomic<std::uint64_t> cross_fiber_rollback_count_{0};
+    // Issue #417: cross-TU MutationBoundaryGuard + per-fiber
+    // stack / depth-slot invariant drift (stack.empty() vs
+    // mutation_boundary_depth_slot == 0). Bumped by
+    // ensure_mutation_invariants() on Guard dtor and
+    // materialize_call_env hot paths.
+    mutable std::atomic<std::uint64_t> total_invariant_violations_{0};
     // Issue #354: set by outermost MutationBoundaryGuard
     // ctor; cleared by dtor. The Fiber::yield path
     // checks this flag to detect "yield while holding
@@ -3450,6 +3456,12 @@ public:
     [[nodiscard]] std::uint64_t cross_fiber_rollback_count() const noexcept {
         return cross_fiber_rollback_count_.load(std::memory_order_relaxed);
     }
+    [[nodiscard]] std::uint64_t get_total_invariant_violations() const noexcept {
+        return total_invariant_violations_.load(std::memory_order_relaxed);
+    }
+    // Issue #417: lightweight cross-TU invariant check for
+    // active_mutation_stack() vs mutation_boundary_depth_slot.
+    void ensure_mutation_invariants() noexcept;
     std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack();
     static std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack_static();
     void bind_yield_hook_evaluator();
@@ -3847,6 +3859,9 @@ public:
                 // roll back to it. (Pre-#241 behavior on
                 // failure was to leave the checkpoint.)
             }
+            // Issue #417: verify stack/depth-slot consistency
+            // after boundary exit (cross-TU drift detection).
+            ev_->ensure_mutation_invariants();
             // unique_lock destructor runs automatically here.
         }
         MutationBoundaryGuard(const MutationBoundaryGuard&) = delete;
