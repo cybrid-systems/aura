@@ -1620,6 +1620,9 @@ aura_issue_test_link_llvm_jit(test_pass_contracts_hotpath_closed_loop_406)
 # Issue #407: ShapeProfiler burst/deopt storm closed loop.
 aura_add_issue_test(test_shape_profiler_burst_closed_loop_407)
 aura_issue_test_link_llvm_jit(test_shape_profiler_burst_closed_loop_407)
+# Issue #408: EDSL dirty propagation cost closed loop.
+aura_add_issue_test(test_dirty_propagation_cost_closed_loop_408)
+aura_issue_test_link_llvm_jit(test_dirty_propagation_cost_closed_loop_408)
 # Issue #571: EvalValue v2 encoding dispatch table + hot-path
 # Contracts matrix under AI mutate → eval → shape-classify.
 # 12 scenarios validating: consteval table, classify roundtrip,

@@ -1786,6 +1786,48 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             relower_per_fn + mod_skip + linear_elide + cascade));
     });
 
+    // Issue #408: query:dirty-propagation-cost-stats. Returns the
+    // sum of 7 EDSL dirty propagation + IR block_dirty_ cost
+    // counters for high-frequency structural mutation profiling
+    // (non-duplicative with #415 dirty-reason-propagation-stats
+    // 9-counter verify-category slice, #550 typed-mutation-stats
+    // narrowing/touched_roots slice, and #399/#398 per-theme tests):
+    //   - upward_calls: mark_dirty_upward_call_count_ (FlatAST)
+    //   - upward_nodes: mark_dirty_total_nodes_ (walk depth proxy)
+    //   - fast_fixed_point: dirty_upward_fast_fixed_point_hits_
+    //   - dirty_propagation: dirty_propagation_count_ (Evaluator)
+    //   - passes_skipped: passes_skipped_type_dirty_ (IR block skip)
+    //   - selective_recheck: selective_recheck_count_ (incremental)
+    //   - cascade_body: cascade_body_only_count (precise block mark)
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:dirty-propagation-cost-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(
+                    ev->compiler_metrics());
+            const std::uint64_t upward_calls =
+                ws ? ws->mark_dirty_upward_call_count() : 0;
+            const std::uint64_t upward_nodes =
+                ws ? ws->mark_dirty_total_nodes() : 0;
+            const std::uint64_t fast_hits =
+                ws ? ws->dirty_upward_fast_fixed_point_count() : 0;
+            const std::uint64_t propagation = ev->get_dirty_propagation_count();
+            const std::uint64_t passes_skip =
+                ev->get_passes_skipped_type_dirty();
+            const std::uint64_t selective = ev->get_selective_recheck_count();
+            const std::uint64_t cascade = m
+                ? m->cascade_body_only_count.load(std::memory_order_relaxed)
+                : 0;
+            return make_int(static_cast<std::int64_t>(
+                upward_calls + upward_nodes + fast_hits + propagation +
+                passes_skip + selective + cascade));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning
