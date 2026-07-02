@@ -132,7 +132,8 @@
     "test_issue_224",
     "test_issue_224_closure_bridge",
     "test_issue_225_bridge_invalidation",
-    "test_issue_226"
+    "test_issue_226",
+    "test_issue_401"
   ],
   "reflect": [
     "test_issue_214",

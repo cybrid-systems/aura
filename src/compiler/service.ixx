@@ -5,6 +5,7 @@ module;
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <expected>
 #include <filesystem>
 #include <fstream>
@@ -6541,6 +6542,11 @@ private:
         // bridge_epoch_hit_count_ bump in apply_closure.
         metrics_.closure_stale_refresh_count_.fetch_add(
             1, std::memory_order_relaxed);
+        // Issue #401: lifetime counter for invalidate_function entry.
+        // Bumped here (before the dep_graph_ walk) so the count is
+        // observable even if the walk short-circuits on an empty graph.
+        metrics_.invalidate_function_calls.fetch_add(
+            1, std::memory_order_relaxed);
         // Issue #610: linear ownership JIT/closure refresh after
         // invalidate — pairs with closure_stale_refresh for the
         // post-mutate linear runtime contract path.
@@ -6561,30 +6567,50 @@ private:
         // before erasing the cache entry, otherwise another fiber could
         // observe a half-erased state.
         std::unique_lock mutate_lock(mutate_mtx_);
-        // BFS to find all transitively dependent functions
+        // Issue #401: real BFS over called_by chain.
+        //
+        // The previous implementation used std::vector + push_back/pop_back,
+        // which is stack/DFS behaviour (LIFO). The misleading comment claimed
+        // "natural BFS order" but the iteration order was depth-first, which
+        // made the re-lower order depend on the hash-map iteration order of
+        // std::unordered_map<string, DepEntry>::called_by. For AI multi-round
+        // mutate:rebind flows, that meant dep_graph_ calls/called_by edges
+        // recorded by record_dependency during re-lower could land in
+        // different orders across runs, producing non-deterministic dep-graph
+        // shape.
+        //
+        // Fix: use std::deque + push_back/pop_front for FIFO BFS, then sort
+        // the dependents vector lexicographically before re-lower. Sorting
+        // gives a stable iteration order regardless of the underlying
+        // unordered_map bucket layout.
         std::vector<std::string> dependents;
-        std::vector<std::string> queue;
+        std::deque<std::string> bfs;
         std::unordered_set<std::string> visited;
 
-        queue.push_back(name);
+        bfs.push_back(name);
         visited.insert(name);
 
-        while (!queue.empty()) {
-            auto current = queue.back();
-            queue.pop_back();
+        while (!bfs.empty()) {
+            auto current = bfs.front();
+            bfs.pop_front();
 
             auto it = dep_graph_.find(current);
             if (it == dep_graph_.end())
                 continue;
 
             for (auto& dependent : it->second.called_by) {
-                if (visited.count(dependent))
+                if (!visited.insert(dependent).second)
                     continue;
-                visited.insert(dependent);
                 dependents.push_back(dependent);
-                queue.push_back(dependent);
+                bfs.push_back(dependent);
             }
         }
+
+        // Issue #401: stable re-lower order. Sort dependents lexicographically
+        // so the iteration below doesn't depend on the unordered_map hash
+        // layout. This is the determinism contract for the follow-up
+        // record_dependency edge-creation order.
+        std::sort(dependents.begin(), dependents.end());
 
         // Debug: check if any dependents found
         if (dependents.empty()) {
@@ -6639,8 +6665,10 @@ private:
             dep_graph_.erase(name);
         }
 
-        // Re-lower each dependent with current cache (nearest to redefined first = natural BFS
-        // order)
+        // Re-lower each dependent with current cache. The dependents vector
+        // is in BFS-discovery order (FIFO from the source) and additionally
+        // sorted lexicographically above (Issue #401) so the iteration order
+        // here is deterministic across runs.
         for (auto& dep_name : dependents) {
             auto src_it = function_sources_.find(dep_name);
             if (src_it == function_sources_.end())
@@ -6865,6 +6893,64 @@ public:
         return &it->second;
     }
     void public_invalidate_bridges_for(const std::string& name) { invalidate_bridge_for(name); }
+
+    // Issue #401: public test hook for invalidate_function. Lets tests
+    // drive the BFS traversal directly without going through the Aura
+    // (mutate:rebind) EDSL surface, which would also rebuild the function
+    // body (mixing the traversal test with the rebind path).
+    void public_invalidate_function(const std::string& name) {
+        invalidate_function(name);
+    }
+
+    // Issue #401: public test accessors for the dep_graph_.
+    //
+    // The dep_graph_ is a private member (no public introspection in the
+    // production API), but the determinism contract for invalidate_function
+    // needs to be verifiable from tests: that BFS traversal visits every
+    // transitively-called_by node exactly once, and that the recorded
+    // calls/called_by edges are symmetric across invalidate cycles.
+    //
+    // These hooks return only counts and presence — not the underlying
+    // vector contents — so test code can verify integrity without leaking
+    // the unordered_map layout.
+
+    // Number of entries currently in dep_graph_ (post-cleanup state).
+    [[nodiscard]] std::size_t public_dep_graph_size() const noexcept {
+        return dep_graph_.size();
+    }
+
+    // Whether a name is in dep_graph_.
+    [[nodiscard]] bool public_dep_graph_contains(
+        const std::string& name) const noexcept {
+        return dep_graph_.find(name) != dep_graph_.end();
+    }
+
+    // Outgoing-edge count (this name calls N functions).
+    [[nodiscard]] std::size_t public_dep_graph_calls_for(
+        const std::string& name) const noexcept {
+        auto it = dep_graph_.find(name);
+        if (it == dep_graph_.end()) return 0;
+        return it->second.calls.size();
+    }
+
+    // Incoming-edge count (N functions call this name).
+    [[nodiscard]] std::size_t public_dep_graph_called_by_for(
+        const std::string& name) const noexcept {
+        auto it = dep_graph_.find(name);
+        if (it == dep_graph_.end()) return 0;
+        return it->second.called_by.size();
+    }
+
+    // Whether a directed edge caller → callee is recorded.
+    [[nodiscard]] bool public_dep_graph_has_edge(
+        const std::string& caller, const std::string& callee) const noexcept {
+        auto cit = dep_graph_.find(caller);
+        if (cit == dep_graph_.end()) return false;
+        for (auto& c : cit->second.calls) {
+            if (c == callee) return true;
+        }
+        return false;
+    }
 
     // Issue #272: test/observability accessor.
     [[nodiscard]] std::uint64_t define_ir_env_bind_count() const noexcept {
