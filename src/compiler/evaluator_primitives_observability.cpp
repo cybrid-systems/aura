@@ -647,6 +647,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:primitive-meta-stats",
             // Issue #405 — Arena auto-compaction orchestration signals
             "query:arena-compaction-stats",
+            // Issue #406 — Pass Pipeline + Contracts hot-path stats
+            "query:pass-contracts-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
