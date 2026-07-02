@@ -32,6 +32,10 @@ using EvalValue = types::EvalValue;
 // arena is reset. The arena remains the actual owner.
 export struct IRClosure {
     std::uint32_t func_id = 0;
+    // Issue #660 Option 1: function NAME for cross-module closure
+    // identity. When func_id is out of bounds in the current module,
+    // the runtime falls back to looking up the function by name.
+    std::string name;
     std::vector<EvalValue> env;
     // Original tree-walker closure info for bridge (empty shared_ptr
     // = not available). See Issue #224 Cycle 2.

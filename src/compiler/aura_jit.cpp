@@ -1971,6 +1971,11 @@ int64_t aura_jit_prim_dispatch(int64_t, int64_t*, int32_t);
 int64_t aura_cast_op(int64_t, int64_t);
 void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
                       int32_t arg_count, int32_t env_count);
+void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
+                            int32_t local_count, int32_t arg_count, int32_t env_count);
+int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64_t* out_arg_count,
+                               int64_t* out_env_count);
+void aura_closure_set_name(int64_t closure_id, const char* name);
 void aura_reset_runtime();
 void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t));
 void aura_set_hash_dispatchers(int64_t (*)(int64_t, int64_t),
@@ -2582,10 +2587,17 @@ struct AuraJIT::Impl {
     }
 
     void register_fn_func(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
-                          uint32_t arg_count, uint32_t env_count) {
-        aura_register_fn(func_id, fn_ptr, static_cast<int32_t>(local_count),
-                         static_cast<int32_t>(arg_count), static_cast<int32_t>(env_count));
-        compiled_fns_.push_back({std::string(), fn_ptr, local_count, arg_count, env_count});
+                          uint32_t arg_count, uint32_t env_count,
+                          const char* name = nullptr) {
+        // Issue #660 Option 1: also register by name if provided.
+        if (name && *name) {
+            aura_register_fn_named(name, func_id, fn_ptr, static_cast<int32_t>(local_count),
+                                    static_cast<int32_t>(arg_count), static_cast<int32_t>(env_count));
+        } else {
+            aura_register_fn(func_id, fn_ptr, static_cast<int32_t>(local_count),
+                             static_cast<int32_t>(arg_count), static_cast<int32_t>(env_count));
+        }
+        compiled_fns_.push_back({name ? std::string(name) : std::string(), fn_ptr, local_count, arg_count, env_count});
     }
 };
 
@@ -2731,8 +2743,8 @@ void AuraJIT::set_string_pool(const std::vector<std::string>* pool) {
 }
 
 void AuraJIT::register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
-                                uint32_t arg_count, uint32_t env_count) {
-    impl_->register_fn_func(func_id, fn_ptr, local_count, arg_count, env_count);
+                                uint32_t arg_count, uint32_t env_count, const char* name) {
+    impl_->register_fn_func(func_id, fn_ptr, local_count, arg_count, env_count, name);
 }
 
 const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
@@ -2810,7 +2822,7 @@ void* AuraJIT::get_function_ptr(const char*) {
 }
 void AuraJIT::register_symbol(const char*, void*) {}
 void AuraJIT::set_string_pool(const std::vector<std::string>*) {}
-void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t) {}
+void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t, const char*) {}
 void AuraJIT::invalidate(const char*) {}
 std::uint64_t AuraJIT::unhandled_opcode_count_for_function(const char*) const {
     return 0;

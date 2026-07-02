@@ -129,7 +129,8 @@ public:
 
     // Register a compiled function with the runtime for closure calls
     void register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
-                           uint32_t arg_count, uint32_t env_count);
+                           uint32_t arg_count, uint32_t env_count,
+                           const char* name = nullptr);
 
     // Get all compiled functions metadata
     const std::vector<FunctionMeta>& compiled_functions() const;
