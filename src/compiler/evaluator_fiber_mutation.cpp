@@ -98,6 +98,18 @@ bool aura::compiler::Evaluator::any_active_mutation_boundary() const noexcept {
     return slot != nullptr && *slot > 0;
 }
 
+void aura::compiler::Evaluator::ensure_mutation_invariants() noexcept {
+    auto& stack = active_mutation_stack();
+    int* depth = mutation_boundary_depth_slot(this);
+    if (!depth)
+        return;
+    const bool stack_empty = stack.empty();
+    const bool depth_zero = (*depth == 0);
+    if (stack_empty != depth_zero) {
+        total_invariant_violations_.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_boundary_yield) {
     bool had_boundary =
         any_active_mutation_boundary() || !active_mutation_stack().empty();

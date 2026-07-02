@@ -1906,6 +1906,45 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 frag_bp));
         });
 
+    // Issue #417: query:mutation-boundary-invariant-stats. Returns
+    // the sum of 7 cross-TU MutationBoundaryGuard + defuse_version_
+    // + per-fiber stack observability counters for post-P1/P2
+    // evaluator split drift detection (non-duplicative with #448
+    // mutation-coordination-stats scheduler/GC slice, #438
+    // fiber-migration-stats 2-counter steal slice, #264
+    // compile:concurrency-stats per-field hash, and #456
+    // epoch-stats single defuse_version return):
+    //   - invariant_violations: total_invariant_violations_
+    //   - cross_fiber_rollback: cross_fiber_rollback_count_
+    //   - mutation_yields: mutation_yield_count_
+    //   - guard_epoch: guard_dirty_epoch_count_
+    //   - boundary_violations: boundary_violation_count_
+    //   - defuse_epoch: defuse_version_ (mutation epoch)
+    //   - boundary_depth: mutation_boundary_depth() snapshot
+    //
+    // P0: returns an integer = sum of all 7 counter groups.
+    add("query:mutation-boundary-invariant-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            const std::uint64_t violations =
+                ev->get_total_invariant_violations();
+            const std::uint64_t rollback =
+                ev->cross_fiber_rollback_count();
+            const std::uint64_t yields = ev->mutation_yield_count();
+            const std::uint64_t guard_epoch =
+                ev->get_guard_dirty_epoch_count();
+            const std::uint64_t boundary =
+                ev->get_boundary_violation_count();
+            const std::uint64_t defuse = ev->get_defuse_version();
+            const std::uint64_t depth =
+                Evaluator::mutation_boundary_depth();
+            return make_int(static_cast<std::int64_t>(
+                violations + rollback + yields + guard_epoch +
+                boundary + defuse + depth));
+        });
+
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning

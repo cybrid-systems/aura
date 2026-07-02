@@ -447,6 +447,8 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
 // of this helper makes the helper usable from any code path
 // that has a closure but might not need a fully wired env.
 Env Evaluator::materialize_call_env(const Closure& cl) {
+    // Issue #417: cross-TU invariant probe on Env materialization.
+    ensure_mutation_invariants();
     // P0 complete: legacy cl.env path removed. All closures have
     // env_id set at capture time (via alloc_env_frame_from_env).
     // Always use SoA path for GC-safety and no pointer chasing.

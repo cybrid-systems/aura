@@ -657,6 +657,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:generation-epoch-stats",
             // Issue #416 — AST SoA column compaction observability
             "query:ast-column-compaction-stats",
+            // Issue #417 — MutationBoundary cross-TU invariant stats
+            "query:mutation-boundary-invariant-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
