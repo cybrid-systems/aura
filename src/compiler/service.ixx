@@ -4841,7 +4841,6 @@ public:
             // a unique stable name for cross-module closure identity.
             if (func.name.empty() || func.name == "__lambda__") {
                 func.name = name_str + std::string("#") + std::to_string(own_pos++);
-            } else {
             }
             bundle.push_back(std::move(func));
             // Also save bridge data
