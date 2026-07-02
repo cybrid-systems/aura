@@ -653,6 +653,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:shape-deopt-burst-stats",
             // Issue #408 — EDSL dirty propagation cost observability
             "query:dirty-propagation-cost-stats",
+            // Issue #414 — Long-term generation_/epoch management
+            "query:generation-epoch-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
