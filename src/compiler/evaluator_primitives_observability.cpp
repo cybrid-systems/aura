@@ -667,6 +667,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:macro-hygiene-contract-stats",
             // Issue #421 — query:pattern recursive MacroIntroduced filter
             "query:pattern-macro-filter-stats",
+            // Issue #422 — Mutate-path hygiene violation detection
+            "query:hygiene-violation-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();

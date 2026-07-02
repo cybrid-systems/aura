@@ -85,6 +85,7 @@ bool stable_match_still_attached(const aura::ast::FlatAST& flat,
 //   triggered). A populated EvalValue (the error pair)
 //   if the mutation should be rejected.
 static std::optional<EvalValue> hygiene_protected_error(
+    Evaluator& ev,
     const aura::ast::FlatAST& flat,
     std::span<const aura::ast::NodeId> target_ids,
     bool allow_macro_mutate,
@@ -96,6 +97,7 @@ static std::optional<EvalValue> hygiene_protected_error(
         if (id == aura::ast::NULL_NODE || id >= flat.size())
             continue;
         if (flat.is_macro_introduced(id)) {
+            ev.record_hygiene_violation_attempt();
             return mev("hygiene-protected",
                        "target node " + std::to_string(id) +
                            " was produced by a hygienic macro expansion; "
@@ -1083,7 +1085,7 @@ void register_mutate_primitives(
         // (hygiene:set-allow-macro-mutate! #t) flag.
         if (old_define != aura::ast::NULL_NODE) {
             aura::ast::NodeId probe_arr[1] = {old_define};
-            if (auto err = hygiene_protected_error(flat, probe_arr,
+            if (auto err = hygiene_protected_error(ev, flat, probe_arr,
                                                    ev.get_allow_macro_mutate(),
                                                    parse_allow_macro_opt_out(ev, a),
                                                    mev)) {
@@ -1681,7 +1683,7 @@ void register_mutate_primitives(
         // path as mutate:rebind.
         {
             aura::ast::NodeId probe_arr[1] = {node};
-            if (auto err = hygiene_protected_error(flat, probe_arr,
+            if (auto err = hygiene_protected_error(ev, flat, probe_arr,
                                                    ev.get_allow_macro_mutate(),
                                                    parse_allow_macro_opt_out(ev, a),
                                                    mev)) {
@@ -2124,6 +2126,7 @@ void register_mutate_primitives(
         // ── Hygiene gate (Issue #142 AC) ─────────────────────
         if (flat.is_macro_introduced(target)) {
             ok = false;
+            ev.record_hygiene_violation_attempt();
             return mev("hygiene", "cannot mutate macro-introduced node");
         }
 
