@@ -2373,6 +2373,10 @@ private:
     // ensure_macro_hygiene_contract() on eval-current and
     // query-side probes.
     mutable std::atomic<std::uint64_t> macro_hygiene_contract_violations_{0};
+    // Issue #421: query:pattern recursive MacroIntroduced filter
+    // observability (post query-split hygiene contract).
+    std::atomic<std::uint64_t> pattern_recursive_macro_skipped_{0};
+    mutable std::atomic<std::uint64_t> pattern_macro_filter_violations_{0};
     // Issue #354: set by outermost MutationBoundaryGuard
     // ctor; cleared by dtor. The Fiber::yield path
     // checks this flag to detect "yield while holding
@@ -3475,6 +3479,21 @@ public:
     void ensure_macro_hygiene_contract() const noexcept;
     [[nodiscard]] std::uint64_t get_macro_hygiene_contract_violations() const noexcept {
         return macro_hygiene_contract_violations_.load(std::memory_order_relaxed);
+    }
+    // Issue #421: recursive query:pattern MacroIntroduced filter.
+    void bump_pattern_recursive_macro_skipped(std::uint64_t n = 1) noexcept {
+        pattern_recursive_macro_skipped_.fetch_add(n, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_pattern_recursive_macro_skipped() const noexcept {
+        return pattern_recursive_macro_skipped_.load(std::memory_order_relaxed);
+    }
+    void verify_pattern_result_hygiene(const aura::ast::FlatAST& flat,
+                                       types::EvalValue result,
+                                       bool with_markers) noexcept;
+    void ensure_pattern_macro_filter_consistency(
+        const aura::ast::FlatAST& flat) const noexcept;
+    [[nodiscard]] std::uint64_t get_pattern_macro_filter_violations() const noexcept {
+        return pattern_macro_filter_violations_.load(std::memory_order_relaxed);
     }
     std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack();
     static std::vector<YieldBoundaryCheckpoint>& active_yield_checkpoint_stack_static();

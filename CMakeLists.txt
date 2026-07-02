@@ -1641,6 +1641,9 @@ aura_issue_test_link_llvm_jit(test_defuse_version_closed_loop_419)
 # Issue #420: MacroIntroduced end-to-end hygiene contract closed loop.
 aura_add_issue_test(test_macro_hygiene_contract_closed_loop_420)
 aura_issue_test_link_llvm_jit(test_macro_hygiene_contract_closed_loop_420)
+# Issue #421: query:pattern recursive MacroIntroduced filter closed loop.
+aura_add_issue_test(test_pattern_macro_filter_closed_loop_421)
+aura_issue_test_link_llvm_jit(test_pattern_macro_filter_closed_loop_421)
 # Issue #571: EvalValue v2 encoding dispatch table + hot-path
 # Contracts matrix under AI mutate → eval → shape-classify.
 # 12 scenarios validating: consteval table, classify roundtrip,

@@ -665,6 +665,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:defuse-version-stats",
             // Issue #420 — MacroIntroduced end-to-end hygiene contract
             "query:macro-hygiene-contract-stats",
+            // Issue #421 — query:pattern recursive MacroIntroduced filter
+            "query:pattern-macro-filter-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();

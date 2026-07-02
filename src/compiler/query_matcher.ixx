@@ -17,6 +17,7 @@
 module;
 
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <utility>
 #include <vector>
@@ -51,7 +52,8 @@ public:
                  FlatAST* pat_flat,
                  StringPool* pat_pool,
                  SymId wildcard_sym,
-                 bool nested_arity);
+                 bool nested_arity,
+                 bool skip_macro_introduced = false);
 
     // ─── Pure helpers ─────────────────────────────────────────
     bool is_wildcard(NodeId pid) const;
@@ -103,6 +105,12 @@ public:
     }
     void clear_pending_guard() { pending_guards_.pop_back(); }
 
+    // Issue #421: recursive MacroIntroduced subtree skips during
+    // match_subtree (post query-split hygiene contract).
+    [[nodiscard]] std::uint64_t recursive_macro_skipped() const noexcept {
+        return recursive_macro_skipped_;
+    }
+
     // ─── Public state ─────────────────────────────────────────
     QueryMatchState state;
 
@@ -112,6 +120,8 @@ private:
     FlatAST* pat_flat_;
     StringPool* pat_pool_;
     SymId wildcard_sym_;
+    bool skip_macro_introduced_ = false;
+    std::uint64_t recursive_macro_skipped_ = 0;
 };
 
 }  // namespace aura::compiler

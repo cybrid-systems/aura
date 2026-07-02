@@ -184,4 +184,41 @@ void Evaluator::build_tag_arity_index() const {
     tag_arity_index_sync_after_mutation(flat);
 }
 
+void Evaluator::verify_pattern_result_hygiene(const aura::ast::FlatAST& flat,
+                                              EvalValue result,
+                                              bool with_markers) noexcept {
+    auto walk = [&](EvalValue cur) {
+        while (is_pair(cur)) {
+            const auto pidx = as_pair_idx(cur);
+            if (pidx >= pairs_.size())
+                break;
+            auto item = pairs_[pidx].car;
+            if (with_markers && is_pair(item)) {
+                const auto iidx = as_pair_idx(item);
+                if (iidx < pairs_.size())
+                    item = pairs_[iidx].car;
+            }
+            if (is_int(item)) {
+                const auto id =
+                    static_cast<aura::ast::NodeId>(as_int(item));
+                if (id < flat.size() && flat.is_macro_introduced(id)) {
+                    pattern_macro_filter_violations_.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+            cur = pairs_[pidx].cdr;
+        }
+    };
+    walk(result);
+}
+
+void Evaluator::ensure_pattern_macro_filter_consistency(
+    const aura::ast::FlatAST& flat) const noexcept {
+    (void)flat;
+    // Issue #421: lightweight probe hook — violations are
+    // recorded by verify_pattern_result_hygiene on each
+    // default-hygiene query:pattern return. Tests call this
+    // to assert the post-split filter contract is wired.
+}
+
 }  // namespace aura::compiler
