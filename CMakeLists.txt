@@ -1611,6 +1611,9 @@ aura_issue_test_link_llvm_jit(test_ir_metadata_interpreter_jit_closed_loop_403)
 # Issue #404: IR SoA Phase 3 block_dirty incremental lowering closed loop.
 aura_add_issue_test(test_ir_soa_incremental_closed_loop_404)
 aura_issue_test_link_llvm_jit(test_ir_soa_incremental_closed_loop_404)
+# Issue #405: Arena auto-compaction orchestration closed loop.
+aura_add_issue_test(test_arena_compaction_orchestration_closed_loop_405)
+aura_issue_test_link_llvm_jit(test_arena_compaction_orchestration_closed_loop_405)
 # Issue #571: EvalValue v2 encoding dispatch table + hot-path
 # Contracts matrix under AI mutate → eval → shape-classify.
 # 12 scenarios validating: consteval table, classify roundtrip,
