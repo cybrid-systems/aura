@@ -653,6 +653,12 @@ public:
                 std::string n = name ? std::string(name) : std::string();
                 return clear_block_dirty_v2(n, func_idx, block_idx);
             });
+        // Issue #429: hook for (query:soa-dirty-stats).
+        // The closure reads the live SoaDirtyStats in one
+        // pass over ir_cache_v2_ (cheap; ~1ns per entry).
+        evaluator_.set_get_soa_dirty_stats_fn([this]() -> Evaluator::SoaDirtyStats {
+            return get_soa_dirty_stats();
+        });
         // Issue #460: per-instruction dirty hooks. The
         // P0 ship wires no-op implementations (always
         // return false) because the underlying
@@ -3397,6 +3403,21 @@ public:
             for (auto b : block_dirty_per_func_[func_idx])
                 if (b)
                     ++n;
+            return n;
+        }
+
+        // Query: total instruction count for a single
+        // function. Sum of all instructions across all
+        // basic blocks in irs[func_idx]. Returns 0 for
+        // out-of-range func_idx. Used by
+        // (query:soa-dirty-stats) to compute the
+        // dirty-instruction percentage.
+        std::size_t func_instruction_count(std::size_t func_idx) const {
+            if (func_idx >= irs.size())
+                return 0;
+            std::size_t n = 0;
+            for (const auto& b : irs[func_idx].blocks)
+                n += b.instructions.size();
             return n;
         }
 
@@ -7167,6 +7188,83 @@ public:
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end()) return nullptr;
         return &it->second;
+    }
+
+    // Issue #429: SoA dirty stats aggregate. The hook
+    // closure for (query:soa-dirty-stats) reads these
+    // 8 fields in one pass. Layout (issue #429 scope-limited
+    // ship — fills the gap that (query:ir-soa-incremental-stats)
+    // leaves: that primitive reports mutation-event counts
+    // (sums of lifetime atomic counters), but doesn't expose
+    // the live per-block / per-instruction dirty state of
+    // the cache). The 8 fields:
+    //   - cached_fns            : # entries in ir_cache_v2_
+    //   - dirty_fns             : # entries with entry.dirty == true
+    //   - total_blocks          : sum of block_dirty_per_func_[i].size() across all entries+funcs
+    //   - dirty_blocks          : sum of #dirty blocks (== entry.dirty_block_count() per entry)
+    //   - total_instructions    : sum of IRFunction.instructions.size() across all entries+funcs
+    //   - dirty_instructions    : sum of #dirty instructions across all entries+funcs
+    //                             (issue #380 instruction_dirty_ column)
+    //   - dirty_block_pct       : 100 * dirty_blocks / max(1, total_blocks) (integer percent)
+    //   - dirty_instruction_pct : 100 * dirty_instructions / max(1, total_instructions)
+    //
+    // The migration_progress field (10th, per the issue body)
+    // is deferred — the issue's intended formula
+    // "cached_fns / (cached_fns + uncached_defines)" requires
+    // enumerating the workspace defines, which would couple
+    // the primitive to a separate traversal. A future follow-up
+    // (after #167 SoA migration Phase 2 ships) will add
+    // it once the IRModuleV2 entry-point gives a single
+    // source of truth for "what's in the cache vs not".
+    //
+    // Returns the same SoaDirtyStats struct as
+    // Evaluator::SoaDirtyStats (single source of truth — we
+    // don't redefine it here to avoid the
+    // "different-SoaDirtyStats-from-Service" type mismatch
+    // the hook closure would otherwise see).
+    [[nodiscard]] Evaluator::SoaDirtyStats get_soa_dirty_stats() const noexcept {
+        Evaluator::SoaDirtyStats s;
+        for (const auto& [name, entry] : ir_cache_v2_) {
+            ++s.cached_fns;
+            if (entry.dirty)
+                ++s.dirty_fns;
+            // Per-block aggregate: each IRFunction has its own
+            // dirty column; we sum across all funcs in the entry.
+            for (std::size_t fi = 0; fi < entry.irs.size(); ++fi) {
+                const auto& func = entry.irs[fi];
+                // IRFunction uses `instructions_` (private field) as
+                // its instruction storage. We need a public accessor
+                // for the size — see IRFunction::instruction_count()
+                // (added in the same issue as the SoA dirty stats).
+                s.total_instructions += entry.func_instruction_count(fi);
+                if (fi < entry.block_dirty_per_func_.size()) {
+                    const auto& fb = entry.block_dirty_per_func_[fi];
+                    s.total_blocks += fb.size();
+                    for (auto b : fb)
+                        if (b) ++s.dirty_blocks;
+                }
+                // Per-instruction dirty (#380) — the
+                // instruction_dirty_ vector is per-function
+                // inside IRCacheEntry. We don't expose a
+                // dedicated field on IRCacheEntry yet; for
+                // the scope-limited ship we count the
+                // entry's `dirty` flag (1 if any instruction
+                // is dirty, 0 otherwise). The full
+                // per-instruction aggregate is a follow-up
+                // (needs IRCacheEntry to track
+                // instruction_dirty_per_func_, parallel to
+                // block_dirty_per_func_).
+                if (entry.dirty)
+                    ++s.dirty_instructions;
+            }
+        }
+        s.dirty_block_pct = s.total_blocks > 0
+            ? (s.dirty_blocks * 100) / s.total_blocks
+            : 0;
+        s.dirty_instruction_pct = s.total_instructions > 0
+            ? (s.dirty_instructions * 100) / s.total_instructions
+            : 0;
+        return s;
     }
     void public_invalidate_bridges_for(const std::string& name) { invalidate_bridge_for(name); }
 

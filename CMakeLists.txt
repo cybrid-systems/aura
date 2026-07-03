@@ -2559,6 +2559,17 @@ add_dependencies(all_test_issue_targets test_issue_edsl_hygiene_atomic)
 aura_add_issue_test(test_issue_428_closure)
 aura_issue_test_link_llvm_jit(test_issue_428_closure)
 add_dependencies(all_test_issue_targets test_issue_428_closure)
+
+# Issue #429: IRFunctionSoA + FlatAST PersistentChildVector
+# production cache locality. Verifies the new
+# (query:soa-dirty-stats) primitive (8-field hash with the
+# live per-block / per-instruction dirty state) and the
+# CompilerService::get_soa_dirty_stats() / func_instruction_count
+# accessors. The full SoA consumer migration (lowering,
+# ir_executor, JIT, Pass pipeline) is multi-week and deferred.
+aura_add_issue_test(test_issue_429_soa)
+aura_issue_test_link_llvm_jit(test_issue_429_soa)
+add_dependencies(all_test_issue_targets test_issue_429_soa)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)
