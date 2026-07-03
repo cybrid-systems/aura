@@ -1,0 +1,52 @@
+# Issue #675: nightly extended fuzz + sanitizer stress (non-blocking on PRs).
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  AURA_BUILD_JOBS: "0"
+  AURA_TEST_JOBS: "4"
+  CCACHE_DISABLE: 1
+
+jobs:
+  fuzz-extended:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Build
+      run: python3 build.py build
+
+    - name: Extended fuzz (full corpus)
+      run: |
+        python3 tests/fuzz_corpus.py
+        python3 tests/fuzz_equiv_mutate.py
+        echo "✓ extended fuzz complete"
+
+  tsan-smoke:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Build with TSAN
+      run: python3 build.py --sanitizer=tsan build
+
+    - name: Run concurrent tests under TSAN
+      env:
+        TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
+      run: |
+        python3 build.py --sanitizer=tsan test concurrent
+        echo "✓ concurrent tests clean under TSAN"

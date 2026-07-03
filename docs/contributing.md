@@ -278,6 +278,31 @@ cmake --preset tsan   && cmake --build --preset tsan
 - **ASan 与 LLVM JIT** 一起开可能 false positive 报告 `use-after-scope` 在 ORC 内部分配器。`--sanitizer=asan` 默认不启用 `AURA_HAVE_LLVM=1`，需要完整覆盖时手动 `cmake -DAURA_HAVE_LLVM=1 -B build_asan`。
 - 跑 TSan 必须设置 `TSAN_OPTIONS=halt_on_error=1`，否则报错只 warn 不退出。
 
+## 生产构建 / 可复现发布（Issue #675）
+
+CI 在 PR 上强制 **UBSAN smoke** + **security-scan**；`main` 额外跑 **reproducible-build** 双构建校验。Nightly workflow 跑扩展 fuzz + TSAN。
+
+```bash
+# 可复现 Release 构建（SOURCE_DATE_EPOCH + prefix map + 固定 random seed）
+SOURCE_DATE_EPOCH=1704067200 ./build.py repro build
+
+# 双构建字节级校验（strip 后 SHA-256 必须一致）
+./build.py repro --verify
+
+# CycloneDX SBOM
+./build.py sbom --version=1.0.0
+
+# 漏洞扫描（优先 Trivy，回退 pip-audit）
+./build.py security
+
+# 完整发布包（tarball + SBOM）
+SOURCE_DATE_EPOCH=1704067200 ./scripts/release.sh 1.0.0
+```
+
+**观测**：`(query:ci-reproducibility-stats)` 返回 5 字段 hash（`source-date-epoch`、`build-type`、`sanitizer-mode`、`reproducible-flags-active`、`ccache-disabled`）。
+
+**本地对齐 CI**：`CCACHE_DISABLE=1 ./build.py check`；需要 sanitizer 矩阵时加 `./build.py --sanitizer=ubsan test unit`。
+
 ## §X Incremental ConstraintSystem soundness (Issue #432 / #466)
 
 `ConstraintSystem::solve_delta()`（`type_checker_impl.cpp`）是 `infer_flat_partial` 多节点增量推断的快路径：只处理 `add_delta` 标记的 dirty 约束子集。

@@ -9,6 +9,8 @@
 # (requirements-dev.txt hash) — no restore-keys fallback.
 #
 # PRs skip the ASAN track; main runs the full matrix.
+# Issue #675: PRs also run ubsan-smoke + security-scan;
+# main adds reproducible-build verification.
 
 name: CI
 
@@ -234,3 +236,90 @@ jobs:
       run: |
         AURA=$(pwd)/build_asan/aura bash tests/run-tests.sh
         echo "✓ emit-binary suite clean under ASAN"
+
+  # Issue #675: UBSAN smoke on every PR (lighter than full ASAN track).
+  ubsan-smoke:
+    needs: [gate]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Build with UBSAN
+      run: python3 build.py --sanitizer=ubsan build
+
+    - name: Run unit tests under UBSAN
+      env:
+        UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+      run: |
+        python3 build.py --sanitizer=ubsan test unit
+        echo "✓ unit tests clean under UBSAN"
+
+  # Issue #675: dependency + filesystem vulnerability scan + SBOM.
+  security-scan:
+    needs: [gate]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Install Trivy
+      run: |
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+          | sh -s -- -b /usr/local/bin v0.58.1
+
+    - name: Security scan
+      run: python3 build.py security
+
+    - name: Generate SBOM
+      run: python3 build.py sbom --version=ci-${{ github.sha }}
+
+    - name: Upload SBOM artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: aura-sbom
+        path: dist/aura-sbom.json
+        if-no-files-found: error
+        retention-days: 30
+
+  # Issue #675: dual reproducible Release build verification (main only).
+  reproducible-build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [gate]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+    env:
+      SOURCE_DATE_EPOCH: "1704067200"
+      CCACHE_DISABLE: 1
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Verify reproducible builds match
+      run: python3 build.py repro --verify

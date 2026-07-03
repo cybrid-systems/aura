@@ -72,6 +72,24 @@
             }
         },
         {
+            "name": "repro",
+            "displayName": "Reproducible Release (Ninja, GCC 16) — Issue #675",
+            "description": "Hermetic Release build with SOURCE_DATE_EPOCH, prefix maps, fixed random seed, and --build-id=none. Pairs with: ./build.py repro",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build_repro",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS": "-ffile-prefix-map=${sourceDir}=. -fdebug-prefix-map=${sourceDir}=. -frandom-seed=aura-repro-675 -g0",
+                "CMAKE_CXX_FLAGS": "-ffile-prefix-map=${sourceDir}=. -fdebug-prefix-map=${sourceDir}=. -frandom-seed=aura-repro-675 -g0",
+                "CMAKE_EXE_LINKER_FLAGS": "-Wl,--build-id=none",
+                "CMAKE_SHARED_LINKER_FLAGS": "-Wl,--build-id=none"
+            },
+            "environment": {
+                "SOURCE_DATE_EPOCH": "1704067200",
+                "CCACHE_DISABLE": "1"
+            }
+        },
+        {
             "name": "tsan",
             "displayName": "ThreadSanitizer (Debug, Ninja, GCC 16) — Issue #299",
             "description": "ThreadSanitizer-instrumented build. Use for data race detection in fibers and concurrent mutate/query. -O0 forced (TSan produces false positives at -O2/-O3). Incompatible with ASan. Pairs with: cmake --build --preset tsan",
@@ -114,6 +132,10 @@
         {
             "name": "tsan",
             "configurePreset": "tsan"
+        },
+        {
+            "name": "repro",
+            "configurePreset": "repro"
         }
     ],
     "testPresets": [

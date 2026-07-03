@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "observability_metrics.h"
+#include "ci_build_info.h"
 
 module aura.compiler.evaluator;
 
@@ -268,6 +269,63 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             {"aot-stale-reject-count", make_int(static_cast<std::int64_t>(stale_rej))},
             {"aot-region-mismatch-count", make_int(static_cast<std::int64_t>(region_mismatch))},
             {"aot-hot-update-success-count", make_int(static_cast<std::int64_t>(hot_update_ok))},
+        };
+        return build_hash(kv);
+    });
+
+    // (query:ci-reproducibility-stats) — Issue #675: build/CI
+    // reproducibility + sanitizer gate observability. Returns a
+    // 5-field hash:
+    //   - source-date-epoch: SOURCE_DATE_EPOCH env (0 if unset)
+    //   - build-type: AURA_BUILD_TYPE env (or "unknown")
+    //   - sanitizer-mode: compile-time "none"|"asan"|"ubsan"|"tsan"
+    //   - reproducible-flags-active: 1 iff SOURCE_DATE_EPOCH > 0
+    //   - ccache-disabled: 1 iff CCACHE_DISABLE=1
+    add("query:ci-reproducibility-stats", [&ev](const auto&) -> EvalValue {
+        const auto epoch = aura::ci::source_date_epoch();
+        const auto repro = aura::ci::reproducible_flags_active();
+        const auto ccache_off = aura::ci::ccache_disabled();
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        auto bt_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(aura::ci::build_type_from_env());
+        auto san_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(aura::ci::sanitizer_mode());
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"source-date-epoch", make_int(epoch)},
+            {"build-type", make_string(bt_idx)},
+            {"sanitizer-mode", make_string(san_idx)},
+            {"reproducible-flags-active", make_bool(repro)},
+            {"ccache-disabled", make_bool(ccache_off)},
         };
         return build_hash(kv);
     });
@@ -1496,6 +1554,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:shape-folding-stats",
             // Issue #463 — SoA Phase 2 adoption
             "query:soa-adoption-stats",
+            // Issue #675 — CI reproducibility + sanitizer gates
+            "query:ci-reproducibility-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1513,9 +1573,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 50 entries as of #463 ship (49 from #462 + 1 new
-        // query:soa-adoption-stats).
-        return make_int(50);
+        // 51 entries as of #675 ship (50 from #463 + 1 new
+        // query:ci-reproducibility-stats).
+        return make_int(51);
     });
 
 }
