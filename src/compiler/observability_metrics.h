@@ -764,6 +764,25 @@ struct CompilerMetrics {
     // requires a vector of atomics indexed by slot, which
     // is invasive to the Primitives class.
     std::atomic<std::uint64_t> primitive_call_total{0};
+
+    // Issue #452: AOT hot-update + region filtering
+    // observability. Each counter is a per-bridge-event
+    // monotonic total readable via (query:aot-stats).
+    // - aot_stale_reject_count_: bumped when
+    //   aura_reload_aot_module rejects a binary because
+    //   the binary's aot_emit_version != host's expected
+    //   version. Signals version drift.
+    // - aot_region_mismatch_: bumped when
+    //   aura_reload_aot_module rejects a binary because
+    //   the binary's region_filter_mask doesn't match
+    //   the host's region. Multi-agent safety signal.
+    //   #452 ships the counter; region_filter wiring is
+    //   a follow-up.
+    // - aot_hot_update_success_: bumped on successful
+    //   dlopen + version check (the constructor ran).
+    std::atomic<std::uint64_t> aot_stale_reject_count_{0};
+    std::atomic<std::uint64_t> aot_region_mismatch_{0};
+    std::atomic<std::uint64_t> aot_hot_update_success_{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

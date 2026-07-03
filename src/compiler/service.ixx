@@ -7901,6 +7901,14 @@ public:
         // Set the global primitives pointer for the JIT dispatcher
         g_jit_prim_ctx.store(&evaluator_.primitives(), std::memory_order_release);
 
+        // Issue #452: wire AOT bridge metrics pointer so
+        // aura_reload_aot_module can bump the
+        // aot_stale_reject_count_, aot_region_mismatch_,
+        // aot_hot_update_success_ counters exposed via
+        // (query:aot-stats). Lifetime is tied to the
+        // service (well-defined teardown order).
+        aura_set_aot_metrics(&metrics_);
+
         // Issue #157 Phase 1: bind the lock hooks. Pattern matches
         // the g_prim_dispatcher pattern above — the runtime bridges
         // (aura_alloc_pair, aura_pair_car, aura_prim_call, etc.) call
