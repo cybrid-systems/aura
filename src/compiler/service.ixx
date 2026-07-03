@@ -514,6 +514,11 @@ public:
         evaluator_.set_mark_define_dirty_fn(
             [this](const std::string& name) { this->mark_define_dirty(name); });
         evaluator_.set_mark_all_defines_dirty_fn([this]() { this->mark_all_defines_dirty(); });
+        // Issue #680: precise IR/JIT/bridge invalidation for closure-heavy Defines.
+        evaluator_.set_invalidate_function_fn(
+            [this](const std::string& name) { this->invalidate_function(name); });
+        evaluator_.set_define_impact_scope_fn(
+            [this](aura::ast::NodeId root) { this->run_define_impact_scope(root); });
         // Phase 2: pre-populate v2 IR cache from workspace defines.
         // Called from (set-code ...) primitive after a successful parse.
         // Plan A + Follow-up 3: hook now calls BOTH the lightweight
@@ -3586,6 +3591,22 @@ public:
     // invalidation will be added in a follow-up that consults
     // the dep_graph_ to find which block(s) of a dependent
     // actually reference the mutated define.
+    // Issue #680: compute ir_cache_pure impact_scope for a Define
+    // mutation root and bump Evaluator observability counters.
+    void run_define_impact_scope(aura::ast::NodeId root) {
+        auto* flat = evaluator_.workspace_flat();
+        if (!flat || root == aura::ast::NULL_NODE || root >= flat->size())
+            return;
+        std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>>
+            source_to_ir;
+        std::unordered_map<std::string, std::size_t> ir_cache_index;
+        auto scope = compute_impact_scope(*flat, root, source_to_ir, ir_cache_index);
+        const std::uint64_t blocks = scope.affected_blocks.empty()
+                                         ? 1u
+                                         : scope.affected_blocks.size();
+        evaluator_.bump_impact_scope_calls(blocks);
+    }
+
     void mark_define_dirty(const std::string& name) {
         auto it = ir_cache_v2_.find(name);
         if (it != ir_cache_v2_.end()) {
