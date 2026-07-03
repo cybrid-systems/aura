@@ -2609,6 +2609,18 @@ add_dependencies(all_test_issue_targets test_issue_431_cxx26)
 aura_add_issue_test(test_issue_440_edsl_readiness)
 aura_issue_test_link_llvm_jit(test_issue_440_edsl_readiness)
 add_dependencies(all_test_issue_targets test_issue_440_edsl_readiness)
+
+# Issue #442: SEVA Demo end-to-end scaffolding. The full
+# scope is multi-day (real SystemVerilog FIFO + iverilog
+# integration + testbench generation + autonomous bug-fix
+# + docs + screenshots); scope-limited close ships the
+# AURA-DEMO foundation: fifo_dut.aura + seva_demo.aura +
+# tests/test_issue_442_seva_demo.cpp + demos/seva/README.md.
+# No new primitives required — uses existing verify:* (#437,
+# #469), mutate:*, query:* primitives + the #440 aggregator.
+aura_add_issue_test(test_issue_442_seva_demo)
+aura_issue_test_link_llvm_jit(test_issue_442_seva_demo)
+add_dependencies(all_test_issue_targets test_issue_442_seva_demo)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)
