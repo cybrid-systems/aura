@@ -2654,6 +2654,19 @@ add_dependencies(all_test_issue_targets test_issue_444_strategy_evolution)
 aura_add_issue_test(test_issue_445_openclaw_integration)
 aura_issue_test_link_llvm_jit(test_issue_445_openclaw_integration)
 add_dependencies(all_test_issue_targets test_issue_445_openclaw_integration)
+
+# Issue #446: SEVA docs + tutorial + metrics. Full scope:
+# docs/demos/seva.md + tutorial + metrics collection +
+# README update. Scope-limited close ships the DOCS +
+# METRICS layer:
+#   - docs/demos/seva.md (architecture + how-to + primitives)
+#   - demos/seva/TUTORIAL.md (step-by-step walkthrough)
+#   - README.md (Demos section pointing to SEVA)
+#   - (seva:run-demo-with-metrics) 6-field hash primitive
+#   - (stats:count) 45 → 46
+aura_add_issue_test(test_issue_446_seva_docs_metrics)
+aura_issue_test_link_llvm_jit(test_issue_446_seva_docs_metrics)
+add_dependencies(all_test_issue_targets test_issue_446_seva_docs_metrics)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)
