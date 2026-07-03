@@ -557,7 +557,9 @@ public:
     [[nodiscard]] double compact_threshold() const noexcept { return compact_threshold_; }
 
     // Get or create an arena for a module
-    ASTArena& module_arena(const std::string& name, std::size_t initial_size = 8 * 1024 * 1024) {
+    ASTArena& module_arena(const std::string& name, std::size_t initial_size = 8 * 1024 * 1024)
+        pre(!name.empty())
+        pre(initial_size >= 1024) {
         auto it = arenas_.find(name);
         if (it != arenas_.end())
             return *it->second;

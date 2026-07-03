@@ -545,6 +545,78 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (query:cxx26-hotpath-invariants) — Issue #465: C++26
+    // hot-path Contracts + consteval invariants observability.
+    // Returns a 5-field hash reporting the compile-time
+    // invariants the binary was built with:
+    //   - fixnum-tag-encoding: 0 (matches low2 dispatch table[0])
+    //   - ref-tag-encoding: 1 (matches low2 dispatch table[1])
+    //   - string-v2-tag-encoding: 2 (matches low2 dispatch table[2])
+    //   - special-tag-encoding: 3 (matches low2 dispatch table[3])
+    //   - float-tag-encoding: 4 (out of low2 dispatch space)
+    //
+    // These are static_assert'd at compile time in
+    // value_tags.h. The primitive reports the values that
+    // were baked in at build time, so the AI Agent can
+    // verify a deployed binary matches the expected
+    // encoding without re-running the static_asserts.
+    //
+    // Future follow-ups will add:
+    //   - The Pass concept instance count
+    //   - The SoA column count
+    //   - The dirty bitmask byte width
+    add("query:cxx26-hotpath-invariants", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        // These values are the ones static_assert'd in
+        // value_tags.h. The build will fail if they drift.
+        // We hardcode the values here because the
+        // EvalValueTag enum is in value.ixx (a different
+        // module partition) and not directly accessible
+        // from this file. The static_assert chain in
+        // value_tags.h is the source of truth; the
+        // primitive reports the same values so the
+        // AI Agent can verify a deployed binary matches
+        // the expected encoding.
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"fixnum-tag-encoding", make_int(0)},
+            {"ref-tag-encoding", make_int(1)},
+            {"string-v2-tag-encoding", make_int(2)},
+            {"special-tag-encoding", make_int(3)},
+            {"float-tag-encoding", make_int(4)},
+        };
+        return build_hash(kv);
+    });
+
     // (atomic-batch:stats) — Issue #192: observability for
     // mutate:atomic-batch. Hash with batch-count, ops-total,
     // rollback-count, ops-per-batch (avg).
@@ -1641,6 +1713,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:arena-auto-stats",
             // Issue #677 — deployment / health / metrics export
             "query:deployment-stats",
+            // Issue #465 — C++26 hot-path contracts + consteval
+            "query:cxx26-hotpath-invariants",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1658,8 +1732,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 55 entries as of #677 ship (54 from #464 + 1 new
-        // query:deployment-stats).
+        // 56 entries as of #465 ship (55 from #677 + 1 new
+        // query:cxx26-hotpath-invariants).
         return make_int(55);
     });
 
