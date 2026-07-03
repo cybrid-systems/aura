@@ -21,6 +21,9 @@ Usage:
   ./build.py lint              # Ruff lint + format check（Python）
   ./build.py lint --fix        # 自动修复可修复项并格式化
   ./build.py fixtures --check  # 校验 tests/fixtures/*.json schema
+  ./build.py repro [--verify]  # 可复现 Release 构建（#675）
+  ./build.py sbom [--version=V] # CycloneDX SBOM 生成（#675）
+  ./build.py security          # 依赖/文件系统漏洞扫描（#675）
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
@@ -1324,6 +1327,122 @@ def cmd_pgo():
 
 
 # ═══════════════════════════════════════════════════════════════
+# Reproducible build / SBOM / security (Issue #675)
+# ═══════════════════════════════════════════════════════════════
+
+REPRO_SOURCE_DATE_EPOCH = "1704067200"  # 2024-01-01T00:00:00Z
+REPRO_SCRIPT = ROOT / "scripts" / "ci_reproducibility.py"
+SBOM_SCRIPT = ROOT / "scripts" / "gen_sbom.py"
+SECURITY_SCRIPT = ROOT / "scripts" / "security_scan.sh"
+
+
+def _repro_cmake_flags() -> tuple[str, str, str]:
+    src = str(ROOT)
+    flags = f"-ffile-prefix-map={src}=. -fdebug-prefix-map={src}=. -frandom-seed=aura-repro-675 -g0"
+    ldflags = "-Wl,--build-id=none"
+    return flags, flags, ldflags
+
+
+def cmd_repro():
+    """Reproducible Release build or dual-build verification."""
+    verify = "--verify" in sys.argv[2:]
+    if verify:
+        print(f"{B}═══ Reproducible build verify ═══{N}")
+        if not REPRO_SCRIPT.exists():
+            fail(f"missing {REPRO_SCRIPT}")
+            return 1
+        return run([sys.executable, str(REPRO_SCRIPT)], cwd=ROOT)
+
+    print(f"{B}═══ Reproducible build ═══{N}")
+    global BUILD, AURA, TEST_BIN
+    BUILD = ROOT / "build_repro"
+    AURA = BUILD / "aura"
+    TEST_BIN = BUILD / "aura"
+    BUILD.mkdir(parents=True, exist_ok=True)
+    nproc = _build_jobs()
+    cflags, cxxflags, ldflags = _repro_cmake_flags()
+    env = {
+        **os.environ,
+        "SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", REPRO_SOURCE_DATE_EPOCH),
+        "CCACHE_DISABLE": "1",
+        "AURA_BUILD_TYPE": "Release",
+    }
+    r = run(
+        [
+            "cmake",
+            "-B",
+            str(BUILD),
+            "-G",
+            "Ninja",
+            "-Wno-dev",
+            "-DCMAKE_BUILD_TYPE=Release",
+            f"-DCMAKE_C_FLAGS={cflags}",
+            f"-DCMAKE_CXX_FLAGS={cxxflags}",
+            f"-DCMAKE_EXE_LINKER_FLAGS={ldflags}",
+            f"-DCMAKE_SHARED_LINKER_FLAGS={ldflags}",
+        ],
+        cwd=ROOT,
+        env=env,
+    )
+    if r != 0:
+        return r
+    r = run(
+        ["cmake", "--build", str(BUILD), "--target", "aura", "-j", str(nproc)],
+        cwd=ROOT,
+        env=env,
+    )
+    if r == 0:
+        ok(f"repro build OK → {AURA}")
+    else:
+        fail("repro build failed")
+    return r
+
+
+def cmd_sbom():
+    """Generate CycloneDX SBOM (Issue #675)."""
+    print(f"{B}═══ SBOM ═══{N}")
+    if not SBOM_SCRIPT.exists():
+        fail(f"missing {SBOM_SCRIPT}")
+        return 1
+    version = os.environ.get("AURA_VERSION", "dev")
+    output = ROOT / "dist" / "aura-sbom.json"
+    i = 2
+    while i < len(sys.argv):
+        a = sys.argv[i]
+        if a.startswith("--version="):
+            version = a.split("=", 1)[1]
+        elif a == "--version" and i + 1 < len(sys.argv):
+            version = sys.argv[i + 1]
+            i += 1
+        elif a.startswith("--output="):
+            output = ROOT / a.split("=", 1)[1]
+        i += 1
+    r = run(
+        [sys.executable, str(SBOM_SCRIPT), "--version", version, "--output", str(output)],
+        cwd=ROOT,
+    )
+    if r == 0:
+        ok(f"SBOM → {output}")
+    else:
+        fail("SBOM generation failed")
+    return r
+
+
+def cmd_security():
+    """Filesystem / dependency vulnerability scan (Issue #675)."""
+    print(f"{B}═══ Security scan ═══{N}")
+    if not SECURITY_SCRIPT.exists():
+        fail(f"missing {SECURITY_SCRIPT}")
+        return 1
+    r = run(["bash", str(SECURITY_SCRIPT)], cwd=ROOT)
+    if r == 0:
+        ok("security scan OK")
+    else:
+        fail("security scan failed")
+    return r
+
+
+# ═══════════════════════════════════════════════════════════════
 # LLM Benchmark
 # ═══════════════════════════════════════════════════════════════
 
@@ -1389,6 +1508,9 @@ def main():
         "fuzz": lambda: cmd_test(["fuzz-equiv", "fuzz-corpus"]),
         "bench-llm": run_bench_llm,
         "pgo": cmd_pgo,
+        "repro": cmd_repro,
+        "sbom": cmd_sbom,
+        "security": cmd_security,
     }
 
     if cmd in commands:

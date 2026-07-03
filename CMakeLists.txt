@@ -2676,6 +2676,12 @@ add_dependencies(all_test_issue_targets test_issue_462_shape_aware_folding)
 aura_add_issue_test(test_issue_463_soa_phase2_wiring)
 aura_issue_test_link_llvm_jit(test_issue_463_soa_phase2_wiring)
 add_dependencies(all_test_issue_targets test_issue_463_soa_phase2_wiring)
+# Issue #675: Build/CI reproducibility + SBOM + security scan gates.
+# 6 ACs: query:ci-reproducibility-stats hash + 5 fields +
+# sanitizer-mode none + SOURCE_DATE_EPOCH flag + stats:list/count.
+aura_add_issue_test(test_issue_675)
+aura_issue_test_link_llvm_jit(test_issue_675)
+add_dependencies(all_test_issue_targets test_issue_675)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)

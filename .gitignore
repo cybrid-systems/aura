@@ -1,5 +1,9 @@
 
 build/
+dist/
+build_repro/
+build_repro_a/
+build_repro_b/
 gcm.cache/
 build_asan
 build_dbg/
