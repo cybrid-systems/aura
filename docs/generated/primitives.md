@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**621** registrations scanned from `src/**/*.cpp`.
+**623** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 146 primitives (24%)
-- **core**: 177 primitives (29%)
-- **internal-observable**: 151 primitives (24%)
+- **mutation-safety**: 146 primitives (23%)
+- **core**: 178 primitives (29%)
+- **internal-observable**: 152 primitives (24%)
 - **convenience**: 147 primitives (24%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,11 +21,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (151)
+## Query: (152)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:arena-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:arena-compaction-stats-hash` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:ast-column-compaction-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:atomic-batch-rollback-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:atomic-batch-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -611,12 +612,13 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `_agent:list` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `_agent:spawn` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Arena: (13)
+## Arena: (14)
 
 - `arena:adaptive-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:adaptive-stats` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-all` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:compact-with-policy` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-requested?` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-stats` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -882,7 +884,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (177)
+### Core builtins (must remain primitive) (178)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -896,6 +898,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `arena:adaptive-stats` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-all` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:compact-with-policy` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-requested?` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-stats` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1062,11 +1065,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (151)
+### Internal observable (stats/counters) (152)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:arena-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:arena-compaction-stats-hash` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:ast-column-compaction-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:atomic-batch-rollback-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:atomic-batch-stats` — `src/compiler/evaluator_primitives_compile.cpp`
