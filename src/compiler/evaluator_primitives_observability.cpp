@@ -1721,6 +1721,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:nested-guard-atomic-stats",
             // Issue #680 — Define mutate IR/JIT/bridge invalidation
             "query:define-mutate-ir-invalidation-stats",
+            // Issue #681 — compiler IRClosure/bridge epoch enforcement
+            "query:compiler-closure-inval-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1738,9 +1740,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 59 entries as of #680 ship (58 from #679 + 1 new
-        // query:define-mutate-ir-invalidation-stats).
-        return make_int(59);
+        // 60 entries as of #681 ship (59 from #680 + 1 new
+        // query:compiler-closure-inval-stats).
+        return make_int(60);
     });
 
 }
