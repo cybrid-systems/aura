@@ -79,6 +79,22 @@ static_assert(eval_value_tag_low2_table(2) == EvalValueTag::StringV2,
 static_assert(eval_value_tag_low2_table(3) == EvalValueTag::Special,
               "dispatch table drift: low2=3 must be Special");
 
+// Issue #465: more consteval encoding invariants for v2
+// dispatch. These are the C++26 zero-overhead way to catch
+// encoding drift at compile time (the alternative is a
+// runtime check on every dispatch, which is what was
+// happening pre-#465).
+static_assert(static_cast<std::uint8_t>(EvalValueTag::Fixnum)   == 0, "Fixnum tag must be 0");
+static_assert(static_cast<std::uint8_t>(EvalValueTag::Ref)      == 1, "Ref tag must be 1");
+static_assert(static_cast<std::uint8_t>(EvalValueTag::StringV2) == 2, "StringV2 tag must be 2");
+static_assert(static_cast<std::uint8_t>(EvalValueTag::Special)  == 3, "Special tag must be 3");
+static_assert(static_cast<std::uint8_t>(EvalValueTag::Float)    == 4, "Float tag must be 4");
+// Unknown = 255 must stay >= 5 (so the low-2-bit dispatch
+// never accidentally classifies a value as Unknown when the
+// real tag is Fixnum/Ref/StringV2/Special).
+static_assert(static_cast<std::uint8_t>(EvalValueTag::Unknown) >= 5,
+              "Unknown tag must be >= 5 (out of low-2-bit space)");
+
 // Issue #571 observability (relaxed-ordering; advisory counts).
 inline std::atomic<std::uint64_t> value_dispatch_hit_count{0};
 inline std::atomic<std::uint64_t> value_dispatch_miss_count{0};

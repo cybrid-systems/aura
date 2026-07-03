@@ -51,6 +51,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:consolidated-production-priority-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-delta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:cxx26-hotpath-invariants` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:cxx26-invariants` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:dead-coercion-zerooverhead-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:def-use` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -1097,6 +1098,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:consolidated-production-priority-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-delta-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:cxx26-hotpath-invariants` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:cxx26-invariants` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:dead-coercion-zerooverhead-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:def-use` — `src/compiler/evaluator_primitives_query_defuse.cpp`

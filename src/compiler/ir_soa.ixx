@@ -27,6 +27,7 @@ module;
 #include <memory_resource>
 #include <string>
 #include <vector>
+#include <contracts>
 
 export module aura.compiler.ir_soa;
 
@@ -332,8 +333,12 @@ export struct IRInstructionView {
         , idx(i) {}
 
     // Accessors — all O(1), one SoA column access each.
-    constexpr aura::ir::IROpcode opcode() const { return func->opcodes_[idx]; }
+    constexpr aura::ir::IROpcode opcode() const {
+        contract_assert(idx < func->opcodes_.size());
+        return func->opcodes_[idx];
+    }
     constexpr std::uint32_t operand(std::size_t i) const {
+        contract_assert(i < 4);  // only 4 operand columns exist
         switch (i) {
             case 0:
                 return func->operand0_[idx];
