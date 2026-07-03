@@ -1436,6 +1436,9 @@ std::pmr::vector<std::uint32_t> type_id_;
     // gauge how often their code crosses mutation boundaries
     // with cached views.
     mutable std::atomic<std::uint64_t> children_safe_view_count_{0};
+    // Issue #678: parent_safe_view(NodeId) counter — mirrors
+    // parent_of_call_count_ for generation-tagged parent access.
+    mutable std::atomic<std::uint64_t> parent_safe_view_count_{0};
     // Issue #256: AST operation observability counters.
     // The hand-written AST operations (children, parent_of,
     // mark_dirty_upward) are candidates for std::meta-based
@@ -2978,7 +2981,8 @@ public:
     // returned span stays valid across mutate operations +
     // rollback. One atomic refcount bump per call (amortized
     // over all reads via the same handle).
-    [[nodiscard]] SafePCVSpan<NodeId> children_safe(NodeId id) const {
+    // Issue #370/#678: lifetime-pinned children accessor.
+    [[nodiscard]] SafePCVSpan<NodeId> children_safe_view(NodeId id) const {
         children_safe_view_count_.fetch_add(1, std::memory_order_relaxed);
         if (id >= children_.size())
             return {};
@@ -2986,6 +2990,11 @@ public:
         std::span<const NodeId> sp(children_[id].data(), children_[id].size());
         return SafePCVSpan<NodeId>(sp, std::move(keep));
     }
+
+    [[nodiscard]] SafePCVSpan<NodeId> children_safe(NodeId id) const {
+        return children_safe_view(id);
+    }
+
     // Mutable overload (for code paths that need to write through
     // the children list, e.g. fixup_deltas in ast_impl.cpp).
     // PCV is immutable; this returns a const span. For
@@ -5279,6 +5288,10 @@ public:
     [[nodiscard]] std::uint64_t children_safe_view_count() const noexcept {
         return children_safe_view_count_.load(std::memory_order_relaxed);
     }
+    // Issue #678: parent_safe_view call counter.
+    [[nodiscard]] std::uint64_t parent_safe_view_count() const noexcept {
+        return parent_safe_view_count_.load(std::memory_order_relaxed);
+    }
 
     // Issue #191: bump the generation counter (with wrap-around
     // to 1, skipping 0 which is reserved). Called automatically
@@ -5995,6 +6008,15 @@ public:
         if (pid == NULL_NODE)
             return StableNodeRef{};
         return StableNodeRef{pid, generation_};
+    }
+
+    // Issue #678: generation-tagged parent accessor for query
+    // paths that may span structural mutations. Unlike parent_of()
+    // (scalar NodeId), the returned StableNodeRef can be validated
+    // via is_valid() after a concurrent mutate.
+    [[nodiscard]] StableNodeRef parent_safe_view(NodeId id) const noexcept {
+        parent_safe_view_count_.fetch_add(1, std::memory_order_relaxed);
+        return parent_stable(id);
     }
 
     [[nodiscard]] std::vector<StableNodeRef> children_stable(NodeId id) const {

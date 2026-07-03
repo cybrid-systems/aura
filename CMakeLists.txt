@@ -2694,6 +2694,10 @@ add_dependencies(all_test_issue_targets test_issue_676)
 aura_add_issue_test(test_issue_677)
 aura_issue_test_link_llvm_jit(test_issue_677)
 add_dependencies(all_test_issue_targets test_issue_677)
+# Issue #678: PCV span lifetime safety in concurrent query paths.
+aura_add_issue_test(test_issue_678)
+aura_issue_test_link_llvm_jit(test_issue_678)
+add_dependencies(all_test_issue_targets test_issue_678)
 # Issue #464: Arena auto-compaction lifecycle + counter + primitive.
 aura_add_issue_test(test_issue_464_arena_auto_compaction)
 aura_issue_test_link_llvm_jit(test_issue_464_arena_auto_compaction)

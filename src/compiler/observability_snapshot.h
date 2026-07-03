@@ -161,6 +161,8 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     // vs the raw std::span from children(NodeId) (which is the
     // dangerous pattern across mutate boundaries).
     std::uint64_t children_safe_view_count = 0;
+    // Issue #678: parent_safe_view call counter.
+    std::uint64_t parent_safe_view_count = 0;
     // Issue #256: AST operation observability. Mirrors
     // CompilerMetrics::{children_call_count,
     // parent_of_call_count, mark_dirty_upward_call_count,

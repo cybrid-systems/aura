@@ -5147,6 +5147,7 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             s.structural_rollback_success = ws_flat->structural_rollback_success();
             s.structural_rollback_besteffort = ws_flat->structural_rollback_besteffort();
             s.children_safe_view_count = ws_flat->children_safe_view_count();
+            s.parent_safe_view_count = ws_flat->parent_safe_view_count();
             // Issue #256: AST operation observability counters
             // (children/parent_of/mark_dirty_upward call counts
             // + total nodes marked dirty).
