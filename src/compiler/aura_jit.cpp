@@ -2783,6 +2783,37 @@ void AuraJIT::invalidate(const char* name) {
     impl_->compile_fns_.erase(n);
 }
 
+// Issue #660 follow-up: invalidate_prefix — walk both
+// fn_trackers_ and compile_fns_ and erase any entry whose
+// key starts with `prefix` (e.g. "mul" → erases "mul#0",
+// "mul#1", ...). Used by cache_define on redefine since
+// JIT cache keys are `name + "#" + pos`, not the bare name.
+void AuraJIT::invalidate_prefix(const char* prefix) {
+    if (!impl_ || !prefix)
+        return;
+    std::string p(prefix);
+    if (p.empty())
+        return;
+    std::string p_hash = p + "#";
+    for (auto it = impl_->fn_trackers_.begin(); it != impl_->fn_trackers_.end(); ) {
+        if (it->first == p || it->first.rfind(p_hash, 0) == 0) {
+            if (auto err = it->second->remove())
+                llvm::consumeError(std::move(err));
+            it = impl_->fn_trackers_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    std::unique_lock<std::shared_mutex> lock(impl_->fn_compile_mtx_);
+    for (auto it = impl_->compile_fns_.begin(); it != impl_->compile_fns_.end(); ) {
+        if (it->first == p || it->first.rfind(p_hash, 0) == 0) {
+            it = impl_->compile_fns_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 // ── Public AOT API ──────────────────────────────────────────────
 
 bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path,
