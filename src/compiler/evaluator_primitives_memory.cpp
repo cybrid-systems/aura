@@ -397,6 +397,42 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(static_cast<std::int64_t>(
             ev.arena_group_->adaptive_compact_all()));
     });
+    // (arena:compact-with-policy name policy) — Issue #430:
+    // manual policy override. policy is one of:
+    //   "force" — always compact (no threshold check)
+    //   "auto"  — consult adaptive threshold (default
+    //             behavior of arena:adaptive-compact)
+    //   "skip"  — never compact (bumps skip counter
+    //             so observability can see the manual skip)
+    // Returns bytes reclaimed. Use "force" sparingly —
+    // compaction is O(capacity) and can stall the
+    // worker thread. The intended use case is a
+    // memory-pressure watchdog that has decided the
+    // adaptive threshold is too lax for the current
+    // workload.
+    add("arena:compact-with-policy", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+        if (!ev.arena_group_)
+            return make_int(0);
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+            return make_void(); // bad-arg signal; same shape as other primitives in this file
+        auto nidx = as_string_idx(a[0]);
+        auto pidx = as_string_idx(a[1]);
+        if (nidx >= ev.string_heap_.size() || pidx >= ev.string_heap_.size())
+            return make_int(0);
+        const auto& name = ev.string_heap_[nidx];
+        const auto& policy = ev.string_heap_[pidx];
+        aura::ast::ArenaGroup::CompactPolicy p;
+        if (policy == "force")
+            p = aura::ast::ArenaGroup::CompactPolicy::Force;
+        else if (policy == "auto")
+            p = aura::ast::ArenaGroup::CompactPolicy::Auto;
+        else if (policy == "skip")
+            p = aura::ast::ArenaGroup::CompactPolicy::Skip;
+        else
+            return make_void(); // unknown policy → no-op (no arena state change)
+        return make_int(static_cast<std::int64_t>(
+            ev.arena_group_->compact_with_policy(name, p)));
+    });
     // (arena:should-auto-compact? name) — Issue #335: cheap
     // O(1) probe that returns #t when the per-module
     // fragmentation ratio is at or above the adaptive

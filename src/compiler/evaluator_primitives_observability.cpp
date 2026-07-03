@@ -570,6 +570,119 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (query:arena-compaction-stats-hash) — Issue #430:
+    // hash variant of (query:arena-compaction-stats). The
+    // legacy primitive returns a single integer = sum of
+    // 7 fields (cheaper for dashboards that only need
+    // the aggregate). The hash variant exposes each
+    // field as a distinct key for the AI Agent's
+    // per-field reasoning (e.g. "is the save rate
+    // dropping?" needs total_compaction_saved vs
+    // compaction_count, which the sum collapses).
+    //
+    // Field list (10 total):
+    //   - auto-compact-triggers: ArenaGroup trigger count
+    //   - auto-compact-skips:    ArenaGroup skip count
+    //   - compactions:           lifetime compact() calls
+    //   - bytes-saved:           lifetime bytes reclaimed
+    //   - last-saved:            bytes reclaimed by last compact
+    //   - paused-by-boundary:    deferred at MutationBoundary
+    //   - mutation-volume:       total_mutations_ (orchestration signal)
+    //   - dirty-propagation:     mark_dirty_upward activity
+    //   - fragmentation-ratio:   current main arena frag ratio * 100
+    //   - peak-used-bytes:       high-water mark for main arena
+    //
+    // Both primitives share the same underlying counters;
+    // pick the integer when you want a single dashboard
+    // metric, pick the hash when you want per-field
+    // reasoning. The integer variant is the recommended
+    // hot path; the hash is for debugging / AI Agent
+    // observability.
+    add("query:arena-compaction-stats-hash", [&ev](const auto&) -> EvalValue {
+        // Reuse the same build_hash pattern as the
+        // closure:stats / soa-dirty-stats primitives.
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t triggers = 0, skips = 0, compacts = 0, saved = 0;
+        std::uint64_t paused = 0, mutations = 0, dirty = 0;
+        std::uint64_t frag_pct = 0, peak = 0, last_saved = 0;
+        if (ev.arena_group_) {
+            const auto stats = ev.arena_group_->total_stats();
+            triggers = ev.arena_group_->auto_compact_trigger_count();
+            skips = ev.arena_group_->auto_compact_skip_count();
+            compacts = stats.compaction_count;
+            saved = stats.total_compaction_saved;
+            last_saved = stats.last_compaction_saved;
+            paused = ev.compaction_paused_by_boundary();
+            mutations = ev.total_mutations();
+            dirty = ev.get_dirty_propagation_count();
+            // Main arena frag ratio (scaled 0..100). Use
+            // arena_ (the main per-Evaluator arena) if set;
+            // else 0 (no fallback path — ArenaGroup::arenas_
+            // is private, and the per-module frag ratio is
+            // already exposed via arena:adaptive-stats +
+            // query:arena-compaction-stats). The
+            // fragmentation-ratio-pct field is the
+            // single-arena view; the multi-arena view is
+            // in the per-arena strings.
+            if (ev.arena_) {
+                const auto s = ev.arena_->stats();
+                frag_pct = static_cast<std::uint64_t>(s.fragmentation_ratio() * 100);
+                peak = s.peak_used;
+            }
+        }
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"auto-compact-triggers", make_int(static_cast<std::int64_t>(triggers))},
+            {"auto-compact-skips", make_int(static_cast<std::int64_t>(skips))},
+            {"compactions", make_int(static_cast<std::int64_t>(compacts))},
+            {"bytes-saved", make_int(static_cast<std::int64_t>(saved))},
+            {"last-saved", make_int(static_cast<std::int64_t>(last_saved))},
+            {"paused-by-boundary", make_int(static_cast<std::int64_t>(paused))},
+            {"mutation-volume", make_int(static_cast<std::int64_t>(mutations))},
+            {"dirty-propagation", make_int(static_cast<std::int64_t>(dirty))},
+            {"fragmentation-ratio-pct", make_int(static_cast<std::int64_t>(frag_pct))},
+            {"peak-used-bytes", make_int(static_cast<std::int64_t>(peak))},
+        };
+        return build_hash(kv);
+    });
+
     // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
     // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
     // (semicolons separate entries; slashes separate used/capacity within an entry).
@@ -891,6 +1004,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:closure-stats",
             // Issue #429 — IR SoA live dirty state
             "query:soa-dirty-stats",
+            // Issue #430 — arena compaction hash variant
+            "query:arena-compaction-stats-hash",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -908,9 +1023,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 40 entries as of #429 ship (39 from #428 + 1 new
-        // query:soa-dirty-stats).
-        return make_int(40);
+        // 41 entries as of #430 ship (40 from #429 + 1 new
+        // query:arena-compaction-stats-hash).
+        return make_int(41);
     });
 
 }
