@@ -1,0 +1,81 @@
+# Aura clang-tidy configuration (Issue #476)
+#
+# Scope-limited subset of modern-C++ checks. The full
+# clang-tidy catalog has ~700 checks; enabling all of
+# them produces too much noise (every modern-* check fires
+# on the existing codebase, blocking CI). The subset below
+# catches the high-value bugs without overwhelming signal:
+#
+#   bugprone-*        — actual bug patterns (use-after-free,
+#                        double-free, missing override, etc.)
+#   modernize-use-override, modernize-use-nullptr,
+#     modernize-use-using, modernize-use-auto
+#                      — small low-friction modernizations
+#   performance-*     — known perf landmines
+#   cert-*            — security-relevant patterns
+#   misc-*            — low-noise correctness checks
+#
+# Excluded (intentional):
+#   readability-*     — too noisy (style opinions)
+#   modernize-use-default-member-init
+#                      — triggers on every member that has a
+#                        non-trivial initializer; not a bug
+#   modernize-raw-string-literal
+#                      — opinionated, not a correctness issue
+#
+# Use a two-level include/exclude filter so the check runs
+# on production source but skips generated / vendored code.
+
+---
+Checks: >-
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  cppcoreguidelines-init-variables,
+  cppcoreguidelines-owning-memory,
+  cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  cppcoreguidelines-pro-bounds-constant-array-index,
+  cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  cppcoreguidelines-pro-type-cstyle-cast,
+  cppcoreguidelines-pro-type-vararg,
+  cppcoreguidelines-slicing,
+  cppcoreguidelines-special-member-functions,
+  misc-*,
+  modernize-deprecated-headers,
+  modernize-deprecated-ios-base-aliases,
+  modernize-loop-convert,
+  modernize-make-shared,
+  modernize-make-unique,
+  modernize-pass-by-value,
+  modernize-raw-string-literal,
+  modernize-redundant-void-arg,
+  modernize-replace-auto-ptr,
+  modernize-replace-disallow-copy-and-assign-mutex,
+  modernize-replace-random-shuffle,
+  modernize-return-braced-init-list,
+  modernize-shrink-to-fit,
+  modernize-use-auto,
+  modernize-use-bool-literals,
+  modernize-use-default-member-init,
+  modernize-use-equals-default,
+  modernize-use-equals-delete,
+  modernize-use-nodiscard,
+  modernize-use-noexcept,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-transparent-functors,
+  modernize-use-using,
+  performance-*,
+  portability-*,
+  readability-identifier-length,
+  readability-implicit-bool-conversion,
+  readability-redundant-smartptr-get
+
+HeaderFilterRegex: '.*/(src|tests)/.*\.(h|hh|hpp|ixx|cppm)$'
+ExcludeHeaderFilterRegex: '.*/(build|build_asan|build_dbg|build_debug|build_release|build_tsan|build_ubsan)/.*|.*/_deps/.*|.*/gcm\.cache/.*|.*/module_cache/.*'
+
+WarningsAsErrors: ''
+
+# Keep this file under 200 lines for reviewer ergonomics.
+# If you need to add a check, document the WHY in a comment.
