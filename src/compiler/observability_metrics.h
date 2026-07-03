@@ -777,6 +777,12 @@ struct CompilerMetrics {
     //     mismatch triggered deopt or hard error
     std::atomic<std::uint64_t> linear_post_mutate_enforcements_total{0};
     std::atomic<std::uint64_t> linear_deopt_on_mismatch_total{0};
+    // Issue #683: linear ownership + GC safepoint / fiber-steal /
+    // post-re-lower revalidate integration.
+    // Exposed via (query:linear-ownership-gc-stats).
+    std::atomic<std::uint64_t> linear_gc_safepoint_violations{0};
+    std::atomic<std::uint64_t> linear_steal_enforced{0};
+    std::atomic<std::uint64_t> linear_relower_revalidate_hits{0};
 
     // Issue #444: strategy evolution controller pheromone
     // counters. Each strategy (coverage-greedy /

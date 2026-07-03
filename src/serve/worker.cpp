@@ -12,6 +12,8 @@ import std;
 
 namespace aura::serve {
 
+extern "C" void aura_evaluator_probe_linear_on_steal();
+
 // ── Constructor ───────────────────────────────────────
 
 WorkerThread::WorkerThread(int id, Scheduler* scheduler)
@@ -157,6 +159,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         // (per-fiber stack depth > 0).
         if (stolen->is_stealable() && stolen->is_at_mutation_boundary_safe()) {
             stolen->bump_steal_success();
+            aura_evaluator_probe_linear_on_steal();
             local_queue_.push(stolen);
             return true;
         }

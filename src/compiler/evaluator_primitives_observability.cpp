@@ -1725,6 +1725,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:compiler-closure-inval-stats",
             // Issue #682 — compiler IRClosure/EnvId GC root coordination
             "query:compiler-gc-root-stats",
+            // Issue #683 — linear ownership + GC safepoint / steal integration
+            "query:linear-ownership-gc-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1742,9 +1744,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 61 entries as of #682 ship (60 from #681 + 1 new
-        // query:compiler-gc-root-stats).
-        return make_int(61);
+        // 62 entries as of #683 ship (61 from #682 + 1 new
+        // query:linear-ownership-gc-stats).
+        return make_int(62);
     });
 
 }
