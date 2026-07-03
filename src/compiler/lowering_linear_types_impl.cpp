@@ -34,37 +34,37 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
                                                    LinearLowerInner lower_inner) {
     switch (v.tag) {
         case aura::ast::NodeTag::Linear: {
-            // (Linear e): wrap value in linear container
+            // (Linear e): wrap value in linear container (Owned=1)
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
-            state.emit(aura::ir::IROpcode::LinearWrap, slot, inner);
+            state.emit_with_metadata(aura::ir::IROpcode::LinearWrap, 0, 1, 0, 0, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::Move: {
-            // (move e): move ownership
+            // (move e): move ownership (Moved=4)
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
-            state.emit(aura::ir::IROpcode::MoveOp, slot, inner);
+            state.emit_with_metadata(aura::ir::IROpcode::MoveOp, 0, 4, 0, 0, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::Borrow: {
-            // (& e): immutable borrow
+            // (& e): immutable borrow (Borrowed=2)
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
-            state.emit(aura::ir::IROpcode::BorrowOp, slot, inner);
+            state.emit_with_metadata(aura::ir::IROpcode::BorrowOp, 0, 2, 0, 0, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::MutBorrow: {
-            // (&mut e): mutable borrow
+            // (&mut e): mutable borrow (MutBorrowed=3)
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
-            state.emit(aura::ir::IROpcode::MutBorrowOp, slot, inner);
+            state.emit_with_metadata(aura::ir::IROpcode::MutBorrowOp, 0, 3, 0, 0, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::Drop: {
-            // (drop e): explicit destruct
+            // (drop e): explicit destruct (Moved=4 on drop site)
             auto inner = lower_inner(v.child(0));
-            state.emit(aura::ir::IROpcode::DropOp, inner, 0, 0);
+            state.emit_with_metadata(aura::ir::IROpcode::DropOp, 0, 4, 0, 0, inner, 0, 0);
             auto slot = state.alloc_local();
             state.emit(aura::ir::IROpcode::ConstVoid, slot);
             return slot;

@@ -4144,6 +4144,10 @@ public:
                 run_coercion_elim_on_function(func);
             }
             escape_pass.run(ir_mod);
+            if (!entry.block_dirty_per_func_.empty()) {
+                metrics_.linear_post_mutate_enforcements_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
             if (clean_blocks_skipped > 0) {
                 metrics_.irsoa_cache_miss_reduction.fetch_add(clean_blocks_skipped,
                                                               std::memory_order_relaxed);

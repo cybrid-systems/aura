@@ -101,6 +101,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:linear-ownership-runtime-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:linear-ownership-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:linear-ownership-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:macro-hygiene-contract-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:macro-introduced` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:macro-reflect-self-evo-commercial-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -1159,6 +1160,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:linear-ownership-runtime-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:linear-ownership-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:linear-ownership-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:linear-ownership-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:macro-hygiene-contract-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:macro-introduced` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:macro-reflect-self-evo-commercial-stats` — `src/compiler/evaluator_primitives_query.cpp`
