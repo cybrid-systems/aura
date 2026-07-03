@@ -2549,6 +2549,16 @@ add_dependencies(all_test_issue_targets test_issue_218)
 aura_add_issue_test(test_issue_edsl_hygiene_atomic)
 aura_issue_test_link_llvm_jit(test_issue_edsl_hygiene_atomic)
 add_dependencies(all_test_issue_targets test_issue_edsl_hygiene_atomic)
+
+# Issue #428: closure bridge + bridge_epoch drift observability.
+# Verifies (query:closure-stats) (new unified surface), the
+# 7-field consistency with legacy (closure:stats), and the
+# multi-round mutate:set-body bridge refresh path. Follows
+# the test_issue_252 + test_issue_531 pattern (closure
+# dispatch + bridge_epoch observability).
+aura_add_issue_test(test_issue_428_closure)
+aura_issue_test_link_llvm_jit(test_issue_428_closure)
+add_dependencies(all_test_issue_targets test_issue_428_closure)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)
