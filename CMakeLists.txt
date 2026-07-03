@@ -2621,6 +2621,22 @@ add_dependencies(all_test_issue_targets test_issue_440_edsl_readiness)
 aura_add_issue_test(test_issue_442_seva_demo)
 aura_issue_test_link_llvm_jit(test_issue_442_seva_demo)
 add_dependencies(all_test_issue_targets test_issue_442_seva_demo)
+
+# Issue #444: SEVA Demo coverage-driven mutation strategy
+# evolution controller. Full scope is multi-week (pheromone
+# tracking + PID + pluggable strategy registry + agent
+# loop); scope-limited close ships:
+#   - 3 built-in strategies (coverage-greedy, bug-fix-
+#     priority, minimal-mutation)
+#   - Per-strategy pheromone counters in CompilerMetrics
+#   - (query:strategy-evolution-stats) 8-field hash
+#   - 4 new Aura primitives (set-strategy, active,
+#     report-success, escalate)
+#   - SEVA demo extension showing the strategy loop
+#   - (stats:count) 43 → 44
+aura_add_issue_test(test_issue_444_strategy_evolution)
+aura_issue_test_link_llvm_jit(test_issue_444_strategy_evolution)
+add_dependencies(all_test_issue_targets test_issue_444_strategy_evolution)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)

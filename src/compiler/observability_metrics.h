@@ -721,6 +721,38 @@ struct CompilerMetrics {
     //     mismatch triggered deopt or hard error
     std::atomic<std::uint64_t> linear_post_mutate_enforcements_total{0};
     std::atomic<std::uint64_t> linear_deopt_on_mismatch_total{0};
+
+    // Issue #444: strategy evolution controller pheromone
+    // counters. Each strategy (coverage-greedy /
+    // bug-fix-priority / minimal-mutation) tracks its
+    // own hits + successes; the controller consults
+    // success_rate = successes / max(1, hits) to decide
+    // when to escalate (random → directed → formal-
+    // assisted). All atomic, relaxed ordering (stats-
+    // only).
+    //
+    //   - strategy_greedy_hits:          # of times
+    //     coverage-greedy strategy was selected
+    //   - strategy_greedy_successes:      # of greedy
+    //     attempts that improved coverage
+    //   - strategy_bugfix_hits:          # of bug-fix-
+    //     priority strategy selections
+    //   - strategy_bugfix_successes:     # of bug-fix
+    //     attempts that fixed a failure
+    //   - strategy_minimal_hits:         # of minimal-
+    //     mutation strategy selections
+    //   - strategy_minimal_successes:     # of minimal
+    //     attempts that improved a per-spec metric
+    //   - strategy_escalations:           # of times
+    //     the controller escalated (e.g. random →
+    //     directed) due to coverage plateau
+    std::atomic<std::uint64_t> strategy_greedy_hits{0};
+    std::atomic<std::uint64_t> strategy_greedy_successes{0};
+    std::atomic<std::uint64_t> strategy_bugfix_hits{0};
+    std::atomic<std::uint64_t> strategy_bugfix_successes{0};
+    std::atomic<std::uint64_t> strategy_minimal_hits{0};
+    std::atomic<std::uint64_t> strategy_minimal_successes{0};
+    std::atomic<std::uint64_t> strategy_escalations{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

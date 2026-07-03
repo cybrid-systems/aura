@@ -2002,6 +2002,13 @@ private:
     std::uint64_t auto_evolve_cycle_count_ = 0;
     std::uint64_t auto_evolve_total_fixed_ = 0;
 
+    // Issue #444: active mutation strategy name.
+    // Empty = no strategy selected yet (the controller
+    // starts in coverage-greedy by default). Updated by
+    // (strategy:set-strategy name) and read by
+    // (query:strategy-evolution-stats).
+    std::string active_strategy_;
+
     // ── Panic auto-rollback (Issue #39) ─────────────────────────
     bool panic_auto_rollback_ = false;
     std::string panic_safe_source_; // last known good source code
