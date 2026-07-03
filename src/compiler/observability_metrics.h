@@ -131,6 +131,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compiler_inval_bridge_epoch_total{0};
     std::atomic<std::uint64_t> compiler_closure_epoch_mismatch_hits{0};
     std::atomic<std::uint64_t> compiler_closure_safe_fallbacks{0};
+    // Issue #682: compiler IRClosure/EnvId GC root coordination on
+    // invalidate / hot-swap / safepoint.
+    //   - ir_closure_roots_registered: roots pinned in last
+    //     flush_compiler_gc_roots (bridge epoch current)
+    //   - hotswap_root_miss: invalidate/hot-swap with no bridge
+    //     or persistent IR binding to refresh
+    //   - compiler_gc_safepoint_defer_count: sweep deferred due
+    //     to live IR interpreter frames during invalidate
+    std::atomic<std::uint64_t> ir_closure_roots_registered{0};
+    std::atomic<std::uint64_t> hotswap_root_miss{0};
+    std::atomic<std::uint64_t> compiler_gc_safepoint_defer_count{0};
     // Issue #253: linear-move elision count (lifetime total).
     // Bumped by TypeSpecializationWrap after each run (in
     // service.ixx — the pass has its own per-run accumulator;

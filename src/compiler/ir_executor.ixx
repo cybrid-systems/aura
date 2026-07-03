@@ -211,6 +211,12 @@ public:
     std::size_t closure_count() const { return runtime_closures_.size(); }
     std::size_t cell_count() const { return cell_heap_.size(); }
 
+    // Issue #682: active-frame probe + GC root export for compiler
+    // IRClosure coordination during invalidate / hot-swap.
+    [[nodiscard]] bool has_active_frames() const noexcept { return !call_stack_.empty(); }
+    void collect_active_gc_roots(std::vector<std::int64_t>& closure_roots_out,
+                                 std::uint64_t current_bridge_epoch) const;
+
 private:
     // Result of run_function: either an EvalResult (Return/error) or PendingCall (need to push
     // frame)

@@ -1723,6 +1723,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:define-mutate-ir-invalidation-stats",
             // Issue #681 — compiler IRClosure/bridge epoch enforcement
             "query:compiler-closure-inval-stats",
+            // Issue #682 — compiler IRClosure/EnvId GC root coordination
+            "query:compiler-gc-root-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1740,9 +1742,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 60 entries as of #681 ship (59 from #680 + 1 new
-        // query:compiler-closure-inval-stats).
-        return make_int(60);
+        // 61 entries as of #682 ship (60 from #681 + 1 new
+        // query:compiler-gc-root-stats).
+        return make_int(61);
     });
 
 }
