@@ -3,6 +3,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "compiler/observability_metrics.h"
 #include "security_capabilities.h"
 #include "serve/http_health.h"
 
@@ -176,6 +177,56 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(ev.suppressed_misalign_caught()))},
             {"macro-rollback-hits",
              make_int(static_cast<std::int64_t>(ev.macro_rollback_hits()))},
+        };
+        return build_hash(kv);
+    });
+
+    // Issue #680: Define mutate IR/JIT/bridge invalidation observability.
+    add("query:define-mutate-ir-invalidation-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t stale_bridge = m
+            ? m->closure_stale_returns.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t recompile_savings = m
+            ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed)
+            : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"precise-inval-hits",
+             make_int(static_cast<std::int64_t>(ev.precise_define_inval_hits()))},
+            {"stale-bridge-caught", make_int(static_cast<std::int64_t>(stale_bridge))},
+            {"recompile-savings", make_int(static_cast<std::int64_t>(recompile_savings))},
         };
         return build_hash(kv);
     });

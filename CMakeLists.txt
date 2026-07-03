@@ -2702,6 +2702,10 @@ add_dependencies(all_test_issue_targets test_issue_678)
 aura_add_issue_test(test_issue_679)
 aura_issue_test_link_llvm_jit(test_issue_679)
 add_dependencies(all_test_issue_targets test_issue_679)
+# Issue #680: precise Define mutate IR/JIT/bridge invalidation.
+aura_add_issue_test(test_issue_680)
+aura_issue_test_link_llvm_jit(test_issue_680)
+add_dependencies(all_test_issue_targets test_issue_680)
 # Issue #464: Arena auto-compaction lifecycle + counter + primitive.
 aura_add_issue_test(test_issue_464_arena_auto_compaction)
 aura_issue_test_link_llvm_jit(test_issue_464_arena_auto_compaction)

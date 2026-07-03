@@ -925,6 +925,27 @@ public:
     void set_mark_all_defines_dirty_fn(std::function<void()> fn) {
         mark_all_defines_dirty_fn_ = std::move(fn);
     }
+    // Issue #680: full invalidate_function BFS for closure-heavy Define
+    // mutations (mutate:rebind / mutate:query-and-replace success path).
+    void set_invalidate_function_fn(std::function<void(const std::string&)> fn) {
+        invalidate_function_fn_ = std::move(fn);
+    }
+    // Issue #680: ir_cache_pure impact_scope analysis on Define dirty.
+    void set_define_impact_scope_fn(std::function<void(aura::ast::NodeId)> fn) {
+        define_impact_scope_fn_ = std::move(fn);
+    }
+    [[nodiscard]] std::uint64_t precise_define_inval_hits() const noexcept {
+        return precise_define_inval_hits_.load(std::memory_order_relaxed);
+    }
+    void bump_precise_define_inval_hit() noexcept {
+        precise_define_inval_hits_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #680: post-mutate Define IR/JIT/bridge invalidation hook
+    // (called from mutate:rebind / mutate:query-and-replace success).
+    void finalize_define_mutate_invalidation(const aura::ast::FlatAST& flat,
+                                             const std::string& name,
+                                             aura::ast::NodeId define_id,
+                                             bool run_full_invalidate = true);
     // Issue #262: precise def-use dirty propagation. Marks entry
     // nodes + ancestors with kDefUseDirty, records the sym for
     // incremental DefUseIndex refresh, and touches per-sym staleness.
@@ -2491,8 +2512,13 @@ private:
     // evaluator partition TUs needing to import CompilerService (circular).
     // mark_define_dirty_fn_(name)         → mark a single define's IR dirty
     // mark_all_defines_dirty_fn_()       → mark all cached defines dirty
+    // invalidate_function_fn_(name)        → BFS re-lower + JIT eviction (#680)
+    // define_impact_scope_fn_(node)      → ir_cache_pure impact_scope (#680)
     std::function<void(const std::string&)> mark_define_dirty_fn_ = nullptr;
     std::function<void()> mark_all_defines_dirty_fn_ = nullptr;
+    std::function<void(const std::string&)> invalidate_function_fn_ = nullptr;
+    std::function<void(aura::ast::NodeId)> define_impact_scope_fn_ = nullptr;
+    std::atomic<std::uint64_t> precise_define_inval_hits_{0};
 
     // ── 模块类型签名（#8 跨模块类型检查） ──────────────────────
     // (declare-type "name" "param-types" "ret-type") 存储的签名，

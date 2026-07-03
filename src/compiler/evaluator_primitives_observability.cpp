@@ -1719,6 +1719,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:span-lifetime-stats",
             // Issue #679 — nested Guard + atomic-batch rollback alignment
             "query:nested-guard-atomic-stats",
+            // Issue #680 — Define mutate IR/JIT/bridge invalidation
+            "query:define-mutate-ir-invalidation-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1736,9 +1738,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 58 entries as of #679 ship (57 from #678 + 1 new
-        // query:nested-guard-atomic-stats).
-        return make_int(58);
+        // 59 entries as of #680 ship (58 from #679 + 1 new
+        // query:define-mutate-ir-invalidation-stats).
+        return make_int(59);
     });
 
 }

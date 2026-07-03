@@ -56,6 +56,41 @@ bool stable_match_still_attached(const aura::ast::FlatAST& flat,
     return parent_child_index_if_attached(flat, match_ref.id).has_value();
 }
 
+// Issue #680: detect Lambda/closure descendants for precise invalidation.
+bool subtree_has_closure(const aura::ast::FlatAST& flat, aura::ast::NodeId root) {
+    if (root == aura::ast::NULL_NODE || root >= flat.size())
+        return false;
+    auto walk = [&](auto self, aura::ast::NodeId id) -> bool {
+        if (id == aura::ast::NULL_NODE || id >= flat.size())
+            return false;
+        auto v = flat.get(id);
+        if (v.tag == aura::ast::NodeTag::Lambda)
+            return true;
+        for (auto c : v.children) {
+            if (c != aura::ast::NULL_NODE && self(self, c))
+                return true;
+        }
+        return false;
+    };
+    return walk(walk, root);
+}
+
+bool define_needs_precise_invalidation(const aura::ast::FlatAST& flat,
+                                       aura::ast::NodeId define_id) {
+    if (define_id == aura::ast::NULL_NODE || define_id >= flat.size())
+        return false;
+    auto v = flat.get(define_id);
+    if (v.tag != aura::ast::NodeTag::Define)
+        return subtree_has_closure(flat, define_id);
+    if (v.children.empty())
+        return false;
+    const auto body = v.child(0);
+    const auto bv = flat.get(body);
+    if (bv.tag == aura::ast::NodeTag::Lambda)
+        return true;
+    return subtree_has_closure(flat, body);
+}
+
 // Issue #373: MacroIntroduced hygiene guard helper.
 //
 // mutate:* primitives call this before any structural
@@ -820,6 +855,21 @@ void register_mutate_primitives(
                     ev.defuse_touch_fn_(ev.defuse_index_, s);
             }
 
+            // Issue #680: precise IR/JIT/bridge invalidation for affected Defines.
+            for (const auto& n : affected_names) {
+                const auto sid = pool.intern(n);
+                aura::ast::NodeId def_id = aura::ast::NULL_NODE;
+                for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                    auto v = flat.get(id);
+                    if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sid) {
+                        def_id = id;
+                        break;
+                    }
+                }
+                if (def_id != aura::ast::NULL_NODE)
+                    ev.finalize_define_mutate_invalidation(flat, n, def_id, true);
+            }
+
             if (ev.pre_cache_workspace_defines_fn_)
                 ev.pre_cache_workspace_defines_fn_();
 
@@ -1236,6 +1286,9 @@ void register_mutate_primitives(
         // (eval-current) re-lowers it.
         if (ev.mark_define_dirty_fn_)
             ev.mark_define_dirty_fn_(name);
+
+        // Issue #680: precise IR/JIT/bridge invalidation for closure-heavy Defines.
+        ev.finalize_define_mutate_invalidation(flat, name, old_define);
 
         // ── Auto-typecheck (Issue #107 / #526) ──────────────
         // Selective infer_flat_partial when the mutation log
@@ -3678,3 +3731,62 @@ void register_mutate_primitives(
 }
 
 } // namespace aura::compiler::primitives_detail
+
+namespace aura::compiler {
+namespace {
+
+bool subtree_has_closure_for_inval(const aura::ast::FlatAST& flat, aura::ast::NodeId root) {
+    if (root == aura::ast::NULL_NODE || root >= flat.size())
+        return false;
+    auto walk = [&](auto self, aura::ast::NodeId id) -> bool {
+        if (id == aura::ast::NULL_NODE || id >= flat.size())
+            return false;
+        auto v = flat.get(id);
+        if (v.tag == aura::ast::NodeTag::Lambda)
+            return true;
+        for (auto c : v.children) {
+            if (c != aura::ast::NULL_NODE && self(self, c))
+                return true;
+        }
+        return false;
+    };
+    return walk(walk, root);
+}
+
+bool define_needs_precise_invalidation_for_inval(const aura::ast::FlatAST& flat,
+                                                 aura::ast::NodeId define_id) {
+    if (define_id == aura::ast::NULL_NODE || define_id >= flat.size())
+        return false;
+    auto v = flat.get(define_id);
+    if (v.tag != aura::ast::NodeTag::Define)
+        return subtree_has_closure_for_inval(flat, define_id);
+    if (v.children.empty())
+        return false;
+    const auto body = v.child(0);
+    const auto bv = flat.get(body);
+    if (bv.tag == aura::ast::NodeTag::Lambda)
+        return true;
+    return subtree_has_closure_for_inval(flat, body);
+}
+
+}  // namespace
+
+void Evaluator::finalize_define_mutate_invalidation(const aura::ast::FlatAST& flat,
+                                                    const std::string& name,
+                                                    aura::ast::NodeId define_id,
+                                                    bool run_full_invalidate) {
+    if (define_id == aura::ast::NULL_NODE || define_id >= flat.size())
+        return;
+    if (workspace_flat_)
+        workspace_flat_->mark_dirty_upward(define_id);
+    if (define_impact_scope_fn_)
+        define_impact_scope_fn_(define_id);
+    if (!run_full_invalidate || !define_needs_precise_invalidation_for_inval(flat, define_id))
+        return;
+    if (invalidate_function_fn_) {
+        invalidate_function_fn_(name);
+        bump_precise_define_inval_hit();
+    }
+}
+
+}  // namespace aura::compiler
