@@ -2597,6 +2597,18 @@ add_dependencies(all_test_issue_targets test_issue_430_arena_compaction)
 aura_add_issue_test(test_issue_431_cxx26)
 aura_issue_test_link_llvm_jit(test_issue_431_cxx26)
 add_dependencies(all_test_issue_targets test_issue_431_cxx26)
+
+# Issue #440: Consolidated Task 1 Review — EDSL production
+# readiness aggregator. The issue body enumerates gaps
+# already tracked by separate issues (#420, #421, #423,
+# #424, #425, #438, #439). The scope-limited close ships
+# the OBSERVABILITY + TEST layer: (query:edsl-readiness)
+# 6-field hash that aggregates the top EDSL readiness
+# signals in one query (replaces the conservative "ask
+# 30+ separate (query:*-stats) primitives" pattern).
+aura_add_issue_test(test_issue_440_edsl_readiness)
+aura_issue_test_link_llvm_jit(test_issue_440_edsl_readiness)
+add_dependencies(all_test_issue_targets test_issue_440_edsl_readiness)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)
