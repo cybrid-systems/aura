@@ -26,6 +26,10 @@ struct FlatInstruction {
     uint32_t narrow_evidence = 0;
     // Issue #538: static TypeId for JIT specialization when set.
     uint32_t type_id = 0;
+    // Issue #684: linear ownership from IRFunctionSoA metadata column.
+    uint8_t linear_ownership_state = 0;
+    // Issue #684: instruction_dirty_ bit from SoA — non-zero triggers deopt.
+    uint8_t dirty = 0;
 };
 
 // Issue #60 Iter 3: shape encoding constants. Must match the

@@ -132,6 +132,8 @@ export struct IRContext {
     CompilerMetrics* metrics = nullptr;
     // Issue #272 Cycle 3: optional evaluator for TopCellLoad (value defines).
     Evaluator* evaluator = nullptr;
+    // Issue #684: optional SoA instruction_dirty_ probe (block, instr_idx).
+    std::function<bool(std::uint32_t, std::size_t)> is_instruction_dirty_fn;
 
     // References must be bound at construction. The caller passes
     // the primitives reference; type_registry and metrics are

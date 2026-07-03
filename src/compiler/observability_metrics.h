@@ -257,6 +257,11 @@ struct CompilerMetrics {
     // a single source of truth.
     std::atomic<std::uint64_t> ir_soa_instructions_emitted{0};
     std::atomic<std::uint64_t> ir_soa_functions_emitted{0};
+    // Issue #684: IRSoA full wiring into lowering/cache/JIT hot paths.
+    // Exposed via (query:irsoa-incremental-stats).
+    std::atomic<std::uint64_t> irsoa_wired_hits{0};
+    std::atomic<std::uint64_t> irsoa_dirty_cascade_savings{0};
+    std::atomic<std::uint64_t> irsoa_cache_miss_reduction{0};
     // Issue #255: reference stability observability. The
     // FlatAST reference stability mechanism (generation_ +
     // node_gen_ + StableNodeRef) is a candidate for a

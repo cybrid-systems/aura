@@ -86,6 +86,8 @@ export struct LoweringState {
     // CompilerMetrics::ir_soa_functions_emitted in service.ixx).
     std::uint64_t soa_instructions_emitted = 0;
     std::uint64_t soa_functions_emitted = 0;
+    // Issue #684: arena-size reserve hint for SoA columns.
+    std::size_t instruction_reserve_hint = 0;
 
     // Issue #280: narrowing evidence bitmask set by CompilerService
     // before calling lower_to_ir. The IfExpr case reads this and
@@ -224,6 +226,8 @@ export struct LoweringState {
             // is about to emit instructions into it. We
             // allocate a fresh V2 function for parity.
             module_v2.functions.push_back({});
+            if (instruction_reserve_hint > 0)
+                module_v2.functions.back().reserve(instruction_reserve_hint);
             cur_func_v2_idx = module_v2.functions.size() - 1;
             ++soa_functions_emitted;
         }
@@ -335,5 +339,16 @@ export aura::ir::IRFunction lower_function_at(
     const Primitives* primitives = nullptr,
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache = nullptr,
     std::vector<std::string>* cache_hits = nullptr);
+
+// Issue #684: snapshot of the last lower_to_ir dual-emit pass.
+// service.ixx reads this after lowering to store IRModuleV2 in
+// ir_cache_v2_ and bump CompilerMetrics.
+export struct LowerSoAEmitSnapshot {
+    std::uint64_t instructions_emitted = 0;
+    std::uint64_t functions_emitted = 0;
+    IRModuleV2 module;
+};
+
+export const LowerSoAEmitSnapshot* lower_last_soa_snapshot() noexcept;
 
 } // namespace aura::compiler

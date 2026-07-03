@@ -339,6 +339,64 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #684: IRSoA full wiring incremental stats hash.
+    add("query:irsoa-incremental-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t wired = m
+            ? m->irsoa_wired_hits.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t cascade = m
+            ? m->irsoa_dirty_cascade_savings.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t cache_red = m
+            ? m->irsoa_cache_miss_reduction.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t skip = m
+            ? m->relower_skipped_entirely_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t full = m
+            ? m->relower_full_called_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t per_fn = m
+            ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t denom = skip + full + per_fn;
+        const std::uint64_t partial_ratio = denom > 0 ? (100 * skip / denom) : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"soa-wired-hits", make_int(static_cast<std::int64_t>(wired))},
+            {"dirty-cascade-savings", make_int(static_cast<std::int64_t>(cascade))},
+            {"partial-relower-ratio", make_int(static_cast<std::int64_t>(partial_ratio))},
+            {"cache-miss-reduction", make_int(static_cast<std::int64_t>(cache_red))},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #680: Define mutate IR/JIT/bridge invalidation observability.
     add("query:define-mutate-ir-invalidation-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

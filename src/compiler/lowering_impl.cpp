@@ -11,6 +11,13 @@ namespace aura::compiler {
 using namespace aura::ir;
 using namespace aura::ast;
 
+// Issue #684: thread-local snapshot of the last dual-emit lower.
+static thread_local LowerSoAEmitSnapshot g_last_soa_snapshot;
+
+const LowerSoAEmitSnapshot* lower_last_soa_snapshot() noexcept {
+    return &g_last_soa_snapshot;
+}
+
 // Map TypeId to CastOp type_tag (used by IR interpreter)
 // INT→0, STRING→1, BOOL→2, FLOAT→4, DYNAMIC→3
 static std::uint32_t type_tag_for_coercion(aura::core::TypeId tid,
@@ -1414,6 +1421,9 @@ static IRModule lower_to_ir_impl(
     const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
     std::uint32_t narrowing_evidence = 0) { // Issue #280
     LoweringState state(arena);
+    // Issue #684: production dual-emit to IRFunctionSoA columns.
+    state.enable_soa_dual_emit();
+    state.instruction_reserve_hint = flat.size();
     state.value_cells = value_cells;
     state.current_narrowing_evidence = narrowing_evidence;
 
@@ -1474,6 +1484,16 @@ static IRModule lower_to_ir_impl(
     state.cur_func = &top_func;
     state.cur_block = 0;
     state.local_count = 0;
+    // Issue #684: bootstrap SoA __top__ function + entry block (the AoS
+    // path creates the first block directly; dual-emit needs parity).
+    if (state.dual_emit_soa) {
+        state.module_v2.functions.push_back({});
+        if (state.instruction_reserve_hint > 0)
+            state.module_v2.functions.back().reserve(state.instruction_reserve_hint);
+        state.cur_func_v2_idx = 0;
+        (void)state.module_v2.add_block(state.cur_func_v2_idx);
+        ++state.soa_functions_emitted;
+    }
 
     auto result_slot = lower_flat_expr(state, flat, pool, flat.root, cache, cache_hits);
 
@@ -1483,6 +1503,21 @@ static IRModule lower_to_ir_impl(
     top_func.region = state.region;
     auto top_id = state.module.add_function(std::move(top_func));
     state.module.entry_function_id = top_id;
+    // Issue #684: seal the final SoA block + publish snapshot.
+    if (state.dual_emit_soa && !state.module_v2.functions.empty()) {
+        const auto v2_idx = state.cur_func_v2_idx;
+        auto& soa_fn = state.module_v2.functions[v2_idx];
+        if (!soa_fn.blocks_.empty()) {
+            state.module_v2.seal_block(
+                v2_idx, static_cast<std::uint32_t>(soa_fn.blocks_.size() - 1));
+        }
+        soa_fn.local_count = state.local_count;
+        if (!top_func.name.empty())
+            soa_fn.name = top_func.name;
+    }
+    g_last_soa_snapshot.instructions_emitted = state.soa_instructions_emitted;
+    g_last_soa_snapshot.functions_emitted = state.soa_functions_emitted;
+    g_last_soa_snapshot.module = std::move(state.module_v2);
     return state.module;
 }
 

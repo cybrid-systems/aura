@@ -246,8 +246,7 @@ bool run_incremental_pipeline(aura::ir::IRModule& mod, P& pass) {
 //               "ConstantFoldingWrap should be IncrementalPass (rename fold_* → run_*)");
 
 // DirtyAwarePass satisfaction: requires is_block_dirty.
-// None of the existing wraps expose this method yet — the
-// static_assert is left as a TODO until a pass is migrated.
+// static_assert moved below ConstantFoldingWrap definition.
 
 
 // ── ComputeKindWrap — analysis pass (wraps pure function) ─────
@@ -310,11 +309,21 @@ private:
 // the per-function allocator.
 export class ConstantFoldingWrap {
 public:
+    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
+        block_dirty_fn_ = std::move(fn);
+    }
+
+    // Issue #684: DirtyAwarePass hook — 1 = block needs folding.
+    [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
+        if (!block_dirty_fn_)
+            return true;
+        return block_dirty_fn_(block_id);
+    }
+
     void run(aura::ir::IRModule& module) {
         folded_ = 0;
         for (auto& func : module.functions) {
-            auto r = aura::compiler::constant_fold_function(func);
-            folded_ += r.folded_count;
+            (void)fold_function(func);
         }
     }
 
@@ -325,8 +334,16 @@ public:
     // value being the per-function count).
     std::size_t fold_function(aura::ir::IRFunction& func) {
         std::size_t before = folded_;
-        auto r = aura::compiler::constant_fold_function(func);
-        folded_ += r.folded_count;
+        if (!block_dirty_fn_) {
+            auto r = aura::compiler::constant_fold_function(func);
+            folded_ += r.folded_count;
+            return folded_ - before;
+        }
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (!is_block_dirty(static_cast<std::uint32_t>(bi)))
+                continue;
+            folded_ += aura::compiler::constant_fold_block(func.blocks[bi], known_);
+        }
         return folded_ - before;
     }
 
@@ -356,8 +373,12 @@ private:
     // under some instantiation paths, but the concrete
     // std::unordered_map is fine.
     std::unordered_map<std::uint32_t, std::int64_t> known_;
+    std::function<bool(std::uint32_t)> block_dirty_fn_;
     std::size_t folded_ = 0;
 };
+
+static_assert(DirtyAwarePass<ConstantFoldingWrap>,
+              "ConstantFoldingWrap exposes is_block_dirty for IRSoA wiring");
 
 // ── TypeCheckWrap — type checking pass (pre-lowering, FlatAST level) ──
 // Unlike other passes, this operates on FlatAST before IR lowering.
