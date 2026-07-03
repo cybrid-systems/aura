@@ -272,6 +272,78 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (query:shape-folding-stats) — Issue #462: observability
+    // for ShapeAwareFoldingPass. Returns a 4-field hash:
+    //   - shape-fold-count: lifetime # of instructions
+    //     replaced (OpNop'd) due to shape/linear/narrow
+    //     metadata
+    //   - shape-linear-elide-count: subset of fold-count
+    //     due to linear-ownership elision (MoveOp on
+    //     non-escaping Owned slot is a no-op)
+    //   - shape-narrow-check-count: # of redundant
+    //     type-checks detected (counted, not yet rewritten
+    //     in Cycle 1; rewrite is #462 follow-up)
+    //   - guard-shape-hits: # of GuardShape instructions
+    //     seen in the module (signal for downstream passes
+    //     to trust per-block shape_id)
+    //
+    // This is the AI Agent's signal for "is the
+    // shape-aware folding pass doing useful work?".
+    // Cycle 2 (separate issue) will add per-shape-id
+    // OpAdd unchecked specialization + the narrow-evidence
+    // rewrite. The counter layer is in place.
+    add("query:shape-folding-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t fold = 0;
+        std::uint64_t linear_elide = 0;
+        std::uint64_t narrow = 0;
+        std::uint64_t guard_hits = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            fold = m->shape_fold_count.load(std::memory_order_relaxed);
+            linear_elide = m->shape_linear_elide_count.load(std::memory_order_relaxed);
+            narrow = m->shape_narrow_check_count.load(std::memory_order_relaxed);
+            guard_hits = m->guard_shape_hits.load(std::memory_order_relaxed);
+        }
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"shape-fold-count", make_int(static_cast<std::int64_t>(fold))},
+            {"shape-linear-elide-count", make_int(static_cast<std::int64_t>(linear_elide))},
+            {"shape-narrow-check-count", make_int(static_cast<std::int64_t>(narrow))},
+            {"guard-shape-hits", make_int(static_cast<std::int64_t>(guard_hits))},
+        };
+        return build_hash(kv);
+    });
+
     // (atomic-batch:stats) — Issue #192: observability for
     // mutate:atomic-batch. Hash with batch-count, ops-total,
     // rollback-count, ops-per-batch (avg).
@@ -1355,6 +1427,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:primitive-perf-stats",
             // Issue #452 — AOT hot-update + region filtering
             "query:aot-stats",
+            // Issue #462 — ShapeAwareFoldingPass
+            "query:shape-folding-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1372,9 +1446,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 48 entries as of #452 ship (47 from #450 + 1 new
-        // query:aot-stats).
-        return make_int(48);
+        // 49 entries as of #462 ship (48 from #452 + 1 new
+        // query:shape-folding-stats).
+        return make_int(49);
     });
 
 }

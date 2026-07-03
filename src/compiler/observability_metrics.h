@@ -150,6 +150,22 @@ struct CompilerMetrics {
     // observability — lets the user see what the pass
     // would have done.
     std::atomic<std::uint64_t> dead_coercion_kept_for_debug_total{0};
+
+    // Issue #462: ShapeAwareFoldingPass metrics (lifetime totals).
+    // Bumped in service.ixx after each ShapeAwareFoldingPass::run.
+    //   - shape_fold_count: total # of instructions replaced
+    //     (OpNop'd) due to shape/linear/narrow metadata
+    //   - shape_linear_elide_count: subset of fold_count due
+    //     to linear-ownership elision (MoveOp on non-escaping
+    //     Owned slot is a no-op)
+    //   - shape_narrow_check_count: # of redundant type-checks
+    //     detected (counted, not yet rewritten in Cycle 1)
+    //   - guard_shape_hits: # of GuardShape instructions seen
+    //     in the module (downstream-pass signal)
+    std::atomic<std::uint64_t> shape_fold_count{0};
+    std::atomic<std::uint64_t> shape_linear_elide_count{0};
+    std::atomic<std::uint64_t> shape_narrow_check_count{0};
+    std::atomic<std::uint64_t> guard_shape_hits{0};
     // Issue #629: zero-overhead coercion path observability.
     //   - coercion_castop_emitted_total: CastOps inserted by
     //     TypeSpecializationWrap
