@@ -35,3 +35,14 @@ build_o0/
 build_o0/
 __pycache__/
 build_tsan/
+
+# Local-only memory files (Anqi's project context + workflow
+# preferences + session logs). Bootstrap-loaded by the dev
+# environment, not synced via this repo's remote. See
+# workspace .gitignore for the same pattern.
+#
+# If you want to share a curated subset, copy to a tracked
+# file (e.g. CONTEXT.md) and commit that instead.
+MEMORY.md
+memory.md
+memory/*.md
