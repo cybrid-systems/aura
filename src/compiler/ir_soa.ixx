@@ -63,6 +63,12 @@ export struct BasicBlockSoA;
 // later). Today: std::vector for simplicity, defer arena
 // migration to Phase 3.
 export struct IRFunctionSoA {
+    // Issue #463: function identity. Mirrors the AoS
+    // IRFunction's name + local_count fields. Needed for
+    // SoA→AoS view conversion in the SoAtoAoSBridgePass.
+    std::string name;
+    std::uint32_t local_count = 0;
+
     // Opcode stream (the most-frequently-touched column)
     std::vector<aura::ir::IROpcode> opcodes_;
 
@@ -429,10 +435,64 @@ export struct IRModuleV2 {
         auto& func = functions[func_idx];
         func.blocks_[block_idx].end_idx = static_cast<std::uint32_t>(func.size());
     }
+
+    // Issue #463: add a function to the module. Returns the
+    // index of the newly added function. Mirrors the pattern
+    // used by the existing AoS IRModule::add_function.
+    std::size_t add_function(std::string name = "",
+                              std::uint32_t local_count = 0) {
+        IRFunctionSoA func;
+        func.name = std::move(name);
+        func.local_count = local_count;
+        functions.push_back(std::move(func));
+        return functions.size() - 1;
+    }
 };
 
 // Compile-time sanity: the view must be cheap to copy.
 static_assert(sizeof(IRInstructionView) <= 16,
               "IRInstructionView should be a small POD (pointer + uint32)");
+
+// ── Issue #463: SoA → AoS view conversion (Phase 2 wiring) ───────
+//
+// Converts an IRFunctionSoA into an AoS IRFunction so the
+// existing Pass pipeline (which operates on IRModule) can
+// run on a SoA-built function. The conversion is O(n) in
+// the number of instructions — one pass over the SoA
+// columns to build a vector of IRInstructions, then a
+// second pass to lay out the basic blocks.
+//
+// This is a TEST SEAM (production code should migrate the
+// Pass pipeline to consume IRInstructionView directly). The
+// SoAtoAoSBridgePass below uses this conversion to let the
+// existing Passes run on SoA-built functions while the
+// per-Pass SoA-aware overloads ship in subsequent cycles.
+export inline aura::ir::IRFunction to_aos_view(const IRFunctionSoA& soa) {
+    aura::ir::IRFunction f;
+    f.name = soa.name;
+    f.local_count = soa.local_count;
+    f.blocks.clear();
+    f.blocks.reserve(soa.blocks_.size());
+    for (const auto& block : soa.blocks_) {
+        aura::ir::BasicBlock b;
+        b.id = block.block_id;
+        b.instructions.reserve(block.end_idx - block.start_idx);
+        for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+            aura::ir::IRInstruction instr;
+            instr.opcode = soa.opcodes_[i];
+            instr.operands = {soa.operand0_[i], soa.operand1_[i],
+                              soa.operand2_[i], soa.operand3_[i]};
+            instr.source_ast_node_id = soa.source_node_ids_[i];
+            instr.type_id = soa.type_ids_[i];
+            instr.shape_id = soa.shape_ids_[i];
+            instr.linear_ownership_state = soa.linear_ownership_states_[i];
+            instr.adt_variant_id = soa.adt_variant_ids_[i];
+            instr.narrow_evidence = soa.narrow_evidence_[i];
+            b.instructions.push_back(std::move(instr));
+        }
+        f.blocks.push_back(std::move(b));
+    }
+    return f;
+}
 
 } // namespace aura::compiler
