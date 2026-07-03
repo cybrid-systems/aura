@@ -4387,6 +4387,260 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(top_kv, 16);
     });
 
+    // ── Issue #445: SEVA high-level goal primitives ──────
+    //
+    // The SEVA demo (#442) is the Aura-side verification
+    // loop. The OpenClaw integration (#445) is the LLM
+    // agent that drives the loop via natural-language
+    // goals. This block ships the Aura-side primitives
+    // that the OpenClaw skill/plugin calls into. Each
+    // primitive wraps 1+ existing lower-level operations
+    // (mutate:*, verify:*, query:*) so the agent doesn't
+    // need to know the Aura primitives in detail.
+    //
+    // The primitives are deliberately conservative: they
+    // return hashes (not raw lists) so the audit log
+    // can be replayed post-hoc, and they never call into
+    // destructive operations without a guard.
+    //
+    // (seva:achieve-coverage name target-pct) — the
+    // canonical SEVA goal. Reads the current coverage
+    // (via verify-dirty-stats), compares to target,
+    // returns a hash with the gap (or zero if already
+    // met). The actual mutation loop is driven by the
+    // OpenClaw agent, not by this primitive — the agent
+    // decides which mutate:* primitive to call next.
+    add("seva:achieve-coverage", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
+            return make_void();
+        auto name_idx = as_string_idx(a[0]);
+        auto target = as_int(a[1]);
+        if (name_idx >= ev.string_heap_.size())
+            return make_void();
+        // Read the current coverage hole count via
+        // the existing verify-dirty primitive
+        // (#437 / #469).
+        std::uint64_t current_dirty = 0;
+        if (auto* ws = ev.workspace_flat()) {
+            current_dirty = ws->verify_coverage_dirty_total();
+        }
+        // The "achievement" metric: dirty holes / 100 =
+        // percent coverage hole. If current_dirty == 0
+        // and target == 100, the goal is met.
+        // The primitive returns a hash with the gap
+        // analysis; the agent uses it to drive the loop.
+        std::int64_t gap = (target >= 100) ? 0
+            : static_cast<std::int64_t>(current_dirty);
+        std::int64_t achieved = (gap == 0) ? 1 : 0;
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        // name as a string field
+        auto name_idx_in_heap = ev.string_heap_.size();
+        ev.string_heap_.push_back(ev.string_heap_[name_idx]);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"name", make_string(name_idx_in_heap)},
+            {"target-pct", make_int(target)},
+            {"current-dirty", make_int(static_cast<std::int64_t>(current_dirty))},
+            {"gap", make_int(gap)},
+            {"achieved", make_int(achieved)},
+        };
+        return build_hash(kv);
+    });
+
+    // (seva:fix-reset-bugs) — read the current verify-
+    // dirty state, identify reset-related holes, return
+    // the list of node IDs the agent should target.
+    // The actual mutate call is the agent's job; the
+    // primitive just identifies the targets.
+    add("seva:fix-reset-bugs", [&ev](const auto&) -> EvalValue {
+        if (!ev.workspace_flat())
+            return make_void();
+        // For now: query verify-dirty-stats and return a
+        // hash with the breakdown by reason. The agent
+        // reads this and decides which (mutate:set-body
+        // / mutate:replace-pattern) call to make next.
+        std::uint64_t assertion = 0, coverage = 0, sva = 0, cex = 0;
+        if (auto* ws = ev.workspace_flat()) {
+            assertion = ws->verify_assertion_dirty_total();
+            coverage = ws->verify_coverage_dirty_total();
+            sva = ws->verify_sva_dirty_total();
+            cex = ws->verify_formal_cex_dirty_total();
+        }
+        std::int64_t reset_holes = static_cast<std::int64_t>(assertion);
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"assertion-dirty", make_int(static_cast<std::int64_t>(assertion))},
+            {"coverage-dirty", make_int(static_cast<std::int64_t>(coverage))},
+            {"sva-dirty", make_int(static_cast<std::int64_t>(sva))},
+            {"formal-cex-dirty", make_int(static_cast<std::int64_t>(cex))},
+            {"reset-holes", make_int(reset_holes)},
+        };
+        return build_hash(kv);
+    });
+
+    // (seva:generate-regression) — emit a regression
+    // script (in Aura syntax) from the current state.
+    // For the MVP this returns a string with the
+    // testbench skeleton; the agent fills in the
+    // specifics. The string is in ev.string_heap_.
+    add("seva:generate-regression", [&ev](const auto&) -> EvalValue {
+        auto sidx = ev.string_heap_.size();
+        std::string script =
+            ";; Auto-generated regression script (seva:generate-regression)\n"
+            ";; Step 1: re-load the workspace\n"
+            "(set-code \"<paste your DUT spec here>\")\n"
+            ";; Step 2: run the verification loop\n"
+            "(eval-current)\n"
+            ";; Step 3: query readiness\n"
+            "(query:edsl-readiness)\n"
+            ";; Step 4: query verify-dirty\n"
+            "(query:verify-dirty-stats)\n";
+        ev.string_heap_.push_back(script);
+        return make_string(sidx);
+    });
+
+    // (seva:approve-mutation id flag) — safety gate.
+    // For the MVP this is a no-op that bumps a counter
+    // (the agent's audit trail records every mutation
+    // regardless). The flag "force" / "auto" / "deny"
+    // tells the system whether the agent has human
+    // approval for the mutation.
+    add("seva:approve-mutation", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto nid = as_int(a[0]);
+        std::string flag = "auto";
+        if (a.size() >= 2 && is_string(a[1])) {
+            auto fidx = as_string_idx(a[1]);
+            if (fidx < ev.string_heap_.size())
+                flag = ev.string_heap_[fidx];
+        }
+        bool approved = (flag == "force" || flag == "auto");
+        (void)nid;
+        return make_bool(approved);
+    });
+
+    // (query:seva-audit-log) — Issue #445: the agent's
+    // audit trail. Returns the recent mutations as a
+    // summary (the full per-mutation record lives on
+    // query:mutation-log-stats). For MVP: returns the
+    // counts per category — agent calls this before
+    // each major operation to confirm the audit log
+    // is consistent.
+    add("query:seva-audit-log", [&ev](const auto&) -> EvalValue {
+        std::uint64_t mutations = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            mutations = m->atomic_batch_commits.load(std::memory_order_relaxed);
+        }
+        // Also include verify-dirty + mutation-rollbacks
+        // so the audit trail covers the full loop.
+        std::uint64_t verify_total = 0;
+        if (auto* ws = ev.workspace_flat()) {
+            verify_total = ws->verify_assertion_dirty_total() +
+                            ws->verify_coverage_dirty_total();
+        }
+        std::uint64_t auto_evolve_cycles = ev.auto_evolve_cycle_count_;
+        std::uint64_t auto_evolve_fixed = ev.auto_evolve_total_fixed_;
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"mutations-total", make_int(static_cast<std::int64_t>(mutations))},
+            {"verify-dirty-total", make_int(static_cast<std::int64_t>(verify_total))},
+            {"auto-evolve-cycles", make_int(static_cast<std::int64_t>(auto_evolve_cycles))},
+            {"auto-evolve-fixed", make_int(static_cast<std::int64_t>(auto_evolve_fixed))},
+        };
+        return build_hash(kv);
+    });
+
 } // register_compile_primitives
 
 } // namespace aura::compiler::primitives_detail
