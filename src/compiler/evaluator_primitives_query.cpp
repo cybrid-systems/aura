@@ -276,7 +276,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // counters. Follow-up: returns a 3-tuple
     // (wraps invalidations stale-accesses) so the AI
     // Agent can react to each category independently.
-    add("query:stable-ref-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        add("query:stable-ref-stats", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
         if (!ev) return make_int(0);
@@ -289,7 +289,73 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             wraps + invalidations + stale));
     });
 
-    // Issue #438: query:fiber-migration-stats. Returns
+    // Issue #470: query:stable-ref-stats-hash — 4-element
+    // integer list for AI Agent decision-making. The
+    // original query:stable-ref-stats returns an integer
+    // sum (3 categories); the list version breaks out each
+    // category + a recommendation int for actionable
+    // monitoring. The list (4 ints) is the simplest cross-
+    // module shape that doesn't need string_heap_ access
+    // (which is private in the static-lambda context).
+    // Decoding: position 0 = generation-wrap-count,
+    // position 1 = stable-ref-invalidations,
+    // position 2 = node-gen-stale-accesses,
+    // position 3 = recommendation (0=healthy,
+    // 1=wrap-detected, 2=high-invalidation-rate).
+    // The Aura side can iterate with a `let` form.
+    add("query:stable-ref-stats-hash", [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        std::uint64_t wraps = 0;
+        std::uint64_t invalidations = 0;
+        std::uint64_t stale = 0;
+        if (auto* ws = ev.workspace_flat()) {
+            wraps = ws->generation_wrap_count();
+            invalidations = ws->stable_ref_invalidations();
+            stale = ws->node_gen_stale_access_count();
+        }
+        std::int64_t rec_int = 0;
+        if (wraps > 0) rec_int = 1;
+        else if (invalidations >= 10) rec_int = 2;
+        // Build a 4-field hash using the FNV-1a scheme
+        // (same as the other observability primitives).
+        // Uses the `string_heap` reference passed into
+        // register_query_primitives() (avoids the private
+        // Evaluator::string_heap_ field).
+        auto* ht = FlatHashTable::create(8);
+        if (!ht) return make_int(rec_int);
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF) fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("generation-wrap-count", static_cast<std::int64_t>(wraps));
+        insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
+        insert_kv("node-gen-stale-accesses", static_cast<std::int64_t>(stale));
+        insert_kv("recommendation", rec_int);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+// Issue #438: query:fiber-migration-stats. Returns
     // the sum of the 2 fiber-migration + work-stealing
     // observability counters:
     //   - mutation_steal_attempts_  (lifetime # of
