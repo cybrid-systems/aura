@@ -126,6 +126,12 @@ void Evaluator::flush_gc_roots(void* root_set_out) {
     //    entries separately (or the GC tolerates an empty set
     //    since the value is in closures_/string_heap_ which we
     //    already marked).
+
+    // 5. Issue #682: compiler-managed IRClosure / EnvId roots
+    //    from bridge cache + persistent IR interpreters.
+    if (compiler_gc_roots_fn_ && compiler_service_) {
+        compiler_gc_roots_fn_(compiler_service_, root_set_out);
+    }
 }
 
 std::size_t Evaluator::gc_root_count() const {
@@ -137,6 +143,20 @@ std::size_t Evaluator::gc_root_count() const {
         }
     }
     return n;
+}
+
+void Evaluator::collect_compiler_managed_gc_roots(
+    std::vector<std::int64_t>& closure_roots_out,
+    std::vector<std::int64_t>& env_roots_out,
+    std::uint64_t current_bridge_epoch) const {
+    std::shared_lock<std::shared_mutex> lock(closures_mtx_);
+    for (const auto& [id, cl] : closures_) {
+        if (cl.bridge_epoch != 0 && cl.bridge_epoch != current_bridge_epoch)
+            continue;
+        closure_roots_out.push_back(static_cast<std::int64_t>(id));
+        if (cl.env_id != NULL_ENV_ID && is_valid_env_id(cl.env_id))
+            env_roots_out.push_back(static_cast<std::int64_t>(cl.env_id));
+    }
 }
 
 // ── GC sweep / compaction (Issue #113 Phase 3) ──────────────

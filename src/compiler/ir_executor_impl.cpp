@@ -1520,4 +1520,13 @@ std::vector<CellSnapshot> IRInterpreter::list_cells() const {
     return result;
 }
 
+void IRInterpreter::collect_active_gc_roots(std::vector<std::int64_t>& closure_roots_out,
+                                            std::uint64_t current_bridge_epoch) const {
+    for (const auto& [id, ircl] : runtime_closures_) {
+        if (ircl.bridge_epoch != 0 && ircl.bridge_epoch != current_bridge_epoch)
+            continue;
+        closure_roots_out.push_back(static_cast<std::int64_t>(id));
+    }
+}
+
 } // namespace aura::compiler

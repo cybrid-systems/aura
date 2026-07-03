@@ -45,10 +45,16 @@ struct GCRootSet {
     std::vector<int64_t> fiber_result_roots;
     // Workspace tree node flat indices
     std::vector<int64_t> workspace_roots;
+    // Issue #682: compiler-managed IRClosure / bridge cache roots
+    // (ClosureId from ir_cache_bridge_ + persistent IR interpreters).
+    std::vector<int64_t> compiler_closure_roots;
+    // Issue #682: live EnvId handles from compiler materialize paths.
+    std::vector<int64_t> compiler_env_roots;
 
     bool empty() const {
         return string_roots.empty() && pair_roots.empty() && closure_roots.empty() &&
-               fiber_result_roots.empty() && workspace_roots.empty();
+               fiber_result_roots.empty() && workspace_roots.empty() &&
+               compiler_closure_roots.empty() && compiler_env_roots.empty();
     }
     void clear() {
         string_roots.clear();
@@ -56,6 +62,8 @@ struct GCRootSet {
         closure_roots.clear();
         fiber_result_roots.clear();
         workspace_roots.clear();
+        compiler_closure_roots.clear();
+        compiler_env_roots.clear();
     }
 };
 

@@ -890,6 +890,13 @@ public:
         return 0;
     }
     void install_bridge_epoch_fn(BridgeEpochFn fn) noexcept { bridge_epoch_fn_ = fn; }
+    // Issue #682: compiler GC root flush hook (service.ixx
+    // implements flush_compiler_gc_roots). Called from
+    // flush_gc_roots at safepoint after runtime heap roots.
+    using CompilerGcRootsFlushFn = void (*)(void* service, void* root_set);
+    void install_compiler_gc_roots_fn(CompilerGcRootsFlushFn fn) noexcept {
+        compiler_gc_roots_fn_ = fn;
+    }
     // Issue #223 / #296: returns true if a closure's captured
     // bridge_epoch is stale relative to the current epoch.
     //
@@ -1414,6 +1421,11 @@ public:
     // pre-GC metrics and for tests that want to verify root set
     // population without allocating the GCRootSet.
     [[nodiscard]] std::size_t gc_root_count() const;
+    // Issue #682: export tree-walker Closure / EnvId roots for
+    // compiler GC coordination (bridge epoch gate).
+    void collect_compiler_managed_gc_roots(std::vector<std::int64_t>& closure_roots_out,
+                                           std::vector<std::int64_t>& env_roots_out,
+                                           std::uint64_t current_bridge_epoch) const;
     // ── GC sweep / compaction (Issue #113 Phase 3) ──────────
     // After the GC collector has marked live objects, this method
     // reclaims the unmarked ones. Called from the GC coordinator's
@@ -1984,6 +1996,7 @@ private:
     // set_compiler_service() so Evaluator can query the epoch
     // without a circular include of service.ixx.
     BridgeEpochFn bridge_epoch_fn_ = nullptr;
+    CompilerGcRootsFlushFn compiler_gc_roots_fn_ = nullptr;
     // Function pointer callbacks (set by CompilerService to avoid circular deps)
     std::function<bool(const std::string&, const std::string&)>* msg_send_fn_ = nullptr;
     std::function<std::optional<std::string>(int)>* msg_recv_fn_ = nullptr;

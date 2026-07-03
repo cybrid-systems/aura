@@ -37,6 +37,7 @@ module;
 #include <sys/stat.h>
 #include <poll.h>
 #include "serve/fiber.h"
+#include "serve/gc_coordinator.h"
 #include "shape.h"
 #include "shape_profiler.h"
 #include "spec_jit_controller.h"
@@ -491,6 +492,18 @@ public:
         return metrics_.compiler_closure_safe_fallbacks.load(
             std::memory_order_relaxed);
     }
+    // Issue #682: compiler GC root coordination observability.
+    [[nodiscard]] std::uint64_t get_ir_closure_roots_registered() const noexcept {
+        return metrics_.ir_closure_roots_registered.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_hotswap_root_miss() const noexcept {
+        return metrics_.hotswap_root_miss.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_compiler_gc_safepoint_defer_count() const noexcept {
+        return metrics_.compiler_gc_safepoint_defer_count.load(
+            std::memory_order_relaxed);
+    }
 
     CompilerService()
         : user_bindings_{"#t", "#f", "nil"}
@@ -519,6 +532,11 @@ public:
         evaluator_.install_bridge_epoch_fn(
             [](void* svc) -> std::uint64_t {
                 return static_cast<CompilerService*>(svc)->bridge_epoch();
+            });
+        // Issue #682: register compiler IRClosure/EnvId GC roots at safepoint.
+        evaluator_.install_compiler_gc_roots_fn(
+            [](void* svc, void* roots) {
+                static_cast<CompilerService*>(svc)->flush_compiler_gc_roots(roots);
             });
         evaluator_.set_workspace_adt_sync_fn([](void* svc) {
             static_cast<CompilerService*>(svc)->refresh_adt_constructors_from_workspace();
@@ -877,6 +895,7 @@ public:
         // the old bindings will see the new epoch_ and
         // re-parse on next use.
         invalidate_bridge_for(name);
+        on_compiler_invalidate_gc_coordination(name);
 
         // Hot-swap: replace in last_ir_mod_ at existing_id, preserving the id
         return last_ir_mod_->hot_swap_function(existing_id, std::move(new_mod.functions[new_id]));
@@ -7053,8 +7072,11 @@ private:
         // Bumps the bridge_epoch_ field so any closure
         // holding a reference will detect staleness and
         // re-parse from body_source on next use.
+        // Issue #682: GC root coordination before bindings cleared.
+        on_compiler_invalidate_gc_coordination(name);
         invalidate_bridge_for(name);
         for (auto& dep_name : dependents) {
+            on_compiler_invalidate_gc_coordination(dep_name);
             invalidate_bridge_for(dep_name);
         }
 
@@ -7581,6 +7603,89 @@ public:
     // shared_ptr). All 3 compose: the invalidation is the
     // trigger, the epoch check is the detector, the
     // shared_ptr is the safety net.
+    // Issue #682: pin compiler-managed IRClosure / EnvId roots for GC.
+    // Called from Evaluator::flush_gc_roots at safepoint (via hook).
+    void flush_compiler_gc_roots(void* root_set_out) {
+        auto& out = *static_cast<aura::serve::GCRootSet*>(root_set_out);
+        const auto current_epoch = bridge_epoch();
+        std::unordered_set<std::int64_t> seen_cl;
+        std::unordered_set<std::int64_t> seen_env;
+        auto add_closure = [&](std::int64_t id) {
+            if (id <= 0 || !seen_cl.insert(id).second)
+                return;
+            out.compiler_closure_roots.push_back(id);
+        };
+        auto add_env = [&](std::int64_t id) {
+            if (id <= 0 || !seen_env.insert(id).second)
+                return;
+            out.compiler_env_roots.push_back(id);
+        };
+
+        for (const auto& [name, bridges] : ir_cache_bridge_) {
+            bool has_live_bridge = false;
+            for (const auto& bridge : bridges) {
+                if (bridge.bridge_epoch != 0 && bridge.bridge_epoch != current_epoch)
+                    continue;
+                if (!bridge.flat && !bridge.pool && bridge.body_source.empty())
+                    continue;
+                has_live_bridge = true;
+                break;
+            }
+            if (!has_live_bridge)
+                continue;
+            auto bit = ir_define_env_bindings_.find(name);
+            if (bit == ir_define_env_bindings_.end() || !bit->second)
+                continue;
+            add_closure(static_cast<std::int64_t>(bit->second->closure_id));
+            if (bit->second->interpreter)
+                bit->second->interpreter->collect_active_gc_roots(
+                    out.compiler_closure_roots, current_epoch);
+        }
+
+        for (auto& [name, binding] : ir_define_env_bindings_) {
+            (void)name;
+            if (!binding || !binding->interpreter)
+                continue;
+            add_closure(static_cast<std::int64_t>(binding->closure_id));
+            binding->interpreter->collect_active_gc_roots(out.compiler_closure_roots,
+                                                          current_epoch);
+        }
+
+        std::vector<std::int64_t> tw_cl;
+        std::vector<std::int64_t> tw_env;
+        evaluator_.collect_compiler_managed_gc_roots(tw_cl, tw_env, current_epoch);
+        for (auto id : tw_cl)
+            add_closure(id);
+        for (auto id : tw_env)
+            add_env(id);
+
+        std::unordered_set<std::int64_t> dedup;
+        dedup.insert(out.compiler_closure_roots.begin(), out.compiler_closure_roots.end());
+        out.compiler_closure_roots.assign(dedup.begin(), dedup.end());
+
+        metrics_.ir_closure_roots_registered.store(out.compiler_closure_roots.size(),
+                                                   std::memory_order_relaxed);
+    }
+
+    // Issue #682: invalidate / hot-swap GC coordination — detect
+    // missing bridge roots and defer when IR frames are live.
+    void on_compiler_invalidate_gc_coordination(const std::string& name) {
+        const bool has_bridge = ir_cache_bridge_.count(name) > 0;
+        const bool has_binding = ir_define_env_bindings_.count(name) > 0;
+        if (!has_bridge && !has_binding)
+            metrics_.hotswap_root_miss.fetch_add(1, std::memory_order_relaxed);
+
+        for (auto& [bind_name, binding] : ir_define_env_bindings_) {
+            if (bind_name != name || !binding || !binding->interpreter)
+                continue;
+            if (binding->interpreter->has_active_frames()) {
+                metrics_.compiler_gc_safepoint_defer_count.fetch_add(
+                    1, std::memory_order_relaxed);
+                (void)evaluator_.request_gc_safepoint();
+            }
+        }
+    }
+
     void invalidate_bridge_for(const std::string& name) {
         std::vector<aura::ir::ClosureBridgeData>* bridges = nullptr;
         if (auto bit = ir_cache_bridge_.find(name); bit != ir_cache_bridge_.end())

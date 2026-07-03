@@ -97,7 +97,9 @@ bool GCCollector::collect() {
     metrics_.root_count.store(
         static_cast<int64_t>(roots.string_roots.size() + roots.pair_roots.size() +
                              roots.closure_roots.size() + roots.fiber_result_roots.size() +
-                             roots.workspace_roots.size()),
+                             roots.workspace_roots.size() +
+                             roots.compiler_closure_roots.size() +
+                             roots.compiler_env_roots.size()),
         std::memory_order_relaxed);
     metrics_.root_collect_us.fetch_add(roots_us, std::memory_order_relaxed);
 
