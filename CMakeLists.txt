@@ -2570,6 +2570,18 @@ add_dependencies(all_test_issue_targets test_issue_428_closure)
 aura_add_issue_test(test_issue_429_soa)
 aura_issue_test_link_llvm_jit(test_issue_429_soa)
 add_dependencies(all_test_issue_targets test_issue_429_soa)
+
+# Issue #430: Production Arena compaction: live-object moving /
+# handle indirection / auto-trigger policy. The full scope is
+# multi-week; the scope-limited close ships POLICY +
+# OBSERVABILITY + TEST:
+#   - ArenaGroup::compact_with_policy(name, policy) (3 policies)
+#   - (arena:compact-with-policy ...) Aura primitive
+#   - (query:arena-compaction-stats-hash) 10-field hash variant
+#   - (stats:count) 40 → 41
+aura_add_issue_test(test_issue_430_arena_compaction)
+aura_issue_test_link_llvm_jit(test_issue_430_arena_compaction)
+add_dependencies(all_test_issue_targets test_issue_430_arena_compaction)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)

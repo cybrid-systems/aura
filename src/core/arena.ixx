@@ -663,6 +663,61 @@ public:
         return total;
     }
 
+    // Issue #430: compact_with_policy(name, policy) —
+    // manual policy override for callers that want to
+    // compact a specific arena regardless of (or stricter
+    // than) the adaptive threshold. The 3 policies are:
+    //   - "force":  always compact (no threshold check)
+    //   - "auto":   use the adaptive threshold (default
+    //               behavior of adaptive_compact)
+    //   - "skip":   never compact (returns 0)
+    //
+    // Returns bytes reclaimed (0 if the policy was
+    // "skip" or the module wasn't found, or 0 if "auto"
+    // was below the threshold). Bumps the trigger /
+    // skip counters in the same way as adaptive_compact
+    // so the observability surface (query:arena-compaction-stats
+    // + arena:adaptive-stats) treats manual and automatic
+    // compactions uniformly.
+    //
+    // The "force" path is the only safe way to compact
+    // an arena during a long AI session when the
+    // adaptive threshold would otherwise skip. Use it
+    // sparingly — compaction is O(capacity) and can
+    // stall the worker thread.
+    enum class CompactPolicy {
+        Force,  // always compact
+        Auto,   // consult adaptive threshold
+        Skip,   // never compact
+    };
+    [[nodiscard]] std::size_t compact_with_policy(const std::string& name,
+                                                  CompactPolicy policy) {
+        auto it = arenas_.find(name);
+        if (it == arenas_.end()) return 0;
+        switch (policy) {
+            case CompactPolicy::Skip: {
+                auto_compact_skip_count_.fetch_add(1, std::memory_order_relaxed);
+                return 0;
+            }
+            case CompactPolicy::Auto:
+                return adaptive_compact(name);
+            case CompactPolicy::Force: {
+                // No threshold check; just compact and
+                // update the EMA + trigger counter.
+                const std::size_t saved = it->second->compact();
+                const double& ema_ref = savings_ema_[name];
+                const double new_ema = (ema_ref == 0.0)
+                    ? static_cast<double>(saved)
+                    : kEmaAlpha * static_cast<double>(saved) +
+                          (1.0 - kEmaAlpha) * ema_ref;
+                savings_ema_[name] = new_ema;
+                auto_compact_trigger_count_.fetch_add(1, std::memory_order_relaxed);
+                return saved;
+            }
+        }
+        return 0; // unreachable
+    }
+
     // Issue #335: observability accessors.
     [[nodiscard]] std::uint64_t auto_compact_trigger_count() const noexcept {
         return auto_compact_trigger_count_.load(std::memory_order_relaxed);
