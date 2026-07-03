@@ -53,6 +53,7 @@ import aura.core.mutation;
 import aura.compiler.evaluator;
 import aura.compiler.ir;
 import aura.compiler.lowering;
+import aura.compiler.ir_soa;
 import aura.compiler.ir_executor;
 import aura.compiler.pass_manager;
 import aura.compiler.type_checker;
@@ -226,6 +227,18 @@ export struct EscapeAnalysisWrap {
     // Per-function escape maps (indexed by IR function id).
     // Each entry: 0=NON_ESCAPING, 1=ESCAPED.
     std::vector<std::vector<std::uint8_t>> maps;
+    std::function<bool(std::uint32_t)> block_dirty_fn_;
+
+    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
+        block_dirty_fn_ = std::move(fn);
+    }
+
+    // Issue #684: DirtyAwarePass hook for incremental escape analysis.
+    [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
+        if (!block_dirty_fn_)
+            return true;
+        return block_dirty_fn_(block_id);
+    }
 
     void run(aura::ir::IRModule& module) {
         if (!g_use_arena) {
@@ -237,10 +250,15 @@ export struct EscapeAnalysisWrap {
             // Convert IR function to flat instructions for escape analysis
             std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(func.blocks.size());
             for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+                if (block_dirty_fn_ && !is_block_dirty(static_cast<std::uint32_t>(bi)))
+                    continue;
                 for (auto& instr : func.blocks[bi].instructions) {
-                    flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
-                                               {instr.operands[0], instr.operands[1],
-                                                instr.operands[2], instr.operands[3]}});
+                    flat_instrs[bi].push_back(
+                        {static_cast<std::uint32_t>(instr.opcode),
+                         {instr.operands[0], instr.operands[1], instr.operands[2],
+                          instr.operands[3]},
+                         0, instr.narrow_evidence, instr.type_id, instr.linear_ownership_state,
+                         0});
                 }
             }
             aura::jit::run_escape_analysis(flat_instrs, func.local_count, maps[func.id]);
@@ -710,16 +728,33 @@ public:
         // follow-up adds the bitmask and the
         // mark/clear implementations.
         evaluator_.set_is_instruction_dirty_fn(
-            [](const char*, std::size_t, std::uint32_t, std::uint32_t) -> bool {
-                return false; // P0: no per-instruction dirty yet
+            [this](const char* name, std::size_t func_idx, std::uint32_t block_idx,
+                   std::uint32_t inst_idx) -> bool {
+                std::string n = name ? std::string(name) : std::string();
+                auto it = ir_cache_v2_.find(n);
+                if (it == ir_cache_v2_.end())
+                    return false;
+                return it->second.is_instruction_dirty(func_idx, block_idx, inst_idx);
             });
         evaluator_.set_mark_instruction_dirty_fn(
-            [](const char*, std::size_t, std::uint32_t, std::uint32_t) -> bool {
-                return false; // P0: no per-instruction dirty yet
+            [this](const char* name, std::size_t func_idx, std::uint32_t block_idx,
+                   std::uint32_t inst_idx) -> bool {
+                std::string n = name ? std::string(name) : std::string();
+                auto it = ir_cache_v2_.find(n);
+                if (it == ir_cache_v2_.end())
+                    return false;
+                it->second.mark_instruction_dirty(func_idx, block_idx, inst_idx);
+                return true;
             });
         evaluator_.set_clear_instruction_dirty_fn(
-            [](const char*, std::size_t, std::uint32_t, std::uint32_t) -> bool {
-                return false; // P0: no per-instruction dirty yet
+            [this](const char* name, std::size_t func_idx, std::uint32_t block_idx,
+                   std::uint32_t inst_idx) -> bool {
+                std::string n = name ? std::string(name) : std::string();
+                auto it = ir_cache_v2_.find(n);
+                if (it == ir_cache_v2_.end())
+                    return false;
+                it->second.clear_instruction_dirty(func_idx, block_idx, inst_idx);
+                return true;
             });
         // Issue #240: per-node occurrence-dirty hook. The
         // hook reads / writes the kOccurrenceDirty bit on
@@ -1852,7 +1887,7 @@ public:
         // ========== IR pipeline (default path for non-define expressions) ==========
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+        auto ir_mod = lower_to_ir_with_cache_tracked(
             *flat_ptr, *pool_ptr, arena_, cache_ptr, nullptr, &evaluator_.primitives(), nullptr,
             cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering(),
             tc_pass.last_narrowing_evidence()); // Issue #280
@@ -2196,7 +2231,7 @@ public:
         // === Normal IR path (with cache awareness) ===
         auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+        auto ir_mod = lower_to_ir_with_cache_tracked(
             *flat_ptr, *pool_ptr, arena_, cache_ptr_local, nullptr, &evaluator_.primitives(),
             nullptr, cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
 
@@ -2446,7 +2481,8 @@ public:
                             {static_cast<std::uint32_t>(instr.opcode),
                              {instr.operands[0], instr.operands[1], instr.operands[2],
                               instr.operands[3]},
-                             shape, instr.narrow_evidence, instr.type_id});
+                             shape, instr.narrow_evidence, instr.type_id,
+                             instr.linear_ownership_state, 0});
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
@@ -3401,6 +3437,11 @@ public:
         // being usable). After store_define_v2 succeeds,
         // all blocks are clean.
         std::vector<std::vector<std::uint8_t>> block_dirty_per_func_;
+        // Issue #684: dual-emit SoA module stored alongside AoS irs[].
+        IRModuleV2 soa_mod;
+        // Issue #684: per-instruction dirty bitmask (parallel to SoA
+        // instruction_dirty_ column). Indexed [func_idx][instr_idx].
+        std::vector<std::vector<std::uint8_t>> instruction_dirty_per_func_;
 
         // Issue #196: per-block dirty bitmask helpers.
 
@@ -3424,9 +3465,113 @@ public:
             auto& fb = block_dirty_per_func_[func_idx];
             if (block_idx >= fb.size()) {
                 fb.resize(block_idx + 1, 1);
+                cascade_block_to_instructions(func_idx, block_idx);
+                if (func_idx < soa_mod.functions.size())
+                    soa_mod.functions[func_idx].mark_block_dirty(block_idx);
                 return;
             }
             fb[block_idx] = 1;
+            cascade_block_to_instructions(func_idx, block_idx);
+            if (func_idx < soa_mod.functions.size())
+                soa_mod.functions[func_idx].mark_block_dirty(block_idx);
+        }
+
+        // Issue #684: mark every instruction in a block dirty (SoA cascade).
+        void cascade_block_to_instructions(std::size_t func_idx, std::uint32_t block_idx) {
+            if (func_idx >= irs.size())
+                return;
+            if (func_idx >= instruction_dirty_per_func_.size())
+                instruction_dirty_per_func_.resize(func_idx + 1);
+            const auto& func = irs[func_idx];
+            std::size_t total = 0;
+            for (const auto& b : func.blocks)
+                total += b.instructions.size();
+            auto& idf = instruction_dirty_per_func_[func_idx];
+            if (idf.size() < total)
+                idf.resize(total, 0);
+            if (block_idx >= func.blocks.size())
+                return;
+            std::size_t base = 0;
+            for (std::uint32_t bi = 0; bi < block_idx; ++bi)
+                base += func.blocks[bi].instructions.size();
+            const auto count = func.blocks[block_idx].instructions.size();
+            for (std::size_t i = base; i < base + count; ++i)
+                idf[i] = 1;
+        }
+
+        void init_instruction_dirty_from_irs() {
+            instruction_dirty_per_func_.clear();
+            instruction_dirty_per_func_.reserve(irs.size());
+            for (const auto& fn : irs) {
+                std::size_t n = 0;
+                for (const auto& b : fn.blocks)
+                    n += b.instructions.size();
+                instruction_dirty_per_func_.emplace_back(n, std::uint8_t{0});
+            }
+        }
+
+        void clear_all_instruction_dirty() {
+            for (auto& idf : instruction_dirty_per_func_)
+                for (auto& b : idf)
+                    b = 0;
+        }
+
+        bool is_instruction_dirty(std::size_t func_idx, std::uint32_t block_idx,
+                                  std::uint32_t inst_in_block) const {
+            if (func_idx >= irs.size() || func_idx >= instruction_dirty_per_func_.size())
+                return false;
+            const auto& func = irs[func_idx];
+            if (block_idx >= func.blocks.size())
+                return false;
+            std::size_t base = 0;
+            for (std::uint32_t bi = 0; bi < block_idx; ++bi)
+                base += func.blocks[bi].instructions.size();
+            const auto idx = base + inst_in_block;
+            const auto& idf = instruction_dirty_per_func_[func_idx];
+            if (idx >= idf.size())
+                return false;
+            return idf[idx] != 0;
+        }
+
+        void mark_instruction_dirty(std::size_t func_idx, std::uint32_t block_idx,
+                                    std::uint32_t inst_in_block) {
+            if (func_idx >= irs.size())
+                return;
+            if (func_idx >= instruction_dirty_per_func_.size())
+                instruction_dirty_per_func_.resize(func_idx + 1);
+            const auto& func = irs[func_idx];
+            std::size_t total = 0;
+            for (const auto& b : func.blocks)
+                total += b.instructions.size();
+            auto& idf = instruction_dirty_per_func_[func_idx];
+            if (idf.size() < total)
+                idf.resize(total, 0);
+            if (block_idx >= func.blocks.size())
+                return;
+            std::size_t base = 0;
+            for (std::uint32_t bi = 0; bi < block_idx; ++bi)
+                base += func.blocks[bi].instructions.size();
+            const auto idx = base + inst_in_block;
+            if (idx < idf.size())
+                idf[idx] = 1;
+        }
+
+        void clear_instruction_dirty(std::size_t func_idx, std::uint32_t block_idx,
+                                     std::uint32_t inst_in_block) {
+            if (func_idx >= instruction_dirty_per_func_.size())
+                return;
+            if (func_idx >= irs.size())
+                return;
+            const auto& func = irs[func_idx];
+            if (block_idx >= func.blocks.size())
+                return;
+            std::size_t base = 0;
+            for (std::uint32_t bi = 0; bi < block_idx; ++bi)
+                base += func.blocks[bi].instructions.size();
+            const auto idx = base + inst_in_block;
+            auto& idf = instruction_dirty_per_func_[func_idx];
+            if (idx < idf.size())
+                idf[idx] = 0;
         }
 
         // Clear a single block's dirty flag (called by the
@@ -3611,7 +3756,14 @@ public:
         // them to clean. Net effect: bitmask mirrors irs shape
         // and reports "no dirty blocks".
         entry.init_block_dirty_from_irs();
+        entry.init_instruction_dirty_from_irs();
         entry.clear_all_block_dirty();
+        entry.clear_all_instruction_dirty();
+        // Issue #684: attach dual-emit SoA module from last lower.
+        if (pending_soa_snapshot_) {
+            entry.soa_mod = std::move(pending_soa_snapshot_->module);
+            pending_soa_snapshot_.reset();
+        }
     }
 
     // Mark a single define dirty. Called by mutate:rebind, mutate:set-body, etc.
@@ -3771,6 +3923,11 @@ public:
             return true;
         }
         entry.mark_block_dirty(func_idx, block_idx);
+        if (func_idx < entry.irs.size() && block_idx < entry.irs[func_idx].blocks.size()) {
+            metrics_.irsoa_dirty_cascade_savings.fetch_add(
+                entry.irs[func_idx].blocks[block_idx].instructions.size(),
+                std::memory_order_relaxed);
+        }
         // Don't flip entry.dirty — a single dirty block
         // doesn't necessarily mean the whole entry is
         // invalid (consumers can re-lower just that block).
@@ -3872,6 +4029,7 @@ public:
             // This is the cycle-2 win: avoid the full
             // lowering pass when the bitmask is clean.
             metrics_.relower_skipped_entirely_count.fetch_add(1, std::memory_order_relaxed);
+            metrics_.irsoa_cache_miss_reduction.fetch_add(1, std::memory_order_relaxed);
             return true;
         }
         // Issue #224 cycle 3: detect single-function-dirty
@@ -3936,20 +4094,43 @@ public:
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         std::vector<std::string> cache_hits;
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+        auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, &name, &type_registry_, value_cells_for_lowering());
         // Run per-function passes on the new bundle.
         {
             aura::compiler::ComputeKindWrap ck_pass;
             aura::compiler::ConstantFoldingWrap cf_pass;
+            const auto& entry = it->second;
+            if (!entry.block_dirty_per_func_.empty()) {
+                cf_pass.set_block_dirty_fn([&entry](std::uint32_t block_id) -> bool {
+                    if (entry.block_dirty_per_func_.empty())
+                        return true;
+                    const auto& fb = entry.block_dirty_per_func_[0];
+                    if (block_id >= fb.size())
+                        return true;
+                    return fb[block_id] != 0;
+                });
+            }
+            std::size_t clean_blocks_skipped = 0;
             for (auto& func : ir_mod.functions) {
                 if (func.id == ir_mod.entry_function_id)
                     continue;
                 ck_pass.compute_function(func);
+                const auto folded_before = cf_pass.folded_count();
                 cf_pass.fold_function(func);
+                if (cf_pass.folded_count() == folded_before && !entry.block_dirty_per_func_.empty()) {
+                    for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+                        if (!cf_pass.is_block_dirty(static_cast<std::uint32_t>(bi)))
+                            ++clean_blocks_skipped;
+                    }
+                }
                 // Issue #538: DCE after post-mutate re-lower.
                 run_coercion_elim_on_function(func);
+            }
+            if (clean_blocks_skipped > 0) {
+                metrics_.irsoa_cache_miss_reduction.fetch_add(clean_blocks_skipped,
+                                                              std::memory_order_relaxed);
             }
         }
         // Extract the non-entry functions as the bundle.
@@ -4587,7 +4768,7 @@ public:
             auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
             auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
             std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+            auto ir_mod = lower_to_ir_with_cache_tracked(
                 flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
                 cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
             flat.root = saved_root; // restore
@@ -4747,7 +4928,7 @@ public:
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+        auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, nullptr, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
 
@@ -4771,7 +4952,7 @@ public:
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+        auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, nullptr, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, &name_str, &type_registry_, value_cells_for_lowering());
         return bind_function_define_via_ir(ir_mod, name_str);
@@ -4973,7 +5154,7 @@ public:
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         std::vector<std::string> cache_hits;
         // Pass self_name so lowering can emit correct MakeClosure for self-references
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+        auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, &name_str, &type_registry_, value_cells_for_lowering());
         // Issue #660 debug: dump IR after lowering
@@ -7117,7 +7298,7 @@ private:
             auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
             auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
             std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+            auto ir_mod = lower_to_ir_with_cache_tracked(
                 flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
                 cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
 
@@ -7167,6 +7348,38 @@ private:
 
         // Issue #683: post re-lower linear ownership revalidate probe.
         run_linear_ownership_revalidate_after_invalidate(name);
+    }
+
+    // Issue #684: lower + absorb SoA dual-emit snapshot.
+    aura::ir::IRModule lower_to_ir_with_cache_tracked(
+        ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& /*arena*/,
+        const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+        std::vector<std::string>* cache_hits, const Primitives* primitives,
+        const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>*
+            cache_bridge,
+        const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
+        const std::string* self_name, const aura::core::TypeRegistry* /*type_reg*/ = nullptr,
+        const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
+        std::uint32_t narrowing_evidence = 0) {
+        auto mod = aura::compiler::lower_to_ir_with_cache(
+            flat, pool, arena_, cache, cache_hits, primitives, cache_bridge, cache_strings,
+            self_name, &type_registry_, value_cells, narrowing_evidence);
+        absorb_lower_soa_snapshot();
+        return mod;
+    }
+
+    // Issue #684: absorb dual-emit snapshot after lowering.
+    void absorb_lower_soa_snapshot() {
+        if (const auto* snap = aura::compiler::lower_last_soa_snapshot()) {
+            if (snap->instructions_emitted == 0 && snap->functions_emitted == 0)
+                return;
+            metrics_.ir_soa_instructions_emitted.fetch_add(
+                snap->instructions_emitted, std::memory_order_relaxed);
+            metrics_.ir_soa_functions_emitted.fetch_add(
+                snap->functions_emitted, std::memory_order_relaxed);
+            metrics_.irsoa_wired_hits.fetch_add(1, std::memory_order_relaxed);
+            pending_soa_snapshot_ = *snap;
+        }
     }
 
     // Issue #683: LinearOwnershipRevalidate after invalidate/re-lower.
@@ -7389,19 +7602,12 @@ public:
                     for (auto b : fb)
                         if (b) ++s.dirty_blocks;
                 }
-                // Per-instruction dirty (#380) — the
-                // instruction_dirty_ vector is per-function
-                // inside IRCacheEntry. We don't expose a
-                // dedicated field on IRCacheEntry yet; for
-                // the scope-limited ship we count the
-                // entry's `dirty` flag (1 if any instruction
-                // is dirty, 0 otherwise). The full
-                // per-instruction aggregate is a follow-up
-                // (needs IRCacheEntry to track
-                // instruction_dirty_per_func_, parallel to
-                // block_dirty_per_func_).
-                if (entry.dirty)
-                    ++s.dirty_instructions;
+                // Issue #684: per-instruction dirty from
+                // instruction_dirty_per_func_ (SoA cascade).
+                if (fi < entry.instruction_dirty_per_func_.size()) {
+                    for (auto d : entry.instruction_dirty_per_func_[fi])
+                        if (d) ++s.dirty_instructions;
+                }
             }
         }
         s.dirty_block_pct = s.total_blocks > 0
@@ -7839,7 +8045,8 @@ public:
                             {static_cast<std::uint32_t>(instr.opcode),
                              {instr.operands[0], instr.operands[1], instr.operands[2],
                               instr.operands[3]},
-                             shape, instr.narrow_evidence, instr.type_id});
+                             shape, instr.narrow_evidence, instr.type_id,
+                             instr.linear_ownership_state, 0});
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
@@ -8205,6 +8412,8 @@ public:
     // that read it via get_*_count() accept that the value
     // may change under them.
     mutable CompilerMetrics metrics_;
+    // Issue #684: pending SoA snapshot consumed by store_define_v2.
+    std::optional<LowerSoAEmitSnapshot> pending_soa_snapshot_;
     // ── Speculative JIT controller (Phase 2, #53) ──────────────
     shape::SpecJITController spec_jit_{jit_};
 

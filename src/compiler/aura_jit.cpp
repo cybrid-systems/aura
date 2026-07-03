@@ -530,6 +530,12 @@ struct LLVMBuilder {
     bool lower(const FlatInstruction& inst, uint32_t block_id, const FlatFunction& fn)
         pre(block_id < fn.num_blocks) pre(fn.num_blocks == 0 || fn.blocks != nullptr) {
         (void)block_id;
+        // Issue #684: deopt when SoA instruction_dirty_ propagated to JIT.
+        if (inst.dirty != 0) {
+            if (fn_deopt_inc)
+                irb->CreateCall(fn_deopt_inc);
+            return false;
+        }
         switch (inst.opcode) {
             case OpNop:
                 // Issue #427: explicit Nop. No-op instruction — no

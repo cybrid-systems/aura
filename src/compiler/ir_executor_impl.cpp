@@ -675,6 +675,19 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 // guard in the IR takes the mismatch to ops[3] (the
                 // generic-trampoline block).
                 case IROpcode::GuardShape: {
+                    // Issue #684: deopt when SoA instruction_dirty_ says stale.
+                    if (context_.is_instruction_dirty_fn &&
+                        (instr.linear_ownership_state != 0 || instr.narrow_evidence != 0) &&
+                        context_.is_instruction_dirty_fn(current, ii)) {
+                        record_linear_runtime_safety(metrics_, true);
+                        if (metrics_) {
+                            metrics_->deopt_count.fetch_add(1, std::memory_order_relaxed);
+                            metrics_->irsoa_cache_miss_reduction.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                        locals[ops[0]] = types::make_bool(false);
+                        break;
+                    }
                     auto& val = locals[ops[1]];
                     auto expected = static_cast<std::uint32_t>(ops[2]);
                     // Issue #149 Phase 4: when occurrence-narrowing
