@@ -4427,6 +4427,32 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
 //
 // Returns the number of nodes that were re-inferred
 // (i.e. NOT just cache hits). The IncrementalStats
+// Issue #688: collect linear binding names under affected nodes for
+// post-mutate OwnershipEnv revalidate in infer_flat_partial.
+static void collect_linear_bindings_under_nodes(
+    const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+    const std::vector<aura::ast::NodeId>& nodes,
+    std::unordered_set<std::string>& out) {
+    std::function<void(aura::ast::NodeId)> walk = [&](aura::ast::NodeId id) {
+        if (id == aura::ast::NULL_NODE || id >= flat.size())
+            return;
+        auto v = flat.get(id);
+        if (v.tag == aura::ast::NodeTag::Let && v.sym_id != aura::ast::INVALID_SYM &&
+            !v.children.empty() && v.child(0) != aura::ast::NULL_NODE &&
+            flat.get(v.child(0)).tag == aura::ast::NodeTag::Linear) {
+            auto name = std::string(pool.resolve(v.sym_id));
+            if (!name.empty())
+                out.insert(name);
+        }
+        for (auto c : v.children) {
+            if (c != aura::ast::NULL_NODE)
+                walk(c);
+        }
+    };
+    for (auto id : nodes)
+        walk(id);
+}
+
 // (cache_hits/cache_misses) is updated as a side effect
 // on `stats_`.
 std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
@@ -4772,6 +4798,38 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     if (last_occurrence_refresh_count_ > 0 && last_partial_narrowing_evidence_ != 0 && metrics_) {
         static_cast<struct CompilerMetrics*>(metrics_)
             ->post_mutate_narrow_consistency_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #688: automatic OwnershipEnv revalidate after partial infer
+    // when the affected subtree contains linear bindings.
+    if (flat.root != aura::ast::NULL_NODE && flat.root < flat.size()) {
+        std::unordered_set<std::string> linear_bindings;
+        collect_linear_bindings_under_nodes(flat, pool, affected, linear_bindings);
+        if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size()) {
+            collect_linear_bindings_under_nodes(flat, pool, {rec.target_node},
+                                                linear_bindings);
+        }
+        if (rec.parent_id != aura::ast::NULL_NODE && rec.parent_id < flat.size()) {
+            collect_linear_bindings_under_nodes(flat, pool, {rec.parent_id},
+                                                linear_bindings);
+        }
+        if (sym_for_lookup != aura::ast::INVALID_SYM) {
+            const auto sym_name = std::string(pool.resolve(sym_for_lookup));
+            if (!sym_name.empty())
+                linear_bindings.insert(sym_name);
+        }
+        if (!linear_bindings.empty()) {
+            std::vector<OwnershipNote> ownership_notes;
+            const bool ownership_pass = OwnershipEnv::validate_ownership(
+                flat, pool, flat.root, linear_bindings, ownership_notes);
+            record_linear_ownership_mutation_metrics(metrics_, true, ownership_notes,
+                                                     ownership_pass);
+            if (metrics_) {
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->linear_dirty_revalidate_count.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
+        }
     }
 
     return re_inferred;

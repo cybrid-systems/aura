@@ -790,6 +790,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_gc_safepoint_violations{0};
     std::atomic<std::uint64_t> linear_steal_enforced{0};
     std::atomic<std::uint64_t> linear_relower_revalidate_hits{0};
+    // Issue #688: infer_flat_partial OwnershipEnv post-mutate revalidate.
+    std::atomic<std::uint64_t> linear_dirty_revalidate_count{0};
+    // Issue #688: graceful safe-fallback on GC/fiber linear probe violation.
+    std::atomic<std::uint64_t> linear_typed_mutate_safe_fallbacks{0};
 
     // Issue #444: strategy evolution controller pheromone
     // counters. Each strategy (coverage-greedy /

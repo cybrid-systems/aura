@@ -171,6 +171,7 @@ static void record_linear_gc_probe(Evaluator& ev, bool violation,
         m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
         m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
         m->linear_gc_safepoint_violations.fetch_add(1, std::memory_order_relaxed);
+        m->linear_typed_mutate_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
     } else {
         m->linear_check_pass_count_.fetch_add(1, std::memory_order_relaxed);
     }

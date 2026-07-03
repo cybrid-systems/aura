@@ -399,6 +399,62 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #688: linear OwnershipEnv post-mutate typed-mutation stats.
+    add("query:linear-ownership-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t revalidates = m
+            ? m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed) +
+              m->linear_dirty_revalidate_count.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t violations = m
+            ? m->linear_violations_caught_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t enforcements = m
+            ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t safe_fallbacks = m
+            ? m->linear_typed_mutate_safe_fallbacks.load(std::memory_order_relaxed) +
+              m->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed)
+            : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"post-mutate-revalidates", make_int(static_cast<std::int64_t>(revalidates))},
+            {"violations-caught", make_int(static_cast<std::int64_t>(violations))},
+            {"enforcement-hits", make_int(static_cast<std::int64_t>(enforcements))},
+            {"safe-fallbacks", make_int(static_cast<std::int64_t>(safe_fallbacks))},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #686: ShapeProfiler ring history + Value v2 dispatch +
     // DirtyAware pass short-circuit synergy stats.
     add("query:shape-value-pass-stats", [&ev](const auto&) -> EvalValue {

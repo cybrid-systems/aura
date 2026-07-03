@@ -1802,6 +1802,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:arena-auto-compact-stats",
             // Issue #686 — ShapeProfiler ring + Value dispatch + Pass dirty wiring
             "query:shape-value-pass-stats",
+            // Issue #688 — Linear OwnershipEnv post-mutate typed-mutation
+            "query:linear-ownership-typed-mutate-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1819,9 +1821,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 67 entries as of #471 ship (66 from #686 + 1 new
-        // query:dirty-propagation-stats from #471).
-        return make_int(67);
+        // 68 entries as of #688 ship (67 from #471 + 1 new
+        // query:linear-ownership-typed-mutate-stats).
+        return make_int(68);
     });
 
 }
