@@ -17,7 +17,7 @@ jobs:
     container:
       image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -36,7 +36,7 @@ jobs:
     container:
       image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
