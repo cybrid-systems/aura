@@ -113,6 +113,7 @@ static_assert(PrimNullP == 43, "PrimId drift: aura_jit.cpp vs ir.ixx");
 // telemetry counter and bypass markers; Phase 1 wraps P1 sites with
 // lock acquire/release and adds version checks at L2 entry points.
 enum Op : uint32_t {
+    OpNop = 0,  // Issue #427: explicit Nop case (matches IROpcode::Nop = 0)
     OpConstI64 = 1,
     OpConstF64 = 2,
     OpLocal = 3,
@@ -530,6 +531,17 @@ struct LLVMBuilder {
         pre(block_id < fn.num_blocks) pre(fn.num_blocks == 0 || fn.blocks != nullptr) {
         (void)block_id;
         switch (inst.opcode) {
+            case OpNop:
+                // Issue #427: explicit Nop. No-op instruction — no
+                // value produced, no side effect. Lowering doesn't
+                // emit Nop in the production path, but if one ever
+                // shows up (e.g. from a future optimization pass),
+                // we handle it as a true no-op rather than the
+                // visible-default path (which would bump
+                // unhandled_opcode_count and write a void sentinel
+                // to ops[0] — wrong for an instruction that has no
+                // result).
+                return true;
             case OpConstI64: {
                 // Fixnum-encode: value << 1 (matching EvalValue pointer tagging)
                 auto raw = c64(static_cast<int64_t>(inst.ops[1]) |

@@ -980,6 +980,19 @@ public:
     void set_get_jit_unhandled_count_fn(std::function<GetJitUnhandledCountFn> fn) {
         get_jit_unhandled_count_fn_ = std::move(fn);
     }
+    // Issue #427: hook to query a single-line JIT metrics
+    // summary (the same string AuraJIT::Metrics::format
+    // produces). Returns "" if no hook is installed (e.g.
+    // unit-test Evaluator without a JIT). The string is
+    // produced into a thread-local buffer in the hook
+    // closure (avoids lifetime issues across the
+    // std::function boundary). Used by the
+    // (query:jit-stats) Aura primitive.
+    using GetJitStatsFn = const char*();
+    std::function<GetJitStatsFn> get_jit_stats_fn_ = nullptr;
+    void set_get_jit_stats_fn(std::function<GetJitStatsFn> fn) {
+        get_jit_stats_fn_ = std::move(fn);
+    }
     // Issue #196: hook to query the incremental-compilation
     // observability struct from the CompilerService. Returns
     // a packed uint64 with (cache_size << 48) | (dirty_count << 32)
