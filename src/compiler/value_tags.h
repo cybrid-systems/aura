@@ -100,6 +100,8 @@ inline std::atomic<std::uint64_t> value_dispatch_hit_count{0};
 inline std::atomic<std::uint64_t> value_dispatch_miss_count{0};
 inline std::atomic<std::uint64_t> value_contract_violation_count{0};
 inline std::atomic<std::uint64_t> v2_string_collision_attempts{0};
+// Issue #686: total classify_eval_value_tag invocations.
+inline std::atomic<std::uint64_t> value_classify_call_count{0};
 
 inline void record_value_dispatch_hit() noexcept {
     value_dispatch_hit_count.fetch_add(1, std::memory_order_relaxed);
@@ -355,6 +357,7 @@ static_assert(make_string_raw_v2(0) <= STRING_BIAS_VAL_2,
 // v > FLOAT_BIAS_VAL_2). The float range check uses
 // is_float_raw_v2 for clarity.
 inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
+    value_classify_call_count.fetch_add(1, std::memory_order_relaxed);
     if ((v & 3) == 3) {
         if (v == 3 || v == 7 || v == 11) {
             record_value_dispatch_hit();

@@ -1798,6 +1798,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:irsoa-incremental-stats",
             // Issue #685 — arena auto-compact policy + defrag/shape synergy
             "query:arena-auto-compact-stats",
+            // Issue #686 — ShapeProfiler ring + Value dispatch + Pass dirty wiring
+            "query:shape-value-pass-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1815,9 +1817,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 65 entries as of #685 ship (64 from #684 + 1 new
-        // query:arena-auto-compact-stats).
-        return make_int(65);
+        // 66 entries as of #686 ship (65 from #685 + 1 new
+        // query:shape-value-pass-stats).
+        return make_int(66);
     });
 
 }

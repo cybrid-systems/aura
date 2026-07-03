@@ -63,6 +63,15 @@ inline std::atomic<std::uint64_t> shape_deopt_hook_fire_count{0};
 // Issue #605: JIT cache entries compiled with a shape_map but
 // invalidated by a newer ShapeProfiler version (post-mutate).
 inline std::atomic<std::uint64_t> jit_shape_miss_count{0};
+// Issue #686: ring-buffer history O(1) overwrites (vs vector erase).
+inline std::atomic<std::uint64_t> history_jitter_reduction_count{0};
+// Issue #686: dirty-hook fires on stability loss / invalidate.
+inline std::atomic<std::uint64_t> shape_dirty_hook_fire_count{0};
+// Issue #686: inline_shape_of Ref-path dispatch observability.
+inline std::atomic<std::uint64_t> inline_shape_ref_dispatch_count{0};
+// Issue #686: compile-time tag/shape static_assert inventory
+// (value_tags.h + shape.h + shape_profiler.cpp guards).
+inline constexpr std::uint32_t k_shape_value_consteval_hits = 24;
 
 inline void record_shape_fiber_refresh() noexcept {
     shape_fiber_refresh_count.fetch_add(1, std::memory_order_relaxed);
