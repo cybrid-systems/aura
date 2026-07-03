@@ -478,6 +478,19 @@ public:
         metrics_.gc_envframe_stale_skipped_.fetch_add(
             1, std::memory_order_relaxed);
     }
+    // Issue #681: compiler closure invalidation observability.
+    [[nodiscard]] std::uint64_t get_compiler_inval_bridge_epoch_total() const noexcept {
+        return metrics_.compiler_inval_bridge_epoch_total.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_compiler_closure_epoch_mismatch_hits() const noexcept {
+        return metrics_.compiler_closure_epoch_mismatch_hits.load(
+            std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_compiler_closure_safe_fallbacks() const noexcept {
+        return metrics_.compiler_closure_safe_fallbacks.load(
+            std::memory_order_relaxed);
+    }
 
     CompilerService()
         : user_bindings_{"#t", "#f", "nil"}
@@ -501,6 +514,12 @@ public:
         // a consistent value.
         evaluator_.set_compiler_metrics(&metrics_);
         evaluator_.set_compiler_service(this);
+        // Issue #681: wire mutation_epoch / bridge_epoch for
+        // apply_closure + IRClosure lifetime checks.
+        evaluator_.install_bridge_epoch_fn(
+            [](void* svc) -> std::uint64_t {
+                return static_cast<CompilerService*>(svc)->bridge_epoch();
+            });
         evaluator_.set_workspace_adt_sync_fn([](void* svc) {
             static_cast<CompilerService*>(svc)->refresh_adt_constructors_from_workspace();
         });
@@ -4171,7 +4190,14 @@ public:
             std::string canonical = "(define " + name + " " + body_src + ")";
             auto hash = fnv1a_64(canonical);
             auto it = ir_cache_v2_.find(name);
-            if (it != ir_cache_v2_.end() && !it->second.dirty && it->second.source_hash == hash) {
+            // populate_dep_graph_from_workspace may have created a
+            // source-only v2 shell (hash match, empty irs/bridges).
+            // Require materialized IR before skipping cache_define.
+            const bool ir_materialized =
+                ir_cache_bridge_.count(name) > 0 ||
+                (it != ir_cache_v2_.end() && !it->second.irs.empty());
+            if (it != ir_cache_v2_.end() && !it->second.dirty &&
+                it->second.source_hash == hash && ir_materialized) {
                 continue;
             }
             auto alloc = arena_.allocator();
@@ -4185,10 +4211,29 @@ public:
             // by calling eval_flat. The define is bound later by
             // eval-current which uses its own env.
             (void)cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name, /*bind_in_env=*/false);
-            auto& entry = ir_cache_v2_[name];
-            entry.source = canonical;
-            entry.source_hash = hash;
-            entry.dirty = false;
+            // Mirror cache_define output into v2 (dep_graph populate may have
+            // left a source-only shell that previously blocked heavy populate).
+            if (auto cit = ir_cache_.find(name); cit != ir_cache_.end()) {
+                std::vector<aura::ir::ClosureBridgeData> bridge_bundle;
+                if (auto bt = ir_cache_bridge_.find(name); bt != ir_cache_bridge_.end())
+                    bridge_bundle = bt->second;
+                std::vector<std::string> strings_bundle;
+                if (auto st = ir_cache_strings_.find(name); st != ir_cache_strings_.end())
+                    strings_bundle = st->second;
+                store_define_v2(name, canonical, std::move(cit->second),
+                                std::move(bridge_bundle), std::move(strings_bundle));
+                auto vit = ir_cache_v2_.find(name);
+                if (vit != ir_cache_v2_.end()) {
+                    ir_cache_[name] = vit->second.irs;
+                    ir_cache_bridge_[name] = vit->second.bridges;
+                    ir_cache_strings_[name] = vit->second.strings;
+                }
+            } else {
+                auto& entry = ir_cache_v2_[name];
+                entry.source = canonical;
+                entry.source_hash = hash;
+                entry.dirty = false;
+            }
         }
     }
 
@@ -7537,14 +7582,28 @@ public:
     // trigger, the epoch check is the detector, the
     // shared_ptr is the safety net.
     void invalidate_bridge_for(const std::string& name) {
-        auto bit = ir_cache_bridge_.find(name);
-        if (bit == ir_cache_bridge_.end())
+        std::vector<aura::ir::ClosureBridgeData>* bridges = nullptr;
+        if (auto bit = ir_cache_bridge_.find(name); bit != ir_cache_bridge_.end())
+            bridges = &bit->second;
+        else if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end() &&
+                                                      !vit->second.bridges.empty())
+            bridges = &vit->second.bridges;
+        if (!bridges || bridges->empty())
             return;
         const auto current_epoch = bridge_epoch();
-        for (auto& bridge : bit->second) {
+        for (auto& bridge : *bridges) {
             bridge.bridge_epoch = current_epoch;
+            // Issue #681: expire captured views so live IRClosure /
+            // bridge callbacks cannot retain stale flat/pool post-
+            // invalidate. body_source remains for safe re-parse fallback.
+            bridge.flat.reset();
+            bridge.pool.reset();
+            bridge.body_id = aura::ast::NULL_NODE;
         }
         metrics_.bridge_invalidations_count.fetch_add(1, std::memory_order_relaxed);
+        metrics_.compiler_inval_bridge_epoch_total.fetch_add(
+            static_cast<std::uint64_t>(bridges->size()),
+            std::memory_order_relaxed);
     }
 
     // Issue #59 Iter 3: Mutation Lock. A mutate:* operation (which

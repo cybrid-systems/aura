@@ -120,6 +120,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> closure_ir_calls{0};
     std::atomic<std::uint64_t> closure_bridge_calls{0};
     std::atomic<std::uint64_t> closure_stale_returns{0};
+    // Issue #681: compiler IRClosure/bridge epoch enforcement on
+    // invalidate_function + apply_closure dual-path.
+    //   - compiler_inval_bridge_epoch_total: bridge entries expired
+    //     in invalidate_bridge_for (shared_ptr reset + epoch bump)
+    //   - compiler_closure_epoch_mismatch_hits: pre-call stale
+    //     bridge_epoch or EnvFrame version mismatch detected
+    //   - compiler_closure_safe_fallbacks: deopt to bridge /
+    //     interpreter / nullopt instead of stale execution
+    std::atomic<std::uint64_t> compiler_inval_bridge_epoch_total{0};
+    std::atomic<std::uint64_t> compiler_closure_epoch_mismatch_hits{0};
+    std::atomic<std::uint64_t> compiler_closure_safe_fallbacks{0};
     // Issue #253: linear-move elision count (lifetime total).
     // Bumped by TypeSpecializationWrap after each run (in
     // service.ixx — the pass has its own per-run accumulator;

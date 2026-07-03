@@ -173,6 +173,31 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
             Diagnostic{ErrorKind::InvalidClosure, "unknown IR closure in call_closure"});
     }
     auto& closure = it->second;
+    // Issue #681: bridge_epoch probe before IR dispatch.
+    if (closure.bridge_epoch != 0 && context_.evaluator) {
+        const auto cur = context_.evaluator->current_bridge_epoch();
+        if (cur != 0 &&
+            context_.evaluator->is_bridge_stale(closure.bridge_epoch, cur)) {
+            if (context_.metrics) {
+                context_.metrics->compiler_closure_epoch_mismatch_hits.fetch_add(
+                    1, std::memory_order_relaxed);
+                context_.metrics->compiler_closure_safe_fallbacks.fetch_add(
+                    1, std::memory_order_relaxed);
+                context_.metrics->closure_stale_returns.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            if (auto tw = context_.evaluator->apply_closure(
+                    static_cast<ClosureId>(closure_id), args))
+                return *tw;
+            return std::unexpected(Diagnostic{
+                ErrorKind::InvalidClosure,
+                "stale IR closure after mutation (bridge_epoch mismatch)"}
+                                       .with_suggestion("re-run (eval-current) after mutate"));
+        }
+        if (context_.metrics)
+            context_.metrics->bridge_epoch_hit_count_.fetch_add(
+                1, std::memory_order_relaxed);
+    }
     if (closure.func_id >= module_.functions.size()) {
         return std::unexpected(
             Diagnostic{ErrorKind::IRCorruption, "invalid function id in IR closure"});
@@ -944,6 +969,30 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         }
 
                         auto& closure = it->second;
+                        // Issue #681: bridge_epoch version probe on apply.
+                        if (closure.bridge_epoch != 0 && context_.evaluator) {
+                            const auto cur =
+                                context_.evaluator->current_bridge_epoch();
+                            if (cur != 0 && context_.evaluator->is_bridge_stale(
+                                                 closure.bridge_epoch, cur)) {
+                                if (context_.metrics) {
+                                    context_.metrics
+                                        ->compiler_closure_epoch_mismatch_hits
+                                        .fetch_add(1, std::memory_order_relaxed);
+                                    context_.metrics
+                                        ->compiler_closure_safe_fallbacks
+                                        .fetch_add(1, std::memory_order_relaxed);
+                                }
+                                if (auto tw = context_.evaluator->apply_closure(
+                                        closure_id, call_args))
+                                    locals[ops[3]] = *tw;
+                                else
+                                    return std::unexpected(Diagnostic{
+                                        ErrorKind::InvalidClosure,
+                                        "stale IR closure after mutation"});
+                                break;
+                            }
+                        }
                         if (closure.func_id >= module_.functions.size())
                             return std::unexpected(
                                 Diagnostic{ErrorKind::IRCorruption, "invalid closure function id"}

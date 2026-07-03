@@ -61,6 +61,29 @@ static std::string closest_match(std::string_view name, std::span<const std::str
         return _ev_;                                                                               \
     } while (0)
 
+// Issue #681: pre-call epoch/version enforcement for live closures
+// held across mutate:rebind / invalidate_function.
+static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
+                                        CompilerMetrics* m) {
+    bool stale = false;
+    if (cl.bridge_epoch != 0 &&
+        ev.is_bridge_stale(cl.bridge_epoch, ev.current_bridge_epoch())) {
+        stale = true;
+        if (m)
+            m->compiler_closure_epoch_mismatch_hits.fetch_add(
+                1, std::memory_order_relaxed);
+    }
+    if (cl.env_id != NULL_ENV_ID) {
+        if (ev.is_env_frame_invalid(cl.env_id) || ev.is_env_frame_stale(cl.env_id)) {
+            stale = true;
+            if (m)
+                m->compiler_closure_epoch_mismatch_hits.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
+    }
+    return stale;
+}
+
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #252: closure dual-path observability. Bump the
@@ -163,9 +186,24 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         }
     }
     if (cl_found) {
-        if (compiler_metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
-            m->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
+        CompilerMetrics* metrics = compiler_metrics_
+                                     ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                                     : nullptr;
+        if (metrics)
+            metrics->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
+        // Issue #681: epoch + EnvFrame version pre-check before
+        // materialize_call_env (live closure across post-mutate inval).
+        if (closure_needs_safe_fallback(*this, cl_copy, metrics)) {
+            if (metrics)
+                metrics->compiler_closure_safe_fallbacks.fetch_add(
+                    1, std::memory_order_relaxed);
+            if (closure_bridge_) {
+                if (auto bridged = closure_bridge_(cid, args))
+                    return bridged;
+            }
+            if (metrics)
+                metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+            return std::nullopt;
         }
         // Issue #145 Phase 2.3 — materialize the call env from
         // the SoA arena (env_frames_[cl.env_id]) -- legacy cl.env pointer path removed in P0.
@@ -206,12 +244,20 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // arena. The body_source re-parse fallback is a
             // future slice (requires parser integration).
             if (is_bridge_stale(cl_copy.bridge_epoch, current_bridge_epoch())) {
-                if (compiler_metrics_) {
-                    auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
-                    m->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+                if (metrics)
+                    metrics->compiler_closure_safe_fallbacks.fetch_add(
+                        1, std::memory_order_relaxed);
+                if (closure_bridge_) {
+                    if (auto bridged = closure_bridge_(cid, args))
+                        return bridged;
                 }
+                if (metrics)
+                    metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
                 return std::nullopt;
             }
+            if (metrics)
+                metrics->bridge_epoch_hit_count_.fetch_add(
+                    1, std::memory_order_relaxed);
             auto r = eval_flat(*cl_copy.flat, *cl_copy.pool, cl_copy.body_id, ne);
             if (r)
                 return *r;
