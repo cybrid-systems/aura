@@ -1469,6 +1469,17 @@ std::pmr::vector<std::uint32_t> type_id_;
     // target reason bits). Surfaced via
     // (compile:dirty-fast-stats).
     mutable std::atomic<std::uint64_t> dirty_upward_fast_fixed_point_hits_{0};
+    // Issue #471: SV-scale observability for dirty
+    // propagation perf. The max_depth_observed_ tracks
+    // the deepest mark_dirty_upward traversal seen on
+    // this FlatAST (lifetime). The early_exit_count_ is
+    // bumped when the early-exit fixed-point check
+    // fires (parent already has the reason bits). The
+    // ratio early_exit / call_count gives the early-exit
+    // rate; max_depth gives the worst-case traversal.
+    // Exposed via (query:dirty-propagation-stats).
+    mutable std::atomic<std::uint64_t> mark_dirty_early_exit_count_{0};
+    mutable std::atomic<std::uint64_t> mark_dirty_max_depth_observed_{0};
     // Issue #412: per-FlatAST type cache generation counter.
     // Bumped by mark_dirty_upward() and by the explicit
     // bump_type_cache_generation() accessor. The
@@ -2086,6 +2097,8 @@ public:
         , parent_of_call_count_(other.parent_of_call_count_.load())
         , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
         , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
+        , mark_dirty_early_exit_count_(other.mark_dirty_early_exit_count_.load())
+        , mark_dirty_max_depth_observed_(other.mark_dirty_max_depth_observed_.load())
         , node_recycle_total_(other.node_recycle_total_.load())
         , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
         , node_compact_total_(other.node_compact_total_.load())
@@ -2146,6 +2159,8 @@ public:
             parent_of_call_count_.store(other.parent_of_call_count_.load());
             mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
             mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
+            mark_dirty_early_exit_count_.store(other.mark_dirty_early_exit_count_.load());
+            mark_dirty_max_depth_observed_.store(other.mark_dirty_max_depth_observed_.load());
             node_recycle_total_.store(other.node_recycle_total_.load());
             node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
             node_compact_total_.store(other.node_compact_total_.load());
@@ -4453,6 +4468,16 @@ public:
             if (p != NULL_NODE)
                 queue.push_back(p);
         }
+        // Issue #471: track max traversal depth. The
+        // max-depth is the deepest BFS level reached in
+        // this call. Atomic max — CAS loop.
+        {
+            const std::uint64_t depth = touched;
+            std::uint64_t cur = mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
+            while (depth > cur) {
+                if (mark_dirty_max_depth_observed_.compare_exchange_weak(cur, depth)) break;
+            }
+        }
         mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
         // Issue #547: mark the tag_arity_index dirty so the
         // next (query:pattern) call knows to rebuild (or
@@ -4570,9 +4595,23 @@ public:
             // itself if needed).
             if (is_dirty_for(p, reasons)) {
                 ++fixed_point_hits;
+                // Issue #471: also bump the lifetime
+                // mark_dirty_early_exit_count_ for
+                // (query:dirty-propagation-stats).
+                mark_dirty_early_exit_count_.fetch_add(
+                    1, std::memory_order_relaxed);
                 continue;
             }
             queue.push_back(p);
+        }
+        // Issue #471: track max depth seen on fast path
+        // (same atomic max as the plain mark_dirty_upward).
+        {
+            const std::uint64_t depth = touched;
+            std::uint64_t cur = mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
+            while (depth > cur) {
+                if (mark_dirty_max_depth_observed_.compare_exchange_weak(cur, depth)) break;
+            }
         }
         mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
         dirty_upward_fast_fixed_point_hits_.fetch_add(
@@ -5590,6 +5629,16 @@ public:
     }
     std::uint64_t mark_dirty_total_nodes() const noexcept {
         return mark_dirty_total_nodes_.load(std::memory_order_relaxed);
+    }
+    // Issue #471: SV-scale dirty propagation observability
+    // (returns the # of times the mark_dirty_upward_fast
+    // early-exit fixed-point check fired + the max depth
+    // observed across all mark_dirty_upward(_fast) calls).
+    std::uint64_t mark_dirty_early_exit_count() const noexcept {
+        return mark_dirty_early_exit_count_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t mark_dirty_max_depth_observed() const noexcept {
+        return mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
     }
 
     // Issue #275: std::expected rollback entry point.

@@ -1727,6 +1727,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:shape-deopt-burst-stats",
             // Issue #408 — EDSL dirty propagation cost observability
             "query:dirty-propagation-cost-stats",
+            // Issue #471 — SV-scale dirty propagation
+            "query:dirty-propagation-stats",
             // Issue #414 — Long-term generation_/epoch management
             "query:generation-epoch-stats",
             // Issue #416 — AST SoA column compaction observability
@@ -1817,9 +1819,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 66 entries as of #686 ship (65 from #685 + 1 new
-        // query:shape-value-pass-stats).
-        return make_int(66);
+        // 67 entries as of #471 ship (66 from #686 + 1 new
+        // query:dirty-propagation-stats from #471).
+        return make_int(67);
     });
 
 }

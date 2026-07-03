@@ -1894,6 +1894,38 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 passes_skip + selective + cascade));
         });
 
+    // Issue #471: query:dirty-propagation-stats. Returns the
+    // sum of 3 SV-scale dirty-propagation observability counters
+    // (complements query:dirty-propagation-cost-stats from #408
+    // which covers 7 cost-related counters):
+    //   - upward_calls: mark_dirty_upward_call_count_ (FlatAST)
+    //   - early_exit_count: mark_dirty_early_exit_count_ (when
+    //     mark_dirty_upward_fast's fixed-point check fired)
+    //   - max_depth_observed: mark_dirty_max_depth_observed_
+    //     (deepest BFS level reached across all calls)
+    //
+    // The max_depth_observed is the key signal for SV-scale
+    // perf: deep module hierarchies (10k+ nodes, generate
+    // blocks) hit BFS levels of 50+ on every small mutate;
+    // the early-exit rate (early_exit / upward_calls) tells
+    // the AI Agent how much redundant work is being saved.
+    add("query:dirty-propagation-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev) return make_int(0);
+            auto* ws = ev->workspace_flat();
+            if (!ws) return make_int(0);
+            const std::uint64_t upward_calls =
+                ws->mark_dirty_upward_call_count();
+            const std::uint64_t early_exit =
+                ws->mark_dirty_early_exit_count();
+            const std::uint64_t max_depth =
+                ws->mark_dirty_max_depth_observed();
+            return make_int(static_cast<std::int64_t>(
+                upward_calls + early_exit + max_depth));
+        });
+
     // Issue #414: query:generation-epoch-stats. Returns the sum of
     // 7 long-running generation_ + composite wrap_epoch_ +
     // mutation-epoch observability counters for AI multi-round

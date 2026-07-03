@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**637** registrations scanned from `src/**/*.cpp`.
+**638** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 124 primitives (19%)
 - **core**: 190 primitives (30%)
-- **internal-observable**: 176 primitives (28%)
+- **internal-observable**: 177 primitives (28%)
 - **convenience**: 147 primitives (23%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (176)
+## Query: (177)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -66,6 +66,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:dirty-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-nodes` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:dirty-propagation-cost-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-propagation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-reason-propagation-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-subtree` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:edsl-concurrency-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -1078,7 +1079,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (176)
+### Internal observable (stats/counters) (177)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1123,6 +1124,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:dirty-impact` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-nodes` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:dirty-propagation-cost-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-reason-propagation-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:dirty-subtree` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:edsl-concurrency-stats` — `src/compiler/evaluator_primitives_query.cpp`
