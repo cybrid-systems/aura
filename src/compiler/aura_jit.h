@@ -37,7 +37,7 @@ constexpr uint32_t SHAPE_STRING = 4;
 constexpr uint32_t SHAPE_VOID = 5;
 constexpr uint32_t SHAPE_PAIR = 10;
 constexpr uint32_t SHAPE_VECTOR = 11;
-constexpr uint32_t SHAPE_HASH_ = 12;
+constexpr uint32_t SHAPE_HASH = 12;
 constexpr uint32_t SHAPE_CLOSURE = 13;
 constexpr uint32_t SHAPE_REF = 14;
 

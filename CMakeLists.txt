@@ -766,6 +766,32 @@ endif()
 add_test(NAME jit_concurrent_compile COMMAND test_jit_concurrent_compile
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# ── JIT consistency / observability tests (Issue #427) ─────────
+# Verifies the (query:jit-stats) surface (format() includes
+# all 12 documented fields), unhandled_opcode_count atomicity
+# under concurrent bumps, observability-counter independence,
+# and fresh-instance zero baseline. Doesn't need a full LLVM
+# pipeline — exercises the public metrics + per-function
+# accessors directly. Same build pattern as test_jit_metrics.
+add_executable(test_jit_consistency tests/test_jit_consistency.cpp
+    tests/test_jit_metrics_stub.cpp
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp)
+target_include_directories(test_jit_consistency PRIVATE src)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+target_sources(test_jit_consistency PRIVATE src/core/contract_handler.cpp)
+target_link_libraries(test_jit_consistency PRIVATE stdc++ stdc++exp pthread aura-reflect)
+if(LLVM_FOUND)
+    target_include_directories(test_jit_consistency PRIVATE ${LLVM_INCLUDE_DIRS})
+    target_link_libraries(test_jit_consistency PRIVATE ${llvm_libs})
+    target_compile_definitions(test_jit_consistency PRIVATE AURA_HAVE_LLVM=1)
+endif()
+add_test(NAME jit_consistency COMMAND test_jit_consistency
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # ── Speculative JIT runtime tests (Phase 3, #53) ────────────
 add_executable(test_spec_runtime tests/test_spec_runtime.cpp)
 target_include_directories(test_spec_runtime PRIVATE src)

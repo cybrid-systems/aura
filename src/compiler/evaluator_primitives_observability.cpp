@@ -356,6 +356,26 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_void();
     });
 
+    // (query:jit-stats) — Issue #427: full JIT metrics line
+    // in the same format AuraJIT::Metrics::format produces.
+    // Returns a single string with key=value fields separated
+    // by spaces. Includes: compiles, avg_us, hot_swaps,
+    // cached_fns, inlined_prims, slow_prims, prim_calls,
+    // prim_avg_ns, verify_fail, add_mod_fail, unhandled_opcode,
+    // intrinsics. Returns "" if no hook is installed (e.g.
+    // unit-test Evaluator without a JIT). Cheap to call —
+    // just reads a thread-local buffer populated by the hook.
+    add("query:jit-stats", [&ev](const auto&) -> EvalValue {
+        auto sidx = ev.string_heap_.size();
+        if (!ev.get_jit_stats_fn_) {
+            ev.string_heap_.push_back("");
+        } else {
+            const char* s = ev.get_jit_stats_fn_();
+            ev.string_heap_.push_back(s ? std::string(s) : std::string());
+        }
+        return make_string(sidx);
+    });
+
     // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
     // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
     // (semicolons separate entries; slashes separate used/capacity within an entry).

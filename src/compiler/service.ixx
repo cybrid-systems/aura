@@ -576,6 +576,21 @@ public:
         evaluator_.set_get_jit_unhandled_count_fn([this](const char* name) -> std::uint64_t {
             return jit_.unhandled_opcode_count_for_function(name);
         });
+        // Issue #427: hook for (query:jit-stats) — returns the
+        // full JIT metrics line (same string AuraJIT::Metrics::format
+        // produces). The closure formats into a thread-local
+        // buffer to avoid lifetime issues across the std::function
+        // boundary. Returns "" if no JIT is attached.
+        evaluator_.set_get_jit_stats_fn([this]() -> const char* {
+            thread_local char buf[1024];
+            // Always format — even a no-JIT build produces a
+            // valid string with all-zero counters. The primitive
+            // (query:jit-stats) just returns it as-is. Saves
+            // us from having to plumb a "no jit" flag through
+            // the service.
+            jit_.metrics().format(buf, sizeof(buf));
+            return buf;
+        });
         // Issue #196: hook to query the incremental-compilation
         // observability struct. Used by the (compile:cache-size),
         // (compile:dirty-count), (compile:epoch), (compile:dep-edges)
