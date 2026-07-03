@@ -1,0 +1,15 @@
+# Issue #677: local production deployment example.
+services:
+  aura:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      AURA_RUNTIME_DIR: /opt/aura
+      AURA_HTTP_PORT: "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

@@ -140,6 +140,7 @@ target_sources(aura PRIVATE
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
     src/serve/serve_async.cpp
+    src/serve/http_health.cpp
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
     src/compiler/git_ctx.cpp
@@ -416,6 +417,7 @@ add_library(aura_test_objects STATIC
     src/serve/worker.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
+    src/serve/http_health.cpp
     # Issue #439 / #451: C-linkage shims (non-module)
     # for Fiber::check_gc_safepoint + the
     # (query:orchestration-metrics) primitive.
@@ -2688,6 +2690,10 @@ add_dependencies(all_test_issue_targets test_issue_675)
 aura_add_issue_test(test_issue_676)
 aura_issue_test_link_llvm_jit(test_issue_676)
 add_dependencies(all_test_issue_targets test_issue_676)
+# Issue #677: HTTP health endpoints + deployment stats + install layout.
+aura_add_issue_test(test_issue_677)
+aura_issue_test_link_llvm_jit(test_issue_677)
+add_dependencies(all_test_issue_targets test_issue_677)
 # Issue #464: Arena auto-compaction lifecycle + counter + primitive.
 aura_add_issue_test(test_issue_464_arena_auto_compaction)
 aura_issue_test_link_llvm_jit(test_issue_464_arena_auto_compaction)
@@ -2716,6 +2722,15 @@ add_dependencies(all_test_issue_targets test_issue_237)
 # not an auto-build step. CI can invoke it via:
 #   cmake --build build --target lint_file_size
 # and check the exit code.
+# Issue #677: production install layout (extends #374).
+include(GNUInstallDirs)
+install(TARGETS aura RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES ${CMAKE_SOURCE_DIR}/lib/runtime.c
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/aura)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/demos
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/aura
+        OPTIONAL)
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_custom_target(lint_file_size

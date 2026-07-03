@@ -1,0 +1,37 @@
+# Issue #677: release artifacts (tarball + SBOM) on tag push.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  SOURCE_DATE_EPOCH: "1704067200"
+  CCACHE_DISABLE: 1
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python CI deps
+        run: pip install --break-system-packages -r requirements-dev.txt
+
+      - name: Build release tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ./scripts/release.sh "$VERSION"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/aura-*.tar.gz
+            dist/aura-sbom.json
+          generate_release_notes: true

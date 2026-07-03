@@ -26,6 +26,14 @@ import aura.compiler.value;
 
 namespace aura::serve {
 
+static Scheduler* g_metrics_scheduler = nullptr;
+
+std::string prometheus_scheduler_metrics() {
+    if (!g_metrics_scheduler)
+        return {};
+    return g_metrics_scheduler->metrics().to_prometheus();
+}
+
 // ── Helpers ─────────────────────────────────────────────
 
 static std::string json_escape(const std::string& s) {

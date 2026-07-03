@@ -233,6 +233,40 @@ struct GlobalMetrics {
         json += "  ]\n}\n";
         return json;
     }
+
+    // Issue #677: Prometheus text exposition for /metrics scrape.
+    std::string to_prometheus() const {
+        std::string out;
+        auto append_counter = [&](const std::string& name, std::uint64_t val) {
+            out += "# TYPE " + name + " counter\n" + name + " " + std::to_string(val) + "\n";
+        };
+        append_counter(std::string("aura_fibers_spawned"),
+                       fibers_spawned.load(std::memory_order_acquire));
+        append_counter(std::string("aura_fibers_completed"),
+                       fibers_completed.load(std::memory_order_acquire));
+        append_counter(std::string("aura_io_events_processed"),
+                       io_events_processed.load(std::memory_order_acquire));
+        append_counter(std::string("aura_io_stdin_events"),
+                       io_stdin_events.load(std::memory_order_acquire));
+        append_counter(std::string("aura_schedule_errors"),
+                       schedule_errors.load(std::memory_order_acquire));
+        std::uint64_t steal_a = 0, steal_s = 0;
+        for (const auto& w : workers) {
+            steal_a += w->steal_attempts.load(std::memory_order_acquire);
+            steal_s += w->steal_successes.load(std::memory_order_acquire);
+        }
+        append_counter(std::string("aura_steal_attempts"), steal_a);
+        append_counter(std::string("aura_steal_successes"), steal_s);
+        for (std::size_t i = 0; i < workers.size(); ++i) {
+            const auto& w = workers[i];
+            const std::string prefix = "aura_worker_" + std::to_string(i) + "_";
+            append_counter(prefix + "fibers_executed",
+                         w->fibers_executed.load(std::memory_order_acquire));
+            append_counter(prefix + "fibers_yielded",
+                           w->fibers_yielded.load(std::memory_order_acquire));
+        }
+        return out;
+    }
 };
 
 // ── Per-fiber trace events (lightweight, compile-time opt-in) ──
