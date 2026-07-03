@@ -205,6 +205,73 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (query:aot-stats) — Issue #452: AOT hot-update + region
+    // filtering observability. Returns a 3-field hash:
+    //   - aot-stale-reject-count: lifetime count of
+    //     aura_reload_aot_module rejections due to
+    //     aot_emit_version mismatch (bumped in
+    //     aura_jit_bridge.cpp)
+    //   - aot-region-mismatch-count: lifetime count of
+    //     region_filter mismatches (currently 0 — region
+    //     wiring is a follow-up; counter is in place
+    //     so the day it ships, observability is immediate)
+    //   - aot-hot-update-success-count: lifetime count of
+    //     successful dlopen + version check + constructor
+    //     invocation.
+    //
+    // This is the AI Agent's signal for "is the AOT
+    // hot-update pipeline behaving correctly?". A rising
+    // stale-reject count without rising success count =
+    // version drift (the bug pattern from #452's body).
+    add("query:aot-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t stale_rej = 0;
+        std::uint64_t region_mismatch = 0;
+        std::uint64_t hot_update_ok = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
+            region_mismatch = m->aot_region_mismatch_.load(std::memory_order_relaxed);
+            hot_update_ok = m->aot_hot_update_success_.load(std::memory_order_relaxed);
+        }
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"aot-stale-reject-count", make_int(static_cast<std::int64_t>(stale_rej))},
+            {"aot-region-mismatch-count", make_int(static_cast<std::int64_t>(region_mismatch))},
+            {"aot-hot-update-success-count", make_int(static_cast<std::int64_t>(hot_update_ok))},
+        };
+        return build_hash(kv);
+    });
+
     // (atomic-batch:stats) — Issue #192: observability for
     // mutate:atomic-batch. Hash with batch-count, ops-total,
     // rollback-count, ops-per-batch (avg).
@@ -1286,6 +1353,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "seva:run-demo-with-metrics",
             // Issue #450 (sub-issue #441) — primitive perf stats
             "query:primitive-perf-stats",
+            // Issue #452 — AOT hot-update + region filtering
+            "query:aot-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1303,9 +1372,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 47 entries as of #450 ship (46 from #446 + 1 new
-        // query:primitive-perf-stats).
-        return make_int(47);
+        // 48 entries as of #452 ship (47 from #450 + 1 new
+        // query:aot-stats).
+        return make_int(48);
     });
 
 }

@@ -3,6 +3,7 @@
 
 #include "aura_jit.h"
 #include "aot_mangle.h" // mangle_aot_name (Issue #136)
+#include "observability_metrics.h" // Issue #452: CompilerMetrics for AOT counter hooks
 
 #include <unistd.h> // Issue #237 v4: readlink for /proc/self/exe lookup
 
@@ -57,6 +58,22 @@ extern "C" void aura_set_aot_defuse_version(std::uint64_t v) {
 // C-linkage getter for diagnostics / tests.
 extern "C" std::uint64_t aura_get_aot_defuse_version(void) {
     return g_aot_defuse_version;
+}
+
+// ── Issue #452: AOT hot-update counters (observable) ───────────
+//
+// Three atomics bumped by aura_reload_aot_module on each
+// version/region check outcome. Exposed via
+// (query:aot-stats) primitive as a 3-field hash:
+//   aot_stale_reject_count, aot_region_mismatch,
+//   aot_hot_update_success_count.
+//
+// The host sets g_aot_metrics once at startup (NULL default
+// preserves pre-#452 behavior — all hooks no-op). Pattern
+// mirrors primitive_call_total: zero overhead when unset.
+static aura::compiler::CompilerMetrics* g_aot_metrics = nullptr;
+extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m) {
+    g_aot_metrics = m;
 }
 
 // ── Issue #287: AOT module version (hot-reload / multi-agent) ───────────
@@ -231,6 +248,9 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
                          static_cast<unsigned long long>(*binary_version),
                          static_cast<unsigned long long>(version), path);
             ::dlclose(handle);
+            // Issue #452: bump stale-reject counter.
+            if (g_aot_metrics)
+                g_aot_metrics->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
         std::fprintf(stderr,
@@ -247,6 +267,10 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
                          "but host specified version=%llu; refusing\n",
                          path, static_cast<unsigned long long>(version));
             ::dlclose(handle);
+            // Issue #452: pre-#243 binary with explicit version
+            // requested counts as stale.
+            if (g_aot_metrics)
+                g_aot_metrics->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
     }
@@ -256,6 +280,9 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
     // the new module's fn_ptrs alongside any old ones (or replaced,
     // depending on the runtime's dispatch policy — that's the
     // closure-dispatch follow-up).
+    // Issue #452: bump hot-update success counter.
+    if (g_aot_metrics)
+        g_aot_metrics->aot_hot_update_success_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
