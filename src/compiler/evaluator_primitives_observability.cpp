@@ -138,6 +138,73 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_pair(pid);
     });
 
+    // (query:primitive-perf-stats) — Issue #441 (rolled into
+    // #450): hot-path primitive dispatch stats. Returns a
+    // hash with 2 fields:
+    //   - primitive-call-total: lifetime count of every
+    //     (primitive-func args...) dispatch (bumped in
+    //     evaluator_eval_flat.cpp at the dispatch site)
+    //   - primitive-count: # of registered primitives
+    //     (snapshot at primitive-registration time; gives
+    //     a per-primitive average call rate when paired
+    //     with primitive-call-total)
+    //
+    // Per-primitive breakdown (which primitive is hottest)
+    // is a follow-up issue — requires a vector of atomics
+    // indexed by slot, which is invasive to the Primitives
+    // class. For the MVP, the aggregate counter is enough
+    // to answer "is the primitive-dispatch hot path actually
+    // hot in this session?".
+    add("query:primitive-perf-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t call_total = 0;
+        std::uint64_t prim_count = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            call_total = m->primitive_call_total.load(std::memory_order_relaxed);
+        }
+        prim_count = ev.primitives_.slot_count();
+        std::int64_t avg_per_prim = prim_count > 0
+            ? static_cast<std::int64_t>(call_total / prim_count)
+            : 0;
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"primitive-call-total", make_int(static_cast<std::int64_t>(call_total))},
+            {"primitive-count", make_int(static_cast<std::int64_t>(prim_count))},
+            {"avg-per-prim", make_int(avg_per_prim)},
+        };
+        return build_hash(kv);
+    });
+
     // (atomic-batch:stats) — Issue #192: observability for
     // mutate:atomic-batch. Hash with batch-count, ops-total,
     // rollback-count, ops-per-batch (avg).
@@ -1217,6 +1284,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:seva-audit-log",
             // Issue #446 — SEVA demo with metrics
             "seva:run-demo-with-metrics",
+            // Issue #450 (sub-issue #441) — primitive perf stats
+            "query:primitive-perf-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1234,9 +1303,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 46 entries as of #446 ship (45 from #445 + 1 new
-        // seva:run-demo-with-metrics).
-        return make_int(46);
+        // 47 entries as of #450 ship (46 from #446 + 1 new
+        // query:primitive-perf-stats).
+        return make_int(47);
     });
 
 }

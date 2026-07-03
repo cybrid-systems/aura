@@ -1159,6 +1159,17 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 args.push_back(*arg_val);
                 current = pairs_[arg_pair].cdr;
             }
+            // Issue #441 (rolled into #450): hot-path primitive
+            // dispatch counter (see ~2792 for the design).
+            // Note: this dispatch site is in eval_data_as_code
+            // (legacy data path) where there's no eval_env —
+            // so we increment the global counter directly. The
+            // helper bump_primitive_call_count() lives on the
+            // Evaluator and is what the IR-path uses.
+            if (compiler_metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+                m->primitive_call_total.fetch_add(1, std::memory_order_relaxed);
+            }
             return (*prim)(args);
         }
 
@@ -2382,6 +2393,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     return ar;
                                 args.push_back(*ar);
                             }
+                            // Issue #441 (rolled into #450): hot-path
+                            // primitive dispatch counter (see ~2792).
+                            eval_env.owner()->bump_primitive_call_count();
                             return (*prim)(args);
                         }
                     }
@@ -2784,6 +2798,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                         return ar;
                                     args.push_back(*ar);
                                 }
+                                // Issue #441 (rolled into #450):
+                                // hot-path primitive dispatch counter.
+                                // Bumped on every primitive call; the
+                                // (query:primitive-perf-stats) primitive
+                                // reads it for hot-path observability.
+                                eval_env.owner()->bump_primitive_call_count();
                                 return (*prim)(args);
                             }
                         }

@@ -753,6 +753,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> strategy_minimal_hits{0};
     std::atomic<std::uint64_t> strategy_minimal_successes{0};
     std::atomic<std::uint64_t> strategy_escalations{0};
+
+    // Issue #441 (rolled into #450 / Primitive-perf-stats):
+    // single counter for total primitive dispatch events.
+    // Hot-path counter: bumped on every (primitive-func)
+    // dispatch from evaluator_eval_flat.cpp line ~2789.
+    // Used by (query:primitive-perf-stats) to report the
+    // overall primitive call rate. Per-primitive breakdown
+    // (which primitives are hottest) is a follow-up —
+    // requires a vector of atomics indexed by slot, which
+    // is invasive to the Primitives class.
+    std::atomic<std::uint64_t> primitive_call_total{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
