@@ -278,6 +278,18 @@ jobs:
         path: ~/.cache/pip
         key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
 
+    # Issue #675 follow-up: cache the Trivy vuln DB so
+    # the first run downloads it once and subsequent runs
+    # reuse the cache (the DB is ~30MB and takes 1-2
+    # min to download on a fresh container). Without
+    # this cache, the vuln scanner can hit the 4-min
+    # timeout on slow CI networks.
+    - uses: actions/cache@v6
+      with:
+        path: ~/.cache/trivy
+        key: trivy-db-${{ runner.os }}-v0.72.0
+        restore-keys: trivy-db-${{ runner.os }}-
+
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
