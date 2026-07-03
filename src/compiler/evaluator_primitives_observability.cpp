@@ -1211,6 +1211,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:cxx26-invariants",
             // Issue #440 — consolidated Task 1 EDSL readiness
             "query:edsl-readiness",
+            // Issue #444 — strategy evolution controller pheromone stats
+            "query:strategy-evolution-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1228,9 +1230,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 43 entries as of #440 ship (42 from #431 + 1 new
-        // query:edsl-readiness).
-        return make_int(43);
+        // 44 entries as of #444 ship (43 from #440 + 1 new
+        // query:strategy-evolution-stats).
+        return make_int(44);
     });
 
 }

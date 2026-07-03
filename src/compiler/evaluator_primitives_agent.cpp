@@ -4,6 +4,12 @@
 module;
 
 #include "runtime_shared.h"
+// Issue #444: CompilerMetrics is the central observability
+// struct; the strategy pheromone counters live there.
+// observability_metrics.h is a plain header (not a
+// module), so we include it directly here in the module
+// preamble (avoids the import-only restriction on .h).
+#include "observability_metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -124,6 +130,177 @@ void register_auto_evolve_primitives(PrimRegistrar add, Evaluator& ev) {
 
     add("auto-evolve-total-fixed", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(ev.auto_evolve_total_fixed_));
+    });
+
+    // ── Issue #444: strategy evolution controller ────────
+    //
+    // 3 built-in strategies. Each mutation success bumps
+    // the strategy's "successes" counter; a plateau
+    // bumps "escalations" + switches the active strategy.
+    //
+    //   "coverage-greedy" — pick the node with the most
+    //     coverage gaps (highest density). Best when the
+    //     verify-dirty count is high.
+    //   "bug-fix-priority" — pick the node that's been
+    //     failing assertions. Best when verify-dirty has
+    //     kAssertionDirty set on many nodes.
+    //   "minimal-mutation" — pick the smallest mutation
+    //     that might help (single-line change). Best when
+    //     prior mutations caused regressions.
+    //
+    // The controller is rule-based (no PID in the MVP —
+    // the PID + pheromone accumulation comes in a follow-
+    // up issue once the baseline coverage curves are
+    // established). The escalation rule:
+    //   if (coverage_delta < threshold) &&
+    //      (successes_in_window == 0):
+    //     escalate (e.g. coverage-greedy → bug-fix-priority)
+    add("strategy:set-strategy", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_void();
+        const std::string& name = ev.string_heap_[idx];
+        if (name != "coverage-greedy" &&
+            name != "bug-fix-priority" &&
+            name != "minimal-mutation") {
+            return make_void();
+        }
+        ev.active_strategy_ = name;
+        // Bump the hits counter for the new strategy.
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            if (name == "coverage-greedy")
+                m->strategy_greedy_hits.fetch_add(1, std::memory_order_relaxed);
+            else if (name == "bug-fix-priority")
+                m->strategy_bugfix_hits.fetch_add(1, std::memory_order_relaxed);
+            else if (name == "minimal-mutation")
+                m->strategy_minimal_hits.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_int(static_cast<std::int64_t>(ev.active_strategy_.size()));
+    });
+
+    add("strategy:active", [&ev](const auto&) -> EvalValue {
+        if (ev.active_strategy_.empty())
+            return make_void();
+        auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(ev.active_strategy_);
+        return make_string(sidx);
+    });
+
+    // (strategy:report-success strategy-name) — call
+    // after a successful mutation driven by the given
+    // strategy. Bumps the strategy's success counter.
+    add("strategy:report-success", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_void();
+        const std::string& name = ev.string_heap_[idx];
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            if (name == "coverage-greedy")
+                m->strategy_greedy_successes.fetch_add(1, std::memory_order_relaxed);
+            else if (name == "bug-fix-priority")
+                m->strategy_bugfix_successes.fetch_add(1, std::memory_order_relaxed);
+            else if (name == "minimal-mutation")
+                m->strategy_minimal_successes.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_bool(true);
+    });
+
+    // (strategy:escalate reason) — record a strategy
+    // escalation event (the controller decided to switch
+    // strategies due to a coverage plateau or a
+    // regression). Reason is a string for observability.
+    add("strategy:escalate", [&ev](const auto& a) -> EvalValue {
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            m->strategy_escalations.fetch_add(1, std::memory_order_relaxed);
+        }
+        (void)a;
+        return make_bool(true);
+    });
+
+    // (query:strategy-evolution-stats) — Issue #444:
+    // hash variant of the strategy pheromone counters.
+    // 7 fields:
+    //   - active-strategy         (string, current)
+    //   - greedy-hits / greedy-successes
+    //   - bugfix-hits / bugfix-successes
+    //   - minimal-hits / minimal-successes
+    //   - escalations
+    add("query:strategy-evolution-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t greedy_h = 0, greedy_s = 0;
+        std::uint64_t bugfix_h = 0, bugfix_s = 0;
+        std::uint64_t minimal_h = 0, minimal_s = 0;
+        std::uint64_t escalations = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            greedy_h = m->strategy_greedy_hits.load(std::memory_order_relaxed);
+            greedy_s = m->strategy_greedy_successes.load(std::memory_order_relaxed);
+            bugfix_h = m->strategy_bugfix_hits.load(std::memory_order_relaxed);
+            bugfix_s = m->strategy_bugfix_successes.load(std::memory_order_relaxed);
+            minimal_h = m->strategy_minimal_hits.load(std::memory_order_relaxed);
+            minimal_s = m->strategy_minimal_successes.load(std::memory_order_relaxed);
+            escalations = m->strategy_escalations.load(std::memory_order_relaxed);
+        }
+        // active-strategy as a string field.
+        std::string active = ev.active_strategy_;
+        auto active_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(active);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"active-strategy", make_string(active_idx)},
+            {"greedy-hits", make_int(static_cast<std::int64_t>(greedy_h))},
+            {"greedy-successes", make_int(static_cast<std::int64_t>(greedy_s))},
+            {"bugfix-hits", make_int(static_cast<std::int64_t>(bugfix_h))},
+            {"bugfix-successes", make_int(static_cast<std::int64_t>(bugfix_s))},
+            {"minimal-hits", make_int(static_cast<std::int64_t>(minimal_h))},
+            {"minimal-successes", make_int(static_cast<std::int64_t>(minimal_s))},
+            {"escalations", make_int(static_cast<std::int64_t>(escalations))},
+        };
+        return build_hash(kv);
     });
 
 }
