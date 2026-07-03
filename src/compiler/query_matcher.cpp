@@ -198,8 +198,12 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
             // Composite node: recurse via match_list. Savepoint
             // ensures failed children-match rolls back any
             // captures bound during the attempt.
+            // Issue #678: pin workspace children PCV so concurrent
+            // structural mutations cannot invalidate ws_ch spans
+            // held during Kleene backtracking.
+            auto ws_safe = ws_flat_->children_safe_view(ws_id);
             auto save = state.captures.size();
-            bool ok = match_list(ws_node.children, pat_node.children);
+            bool ok = match_list(ws_safe.span(), pat_node.children);
             if (!ok)
                 state.captures.resize(save);
             return ok;
