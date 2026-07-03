@@ -243,6 +243,26 @@ bool Evaluator::restore_panic_checkpoint() {
         if (panic_safe_pairs_size_ > 0 && panic_safe_pairs_size_ <= pairs_.size()) {
             pairs_.resize(panic_safe_pairs_size_);
         }
+        // Issue #425: post-truncate size verification. The
+        // mutation stack may have been re-entered between save
+        // and restore (e.g. fiber yield + nested Guard stack),
+        // in which case the cells_/pairs_ sizes recorded at
+        // save time might be deeper than the current values
+        // (truncating past 0 would corrupt the arena). Bump a
+        // observability counter when the recorded size exceeds
+        // the current size — this signals that the snapshot was
+        // taken in a different transactional state than the
+        // restore. The fix is a future issue (likely: capture
+        // a (snapshot_id, generation) pair at save and refuse
+        // restore if generation drift exceeds a threshold).
+        // For now: don't truncate past current size; bump a
+        // counter for observability.
+        if (panic_safe_cells_size_ > cells_.size()) {
+            bump_panic_checkpoint_size_mismatch();
+        }
+        if (panic_safe_pairs_size_ > pairs_.size()) {
+            bump_panic_checkpoint_size_mismatch();
+        }
         // Issue #356: mark env_frames_ entries allocated during
         // the doomed transaction as INVALID_VERSION. The frames
         // stay allocated (truncating env_frames_ would invalidate

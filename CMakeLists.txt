@@ -2539,6 +2539,16 @@ add_dependencies(all_test_issue_targets test_issue_216)
 add_dependencies(all_test_issue_targets test_issue_217)
 add_dependencies(all_test_issue_targets test_issue_178)
 add_dependencies(all_test_issue_targets test_issue_218)
+
+# Issue #425: EDSL hygiene integration into query primitives
+# (query:filter :hygiene / :skip-macro-introduced top-level
+# keywords) + post-truncate size verification on
+# restore_panic_checkpoint. Follows the test_issue_244 +
+# test_issue_190 + test_issue_250 pattern (query primitives +
+# marker / atomic batch integration).
+aura_add_issue_test(test_issue_edsl_hygiene_atomic)
+aura_issue_test_link_llvm_jit(test_issue_edsl_hygiene_atomic)
+add_dependencies(all_test_issue_targets test_issue_edsl_hygiene_atomic)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)

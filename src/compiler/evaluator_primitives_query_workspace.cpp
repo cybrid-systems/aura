@@ -537,6 +537,64 @@ void register_workspace_query_primitives(
         auto& flat = *ws.workspace_flat;
         auto& pool = *ws.workspace_pool;
 
+        // Issue #425: top-level :hygiene / :skip-macro-introduced
+        // hygiene gate. When enabled (default #f → opt-in to keep
+        // existing behavior; opt-in #t skips MacroIntroduced nodes
+        // from the result set BEFORE predicate evaluation), the
+        // filter silently drops any node whose marker is
+        // SyntaxMarker::MacroIntroduced. This is the natural
+        // EDSL surface for the "AI mutate shouldn't touch macro
+        // expansion" use case from the issue body — the agent
+        // calls (query:filter :hygiene #t ...) and gets back
+        // only user-written nodes, no need to remember the
+        // (:marker "User") predicate idiom.
+        //
+        // The :hygiene keyword takes a boolean (or int-as-bool)
+        // value. The :skip-macro-introduced keyword is a
+        // discoverable alias — same semantics, more explicit
+        // name for readers unfamiliar with the hygiene terminology.
+        //
+        // The gate runs BEFORE the predicate loop, so any (where ...)
+        // predicates still apply on top of the hygiene filter.
+        bool hygiene_skip_macro = false;
+        // Issue #425: track which arg indices are consumed by
+        // top-level keyword parsing so the predicate parser can
+        // skip them. Without this, the predicate loop would
+        // re-encounter :hygiene / #f and reject them as
+        // "malformed predicate" (not a (where ...) pair).
+        std::vector<bool> arg_consumed(a.size(), false);
+        for (std::size_t ai = 0; ai < a.size(); ++ai) {
+            if (is_keyword(a[ai])) {
+                auto kidx = as_keyword_idx(a[ai]);
+                if (kidx >= ws.keyword_table.size())
+                    return mev("bad-arg", "unknown keyword");
+                auto kw = ws.keyword_table[kidx];
+                if (kw == ":hygiene" || kw == ":skip-macro-introduced") {
+                    bool v = true;
+                    arg_consumed[ai] = true;
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            v = as_bool(a[ai + 1]);
+                        else
+                            v = (as_int(a[ai + 1]) != 0);
+                        arg_consumed[ai + 1] = true;
+                        ++ai;
+                    }
+                    hygiene_skip_macro = v;
+                } else {
+                    // Re-emit a bad-arg for unknown top-level
+                    // keyword (we already validated that each
+                    // non-keyword arg is a (where ...) pair
+                    // below). The predicate parser would have
+                    // already produced a "malformed predicate"
+                    // for a stray keyword at this point, but we
+                    // surface it earlier with a clearer message.
+                    return mev("bad-arg",
+                               std::string("unknown top-level keyword: ") + kw);
+                }
+            }
+        }
+
         // Collect predicates from arguments (each is a (where ...) pair)
         struct Predicate {
             std::string field;
@@ -545,6 +603,10 @@ void register_workspace_query_primitives(
         std::vector<Predicate> predicates;
 
         for (std::size_t ai = 0; ai < a.size(); ++ai) {
+            // Issue #425: skip args consumed by the top-level
+            // keyword parser (e.g. :hygiene + its bool value).
+            if (arg_consumed[ai])
+                continue;
             if (!is_pair(a[ai]))
                 return mev("bad-arg", "each predicate must be a (where ...) pair");
             auto pair_idx = as_pair_idx(a[ai]);
@@ -559,12 +621,21 @@ void register_workspace_query_primitives(
             predicates.push_back({ws.keyword_table[kidx], ws.string_heap[sidx]});
         }
 
-        if (predicates.empty())
+        if (predicates.empty() && !hygiene_skip_macro)
             return mev("bad-arg", "at least one predicate required");
 
         // Iterate all workspace nodes, applying all predicates
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            // Issue #425: hygiene gate. Drop MacroIntroduced nodes
+            // BEFORE predicate evaluation so the predicate list
+            // doesn't have to repeat the (:marker "User")
+            // idiom on every query. The `flat.marker(id)` call
+            // is O(1) (one vector lookup) and the early-continue
+            // is cheaper than a chain of 5+ where clauses for
+            // the common EDSL self-evolution query patterns.
+            if (hygiene_skip_macro && flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
+                continue;
             auto v = flat.get(id);
             bool match = true;
 

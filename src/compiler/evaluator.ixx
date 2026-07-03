@@ -2106,6 +2106,10 @@ private:
     std::atomic<std::uint64_t> panic_checkpoint_save_count_{0};
     std::atomic<std::uint64_t> panic_checkpoint_restore_count_{0};
     std::atomic<std::uint64_t> panic_checkpoint_commit_count_{0};
+    // Issue #425: panic checkpoint size-mismatch counter.
+    // Bumped by restore_panic_checkpoint when the recorded
+    // snapshot size exceeds the current size (drift signal).
+    std::atomic<std::uint64_t> panic_checkpoint_size_mismatch_{0};
     std::atomic<std::uint64_t> rollback_success_on_panic_{0};
     // Issue #549: self-evolution-stability counters. Bumped
     // by validate_stable_ref + exit_mutation_boundary(false)
@@ -2641,6 +2645,16 @@ public:
     }
     void bump_panic_checkpoint_commit_count() noexcept {
         panic_checkpoint_commit_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #425: bumped by restore_panic_checkpoint when the
+    // recorded checkpoint size exceeds the current size (the
+    // snapshot was taken in a different transactional state
+    // than the restore — likely fiber yield + nested Guard
+    // stack drift). The fix is a future issue; for now this
+    // counter is the observability hook. The post-truncate
+    // skip is the safe behavior (don't corrupt the arena).
+    void bump_panic_checkpoint_size_mismatch() noexcept {
+        panic_checkpoint_size_mismatch_.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_rollback_success_on_panic() noexcept {
         rollback_success_on_panic_.fetch_add(1, std::memory_order_relaxed);
