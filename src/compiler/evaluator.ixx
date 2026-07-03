@@ -1045,6 +1045,29 @@ public:
     void set_clear_block_dirty_fn(std::function<ClearBlockDirtyFn> fn) {
         clear_block_dirty_fn_ = std::move(fn);
     }
+    // Issue #429: hook for (query:soa-dirty-stats). The
+    // hook reads the live per-block / per-instruction dirty
+    // state of the CompilerService's ir_cache_v2_ in one
+    // pass and returns an 8-field SoaDirtyStats struct
+    // (see CompilerService::get_soa_dirty_stats). Returns
+    // a zero struct if no hook is installed. The hook
+    // closure is stateless (a one-shot aggregate read);
+    // no buffer lifetime issues.
+    struct SoaDirtyStats {
+        std::uint64_t cached_fns = 0;
+        std::uint64_t dirty_fns = 0;
+        std::uint64_t total_blocks = 0;
+        std::uint64_t dirty_blocks = 0;
+        std::uint64_t total_instructions = 0;
+        std::uint64_t dirty_instructions = 0;
+        std::uint64_t dirty_block_pct = 0;
+        std::uint64_t dirty_instruction_pct = 0;
+    };
+    using GetSoaDirtyStatsFn = SoaDirtyStats();
+    std::function<GetSoaDirtyStatsFn> get_soa_dirty_stats_fn_ = nullptr;
+    void set_get_soa_dirty_stats_fn(std::function<GetSoaDirtyStatsFn> fn) {
+        get_soa_dirty_stats_fn_ = std::move(fn);
+    }
     // Issue #460: per-instruction dirty hooks. Mirror the
     // per-block pattern above. The 3 hooks are:
     //   - is_instruction_dirty(name, i, b, k)        — is (i, b, k) dirty?

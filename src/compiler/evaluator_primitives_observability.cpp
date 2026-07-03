@@ -488,6 +488,88 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(sidx);
     });
 
+    // (query:soa-dirty-stats) — Issue #429: live SoA
+    // dirty state aggregate. Returns a hash with 8 fields
+    // computed in one pass over ir_cache_v2_:
+    //   - cached_fns:            # entries in the cache
+    //   - dirty_fns:             # entries with entry.dirty == true
+    //   - total_blocks:          sum of block_dirty_per_func_[i].size()
+    //   - dirty_blocks:          sum of #dirty blocks
+    //   - total_instructions:    sum of IRFunction.instructions.size()
+    //   - dirty_instructions:    # entries with entry.dirty
+    //                            (per-instruction aggregate is a
+    //                            follow-up — see CompilerService ::
+    //                            get_soa_dirty_stats comment)
+    //   - dirty_block_pct:       100 * dirty_blocks / total_blocks
+    //   - dirty_instruction_pct: 100 * dirty_instructions /
+    //                            total_instructions
+    //
+    // The new primitive complements (query:ir-soa-incremental-stats)
+    // (mutation-event lifetime counts) and (compile:ir-soa-stats)
+    // (a #254 hash that ships the migration-progress field).
+    // query:soa-dirty-stats is the LIVE view (current
+    // dirty state) — the AI Agent reads it to decide
+    // whether the cache is in a healthy steady state
+    // (low dirty_block_pct) or needs a re-lower burst
+    // (> 20% dirty means the cache is falling behind the
+    // mutation rate).
+    add("query:soa-dirty-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        Evaluator::SoaDirtyStats s;
+        if (ev.get_soa_dirty_stats_fn_) {
+            s = ev.get_soa_dirty_stats_fn_();
+        }
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"cached-fns", make_int(static_cast<std::int64_t>(s.cached_fns))},
+            {"dirty-fns", make_int(static_cast<std::int64_t>(s.dirty_fns))},
+            {"total-blocks", make_int(static_cast<std::int64_t>(s.total_blocks))},
+            {"dirty-blocks", make_int(static_cast<std::int64_t>(s.dirty_blocks))},
+            {"total-instructions", make_int(static_cast<std::int64_t>(s.total_instructions))},
+            {"dirty-instructions", make_int(static_cast<std::int64_t>(s.dirty_instructions))},
+            {"dirty-block-pct", make_int(static_cast<std::int64_t>(s.dirty_block_pct))},
+            {"dirty-instruction-pct", make_int(static_cast<std::int64_t>(s.dirty_instruction_pct))},
+        };
+        return build_hash(kv);
+    });
+
     // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
     // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
     // (semicolons separate entries; slashes separate used/capacity within an entry).
@@ -807,6 +889,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:stable-ref-workspace-tree-stats",
             // Issue #428 — closure bridge + bridge_epoch drift
             "query:closure-stats",
+            // Issue #429 — IR SoA live dirty state
+            "query:soa-dirty-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -824,9 +908,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 39 entries as of #428 ship (38 from #560 + 1 new
-        // query:closure-stats).
-        return make_int(39);
+        // 40 entries as of #429 ship (39 from #428 + 1 new
+        // query:soa-dirty-stats).
+        return make_int(40);
     });
 
 }
