@@ -334,4 +334,89 @@ struct NullIdCheck {
 //   - Tooling: IDEs and static analyzers understand
 //     concepts natively; SFINAE patterns are opaque.
 
+// ── SoAColumnar (NEW, Issue #431) ───────────────────────────
+//
+// A SoA (Structure-of-Arrays) column storage. Required
+// API:
+//   - size(): the column length (same across all columns
+//     in a parallel SoA container)
+//   - empty(): shortcut for size() == 0
+//   - data(): contiguous pointer to the column's elements
+//     (used by JIT lowering + interpreter fast paths)
+//
+// Used by:
+//   - IRFunctionSoA: per-function SoA columns
+//     (opcodes_, operand0_, ..., block_dirty_, instruction_dirty_)
+//   - FlatAST: per-node SoA columns (tag_, sym_id_,
+//     child_begin_, ..., dirty_)
+//   - IRCacheEntry::block_dirty_per_func_: nested bytes
+//
+// The data() requirement is what makes this concept
+// distinct from a generic range: the JIT fast path needs
+// pointer-based traversal (no iterators), and the
+// interpreter needs to know the storage is contiguous.
+export template <typename C>
+concept SoAColumnar = requires(C& c, const C& cc) {
+    { cc.size() } -> std::integral;
+    { cc.empty() } -> std::convertible_to<bool>;
+    { c.data() };
+};
+
+// ── DirtyPropagator (NEW, Issue #431) ───────────────────────
+//
+// A node/func marker that participates in the dirty
+// cascade. Required API:
+//   - mark_dirty(id): single-node / single-block dirty
+//   - mark_dirty_upward(id, n): cascade upward (mark a
+//     node + its N ancestors dirty)
+//   - is_dirty(id): query whether a node is dirty
+//   - clear_dirty(id): clear the dirty bit (post re-lower)
+//
+// Used by:
+//   - FlatAST: per-node dirty column
+//   - IRFunctionSoA: per-block + per-instruction dirty
+//   - IRCacheEntry: entry-level dirty + per-function
+//     block_dirty_per_func_
+//
+// The mark_dirty_upward requirement encodes the AI-loop
+// cascade pattern: a single mutation in the workspace
+// propagates upward through dep_graph_, marking every
+// ancestor as dirty. Templates that consume the cascade
+// (mark_define_dirty, mark_all_defines_dirty) constrain
+// their parameter with DirtyPropagator.
+export template <typename D, typename Id = std::uint32_t>
+concept DirtyPropagator = requires(D d, Id id, std::size_t n) {
+    { d.mark_dirty(id) };
+    { d.mark_dirty_upward(id, n) };
+    { d.is_dirty(id) } -> std::convertible_to<bool>;
+    { d.clear_dirty(id) };
+};
+
+// ── ShapeDispatchable (NEW, Issue #431) ──────────────────────
+//
+// A shape profiler / dispatcher. Required API:
+//   - inline_shape_of(value): the shape id of a value
+//     (0 = generic, otherwise specialized for that shape)
+//   - shape_name(id): human-readable name for a shape id
+//     (for diagnostics)
+//   - is_specialized(id): is this shape specialized?
+//
+// Used by:
+//   - shape_profiler.cpp: the central shape_id dispatcher
+//   - JIT lower() / TypeSpecializationWrap: per-fn
+//     specialized_for lookup
+//   - QueryShapeWrap: per-node shape classification
+//
+// The inline_shape_of requirement is what makes this
+// concept distinct from a generic function: the JIT path
+// needs the shape check to be cheap (bit-test + switch,
+// no allocation). The shape_name requirement is for
+// diagnostics / observability.
+export template <typename S, typename Value = int, typename Id = std::uint32_t>
+concept ShapeDispatchable = requires(S s, Value v, Id id) {
+    { s.inline_shape_of(v) } -> std::integral;
+    { s.shape_name(id) } -> std::convertible_to<std::string_view>;
+    { s.is_specialized(id) } -> std::convertible_to<bool>;
+};
+
 } // namespace aura::core

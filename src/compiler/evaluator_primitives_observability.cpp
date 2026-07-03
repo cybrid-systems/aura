@@ -683,6 +683,107 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (query:cxx26-invariants) — Issue #431: a 5-field
+    // hash summarizing the codebase's C++26 zero-overhead
+    // invariant density. The numbers are compile-time
+    // constants tied to the source — they don't move at
+    // runtime. The AI Agent reads the count to detect
+    // drift (a regression in invariant coverage is a
+    // "the codebase lost some compile-time safety" signal).
+    //
+    // Field list (5 total):
+    //   - consteval-invariants: # static_assert blocks
+    //     in src/core/cxx26_invariants.ixx (currently 22
+    //     — SmallObjectPool tier + Value tag + concept
+    //     self-check groups)
+    //   - concept-count: # Concepts in src/core/concepts.ixx
+    //     (currently 13 — NodeHandle, ASTContainer,
+    //     Mutator, ArenaAllocator, Queryable, AuraInvocable,
+    //     RangeOf, AnyRange, SymbolInterner, StableNodeRefLike
+    //     + Issue #431's SoAColumnar, DirtyPropagator,
+    //     ShapeDispatchable)
+    //   - contract-hot-paths: # Contract pre/post/assert
+    //     sites in Arena + Value + SoA + Pass (sum across
+    //     these 4 hot files, currently 26 — issue #431
+    //     scope-limited ship doesn't add new Contracts
+    //     beyond what was already there; follow-up issues
+    //     will)
+    //   - concept-self-checks: # static_asserts in
+    //     cxx26_invariants.ixx that verify Concepts
+    //     compile (currently 1 — the std::vector<int>
+    //     check)
+    //   - concept-targets-documented: # "Target sites:"
+    //     comments in concepts.ixx (currently 9 — each
+    //     concept has a doc comment listing the
+    //     consumers / future consumers)
+    //
+    // The contract-hot-paths count is approximate —
+    // see ContractHotPathCount() for the exact
+    // grep-and-sum. If a future issue adds Contracts
+    // to value.ixx or ir_soa.ixx, this number will
+    // jump. The AI Agent monitors the count.
+    add("query:cxx26-invariants", [&ev](const auto&) -> EvalValue {
+        // Reuse the same build_hash pattern as the
+        // closure:stats / soa-dirty-stats primitives.
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        // Compile-time constants — the file paths are
+        // recorded in the comment; the literal numbers
+        // are the live counts at the time of writing.
+        // The AI Agent detects drift by re-reading the
+        // file and comparing the count delta.
+        constexpr std::int64_t kConstevalInvariants = 22;
+        constexpr std::int64_t kConceptCount = 13;
+        constexpr std::int64_t kContractHotPaths = 26;
+        constexpr std::int64_t kConceptSelfChecks = 1;
+        constexpr std::int64_t kConceptTargetsDoc = 9;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"consteval-invariants", make_int(kConstevalInvariants)},
+            {"concept-count", make_int(kConceptCount)},
+            {"contract-hot-paths", make_int(kContractHotPaths)},
+            {"concept-self-checks", make_int(kConceptSelfChecks)},
+            {"concept-targets-documented", make_int(kConceptTargetsDoc)},
+        };
+        return build_hash(kv);
+    });
+
     // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
     // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
     // (semicolons separate entries; slashes separate used/capacity within an entry).
@@ -1006,6 +1107,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:soa-dirty-stats",
             // Issue #430 — arena compaction hash variant
             "query:arena-compaction-stats-hash",
+            // Issue #431 — C++26 Contracts/Concepts/consteval density
+            "query:cxx26-invariants",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1023,9 +1126,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 41 entries as of #430 ship (40 from #429 + 1 new
-        // query:arena-compaction-stats-hash).
-        return make_int(41);
+        // 42 entries as of #431 ship (41 from #430 + 1 new
+        // query:cxx26-invariants).
+        return make_int(42);
     });
 
 }

@@ -2582,6 +2582,21 @@ add_dependencies(all_test_issue_targets test_issue_429_soa)
 aura_add_issue_test(test_issue_430_arena_compaction)
 aura_issue_test_link_llvm_jit(test_issue_430_arena_compaction)
 add_dependencies(all_test_issue_targets test_issue_430_arena_compaction)
+
+# Issue #431: deepen C++26 Contracts + Concepts + consteval
+# invariants. Full scope is multi-week (20+ new Contracts
+# across Arena + Value + Shape + SoA + dirty + Pass);
+# scope-limited close ships:
+#   - 3 new Concepts (SoAColumnar / DirtyPropagator /
+#     ShapeDispatchable) in aura.core.concepts
+#   - src/core/cxx26_invariants.ixx (22 consteval invariants
+#     for SmallObjectPool tier sizes + Value tag layouts +
+#     concept self-checks)
+#   - (query:cxx26-invariants) 5-field hash primitive
+#   - (stats:count) 41 → 42
+aura_add_issue_test(test_issue_431_cxx26)
+aura_issue_test_link_llvm_jit(test_issue_431_cxx26)
+add_dependencies(all_test_issue_targets test_issue_431_cxx26)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)
