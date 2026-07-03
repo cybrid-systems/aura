@@ -2637,6 +2637,23 @@ add_dependencies(all_test_issue_targets test_issue_442_seva_demo)
 aura_add_issue_test(test_issue_444_strategy_evolution)
 aura_issue_test_link_llvm_jit(test_issue_444_strategy_evolution)
 add_dependencies(all_test_issue_targets test_issue_444_strategy_evolution)
+
+# Issue #445: OpenClaw / LLM Agent integration layer for
+# SEVA natural-language goals. Full scope: NL goal →
+# sequence of query/mutate/eval calls + safety guardrails
+# + audit log + OpenClaw skill/plugin + integration
+# contract docs. Scope-limited close ships the AURA-SIDE
+# foundation:
+#   - 4 SEVA goal primitives (seva:achieve-coverage,
+#     seva:fix-reset-bugs, seva:generate-regression,
+#     seva:approve-mutation)
+#   - (query:seva-audit-log) audit trail primitive
+#   - demos/seva/openclaw-skill/seva_skill.py — example
+#     OpenClaw skill showing the integration shape
+#   - (stats:count) 44 → 45
+aura_add_issue_test(test_issue_445_openclaw_integration)
+aura_issue_test_link_llvm_jit(test_issue_445_openclaw_integration)
+add_dependencies(all_test_issue_targets test_issue_445_openclaw_integration)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)
