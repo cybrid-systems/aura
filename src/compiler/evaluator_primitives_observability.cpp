@@ -1639,6 +1639,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:mutation-audit-log",
             // Issue #464 — Arena auto-compaction lifecycle
             "query:arena-auto-stats",
+            // Issue #677 — deployment / health / metrics export
+            "query:deployment-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1656,9 +1658,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 54 entries as of #464 ship (53 from #676 + 1 new
-        // query:arena-auto-stats).
-        return make_int(54);
+        // 55 entries as of #677 ship (54 from #464 + 1 new
+        // query:deployment-stats).
+        return make_int(55);
     });
 
 }

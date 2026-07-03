@@ -13,6 +13,7 @@
 #endif
 #include "serve/serve_async.h"
 #include "serve/scheduler.h"
+#include "serve/http_health.h"
 #include "serve/aura_platform.h"
 
 import std;
@@ -508,6 +509,53 @@ int main(int argc, char* argv[]) {
         }
         return -1;
     };
+    // Issue #677: HTTP health/metrics (AURA_HTTP_PORT or --health-port).
+    auto parse_health_port = [&]() -> int {
+        int port = aura::serve::http::port_from_env();
+        for (int i = 1; i < argc; ++i) {
+            const std::string_view a(argv[i]);
+            if (a == "--health-port" && i + 1 < argc) {
+                port = std::atoi(argv[i + 1]);
+                break;
+            }
+            if (a.starts_with("--health-port=")) {
+                port = std::atoi(a.data() + 13);
+                break;
+            }
+        }
+        return port;
+    };
+    const int health_port = parse_health_port();
+    if (health_port > 0) {
+        static std::atomic<bool> health_ready{true};
+        aura::serve::http::HealthConfig cfg;
+        cfg.ready = &health_ready;
+        cfg.metrics_prometheus = [] { return aura::serve::prometheus_scheduler_metrics(); };
+        cfg.runtime_resolved = [] { return aura::serve::http::runtime_c_resolved(); };
+        aura::serve::http::start_health_server(health_port, cfg);
+        static int health_atexit =
+            (std::atexit(+[]() { aura::serve::http::stop_health_server(); }), 0);
+        (void)health_atexit;
+    }
+
+    if (argc > 1 && std::string_view(argv[1]) == "--health-server") {
+        const int port = (argc > 2) ? std::atoi(argv[2]) : (health_port > 0 ? health_port : 8080);
+        if (port <= 0) {
+            std::println(std::cerr, "usage: aura --health-server [PORT]");
+            return 1;
+        }
+        if (health_port <= 0) {
+            static std::atomic<bool> health_ready{true};
+            aura::serve::http::HealthConfig cfg;
+            cfg.ready = &health_ready;
+            cfg.runtime_resolved = [] { return aura::serve::http::runtime_c_resolved(); };
+            aura::serve::http::start_health_server(port, cfg);
+        }
+        std::println(std::cout, "aura health server listening on :{}", port);
+        for (;;)
+            ::pause();
+    }
+
     int wt_idx = parse_worker_threads();
     if (wt_idx >= 0) {
         // Shift remaining args to remove --worker-threads

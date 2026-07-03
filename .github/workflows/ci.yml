@@ -323,3 +323,30 @@ jobs:
 
     - name: Verify reproducible builds match
       run: python3 build.py repro --verify
+
+  # Issue #677: health endpoint smoke (main only).
+  deployment-health:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [gate]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Build aura
+      run: python3 build.py build
+
+    - name: Health endpoint smoke
+      run: |
+        AURA_RUNTIME_DIR=$PWD ./build/aura --health-server 18087 &
+        pid=$!
+        sleep 1
+        curl -fsS http://127.0.0.1:18087/healthz
+        curl -fsS http://127.0.0.1:18087/readyz
+        curl -fsS http://127.0.0.1:18087/metrics | grep -q 'aura_up 1'
+        kill $pid
+        ./build/test_issue_677
