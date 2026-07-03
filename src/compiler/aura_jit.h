@@ -211,6 +211,14 @@ public:
     // redefine path so the next compile() actually re-runs the
     // LLVM pipeline instead of returning a stale fn_ptr.
     void invalidate(const char* name);
+    // Issue #660 follow-up: invalidate all JIT cache entries
+    // whose key starts with `prefix` (e.g. "mul" → erases
+    // "mul#0", "mul#1", ...). Used by cache_define on redefine
+    // since the actual JIT cache keys are `name + "#" + pos`,
+    // not the bare name. Without prefix-based invalidation,
+    // the redefine's old compiled function pointer remains
+    // in compile_fns_ and the next exec returns the old body.
+    void invalidate_prefix(const char* prefix);
 
 private:
     struct Impl;

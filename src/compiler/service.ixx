@@ -4926,13 +4926,30 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         }
 
         if (is_redefine) {
-            // Clear stale JIT cache entries — the inlined __lambda__ function
-            // from the previous definition is cached by name and won't be
-            // evicted by invalidate_function (which erases by fn name, not lambda)
+            // Issue #660 follow-up: JIT cache keys are
+            // `name + "#" + position` (e.g. "mul#0"), not the
+            // bare user name. The previous fix erased
+            // "__lambda__" + name_str, both of which miss the
+            // actual entry. Walk the cache and erase any
+            // entries whose key starts with name_str + "#"
+            // (covers mul#0, mul#1, ... for the user's mul).
+            // Also call jit_.invalidate_prefix(name_str) to
+            // clear the AuraJIT::compile_fns_ + fn_trackers_
+            // caches (which are keyed by ir_fn.name, also
+            // name + "#" + pos).
             {
                 std::unique_lock cache_write(jit_cache_mtx_);
-                jit_cache_.erase("__lambda__");
+                std::string prefix = name_str + "#";
+                for (auto it = jit_cache_.begin(); it != jit_cache_.end(); ) {
+                    if (it->first == "__lambda__" ||
+                        it->first.rfind(prefix, 0) == 0) {
+                        it = jit_cache_.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
             }
+            jit_.invalidate_prefix(name_str.c_str());
             // Also drop the per-function compile cache inside AuraJIT
             // (compile_fns_) so the next compile() actually re-runs the
             // LLVM pipeline. Without this, compile() short-circuits
