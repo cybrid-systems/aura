@@ -175,7 +175,7 @@ jobs:
       run: python3 build.py --sanitizer=asan build
 
     - name: Upload ASAN binaries
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: asan-binaries
         path: |
@@ -293,7 +293,7 @@ jobs:
       run: python3 build.py sbom --version=ci-${{ github.sha }}
 
     - name: Upload SBOM artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: aura-sbom
         path: dist/aura-sbom.json
