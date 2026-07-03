@@ -75,6 +75,21 @@ cmake --preset macos && cmake --build build-mac -j
 echo '(+ 1 2)' | ./build-mac/aura   # → 3
 ```
 
+## Demos
+
+The flagship EDA demo is **SEVA** — a self-evolving
+verification agent that drives a hardware verification
+closed-loop using Aura's mutation + query primitives.
+
+- Architecture + how-it-works: [docs/demos/seva.md](docs/demos/seva.md)
+- Step-by-step tutorial: [demos/seva/TUTORIAL.md](demos/seva/TUTORIAL.md)
+- Runnable demo: `cat demos/seva/seva_demo.aura | ./build/aura`
+- OpenClaw skill: `python3 demos/seva/openclaw-skill/seva_skill.py "Achieve 95% coverage on FIFO"`
+
+The loop: load DUT → verify:parse-coverage-feedback
+→ query:verify-dirty-stats → strategy evolution controller
+→ mutate:replace-pattern → query:seva-audit-log → repeat.
+
 ## License
 
 Apache 2.0

@@ -1215,6 +1215,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:strategy-evolution-stats",
             // Issue #445 — SEVA audit log (OpenClaw integration)
             "query:seva-audit-log",
+            // Issue #446 — SEVA demo with metrics
+            "seva:run-demo-with-metrics",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1232,9 +1234,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 45 entries as of #445 ship (44 from #444 + 1 new
-        // query:seva-audit-log).
-        return make_int(45);
+        // 46 entries as of #446 ship (45 from #445 + 1 new
+        // seva:run-demo-with-metrics).
+        return make_int(46);
     });
 
 }
