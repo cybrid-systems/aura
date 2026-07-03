@@ -2428,6 +2428,10 @@ private:
     // ensure_mutation_invariants() on Guard dtor and
     // materialize_call_env hot paths.
     mutable std::atomic<std::uint64_t> total_invariant_violations_{0};
+    // Issue #679: nested Guard + atomic-batch rollback alignment.
+    mutable std::atomic<std::uint64_t> nested_guard_depth_max_{0};
+    mutable std::atomic<std::uint64_t> suppressed_misalign_caught_{0};
+    mutable std::atomic<std::uint64_t> macro_rollback_hits_{0};
     // Issue #420: MacroIntroduced marker vs macro_dirty_
     // (kMacroExpansion) end-to-end contract drift. Bumped by
     // ensure_macro_hygiene_contract() on eval-current and
@@ -3250,6 +3254,11 @@ public:
     struct MutationCheckpoint {
         std::uint64_t version;             // defuse_version_ at boundary entry
         std::size_t mutation_log_size = 0; // FlatAST::mutation_log_.size() at entry
+        // Issue #679: atomic-batch + macro marker snapshot at outermost
+        // boundary entry for rollback realignment.
+        bool bump_suppressed_at_entry = false;
+        std::uint64_t macro_introduced_count_at_entry = 0;
+        std::uint16_t flat_generation_at_entry = 0;
         // Issue #221: snapshot of FlatAST::children_ (the per-node
         // PersistentChildVector list). On rollback (exit(false)),
         // the captured vector is reinstalled in workspace_flat_->
@@ -3362,17 +3371,39 @@ public:
         fine_rollback_for_next_boundary_ = false;
         std::pmr::vector<aura::ast::SymId> sym_id_snapshot;
         aura::ast::FlatAST::ParamColumnsSnapshot param_snapshot;
+        bool bump_suppressed_at_entry = false;
+        std::uint64_t macro_introduced_count_at_entry = 0;
+        std::uint16_t flat_generation_at_entry = 0;
         if (workspace_flat_) {
             children_snapshot = workspace_flat_->snapshot_children();
             if (fine_rollback) {
                 sym_id_snapshot = workspace_flat_->snapshot_sym_id();
                 param_snapshot = workspace_flat_->snapshot_param_columns();
             }
+            bump_suppressed_at_entry = workspace_flat_->atomic_batch_active();
+            flat_generation_at_entry = workspace_flat_->generation();
         }
-        active_mutation_stack().push_back(
-            {defuse_version_.load(std::memory_order_acquire), log_size,
-             std::move(children_snapshot), fine_rollback, std::move(sym_id_snapshot),
-             std::move(param_snapshot)});
+        MutationCheckpoint cp{
+            defuse_version_.load(std::memory_order_acquire), log_size,
+            bump_suppressed_at_entry, macro_introduced_count_at_entry,
+            flat_generation_at_entry, std::move(children_snapshot), fine_rollback,
+            std::move(sym_id_snapshot), std::move(param_snapshot)};
+        active_mutation_stack().push_back(std::move(cp));
+        const std::size_t depth = active_mutation_stack().size();
+        std::uint64_t prev_max =
+            nested_guard_depth_max_.load(std::memory_order_relaxed);
+        while (depth > prev_max &&
+               !nested_guard_depth_max_.compare_exchange_weak(
+                   prev_max, depth, std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {}
+        if (depth == 1 && workspace_flat_) {
+            for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
+                if (workspace_flat_->is_macro_introduced(id))
+                    ++macro_introduced_count_at_entry;
+            }
+            active_mutation_stack().back().macro_introduced_count_at_entry =
+                macro_introduced_count_at_entry;
+        }
         defuse_version_.fetch_add(1, std::memory_order_release);
         // Issue #189: bump the total-mutations counter for
         // observability. Relaxed because it's stats-only.
@@ -3450,6 +3481,19 @@ public:
                 workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
                 stats.sym_id_column_restored = true;
                 stats.param_columns_restored = true;
+            }
+            // Issue #679: realign atomic-batch suppressed flag if a
+            // nested path left it inconsistent with the snapshot.
+            if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
+                if (cp.bump_suppressed_at_entry)
+                    workspace_flat_->begin_atomic_batch();
+                else
+                    workspace_flat_->rollback_atomic_batch();
+                suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (stats.children_column_restored &&
+                cp.macro_introduced_count_at_entry > 0) {
+                macro_rollback_hits_.fetch_add(1, std::memory_order_relaxed);
             }
             last_boundary_rollback_stats_ = stats;
             // Invalidate the def-use index — the workspace state
@@ -3624,6 +3668,16 @@ public:
     }
     [[nodiscard]] std::uint64_t get_total_invariant_violations() const noexcept {
         return total_invariant_violations_.load(std::memory_order_relaxed);
+    }
+    // Issue #679: nested Guard / atomic-batch / macro rollback stats.
+    [[nodiscard]] std::uint64_t nested_guard_depth_max() const noexcept {
+        return nested_guard_depth_max_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t suppressed_misalign_caught() const noexcept {
+        return suppressed_misalign_caught_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t macro_rollback_hits() const noexcept {
+        return macro_rollback_hits_.load(std::memory_order_relaxed);
     }
     // Issue #417: lightweight cross-TU invariant check for
     // active_mutation_stack() vs mutation_boundary_depth_slot.
