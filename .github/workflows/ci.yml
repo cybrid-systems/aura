@@ -36,7 +36,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
         key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
@@ -130,7 +130,7 @@ jobs:
       with:
         fetch-depth: 0
 
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
         key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
@@ -246,7 +246,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
         key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
@@ -273,7 +273,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
         key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
@@ -313,7 +313,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
         key: pip-${{ runner.os }}-aura-ci-v1.0.1-${{ hashFiles('requirements-dev.txt') }}
