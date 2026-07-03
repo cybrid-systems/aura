@@ -7164,6 +7164,19 @@ private:
         mark_module_dirty(name);
         for (auto& d : dependents)
             mark_module_dirty(d);
+
+        // Issue #683: post re-lower linear ownership revalidate probe.
+        run_linear_ownership_revalidate_after_invalidate(name);
+    }
+
+    // Issue #683: LinearOwnershipRevalidate after invalidate/re-lower.
+    void run_linear_ownership_revalidate_after_invalidate(const std::string& name) {
+        (void)name;
+        metrics_.linear_relower_revalidate_hits.fetch_add(
+            1, std::memory_order_relaxed);
+        metrics_.linear_post_mutate_revalidations_total.fetch_add(
+            1, std::memory_order_relaxed);
+        evaluator_.probe_linear_ownership_at_gc_safepoint();
     }
 
     ast::ASTArena arena_;

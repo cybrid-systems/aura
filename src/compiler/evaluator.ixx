@@ -1426,6 +1426,14 @@ public:
     void collect_compiler_managed_gc_roots(std::vector<std::int64_t>& closure_roots_out,
                                            std::vector<std::int64_t>& env_roots_out,
                                            std::uint64_t current_bridge_epoch) const;
+    // Issue #683: linear ownership runtime probe at GC safepoint /
+    // fiber steal / post-invalidate re-lower boundaries.
+    [[nodiscard]] static bool validate_linear_ownership_state(
+        std::uint8_t linear_state, std::uint64_t frame_version,
+        std::uint64_t current_version, std::uint64_t bridge_epoch,
+        std::uint64_t current_bridge_epoch) noexcept;
+    void probe_linear_ownership_at_gc_safepoint() noexcept;
+    void probe_linear_ownership_on_fiber_steal() noexcept;
     // ── GC sweep / compaction (Issue #113 Phase 3) ──────────
     // After the GC collector has marked live objects, this method
     // reclaims the unmarked ones. Called from the GC coordinator's
@@ -3091,6 +3099,9 @@ public:
             bump_gc_safepoint_deferred();
             return 1;
         }
+        // Issue #683: probe linear ownership before sweep when
+        // safepoint is not deferred by MutationBoundary.
+        probe_linear_ownership_at_gc_safepoint();
         return 0;
     }
     // Issue #439: wait_for_safepoint(timeout_ms) — the
@@ -3116,6 +3127,8 @@ public:
     void transfer_mutation_stack_to_current_fiber() noexcept {
         sync_per_fiber_mutation_stack(nullptr);
         bump_mutation_steal_attempt();
+        // Issue #683: linear ownership enforcement on fiber steal.
+        probe_linear_ownership_on_fiber_steal();
     }
     // Issue #391: validate a (id . gen) stable-ref pair
     // against the current workspace's generation. Returns

@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "observability_metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -486,6 +487,22 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // materialize_call_env) is reading.
     std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
     const EnvFrame& fr = env_frame(cl.env_id);
+    // Issue #683: linear-capturing closure materialize gate — bridge_epoch
+    // tracked closures participate in linear ownership + EnvFrame version_.
+    if (cl.bridge_epoch != 0 && compiler_metrics_) {
+        const auto cur_ver = defuse_version_.load(std::memory_order_acquire);
+        const auto ok = validate_linear_ownership_state(
+            1, fr.version_, cur_ver, cl.bridge_epoch, current_bridge_epoch());
+        auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+        m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
+        if (!ok) {
+            m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+            m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+            m->linear_gc_safepoint_violations.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            m->linear_check_pass_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     // Issue #418: dual-path consistency probe on materialize.
     ensure_envframe_dual_path_consistency(fr);
     // Issue #242: detect a stale frame (captured before the

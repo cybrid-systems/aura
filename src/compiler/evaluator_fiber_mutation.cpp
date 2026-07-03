@@ -501,4 +501,12 @@ aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms) {
     ev->wait_for_safepoint(timeout_ms);
 }
 
+// Issue #683: linear ownership enforcement on work-steal.
+extern "C" void aura_evaluator_probe_linear_on_steal() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        return;
+    ev->probe_linear_ownership_on_fiber_steal();
+}
+
 } // namespace aura::compiler

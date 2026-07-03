@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "observability_metrics.h"
 #include "serve/gc_coordinator.h"
 
 module aura.compiler.evaluator;
@@ -143,6 +144,83 @@ std::size_t Evaluator::gc_root_count() const {
         }
     }
     return n;
+}
+
+bool Evaluator::validate_linear_ownership_state(
+    std::uint8_t linear_state, std::uint64_t frame_version,
+    std::uint64_t current_version, std::uint64_t bridge_epoch,
+    std::uint64_t current_bridge_epoch) noexcept {
+    if (linear_state == 0)
+        return true;
+    if (frame_version < current_version)
+        return false;
+    if (bridge_epoch != 0 && bridge_epoch != current_bridge_epoch)
+        return false;
+    return true;
+}
+
+static void record_linear_gc_probe(Evaluator& ev, bool violation,
+                                   std::atomic<std::uint64_t>* site_counter) {
+    if (site_counter)
+        site_counter->fetch_add(1, std::memory_order_relaxed);
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    if (!m)
+        return;
+    m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
+    if (violation) {
+        m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+        m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        m->linear_gc_safepoint_violations.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        m->linear_check_pass_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
+    const auto current_ver = defuse_version_snapshot();
+    const auto current_bridge = current_bridge_epoch();
+    bool violation = false;
+    std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+    std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    for (const auto& [id, cl] : closures_) {
+        (void)id;
+        if (cl.bridge_epoch == 0)
+            continue;
+        if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+            continue;
+        const auto& fr = env_frames_[cl.env_id];
+        if (!validate_linear_ownership_state(1, fr.version_, current_ver,
+                                             cl.bridge_epoch, current_bridge)) {
+            violation = true;
+            break;
+        }
+    }
+    record_linear_gc_probe(*this, violation, nullptr);
+}
+
+void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
+    const auto current_ver = defuse_version_snapshot();
+    const auto current_bridge = current_bridge_epoch();
+    bool violation = false;
+    std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+    std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    for (const auto& [id, cl] : closures_) {
+        (void)id;
+        if (cl.bridge_epoch == 0)
+            continue;
+        if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+            continue;
+        const auto& fr = env_frames_[cl.env_id];
+        if (!validate_linear_ownership_state(1, fr.version_, current_ver,
+                                             cl.bridge_epoch, current_bridge)) {
+            violation = true;
+            break;
+        }
+    }
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    std::atomic<std::uint64_t>* site =
+        m ? &m->linear_steal_enforced : nullptr;
+    record_linear_gc_probe(*this, violation, site);
 }
 
 void Evaluator::collect_compiler_managed_gc_roots(
