@@ -305,7 +305,14 @@ target_sources(test_ir PRIVATE
     # "undefined reference to aura_jit_fallback_count_v_read".
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp)
+    src/compiler/aura_jit_bridge.cpp
+    # Issue #675 follow-up: http_health.cpp provides
+    # aura::serve::http::port_from_env (used by
+    # evaluator_primitives_security.cpp's
+    # (query:security-stats) primitive). Without this
+    # the test_ir link fails with "undefined reference
+    # to aura::serve::http::port_from_env".
+    src/serve/http_health.cpp)
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
@@ -553,6 +560,14 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/sv_ir_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
+    # Issue #675 follow-up: http_health.cpp provides
+    # aura::serve::http::port_from_env (used by
+    # evaluator_primitives_security.cpp's
+    # (query:security-stats) primitive). Without this
+    # the test_gc_evaluator_integration link fails
+    # with "undefined reference to
+    # aura::serve::http::port_from_env".
+    src/serve/http_health.cpp
 )
 aura_test_compile_options(test_gc_evaluator_integration)
 # Issue #278 follow-up: pre-existing build fix. The C++26 contract
