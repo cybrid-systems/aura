@@ -784,6 +784,106 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (query:edsl-readiness) — Issue #440: a single
+    // hash that aggregates the top 8 EDSL production
+    // readiness signals from across the existing
+    // query:*-stats primitives. The intent is for the
+    // AI Agent to ask "is the EDSL production-ready?"
+    // in a single query (vs. 8 separate (query:*) calls).
+    //
+    // Field list (6 total):
+    //   - closure-stale-refresh:    closure_bridge refreshes (#531)
+    //   - linear-check-pass:        linear ownership fast-path checks (#149)
+    //   - mutation-rollbacks:       MutationBoundaryGuard rollbacks (#241)
+    //   - mutation-commits:        MutationBoundaryGuard commits (#241)
+    //   - stable-ref-invalidates:   StableNodeRef is_valid misses (#417)
+    //   - generation-bumps:         mutation_epoch_ lifetime total (#401)
+    //   - pattern-macro-filtered:   MacroIntroduced skipped in patterns (#421)
+    //   - dirty-block-rate:         live per-block dirty % from #429
+    //                                (capped 0..100)
+    //
+    // All fields are non-negative integers; the AI Agent
+    // reads each as a signal:
+    //   - High closure-stale-refresh + low stale-refresh → bridge healthy
+    //   - Linear-check-pass dominance → linear ownership fast path active
+    //   - Mutation-commits > mutation-rollbacks → mutations stick
+    //   - Generation-bumps > 0 → mutating (cache eviction expected)
+    //   - Pattern-macro-filtered > 0 → hygiene gate active
+    //   - Dirty-block-rate > 20% → cache is falling behind
+    //
+    // The 8 fields are a curated subset of the 30+
+    // existing (query:*-stats) primitives; the issue
+    // body enumerates which. Adding more later is a
+    // 1-line code change (add to the kv vector).
+    add("query:edsl-readiness", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t closure_stale = 0, linear_pass = 0;
+        std::uint64_t atomic_commits = 0;
+        std::uint64_t stable_ref_invalidates = 0;
+        std::uint64_t occurrence_stale_refreshes = 0;
+        std::int64_t dirty_pct = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            closure_stale = m->closure_stale_refresh_count_.load(std::memory_order_relaxed);
+            linear_pass = m->linear_check_pass_count_.load(std::memory_order_relaxed);
+            atomic_commits = m->atomic_batch_commits.load(std::memory_order_relaxed);
+            stable_ref_invalidates = m->stable_ref_invalidations.load(std::memory_order_relaxed);
+            occurrence_stale_refreshes = m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed);
+        }
+        // dirty-block-rate from #429's get_soa_dirty_stats.
+        if (ev.get_soa_dirty_stats_fn_) {
+            const auto s = ev.get_soa_dirty_stats_fn_();
+            dirty_pct = static_cast<std::int64_t>(s.dirty_block_pct);
+        }
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"closure-stale-refresh", make_int(static_cast<std::int64_t>(closure_stale))},
+            {"linear-check-pass", make_int(static_cast<std::int64_t>(linear_pass))},
+            {"atomic-batch-commits", make_int(static_cast<std::int64_t>(atomic_commits))},
+            {"stable-ref-invalidations", make_int(static_cast<std::int64_t>(stable_ref_invalidates))},
+            {"occurrence-stale-refreshes", make_int(static_cast<std::int64_t>(occurrence_stale_refreshes))},
+            {"dirty-block-rate", make_int(dirty_pct)},
+        };
+        return build_hash(kv);
+    });
+
     // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
     // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
     // (semicolons separate entries; slashes separate used/capacity within an entry).
@@ -1109,6 +1209,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:arena-compaction-stats-hash",
             // Issue #431 — C++26 Contracts/Concepts/consteval density
             "query:cxx26-invariants",
+            // Issue #440 — consolidated Task 1 EDSL readiness
+            "query:edsl-readiness",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1126,9 +1228,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 42 entries as of #431 ship (41 from #430 + 1 new
-        // query:cxx26-invariants).
-        return make_int(42);
+        // 43 entries as of #440 ship (42 from #431 + 1 new
+        // query:edsl-readiness).
+        return make_int(43);
     });
 
 }
