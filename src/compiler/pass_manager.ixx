@@ -3324,4 +3324,151 @@ private:
     std::vector<Result> results_;
 };
 
+// ── ShapeAwareFoldingPass — Issue #462 ────────────────────────
+//
+// New optimization pass that exploits IRInstruction's rich
+// metadata (shape_id, linear_ownership_state,
+// adt_variant_id, narrow_evidence) for two hot-path wins:
+//
+//  1. **Linear elision**: when an op's source slot has
+//     `linear_ownership_state == Owned` (value 1) and is
+//     not in the escape_map, the subsequent MoveOp on that
+//     slot is redundant — the value is provably not aliased
+//     so the move is a no-op. We elide by replacing MoveOp
+//     with Nop (the source register still carries the
+//     right value, and Nop is a zero-cost instruction).
+//
+//  2. **Narrow-evidence fold**: when an op has
+//     `narrow_evidence != 0` (the type has been narrowed
+//     by a type-predicate branch) and the op is a
+//     dynamic-type-check (e.g. OpTypeCheck on a value
+//     whose narrow_evidence already covers the check), the
+//     type-check is provably true and can be elided. For
+//     the scope-limited slice we count these opportunities
+//     but don't actually rewrite the IR — the rewrites
+//     follow in #462 follow-ups (Cycle 2 of the same
+//     issue).
+//
+// Observable stats:
+//   - fold_count: # of instructions replaced (Nop'd) due
+//     to shape/linear/narrow metadata
+//   - linear_elide_count: subset of fold_count due to
+//     linear-ownership elision
+//   - narrow_check_count: # of redundant type-checks
+//     detected (counted, not yet elided in Cycle 1)
+//   - guard_shape_hits: # of GuardShape instructions seen
+//     in the module (signal for downstream passes to
+//     trust the per-block shape_id)
+//
+// Cycle 2 (separate issue) will add the actual narrow-
+// evidence rewrite + the per-shape-id OpAdd unchecked
+// specialization. The pass scaffolding + counters +
+// run() + observability hookup are the Cycle 1 ship.
+export class ShapeAwareFoldingPass {
+public:
+    void run(aura::ir::IRModule& module) {
+        for (auto& func : module.functions) {
+            run_on_function(func);
+        }
+    }
+
+    bool has_error() const { return false; }
+    std::string_view name() const { return "shape-aware-folding"; }
+
+    // Counters for (query:shape-folding-stats) primitive.
+    std::uint64_t fold_count() const { return fold_count_; }
+    std::uint64_t linear_elide_count() const { return linear_elide_count_; }
+    std::uint64_t narrow_check_count() const { return narrow_check_count_; }
+    std::uint64_t guard_shape_hits() const { return guard_shape_hits_; }
+
+    // Test seam: cycle the pass with a known escape map
+    // (production wires this from EscapeAnalysisPass).
+    void set_escape_map(std::string function_name,
+                        std::vector<std::uint8_t> escape) {
+        escape_maps_[std::move(function_name)] = std::move(escape);
+    }
+
+private:
+    void run_on_function(aura::ir::IRFunction& func) {
+        // Build the escape map for this function. Default
+        // to "all slots escape" (conservative) if no
+        // override was provided via set_escape_map — that
+        // way the pass never elides unless EscapeAnalysis
+        // has explicitly marked the slot as non-escaping.
+        std::vector<std::uint8_t> escape_map(func.local_count, 1);
+        if (auto it = escape_maps_.find(func.name); it != escape_maps_.end()) {
+            auto& src = it->second;
+            for (std::size_t i = 0; i < escape_map.size() && i < src.size(); ++i)
+                escape_map[i] = src[i];
+        }
+
+        for (auto& block : func.blocks) {
+            for (auto& instr : block.instructions) {
+                // Count GuardShape occurrences (signal for
+                // downstream passes).
+                if (instr.opcode == aura::ir::IROpcode::GuardShape) {
+                    ++guard_shape_hits_;
+                    continue;
+                }
+
+                // Linear elision: MoveOp on a slot that
+                // (a) is Owned (linear_ownership_state == 1)
+                // (b) is not in the escape map
+                // → the move is provably a no-op, replace
+                // with Nop.
+                if (instr.opcode == aura::ir::IROpcode::MoveOp) {
+                    auto src_slot = instr.operands.size() > 1
+                        ? instr.operands[1] : 0;
+                    if (src_slot < func.local_count &&
+                        escape_map[src_slot] == 0) {
+                        // Find the IRInstruction with this
+                        // result that has linear_ownership_state
+                        // == 1 (Owned).
+                        bool src_owned = false;
+                        for (const auto& prev_block : func.blocks) {
+                            for (const auto& prev : prev_block.instructions) {
+                                if (!prev.operands.empty() &&
+                                    prev.operands[0] == src_slot &&
+                                    prev.linear_ownership_state == 1) {
+                                    src_owned = true;
+                                    break;
+                                }
+                            }
+                            if (src_owned) break;
+                        }
+                        if (src_owned) {
+                            instr.opcode = aura::ir::IROpcode::Nop;
+                            instr.operands = {};
+                            ++linear_elide_count_;
+                            ++fold_count_;
+                            continue;
+                        }
+                    }
+                }
+
+                // Narrow-evidence count (rewrite deferred
+                // to Cycle 2).
+                if (instr.narrow_evidence != 0) {
+                    // Type-check-ish opcodes (Issue #149
+                    // Phase 1): when narrow_evidence covers
+                    // the check, the check is redundant.
+                    // We count the opportunity; the actual
+                    // rewrite (OpNop replacement) is Cycle 2.
+                    // CastOp is the runtime type-check opcode
+                    // (Issue #149: result, value, type_tag).
+                    if (instr.opcode == aura::ir::IROpcode::CastOp) {
+                        ++narrow_check_count_;
+                    }
+                }
+            }
+        }
+    }
+
+    std::uint64_t fold_count_ = 0;
+    std::uint64_t linear_elide_count_ = 0;
+    std::uint64_t narrow_check_count_ = 0;
+    std::uint64_t guard_shape_hits_ = 0;
+    std::map<std::string, std::vector<std::uint8_t>> escape_maps_;
+};
+
 } // namespace aura::compiler
