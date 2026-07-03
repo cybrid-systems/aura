@@ -283,8 +283,19 @@ jobs:
 
     - name: Install Trivy
       run: |
+        # Issue #675 fix-up: pin to a known-available
+        # release. v0.58.1 was yanked from the GitHub
+        # release page (the install script downloaded a
+        # 404 tarball, causing the security-scan job to
+        # fail with exit 1). v0.72.0 is the latest stable
+        # release (2026-06-30) with all linux/amd64
+        # assets present. Update this pin when bumping
+        # the Trivy minor; verify the release still
+        # exists via:
+        #   curl -sI https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz
+        # (302 redirect = good; 404 = yanked).
         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-          | sh -s -- -b /usr/local/bin v0.58.1
+          | sh -s -- -b /usr/local/bin v0.72.0
 
     - name: Security scan
       run: python3 build.py security
