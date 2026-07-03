@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**639** registrations scanned from `src/**/*.cpp`.
+**640** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 146 primitives (23%)
 - **core**: 187 primitives (29%)
-- **internal-observable**: 159 primitives (25%)
+- **internal-observable**: 160 primitives (25%)
 - **convenience**: 147 primitives (23%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (159)
+## Query: (160)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -155,6 +155,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:shape-folding-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:shape-stability-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:siblings` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:soa-adoption-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:soa-dirty-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:soa-hotpath-adoption-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:solve-delta-safety-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -1096,7 +1097,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (159)
+### Internal observable (stats/counters) (160)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1230,6 +1231,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:shape-folding-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:shape-stability-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:siblings` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:soa-adoption-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:soa-dirty-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:soa-hotpath-adoption-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:solve-delta-safety-stats` — `src/compiler/evaluator_primitives_query.cpp`

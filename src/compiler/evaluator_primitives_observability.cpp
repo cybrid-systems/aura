@@ -344,6 +344,71 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (query:soa-adoption-stats) — Issue #463: SoA Phase 2
+    // adoption observability. Returns a 3-field hash:
+    //   - soa-functions-visited: lifetime # of SoA
+    //     functions walked by the bridge pass
+    //   - soa-instructions-visited: lifetime # of SoA
+    //     instructions walked
+    //   - aos-view-built-count: lifetime # of SoA→AoS
+    //     view conversions
+    //
+    // This is the AI Agent's signal for "is the SoA
+    // rollout progressing?". A rising
+    // soa-instructions-visited count with no
+    // aos-view-built-count growth means the SoA path is
+    // being used end-to-end (the AoS view is a one-time
+    // scaffold; subsequent cycles replace it with
+    // SoA-aware Pass overloads).
+    add("query:soa-adoption-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t funcs = 0;
+        std::uint64_t instrs = 0;
+        std::uint64_t views = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            funcs = m->soa_functions_visited.load(std::memory_order_relaxed);
+            instrs = m->soa_instructions_visited.load(std::memory_order_relaxed);
+            views = m->aos_view_built_count.load(std::memory_order_relaxed);
+        }
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"soa-functions-visited", make_int(static_cast<std::int64_t>(funcs))},
+            {"soa-instructions-visited", make_int(static_cast<std::int64_t>(instrs))},
+            {"aos-view-built-count", make_int(static_cast<std::int64_t>(views))},
+        };
+        return build_hash(kv);
+    });
+
     // (atomic-batch:stats) — Issue #192: observability for
     // mutate:atomic-batch. Hash with batch-count, ops-total,
     // rollback-count, ops-per-batch (avg).
@@ -1429,6 +1494,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:aot-stats",
             // Issue #462 — ShapeAwareFoldingPass
             "query:shape-folding-stats",
+            // Issue #463 — SoA Phase 2 adoption
+            "query:soa-adoption-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1446,9 +1513,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 49 entries as of #462 ship (48 from #452 + 1 new
-        // query:shape-folding-stats).
-        return make_int(49);
+        // 50 entries as of #463 ship (49 from #462 + 1 new
+        // query:soa-adoption-stats).
+        return make_int(50);
     });
 
 }

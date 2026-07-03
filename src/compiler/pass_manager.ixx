@@ -23,6 +23,7 @@ import aura.compiler.ir;
 import aura.core.type;
 import aura.compiler.ir;
 import aura.compiler.compute_kind;
+import aura.compiler.ir_soa;
 import aura.compiler.arity;
 import aura.compiler.constant_folding;
 import aura.compiler.type_checker;
@@ -3469,6 +3470,80 @@ private:
     std::uint64_t narrow_check_count_ = 0;
     std::uint64_t guard_shape_hits_ = 0;
     std::map<std::string, std::vector<std::uint8_t>> escape_maps_;
+};
+
+// ── SoAtoAoSBridgePass — Issue #463 (Phase 2 wiring scaffold) ─────
+//
+// This Pass consumes an IRModuleV2 (SoA) + a templated AoS
+// Pass type P, converts each SoA function to AoS via
+// to_aos_view(), runs P on the AoS view, then propagates
+// the result back (currently a no-op — the SoA module is
+// the read-only input; the AoS result is discarded).
+//
+// Counters:
+//   - soa_functions_visited: # of SoA functions walked
+//   - soa_instructions_visited: # of SoA instructions walked
+//   - aos_view_built_count: # of to_aos_view() conversions
+//     (incremented each time the bridge is invoked)
+//
+// The Pass concept expects `run(IRModule&)`. The bridge
+// works at a different level (IRModuleV2 + a Pass instance
+// + the SoA-side wiring), so it doesn't itself satisfy the
+// Pass concept — it's invoked explicitly from the
+// service.ixx pipeline after the SoA-built module is
+// available, BEFORE the AoS pipeline that consumes the
+// legacy IRModule. This is the test-seam wiring for the
+// Phase 2 SoA→AoS migration; subsequent cycles replace
+// the AoS side with a SoA-aware overload of the same Pass
+// (e.g. ConstantFoldingWrap::run_soa).
+export template <typename P>
+class SoAtoAoSBridgePass {
+public:
+    explicit SoAtoAoSBridgePass(P& pass) : pass_(pass) {}
+
+    // Run the bridge: convert each SoA function to AoS, run
+    // the wrapped AoS pass on the AoS view, bump counters.
+    // Returns true if the wrapped pass returned no errors.
+    bool run(IRModuleV2& soa_mod) {
+        // Build a temporary AoS IRModule from the SoA module
+        // for the wrapped pass to consume. This is the
+        // bridge — the SoA side is the source of truth, the
+        // AoS side is a view.
+        aos_view_ = aura::ir::IRModule{};
+        aos_view_.entry_function_id = soa_mod.entry_function_id;
+        aos_view_.string_pool = soa_mod.string_pool;
+        aos_view_.functions.reserve(soa_mod.functions.size());
+        for (const auto& soa_fn : soa_mod.functions) {
+            ++soa_functions_visited_;
+            soa_instructions_visited_ += soa_fn.opcodes_.size();
+            ++aos_view_built_count_;
+            auto aos_fn = aura::compiler::to_aos_view(soa_fn);
+            aos_view_.functions.push_back(std::move(aos_fn));
+        }
+        // Run the wrapped pass on the AoS view.
+        pass_.run(aos_view_);
+        // Propagate any error state from the wrapped pass.
+        return !pass_.has_error();
+    }
+
+    // Counters for (query:soa-adoption-stats) primitive.
+    std::uint64_t soa_functions_visited() const { return soa_functions_visited_; }
+    std::uint64_t soa_instructions_visited() const { return soa_instructions_visited_; }
+    std::uint64_t aos_view_built_count() const { return aos_view_built_count_; }
+
+    // Test seam: read-only access to the AoS view that was
+    // built during the last run() call.
+    const aura::ir::IRModule& aos_view() const { return aos_view_; }
+
+    bool has_error() const { return pass_.has_error(); }
+    std::string_view name() const { return "soa-to-aos-bridge"; }
+
+private:
+    P& pass_;
+    std::uint64_t soa_functions_visited_ = 0;
+    std::uint64_t soa_instructions_visited_ = 0;
+    std::uint64_t aos_view_built_count_ = 0;
+    aura::ir::IRModule aos_view_;
 };
 
 } // namespace aura::compiler

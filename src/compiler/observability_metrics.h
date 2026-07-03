@@ -166,6 +166,23 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> shape_linear_elide_count{0};
     std::atomic<std::uint64_t> shape_narrow_check_count{0};
     std::atomic<std::uint64_t> guard_shape_hits{0};
+
+    // Issue #463: SoA Phase 2 adoption counters (lifetime totals).
+    // Bumped in service.ixx by SoAtoAoSBridgePass accumulators
+    // after each compile. The SoA scaffold (#167 / #429) is in
+    // place but adoption is still opt-in; these counters let the
+    // AI Agent monitor the rollout.
+    //   - soa_functions_visited: # of SoA functions walked by
+    //     the bridge pass
+    //   - soa_instructions_visited: # of SoA instructions
+    //     walked (sum across all functions)
+    //   - aos_view_built_count: # of SoA→AoS view conversions
+    //     (should equal soa_functions_visited; the counter
+    //     exists separately so a future Pass can build multiple
+    //     AoS views per function if needed)
+    std::atomic<std::uint64_t> soa_functions_visited{0};
+    std::atomic<std::uint64_t> soa_instructions_visited{0};
+    std::atomic<std::uint64_t> aos_view_built_count{0};
     // Issue #629: zero-overhead coercion path observability.
     //   - coercion_castop_emitted_total: CastOps inserted by
     //     TypeSpecializationWrap
