@@ -1717,6 +1717,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:cxx26-hotpath-invariants",
             // Issue #678 — PCV span lifetime safety in query layer
             "query:span-lifetime-stats",
+            // Issue #679 — nested Guard + atomic-batch rollback alignment
+            "query:nested-guard-atomic-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1734,9 +1736,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 57 entries as of #678 ship (56 from #465 + 1 new
-        // query:span-lifetime-stats).
-        return make_int(57);
+        // 58 entries as of #679 ship (57 from #678 + 1 new
+        // query:nested-guard-atomic-stats).
+        return make_int(58);
     });
 
 }
