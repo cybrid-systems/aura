@@ -7,6 +7,13 @@
 module;
 
 #include "../core/persistent_child_vector.hh"
+// Issue #441 (rolled into #450): bump_primitive_call_count
+// needs the CompilerMetrics struct (defined in
+// observability_metrics.h). observability_metrics.h is a
+// plain header (not a module), so we include it directly
+// here in the module preamble (avoids the import-only
+// restriction on .h).
+#include "observability_metrics.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -2688,6 +2695,18 @@ public:
     }
     void bump_rollback_success_on_panic() noexcept {
         rollback_success_on_panic_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #441 (rolled into #450): hot-path primitive
+    // dispatch counter. Called from the primitive-dispatch
+    // path in evaluator_eval_flat.cpp. No-op when
+    // compiler_metrics_ is unset (zero overhead in that
+    // case). The counter is used by
+    // (query:primitive-perf-stats).
+    inline void bump_primitive_call_count() noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->primitive_call_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     // Issue #549: self-evolution-stability accessors + bump
     // helpers. Public so the
