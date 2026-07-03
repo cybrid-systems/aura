@@ -216,6 +216,29 @@ bool run_incremental_pipeline(aura::ir::IRModule& mod, P& pass) {
     return true;
 }
 
+// Issue #686: incremental pipeline with DirtyAware short-circuit —
+// skip functions whose blocks are all clean when the pass exposes
+// is_block_dirty().
+export template <IncrementalPass P>
+    requires DirtyAwarePass<P>
+bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
+    for (auto& func : mod.functions) {
+        bool any_dirty = false;
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (pass.is_block_dirty(static_cast<std::uint32_t>(bi))) {
+                any_dirty = true;
+                break;
+            }
+        }
+        if (!any_dirty)
+            continue;
+        pass.run(func);
+        if (pass.has_error())
+            return false;
+    }
+    return true;
+}
+
 // ── Issue #381: static_asserts documenting the new concepts ────
 //
 // These are documentation-as-tests: the static_asserts would

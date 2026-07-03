@@ -18,6 +18,7 @@
 // cache miss pattern of unordered_map's
 // hash-bucket traversal.
 #include <flat_map>
+#include <functional>
 #include <vector>
 #include <string>
 #include "shape.h"
@@ -74,14 +75,56 @@ public:
     void set_window_size(std::uint32_t n) { window_size_ = n; }
     void set_stability_ratio(double r) { stability_ratio_ = r; }
 
+    // Issue #686: optional dirty-scope callback (IRSoA / block_dirty_).
+    void set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook) {
+        dirty_hook_ = std::move(hook);
+    }
+
 private:
     struct ShapeRecord {
         ShapeID shape_id;
         std::uint64_t timestamp;
     };
 
+    // Issue #686: fixed-capacity ring buffer — O(1) push vs vector erase(begin).
+    struct ShapeHistoryRing {
+        std::vector<ShapeRecord> slots;
+        std::uint32_t head = 0;
+        std::uint32_t count = 0;
+
+        void clear() noexcept {
+            head = 0;
+            count = 0;
+        }
+
+        void ensure_capacity(std::uint32_t cap) {
+            if (slots.size() != cap)
+                slots.resize(cap);
+        }
+
+        void push(const ShapeRecord& rec, std::uint32_t window_size);
+
+        [[nodiscard]] std::uint32_t size() const noexcept { return count; }
+
+        template <typename F>
+        void for_each(F&& f) const {
+            if (count == 0)
+                return;
+            if (count < slots.size()) {
+                for (std::uint32_t i = 0; i < count; ++i)
+                    f(slots[i]);
+                return;
+            }
+            const auto cap = static_cast<std::uint32_t>(slots.size());
+            for (std::uint32_t i = 0; i < cap; ++i) {
+                const auto idx = (head + i) % cap;
+                f(slots[idx]);
+            }
+        }
+    };
+
     struct FnProfile {
-        std::vector<ShapeRecord> history; // sliding window
+        ShapeHistoryRing history;
         std::uint64_t total_calls = 0;
         std::uint64_t version = 0;
         std::uint64_t deopt_count = 0;
@@ -104,10 +147,15 @@ private:
     std::uint32_t window_size_ = kDefaultWindowSize;
     double stability_ratio_ = kDefaultStabilityRatio;
     std::uint64_t global_time_ = 0;
+    std::function<void(FnKey fn, std::uint32_t dirty_scope)> dirty_hook_;
 };
 
-// Issue #570: deopt hook fired on version bump / stable→unstable.
-using ShapeDeoptHook = void (*)(FnKey fn, std::uint64_t version);
+// Issue #570 / #686: deopt hook fired on version bump / stable→unstable.
+// dirty_scope: 0 = advisory, 1 = stability loss, 2 = explicit invalidate.
+using ShapeDeoptHook = void (*)(FnKey fn, std::uint64_t version, std::uint32_t dirty_scope);
+
+inline constexpr std::uint32_t kShapeDirtyScopeStabilityLoss = 1;
+inline constexpr std::uint32_t kShapeDirtyScopeInvalidate = 2;
 
 void set_shape_deopt_hook(ShapeDeoptHook hook) noexcept;
 [[nodiscard]] ShapeDeoptHook shape_deopt_hook() noexcept;

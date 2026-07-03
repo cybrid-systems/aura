@@ -4,6 +4,8 @@ module;
 
 #include "runtime_shared.h"
 #include "compiler/observability_metrics.h"
+#include "shape.h"
+#include "value_tags.h"
 #include "security_capabilities.h"
 #include "serve/http_health.h"
 
@@ -393,6 +395,66 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             {"dirty-cascade-savings", make_int(static_cast<std::int64_t>(cascade))},
             {"partial-relower-ratio", make_int(static_cast<std::int64_t>(partial_ratio))},
             {"cache-miss-reduction", make_int(static_cast<std::int64_t>(cache_red))},
+        };
+        return build_hash(kv);
+    });
+
+    // Issue #686: ShapeProfiler ring history + Value v2 dispatch +
+    // DirtyAware pass short-circuit synergy stats.
+    add("query:shape-value-pass-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const std::uint64_t jitter =
+            shape::history_jitter_reduction_count.load(std::memory_order_relaxed);
+        const std::uint64_t dispatch =
+            types::value_dispatch_hit_count.load(std::memory_order_relaxed) +
+            types::value_dispatch_miss_count.load(std::memory_order_relaxed) +
+            types::value_contract_violation_count.load(std::memory_order_relaxed) +
+            types::v2_string_collision_attempts.load(std::memory_order_relaxed) +
+            types::value_classify_call_count.load(std::memory_order_relaxed) +
+            shape::inline_shape_ref_dispatch_count.load(std::memory_order_relaxed);
+        const std::uint64_t dirty_skip = ev.get_passes_skipped_type_dirty();
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t shape_sync = m
+            ? m->shape_ids_sync_hits.load(std::memory_order_relaxed) : 0;
+        (void)shape_sync;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"history-jitter-reduction", make_int(static_cast<std::int64_t>(jitter))},
+            {"dispatch-stats", make_int(static_cast<std::int64_t>(dispatch))},
+            {"dirty-shortcircuit-savings",
+             make_int(static_cast<std::int64_t>(dirty_skip))},
+            {"consteval-hits",
+             make_int(static_cast<std::int64_t>(shape::k_shape_value_consteval_hits))},
         };
         return build_hash(kv);
     });

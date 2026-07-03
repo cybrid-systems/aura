@@ -262,6 +262,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> irsoa_wired_hits{0};
     std::atomic<std::uint64_t> irsoa_dirty_cascade_savings{0};
     std::atomic<std::uint64_t> irsoa_cache_miss_reduction{0};
+    // Issue #686: ShapeProfiler stable-shape → IRSoA shape_ids_ sync.
+    std::atomic<std::uint64_t> shape_ids_sync_hits{0};
     // Issue #255: reference stability observability. The
     // FlatAST reference stability mechanism (generation_ +
     // node_gen_ + StableNodeRef) is a candidate for a

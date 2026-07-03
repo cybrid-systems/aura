@@ -286,6 +286,9 @@ export struct EscapeAnalysisWrap {
     std::vector<std::vector<std::uint8_t>> take_maps() { return std::move(maps); }
 };
 
+static_assert(DirtyAwarePass<EscapeAnalysisWrap>,
+              "EscapeAnalysisWrap exposes is_block_dirty for IRSoA wiring");
+
 // CompilerService — owns a full compilation session's lifecycle.
 //
 // Each request creates a fresh AST in the arena; after eval, arena
@@ -537,6 +540,11 @@ public:
         evaluator_.set_temp_arena(&temp_arena_);
         // Issue #685: ShapeProfiler synergy on arena compact/defrag.
         arena_.set_on_compact_hook([this]() { shape_profiler_.invalidate_all(); });
+        // Issue #686: shape stability loss / invalidate → IRSoA block_dirty_.
+        shape_profiler_.set_dirty_hook([this](shape::FnKey fn_key, std::uint32_t dirty_scope) {
+            (void)dirty_scope;
+            mark_shape_dirty_for_fn_key(fn_key);
+        });
         evaluator_.set_type_registry(&type_registry_);
         // Issue #252: wire the shared CompilerMetrics to the
         // Evaluator. apply_closure increments the closure_*
@@ -3455,6 +3463,8 @@ public:
                 for (auto& b : func_blocks)
                     b = 1;
             }
+            for (auto& soa_fn : soa_mod.functions)
+                soa_fn.mark_all_blocks_dirty();
         }
 
         // Mark a single block dirty. Resizes the bitmask
@@ -4103,16 +4113,19 @@ public:
         {
             aura::compiler::ComputeKindWrap ck_pass;
             aura::compiler::ConstantFoldingWrap cf_pass;
+            EscapeAnalysisWrap escape_pass;
             const auto& entry = it->second;
             if (!entry.block_dirty_per_func_.empty()) {
-                cf_pass.set_block_dirty_fn([&entry](std::uint32_t block_id) -> bool {
+                const auto block_dirty_fn = [&entry](std::uint32_t block_id) -> bool {
                     if (entry.block_dirty_per_func_.empty())
                         return true;
                     const auto& fb = entry.block_dirty_per_func_[0];
                     if (block_id >= fb.size())
                         return true;
                     return fb[block_id] != 0;
-                });
+                };
+                cf_pass.set_block_dirty_fn(block_dirty_fn);
+                escape_pass.set_block_dirty_fn(block_dirty_fn);
             }
             std::size_t clean_blocks_skipped = 0;
             for (auto& func : ir_mod.functions) {
@@ -4130,6 +4143,7 @@ public:
                 // Issue #538: DCE after post-mutate re-lower.
                 run_coercion_elim_on_function(func);
             }
+            escape_pass.run(ir_mod);
             if (clean_blocks_skipped > 0) {
                 metrics_.irsoa_cache_miss_reduction.fetch_add(clean_blocks_skipped,
                                                               std::memory_order_relaxed);
@@ -8253,7 +8267,8 @@ public:
             // No IR module — record against a generic key
             auto fn_key = shape::make_fn_key(session, "__eval__");
             auto shape_id = shape::inline_shape_of(result.val);
-            profiler.record_shape(fn_key, shape_id);
+            if (profiler.record_shape(fn_key, shape_id) && profiler.is_stable(fn_key))
+                sync_shape_ids_for_fn_key(fn_key, shape_id);
             return;
         }
 
@@ -8262,7 +8277,8 @@ public:
             if (fn.id == mod->entry_function_id) {
                 auto fn_key = shape::make_fn_key(session, fn.name);
                 auto shape_id = shape::inline_shape_of(result.val);
-                profiler.record_shape(fn_key, shape_id);
+                if (profiler.record_shape(fn_key, shape_id) && profiler.is_stable(fn_key))
+                    sync_shape_ids_for_fn_key(fn_key, shape_id);
 
                 // Also record argument shapes if we have them
                 // (Phase 2: expand to arg-level shape tracking)
@@ -8298,6 +8314,36 @@ public:
             return false;
         const auto snap = shape_profiler_.current_snapshot(fn_key);
         return entry.compiled_shape_version_ != snap.version;
+    }
+
+    // Issue #686: mark IR cache dirty for a ShapeProfiler FnKey.
+    void mark_shape_dirty_for_fn_key(shape::FnKey fn_key) {
+        for (auto& [name, entry] : ir_cache_v2_) {
+            if (shape::make_fn_key(session_id_, name) != fn_key)
+                continue;
+            entry.mark_all_blocks_dirty();
+            metrics_.irsoa_dirty_cascade_savings.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
+
+    // Issue #686: propagate stable dominant shape into IRSoA shape_ids_.
+    void sync_shape_ids_for_fn_key(shape::FnKey fn_key, shape::ShapeID shape_id) {
+        if (shape_id == shape::SHAPE_UNKNOWN)
+            return;
+        for (auto& [name, entry] : ir_cache_v2_) {
+            if (shape::make_fn_key(session_id_, name) != fn_key)
+                continue;
+            const auto sid = static_cast<std::uint32_t>(shape_id);
+            for (auto& soa_fn : entry.soa_mod.functions) {
+                for (auto& col : soa_fn.shape_ids_) {
+                    if (col == 0)
+                        col = sid;
+                }
+            }
+            metrics_.shape_ids_sync_hits.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
     }
 
     // Invalidate shape profile for a function (called after mutate:*).

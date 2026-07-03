@@ -2741,6 +2741,10 @@ add_dependencies(all_test_issue_targets test_issue_684)
 aura_add_issue_test(test_issue_685)
 aura_issue_test_link_llvm_jit(test_issue_685)
 add_dependencies(all_test_issue_targets test_issue_685)
+
+aura_add_issue_test(test_issue_686)
+aura_issue_test_link_llvm_jit(test_issue_686)
+add_dependencies(all_test_issue_targets test_issue_686)
 # Issue #464: Arena auto-compaction lifecycle + counter + primitive.
 aura_add_issue_test(test_issue_464_arena_auto_compaction)
 aura_issue_test_link_llvm_jit(test_issue_464_arena_auto_compaction)

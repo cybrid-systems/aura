@@ -23,10 +23,14 @@ namespace {
 
 ShapeDeoptHook g_shape_deopt_hook = nullptr;
 
-void fire_shape_deopt_hook(FnKey fn, std::uint64_t version) noexcept {
+void fire_shape_deopt_hook(FnKey fn, std::uint64_t version,
+                           std::uint32_t dirty_scope) noexcept {
     shape_deopt_hook_fire_count.fetch_add(1, std::memory_order_relaxed);
+    if (dirty_scope != 0) {
+        shape_dirty_hook_fire_count.fetch_add(1, std::memory_order_relaxed);
+    }
     if (g_shape_deopt_hook)
-        g_shape_deopt_hook(fn, version);
+        g_shape_deopt_hook(fn, version, dirty_scope);
 }
 
 ShapeID finish_inline_shape_id(ShapeID id) noexcept {
@@ -83,6 +87,7 @@ ShapeID inline_shape_of(std::int64_t val) {
             return finish_inline_shape_id(SHAPE_VOID);
         return finish_inline_shape_id(SHAPE_ANY);
     case EvalValueTag::Ref: {
+        inline_shape_ref_dispatch_count.fetch_add(1, std::memory_order_relaxed);
         const auto rt = ref_type(val);
         switch (rt) {
         case aura::compiler::types::RefPair:
@@ -256,13 +261,24 @@ std::string format_shape_id(ShapeID id) {
 
 ShapeProfiler::ShapeProfiler() = default;
 
+void ShapeProfiler::ShapeHistoryRing::push(const ShapeRecord& rec,
+                                           std::uint32_t window_size) {
+    ensure_capacity(window_size);
+    if (count < window_size) {
+        slots[count++] = rec;
+        return;
+    }
+    slots[head] = rec;
+    head = (head + 1) % window_size;
+    history_jitter_reduction_count.fetch_add(1, std::memory_order_relaxed);
+}
+
 ShapeID ShapeProfiler::FnProfile::compute_dominant() const {
-    if (history.empty())
+    if (history.size() == 0)
         return SHAPE_UNKNOWN;
 
     std::unordered_map<ShapeID, std::uint32_t> counts;
-    for (auto& rec : history)
-        counts[rec.shape_id]++;
+    history.for_each([&](const ShapeRecord& rec) { counts[rec.shape_id]++; });
 
     ShapeID best = SHAPE_UNKNOWN;
     std::uint32_t best_count = 0;
@@ -282,9 +298,7 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     auto& history = profile.history;
     std::uint64_t now = ++global_time_;
 
-    history.push_back({shape_id, now});
-    if (history.size() > window_size_)
-        history.erase(history.begin());
+    history.push({shape_id, now}, window_size_);
 
     profile.total_calls++;
 
@@ -293,12 +307,13 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
 
     auto dominant = profile.compute_dominant();
     auto dominant_count = 0;
-    for (auto& rec : history) {
+    history.for_each([&](const ShapeRecord& rec) {
         if (rec.shape_id == dominant)
             dominant_count++;
-    }
+    });
 
-    double ratio = static_cast<double>(dominant_count) / history.size();
+    const auto hist_size = history.size();
+    double ratio = static_cast<double>(dominant_count) / hist_size;
     if (ratio >= stability_ratio_ && profile.is_stable && profile.stable_shape == dominant) {
         return true;
     }
@@ -315,7 +330,9 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
 
     if (profile.is_stable) {
         mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
-        fire_shape_deopt_hook(fn, profile.version);
+        fire_shape_deopt_hook(fn, profile.version, kShapeDirtyScopeStabilityLoss);
+        if (dirty_hook_)
+            dirty_hook_(fn, kShapeDirtyScopeStabilityLoss);
     }
     profile.is_stable = false;
     profile.stable_shape = SHAPE_UNKNOWN;
@@ -360,7 +377,9 @@ bool ShapeProfiler::invalidate(FnKey fn) {
     if (was_stable) {
         mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
     }
-    fire_shape_deopt_hook(fn, it->second.version);
+    fire_shape_deopt_hook(fn, it->second.version, kShapeDirtyScopeInvalidate);
+    if (dirty_hook_)
+        dirty_hook_(fn, kShapeDirtyScopeInvalidate);
     return was_stable;
 }
 
@@ -381,18 +400,18 @@ ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {
     m.deopt_count = p.deopt_count;
 
     std::unordered_set<ShapeID> seen;
-    for (auto& rec : p.history)
-        seen.insert(rec.shape_id);
+    p.history.for_each([&](const ShapeRecord& rec) { seen.insert(rec.shape_id); });
     m.unique_shapes_seen = static_cast<std::uint32_t>(seen.size());
 
     if (p.history.size() >= kStableThreshold) {
         auto dominant = p.compute_dominant();
         auto dominant_count = 0;
-        for (auto& rec : p.history) {
+        p.history.for_each([&](const ShapeRecord& rec) {
             if (rec.shape_id == dominant)
                 dominant_count++;
-        }
-        m.shape_stability_ratio = static_cast<double>(dominant_count) / p.history.size();
+        });
+        m.shape_stability_ratio =
+            static_cast<double>(dominant_count) / p.history.size();
     }
 
     if (p.total_calls > 0 && p.deopt_count > 0) {
