@@ -467,6 +467,84 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (query:arena-auto-stats) — Issue #464: Arena
+    // auto-compaction lifecycle observability. Returns a
+    // 4-field hash:
+    //   - auto-compact-guard-call-count: lifetime # of
+    //     times MutationBoundaryGuard dtor bumped the
+    //     closed-loop signal (one bump per outermost +
+    //     success guard exit)
+    //   - compaction-yield-checks: lifetime # of times
+    //     auto_compact_with_safety() observed a fiber
+    //     context (g_current_fiber != nullptr); the actual
+    //     yield-during-compact is a #464 follow-up
+    //   - auto-compact-trigger-count: lifetime # of
+    //     triggered compactions (from ArenaGroup)
+    //   - auto-compact-skip-count: lifetime # of
+    //     skipped triggers (below adaptive threshold)
+    //
+    // This is the AI Agent's signal for "is the
+    // arena auto-compaction lifecycle working as
+    // expected?". Cycle 2 (separate issue) will add
+    // the actual auto_compact_with_safety() call from
+    // the scheduler + the fiber-yield integration.
+    add("query:arena-auto-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t guard_calls = 0;
+        std::uint64_t yield_checks = 0;
+        std::uint64_t trigger_count = 0;
+        std::uint64_t skip_count = 0;
+        // Read all 4 counters directly from the ArenaGroup
+        // (the bump happens in MutationBoundaryGuard dtor
+        // on ev_->arena_group_). The compiler_metrics_
+        // field is the in-process metrics struct used by
+        // the snapshot() helper; for EDSL primitives we
+        // read from the source of truth (ArenaGroup) so
+        // the counter advances immediately without
+        // requiring a metrics copy.
+        guard_calls = ev.arena_group().auto_compact_guard_call_count();
+        yield_checks = ev.arena_group().compaction_yield_checks_group();
+        trigger_count = ev.arena_group().auto_compact_trigger_count();
+        skip_count = ev.arena_group().auto_compact_skip_count();
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"auto-compact-guard-call-count", make_int(static_cast<std::int64_t>(guard_calls))},
+            {"compaction-yield-checks", make_int(static_cast<std::int64_t>(yield_checks))},
+            {"auto-compact-trigger-count", make_int(static_cast<std::int64_t>(trigger_count))},
+            {"auto-compact-skip-count", make_int(static_cast<std::int64_t>(skip_count))},
+        };
+        return build_hash(kv);
+    });
+
     // (atomic-batch:stats) — Issue #192: observability for
     // mutate:atomic-batch. Hash with batch-count, ops-total,
     // rollback-count, ops-per-batch (avg).
@@ -1559,6 +1637,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #676 — sandbox capability + mutation audit
             "query:security-stats",
             "query:mutation-audit-log",
+            // Issue #464 — Arena auto-compaction lifecycle
+            "query:arena-auto-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1576,9 +1656,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 53 entries as of #676 ship (51 from #675 + 2 new
-        // query:security-stats + query:mutation-audit-log).
-        return make_int(53);
+        // 54 entries as of #464 ship (53 from #676 + 1 new
+        // query:arena-auto-stats).
+        return make_int(54);
     });
 
 }

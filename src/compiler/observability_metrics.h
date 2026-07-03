@@ -183,6 +183,7 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> soa_functions_visited{0};
     std::atomic<std::uint64_t> soa_instructions_visited{0};
     std::atomic<std::uint64_t> aos_view_built_count{0};
+
     // Issue #629: zero-overhead coercion path observability.
     //   - coercion_castop_emitted_total: CastOps inserted by
     //     TypeSpecializationWrap
