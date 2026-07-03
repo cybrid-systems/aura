@@ -4100,6 +4100,32 @@ public:
             // Issue #422: hygiene violation detection hook on
             // Guard exit (mutate paths record attempts at block).
             ev_->ensure_hygiene_violation_detection();
+            // Issue #464: bump the ArenaGroup
+            // auto_compact_guard_call_count_ counter on
+            // every guard dtor (the closed-loop signal for
+            // long AI sessions). The actual
+            // auto_compact_with_safety() call is wired in
+            // #464 follow-up commits (Cycle 2) when the
+            // fiber-safety check + safe-point integration
+            // are in place. For now: counter only.
+            // Issue #464: bump the ArenaGroup
+            // auto_compact_guard_call_count_ counter on
+            // every outermost guard exit (the closed-loop
+            // signal for long AI sessions). The actual
+            // auto_compact_with_safety() call is wired in
+            // #464 follow-up commits (Cycle 2) when the
+            // fiber-safety check + safe-point integration
+            // are in place. For now: counter only.
+            //
+            // We bump on every outermost exit (regardless
+            // of success) so the agent can monitor
+            // mutation attempts (success + failure). The
+            // success/failure distinction is a #464
+            // follow-up. The counter is the precondition
+            // that the AI Agent can monitor.
+            if (outermost && ev_->arena_group_) {
+                ev_->arena_group_->bump_auto_compact_guard_call();
+            }
             // unique_lock destructor runs automatically here.
         }
         MutationBoundaryGuard(const MutationBoundaryGuard&) = delete;
