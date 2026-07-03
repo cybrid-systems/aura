@@ -1556,6 +1556,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:soa-adoption-stats",
             // Issue #675 — CI reproducibility + sanitizer gates
             "query:ci-reproducibility-stats",
+            // Issue #676 — sandbox capability + mutation audit
+            "query:security-stats",
+            "query:mutation-audit-log",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1573,9 +1576,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 51 entries as of #675 ship (50 from #463 + 1 new
-        // query:ci-reproducibility-stats).
-        return make_int(51);
+        // 53 entries as of #676 ship (51 from #675 + 2 new
+        // query:security-stats + query:mutation-audit-log).
+        return make_int(53);
     });
 
 }

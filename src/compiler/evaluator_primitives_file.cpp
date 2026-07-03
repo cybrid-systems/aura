@@ -6,6 +6,7 @@ module;
 #include <dirent.h>
 #include <sys/stat.h>
 #include "runtime_shared.h"
+#include "security_capabilities.h"
 
 module aura.compiler.evaluator;
 
@@ -20,6 +21,24 @@ using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 using namespace types;
 
 void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
+
+    const auto deny_io = [&ev](std::string_view cap, std::string_view msg) -> EvalValue {
+        if (!ev.sandbox_mode() || ev.has_capability(cap)
+            || ev.has_capability(aura::compiler::security::kCapIo)
+            || ev.has_capability(aura::compiler::security::kCapWildcard))
+            return make_void();
+        ev.bump_capability_denial();
+        return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                    ev.primitive_error_counter_ptr());
+    };
+    const auto deny_exec = [&ev](std::string_view msg) -> EvalValue {
+        if (!ev.sandbox_mode() || ev.has_capability(aura::compiler::security::kCapExec)
+            || ev.has_capability(aura::compiler::security::kCapWildcard))
+            return make_void();
+        ev.bump_capability_denial();
+        return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                    ev.primitive_error_counter_ptr());
+    };
 
     add("read", [&ev](const auto&) {
         std::string line;
@@ -37,7 +56,11 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
     };
 
-    add("read-file", [&ev, is_regular](const auto& a) {
+    add("read-file", [&ev, is_regular, deny_io](const auto& a) {
+        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                  "capability denied: io-read required");
+            is_error(denied))
+            return denied;
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
@@ -55,7 +78,11 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(id);
     });
 
-    add("write-file", [&ev](std::span<const EvalValue> a) {
+    add("write-file", [&ev, deny_io](std::span<const EvalValue> a) {
+        if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
+                                  "capability denied: io-write required");
+            is_error(denied))
+            return denied;
         if (a.size() < 2 || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
@@ -114,7 +141,11 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(::stat(path.c_str(), &st) == 0 ? 1 : 0);
     });
 
-    add("file-copy", [&ev, is_regular](const auto& a) {
+    add("file-copy", [&ev, is_regular, deny_io](const auto& a) {
+        if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
+                                  "capability denied: io-write required");
+            is_error(denied))
+            return denied;
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_void();
         auto sidx = as_string_idx(a[0]), didx = as_string_idx(a[1]);
@@ -132,7 +163,11 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(1);
     });
 
-    add("file-delete", [&ev](std::span<const EvalValue> a) {
+    add("file-delete", [&ev, deny_io](std::span<const EvalValue> a) {
+        if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
+                                  "capability denied: io-write required");
+            is_error(denied))
+            return denied;
         if (a.empty() || !is_string(a[0]))
             return make_int(0);
         auto idx = as_string_idx(a[0]);
@@ -153,7 +188,9 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(f.tellg()));
     });
 
-    add("shell", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("shell", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
+        if (auto denied = deny_exec("capability denied: exec required"); is_error(denied))
+            return denied;
         if (a.empty() || !is_string(a[0]))
             return make_int(-1);
         auto idx = as_string_idx(a[0]);
@@ -162,7 +199,9 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(::system(ev.string_heap_[idx].c_str()));
     });
 
-    add("command-output", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("command-output", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
+        if (auto denied = deny_exec("capability denied: exec required"); is_error(denied))
+            return denied;
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);

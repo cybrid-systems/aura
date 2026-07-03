@@ -45,6 +45,8 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_agent.cpp
     src/compiler/evaluator_primitives_memory.cpp
     src/compiler/evaluator_primitives_policy.cpp
+    src/compiler/evaluator_security.cpp
+    src/compiler/evaluator_primitives_security.cpp
     src/compiler/evaluator_primitives_eval.cpp
     src/compiler/evaluator_primitives_types.cpp
     src/compiler/evaluator_primitives_diagnostic.cpp
@@ -2682,6 +2684,10 @@ add_dependencies(all_test_issue_targets test_issue_463_soa_phase2_wiring)
 aura_add_issue_test(test_issue_675)
 aura_issue_test_link_llvm_jit(test_issue_675)
 add_dependencies(all_test_issue_targets test_issue_675)
+# Issue #676: sandbox capability enforcement + mutation audit log.
+aura_add_issue_test(test_issue_676)
+aura_issue_test_link_llvm_jit(test_issue_676)
+add_dependencies(all_test_issue_targets test_issue_676)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)

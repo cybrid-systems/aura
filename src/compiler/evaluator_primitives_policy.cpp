@@ -166,8 +166,17 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
         return result;
     });
 
-    add("capability?",
-                    [](const auto& a) -> EvalValue { return types::make_bool(false); });
+    add("capability?", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability?: requires capability name",
+                                        ev.primitive_error_counter_ptr());
+        }
+        const auto sidx = types::as_string_idx(a[0]);
+        if (sidx >= ev.string_heap_.size())
+            return types::make_bool(false);
+        return types::make_bool(ev.has_capability(ev.string_heap_[sidx]));
+    });
 
     add("check-capability", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {

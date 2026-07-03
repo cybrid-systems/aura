@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
+#include "security_capabilities.h"
 
 module aura.compiler.evaluator;
 
@@ -204,6 +205,17 @@ void register_mutate_primitives(
     PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
     std::function<void()> destroy_defuse_index) {
 
+    auto add_mutate = [&](std::string name, auto fn) {
+        add(std::move(name), [&ev, mev, fn](std::span<const EvalValue> a) -> EvalValue {
+            if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapMutate)
+                && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+                ev.bump_capability_denial();
+                return mev("capability-denied", "mutate capability required in sandbox mode");
+            }
+            return fn(a);
+        });
+    };
+
     // ── Typed mutation operators ──────────────────────────────────
 
     // (mutate:replace-type node-id new-type-str)
@@ -214,7 +226,7 @@ void register_mutate_primitives(
     // the workspace write lock (only had the version bump) —
     // migrating via the guard adds the lock that should have
     // been there.
-    add("mutate:replace-type", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:replace-type", [&ev](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // Yield at mutation boundary (Issue #31) — safe point before/after mutation.
@@ -286,7 +298,7 @@ void register_mutate_primitives(
     // add_mutation_with_rollback for int_val_/float_val_/sym_id_
     // — so the rollback path actually restores the original
     // value on exit(success=false).
-    add("mutate:replace-value", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:replace-value", [&ev](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // (Step 0.2/0.3) local merr removed; using centralized make_merr
@@ -407,7 +419,7 @@ void register_mutate_primitives(
     // change), so the rollback path is just "mark the
     // record as RolledBack + bump version" — no data
     // restoration needed.
-    add("mutate:record-patch", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:record-patch", [&ev](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // (Step 0.3 continuation) local merr removed; use centralized make_merr
@@ -818,7 +830,7 @@ void register_mutate_primitives(
     // node-id still has the same generation, #f otherwise.
     // Useful for agents that want to do an early validity check
     // before invoking a more expensive mutation.
-    add("mutate:check-stable-ref", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:check-stable-ref", [&ev, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         if (!is_pair(a[0]))
             return mev("bad-arg", "usage: (mutate:check-stable-ref (id . gen))");
@@ -869,7 +881,7 @@ void register_mutate_primitives(
     // P0: 3 policies. Disabled = no checks; Warn =
     // observe but don't block; Strict = block (return
     // tagged stale-ref error) on stale detection.
-    add("mutate:set-stale-ref-policy", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:set-stale-ref-policy", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -940,7 +952,7 @@ void register_mutate_primitives(
     // timeout is recorded (bump wait counter + bump
     // wait_total_ns) but the actual wait is a no-op
     // (the follow-up wires the real implementation).
-    add("mutate:request-gc-safepoint", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:request-gc-safepoint", [&ev](const auto& a) -> EvalValue {
         const int result = ev.request_gc_safepoint();
         if (a.size() >= 1 && is_int(a[0])) {
             const auto timeout_ms =
@@ -982,7 +994,7 @@ void register_mutate_primitives(
     // Both can fire on the same call site (e.g. typecheck
     // failure: guard rolls back the MutationRecord log +
     // panic_checkpoint restores the source).
-    add("mutate:rebind", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:rebind", [&ev, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         if (ev.workspace_read_only_) {
@@ -1287,7 +1299,7 @@ void register_mutate_primitives(
     // save_panic_checkpoint / restore_panic_checkpoint handle
     // panic recovery (separately). The two mechanisms are
     // complementary, not redundant.
-    add("mutate:set-body", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:set-body", [&ev, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         if (ev.workspace_read_only_) {
@@ -1494,7 +1506,7 @@ void register_mutate_primitives(
     //   - the manual `ev.defuse_version_.fetch_add(1)` for the
     //     second bump is removed (the guard does it on rollback
     //     only; on success the version advance from enter stays)
-    add("mutate:remove-node", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:remove-node", [&ev, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         aura::messaging::g_fiber_yield_mutation_boundary
@@ -1571,7 +1583,7 @@ void register_mutate_primitives(
     // insert_child + mark_dirty_upward to the strategy. Error
     // propagation flows through AuraResult<NodeId> for uniform
     // handling.
-    add("mutate:insert-child", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:insert-child", [&ev, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
         aura::messaging::g_fiber_yield_mutation_boundary
@@ -1656,7 +1668,7 @@ void register_mutate_primitives(
     // rollback path bumps the version and invalidates the
     // defuse index, which is enough to surface "the workspace
     // state changed" to readers.
-    add("mutate:tweak-literal", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:tweak-literal", [&ev, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         aura::messaging::g_fiber_yield_mutation_boundary
@@ -1735,7 +1747,7 @@ void register_mutate_primitives(
     // original children (the SoA column isn't in the rollback
     // switch), but it does bump the version + invalidate the
     // defuse index, so readers know the workspace state changed.
-    add("mutate:replace-pattern", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:replace-pattern", [&ev, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         using namespace aura::ast;
@@ -2084,7 +2096,7 @@ void register_mutate_primitives(
     // uses add_mutation_subtree (with has_subtree_rollback=true)
     // — so the rollback path can re-parse the old_subtree_source
     // and re-attach it at (parent_id, child_idx).
-    add("mutate:replace-subtree", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:replace-subtree", [&ev, mev](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         if (ev.workspace_read_only_) {
@@ -2412,7 +2424,7 @@ void register_mutate_primitives(
     //     sub-primitive fails) triggers rollback_since(
     //     initial_log_size) which actually undoes the
     //     per-op mutations recorded in the log.
-    add("mutate:atomic-batch", [&ev, mev](const auto& a) -> EvalValue {
+    add_mutate("mutate:atomic-batch", [&ev, mev](const auto& a) -> EvalValue {
         bool guard_ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
         // Issue #396 Phase 1: set the current fiber's yield reason
@@ -2580,7 +2592,7 @@ void register_mutate_primitives(
     // MutationBoundaryGuard. The primitive mutates children_
     // (SoA column not in rollback switch), so the rollback
     // path is "bump version + invalidate ev.defuse_index_".
-    add("mutate:splice", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:splice", [&ev](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // (Step 0.3) local merr removed; centralized make_merr
@@ -2682,7 +2694,7 @@ void register_mutate_primitives(
     // MutationBoundaryGuard. Mutates children_ (SoA column
     // not in rollback switch), so the rollback path is
     // "bump version + invalidate ev.defuse_index_".
-    add("mutate:wrap", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:wrap", [&ev](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // local merr removed; now centralized make_merr (phase complete)
@@ -2814,7 +2826,7 @@ void register_mutate_primitives(
     // a new define + replaces original with a call), but
     // rollback doesn't reverse the AST changes — it just
     // bumps the version + invalidates the defuse index.
-    add("mutate:refactor/extract", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:refactor/extract", [&ev](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
         // local merr removed; now centralized make_merr (phase complete)
@@ -3074,7 +3086,7 @@ void register_mutate_primitives(
     // the summary record. The rollback path is "bump version
     // + invalidate ev.defuse_index_" (no per-node data restoration
     // because there are too many).
-    add("mutate:rename-symbol", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:rename-symbol", [&ev](const auto& a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
@@ -3149,7 +3161,7 @@ void register_mutate_primitives(
     // switch), so the rollback path is "bump version +
     // invalidate ev.defuse_index_" — the actual move is not
     // reversed, but readers know the workspace state changed.
-    add("mutate:move-node", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:move-node", [&ev](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
@@ -3355,7 +3367,7 @@ void register_mutate_primitives(
     //   with the body of the called function, substituting arguments for
     //   formal parameters. Only works for directly defined named functions
     //   and inline lambdas with matching arity.
-    add("mutate:inline-call", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add_mutate("mutate:inline-call", [&ev](std::span<const EvalValue> a) -> EvalValue {
         using aura::ast::NodeId;
         using aura::ast::NodeTag;
         using aura::ast::SymId;
@@ -3620,7 +3632,7 @@ void register_mutate_primitives(
     //     records into the workspace AST so the
     //     primitive can mutate the actual record.
     //   - Returns #t on success, #f on bad args.
-    add("mutate:sv-add-coverpoint", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:sv-add-coverpoint", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();
@@ -3647,7 +3659,7 @@ void register_mutate_primitives(
     // P0 scope-limited ship: mirrors
     // (mutate:sv-add-coverpoint) — increments counters,
     // adds a mutation record, returns #t / #f.
-    add("mutate:sv-weaken-property", [&ev](const auto& a) -> EvalValue {
+    add_mutate("mutate:sv-weaken-property", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();
