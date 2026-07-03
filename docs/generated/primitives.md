@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**635** registrations scanned from `src/**/*.cpp`.
+**636** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 146 primitives (23%)
-- **core**: 186 primitives (29%)
+- **core**: 187 primitives (29%)
 - **internal-observable**: 156 primitives (25%)
 - **convenience**: 147 primitives (23%)
 
@@ -703,12 +703,13 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 - `scheduler:pin` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Seva: (4)
+## Seva: (5)
 
 - `seva:achieve-coverage` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `seva:approve-mutation` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `seva:fix-reset-bugs` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `seva:generate-regression` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:run-demo-with-metrics` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## Stats: (2)
 
@@ -902,7 +903,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (186)
+### Core builtins (must remain primitive) (187)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1052,6 +1053,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `seva:approve-mutation` — `src/compiler/evaluator_primitives_compile.cpp`
 - `seva:fix-reset-bugs` — `src/compiler/evaluator_primitives_compile.cpp`
 - `seva:generate-regression` — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:run-demo-with-metrics` — `src/compiler/evaluator_primitives_compile.cpp`
 - `shell` — `src/compiler/evaluator_primitives_file.cpp`
 - `sin` — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
