@@ -289,6 +289,118 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // (query:closure-stats) — Issue #428: unified closure
+    // observability surface in the query: family. Returns
+    // a hash with 9 fields covering both the dispatch
+    // (closure:stats 7 fields) and the bridge_epoch drift
+    // (bridge-epoch-hits, bridge-epoch-drift-pct). The
+    // drift is the percent of bridge_epoch checks that
+    // observed a stale epoch (vs hits which observed
+    // fresh) — the AI Agent's primary signal for
+    // "is the bridge falling behind the mutation rate?".
+    //
+    // Field list (9 total):
+    //   - calls-total:           every apply_closure call
+    //   - ffi-calls:             FFI-dispatched
+    //   - tw-calls:              tree-walker closures_ map hit
+    //   - ir-calls:              IR runtime_closures_ hit
+    //   - bridge-calls:          closure_bridge_ (IR/JIT)
+    //   - stale-returns:         stale-bridge nullopt returns
+    //   - bridge-fraction-pct:   bridge-calls / calls-total * 100
+    //   - bridge-epoch-hits:     # of bridge_epoch checks
+    //                            that succeeded (fresh)
+    //   - bridge-epoch-drift-pct: stale-returns /
+    //                            (bridge-epoch-hits + stale-returns)
+    //                            * 100. The AI Agent's primary
+    //                            signal — > 0 means the workspace
+    //                            is mutating faster than closures
+    //                            can refresh.
+    //
+    // Migration note: closure:stats is the pre-#428 primitive;
+    // query:closure-stats is the new unified surface. Both
+    // return the same hash shape; the new one just adds
+    // 2 bridge_epoch fields. The old primitive stays for
+    // backward compat (existing tests use closure:stats).
+    add("query:closure-stats", [&ev](const auto&) -> EvalValue {
+        // Reuse the same build_hash pattern as closure:stats.
+        // Inline here (instead of refactoring closure:stats to
+        // a helper) so the new primitive stays self-contained
+        // and easy to evolve independently.
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t calls = 0, ffi_c = 0, tw_c = 0, ir_c = 0;
+        std::uint64_t bridge_c = 0, stale_c = 0;
+        std::uint64_t bridge_epoch_hits = 0, bridge_epoch_drifts = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            calls = m->closure_calls_total.load(std::memory_order_relaxed);
+            ffi_c = m->closure_ffi_calls.load(std::memory_order_relaxed);
+            tw_c = m->closure_tw_calls.load(std::memory_order_relaxed);
+            ir_c = m->closure_ir_calls.load(std::memory_order_relaxed);
+            bridge_c = m->closure_bridge_calls.load(std::memory_order_relaxed);
+            stale_c = m->closure_stale_returns.load(std::memory_order_relaxed);
+            bridge_epoch_hits = m->bridge_epoch_hit_count_.load(std::memory_order_relaxed);
+            bridge_epoch_drifts = m->closure_stale_refresh_count_.load(std::memory_order_relaxed);
+        }
+        std::int64_t bridge_pct = calls > 0 ? static_cast<std::int64_t>((bridge_c * 100) / calls) : 0;
+        // Drift = stale-refreshes / (hits + drifts) * 100.
+        // 0 if no checks yet (avoids divide-by-zero in the
+        // dashboard, which would otherwise show NaN).
+        std::uint64_t total_epoch_checks = bridge_epoch_hits + bridge_epoch_drifts;
+        std::int64_t drift_pct = total_epoch_checks > 0
+            ? static_cast<std::int64_t>((bridge_epoch_drifts * 100) / total_epoch_checks)
+            : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"calls-total", make_int(static_cast<std::int64_t>(calls))},
+            {"ffi-calls", make_int(static_cast<std::int64_t>(ffi_c))},
+            {"tw-calls", make_int(static_cast<std::int64_t>(tw_c))},
+            {"ir-calls", make_int(static_cast<std::int64_t>(ir_c))},
+            {"bridge-calls", make_int(static_cast<std::int64_t>(bridge_c))},
+            {"stale-returns", make_int(static_cast<std::int64_t>(stale_c))},
+            {"bridge-fraction-pct", make_int(bridge_pct)},
+            {"bridge-epoch-hits", make_int(static_cast<std::int64_t>(bridge_epoch_hits))},
+            {"bridge-epoch-drift-pct", make_int(drift_pct)},
+        };
+        return build_hash(kv);
+    });
+
 }
 
 void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -693,6 +805,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:pattern-structural-index-stats",
             // Issue #424 — StableNodeRef WorkspaceTree COW safety
             "query:stable-ref-workspace-tree-stats",
+            // Issue #428 — closure bridge + bridge_epoch drift
+            "query:closure-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -710,10 +824,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 38 entries as of #560 ship (12 query:*-stats from
-        // #543-#556 + #531 + 14 pre-existing query stats + 11
-        // compile: stats + 1 query:primitive-error-stats).
-        return make_int(38);
+        // 39 entries as of #428 ship (38 from #560 + 1 new
+        // query:closure-stats).
+        return make_int(39);
     });
 
 }
