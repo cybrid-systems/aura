@@ -27,11 +27,10 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import time
 from dataclasses import dataclass
 
-
 # ── AuraServer — minimal pipe-based connection ───────────────
+
 
 @dataclass
 class AuraServer:
@@ -40,10 +39,11 @@ class AuraServer:
     For production: replace with a real transport (MCP /
     HTTP / gRPC) and the AuraServer keeps the same call() API.
     """
+
     proc: subprocess.Popen
 
     @classmethod
-    def spawn(cls, aura_bin: str = "./build/aura") -> "AuraServer":
+    def spawn(cls, aura_bin: str = "./build/aura") -> AuraServer:
         # Aura reads expressions from stdin, prints results.
         # Each top-level expression returns a value; we feed
         # them one at a time.
@@ -74,6 +74,7 @@ class AuraServer:
 
 # ── Goal parser ───────────────────────────────────────────────
 
+
 def parse_goal(goal: str) -> tuple[str, dict]:
     """Parse a natural-language SEVA goal into a (kind, params)
     pair.
@@ -88,6 +89,7 @@ def parse_goal(goal: str) -> tuple[str, dict]:
     if "coverage" in g and ("achieve" in g or "reach" in g):
         # Extract the target pct.
         import re
+
         m = re.search(r"(\d+)\s*%", g)
         target = int(m.group(1)) if m else 95
         # Extract the DUT name (everything after "on").
@@ -105,19 +107,18 @@ def parse_goal(goal: str) -> tuple[str, dict]:
 
 # ── Goal drivers ──────────────────────────────────────────────
 
+
 def achieve_coverage(server: AuraServer, name: str, target: int) -> dict:
     """Drive the SEVA loop until coverage target is met."""
     audit_log = []
     for iter_n in range(5):  # bounded iterations
         # 1. Read current state
-        gap_hash = server.call(
-            f'(hash-ref (seva:achieve-coverage "{name}" {target}) (quote gap))'
-        )
+        gap_hash = server.call(f'(hash-ref (seva:achieve-coverage "{name}" {target}) (quote gap))')
         try:
             gap = int(gap_hash)
         except ValueError:
             gap = -1
-        audit_log.append(f"  iter {iter_n+1}: gap={gap}")
+        audit_log.append(f"  iter {iter_n + 1}: gap={gap}")
 
         # 2. Approve the next mutation (auto-approved in MVP)
         server.call('(seva:approve-mutation 0 "auto")')
@@ -131,7 +132,7 @@ def achieve_coverage(server: AuraServer, name: str, target: int) -> dict:
             break
 
         # 4. Read audit log
-        audit = server.call('(hash-ref (query:seva-audit-log) (quote mutations-total))')
+        audit = server.call("(hash-ref (query:seva-audit-log) (quote mutations-total))")
         audit_log.append(f"  audit: mutations-total={audit}")
 
     return {
@@ -144,9 +145,7 @@ def achieve_coverage(server: AuraServer, name: str, target: int) -> dict:
 def fix_reset_bugs(server: AuraServer) -> dict:
     """Identify reset-related verification holes and target them."""
     # Read the reset-holes count
-    reset_holes = server.call(
-        '(hash-ref (seva:fix-reset-bugs) (quote reset-holes))'
-    )
+    reset_holes = server.call("(hash-ref (seva:fix-reset-bugs) (quote reset-holes))")
     return {
         "kind": "fix_reset_bugs",
         "reset_holes": reset_holes,
@@ -156,7 +155,7 @@ def fix_reset_bugs(server: AuraServer) -> dict:
 
 def generate_regression(server: AuraServer) -> dict:
     """Emit a regression script and return it as text."""
-    script = server.call('(seva:generate-regression)')
+    script = server.call("(seva:generate-regression)")
     return {
         "kind": "generate_regression",
         "script": script,
@@ -165,8 +164,8 @@ def generate_regression(server: AuraServer) -> dict:
 
 def verify_loop(server: AuraServer) -> dict:
     """Run one pass of the verification loop."""
-    audit = server.call('(query:seva-audit-log)')
-    readiness = server.call('(hash-ref (query:edsl-readiness) (quote dirty-block-rate))')
+    audit = server.call("(query:seva-audit-log)")
+    readiness = server.call("(hash-ref (query:edsl-readiness) (quote dirty-block-rate))")
     return {
         "kind": "verify_loop",
         "audit": audit,
@@ -175,6 +174,7 @@ def verify_loop(server: AuraServer) -> dict:
 
 
 # ── Main ──────────────────────────────────────────────────────
+
 
 def main() -> int:
     if len(sys.argv) < 2:
@@ -191,7 +191,7 @@ def main() -> int:
     try:
         # Make sure the workspace is loaded.
         server.call('(set-code "(define (f x) (+ x 1))")')
-        server.call('(eval-current)')
+        server.call("(eval-current)")
 
         if kind == "achieve_coverage":
             result = achieve_coverage(server, **params)
