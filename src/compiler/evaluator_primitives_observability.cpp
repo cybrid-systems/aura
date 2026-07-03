@@ -545,6 +545,71 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #685: (query:arena-auto-compact-stats) — alloc-path
+    // auto-compact policy + Shape/dirty synergy metrics.
+    add("query:arena-auto-compact-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t auto_triggers = 0;
+        std::uint64_t frag_reduced = 0;
+        std::uint64_t shape_inval = 0;
+        std::uint64_t defrag_savings = 0;
+        std::uint64_t yield_checks = 0;
+        if (ev.arena_) {
+            const auto s = ev.arena_->stats();
+            auto_triggers += s.auto_alloc_trigger_count;
+            frag_reduced += s.frag_reduced_bp;
+            shape_inval += s.shape_inval_on_compact;
+            defrag_savings += s.defrag_savings_alloc;
+            yield_checks += s.compaction_yield_checks;
+        }
+        if (ev.arena_group_) {
+            const auto ag = ev.arena_group_->auto_compact_policy_stats();
+            auto_triggers += ag.auto_triggers;
+            frag_reduced += ag.frag_reduced;
+            shape_inval += ag.shape_inval_on_compact;
+            defrag_savings += ag.defrag_savings;
+            yield_checks += ag.yield_checks_hit;
+        }
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"auto-triggers", make_int(static_cast<std::int64_t>(auto_triggers))},
+            {"frag-reduced", make_int(static_cast<std::int64_t>(frag_reduced))},
+            {"shape-inval-on-compact", make_int(static_cast<std::int64_t>(shape_inval))},
+            {"defrag-savings", make_int(static_cast<std::int64_t>(defrag_savings))},
+            {"yield-checks-hit", make_int(static_cast<std::int64_t>(yield_checks))},
+        };
+        return build_hash(kv);
+    });
+
     // (query:cxx26-hotpath-invariants) — Issue #465: C++26
     // hot-path Contracts + consteval invariants observability.
     // Returns a 5-field hash reporting the compile-time
@@ -1731,6 +1796,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:linear-ownership-gc-stats",
             // Issue #684 — IRSoA full wiring incremental stats
             "query:irsoa-incremental-stats",
+            // Issue #685 — arena auto-compact policy + defrag/shape synergy
+            "query:arena-auto-compact-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1748,9 +1815,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 64 entries as of #684 ship (63 from #470/#683 + 1 new
-        // query:irsoa-incremental-stats).
-        return make_int(64);
+        // 65 entries as of #685 ship (64 from #684 + 1 new
+        // query:arena-auto-compact-stats).
+        return make_int(65);
     });
 
 }

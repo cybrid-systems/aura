@@ -535,6 +535,8 @@ public:
         Evaluator::set_query_evaluator(&evaluator_);
         evaluator_.set_arena(&arena_);
         evaluator_.set_temp_arena(&temp_arena_);
+        // Issue #685: ShapeProfiler synergy on arena compact/defrag.
+        arena_.set_on_compact_hook([this]() { shape_profiler_.invalidate_all(); });
         evaluator_.set_type_registry(&type_registry_);
         // Issue #252: wire the shared CompilerMetrics to the
         // Evaluator. apply_closure increments the closure_*

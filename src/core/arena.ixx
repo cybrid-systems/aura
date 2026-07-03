@@ -3,6 +3,7 @@ module;
 #include <atomic>
 #include <cstddef>
 #include <format>
+#include <functional>
 #include <memory>
 #include <memory_resource>
 #include <string>
@@ -48,6 +49,11 @@ export struct ArenaStats {
     // primitive returns 0 for the defrag slot until then.
     std::size_t defrag_attempted_count = 0;
     std::size_t last_defrag_saved = 0;
+    // Issue #685: alloc-path auto-compact policy observability.
+    std::size_t auto_alloc_trigger_count = 0;
+    std::size_t frag_reduced_bp = 0;
+    std::size_t shape_inval_on_compact = 0;
+    std::size_t defrag_savings_alloc = 0;
 
     std::string format() const {
         return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
@@ -81,6 +87,10 @@ export struct ArenaStats {
         defrag_attempted_count += other.defrag_attempted_count;
         if (other.defrag_attempted_count > 0)
             last_defrag_saved = other.last_defrag_saved;
+        auto_alloc_trigger_count += other.auto_alloc_trigger_count;
+        frag_reduced_bp += other.frag_reduced_bp;
+        shape_inval_on_compact += other.shape_inval_on_compact;
+        defrag_savings_alloc += other.defrag_savings_alloc;
     }
 };
 
@@ -147,6 +157,12 @@ public:
     // Capacity of the small pool
     [[nodiscard]] std::size_t capacity() const { return kSmallPoolSize; }
 
+    // Issue #685: fraction of small-pool bytes in use [0,1].
+    [[nodiscard]] double utilization() const noexcept {
+        return static_cast<double>(allocated_from_small_) /
+               static_cast<double>(kSmallPoolSize);
+    }
+
 private:
     struct Tier {
         std::byte* start = nullptr;
@@ -210,6 +226,12 @@ public:
     }
     void clear_defrag_request() noexcept {
         defrag_requested_.store(false, std::memory_order_release);
+    }
+
+    // Issue #685: optional hook invoked after compact()/defrag()
+    // reclaims bytes (ShapeProfiler invalidate, dirty cascade).
+    void set_on_compact_hook(std::function<void()> hook) {
+        on_compact_hook_ = std::move(hook);
     }
 
     ~ASTArena() {
@@ -368,6 +390,7 @@ public:
             stats_.compaction_count++;
             stats_.last_compaction_saved = saved;
             stats_.total_compaction_saved += saved;
+            invoke_compact_hook_();
         }
         return saved;
     }
@@ -416,6 +439,7 @@ public:
         if (saved > 0) {
             stats_.defrag_attempted_count++;
             stats_.last_defrag_saved = saved;
+            invoke_compact_hook_();
         }
         // Note: NOT touching stats_.compaction_count /
         // last_compaction_saved. This is intentionally a separate
@@ -518,6 +542,8 @@ private:
         if (size <= SmallObjectPool::kMaxSmallSize) {
             void* ptr = small_pool_.try_allocate(size);
             if (ptr) {
+                stats_.allocation_count++;
+                maybe_auto_compact_on_alloc();
                 return ptr;
             }
             // Small-object tier exhausted — fall through to main arena
@@ -526,7 +552,46 @@ private:
         // Allocate from main pmr buffer
         void* ptr = resource_.allocate(size, alignment);
         stats_.used += size;
+        stats_.allocation_count++;
+        maybe_auto_compact_on_alloc();
         return ptr;
+    }
+
+    // Issue #685: auto-compact / defrag when fragmentation or
+    // small-pool pressure exceeds thresholds (alloc-path policy).
+    void maybe_auto_compact_on_alloc() noexcept {
+        static constexpr double kFragThreshold = 0.50;
+        static constexpr double kSmallPoolThreshold = 0.85;
+        const auto snap = stats();
+        const bool small_high = small_pool_.utilization() >= kSmallPoolThreshold;
+        const bool frag_high = snap.fragmentation_ratio() >= kFragThreshold;
+        const bool want_defrag = defrag_requested();
+        if (!small_high && !frag_high && !want_defrag)
+            return;
+
+        stats_.compaction_yield_checks++;
+        const double frag_before = snap.fragmentation_ratio();
+        std::size_t saved = 0;
+        if (want_defrag) {
+            saved = defrag();
+            if (saved > 0)
+                stats_.defrag_savings_alloc += saved;
+        } else {
+            saved = compact();
+        }
+        stats_.auto_alloc_trigger_count++;
+        const double frag_after = stats().fragmentation_ratio();
+        if (frag_before > frag_after) {
+            stats_.frag_reduced_bp += static_cast<std::size_t>(
+                (frag_before - frag_after) * 10000.0);
+        }
+    }
+
+    void invoke_compact_hook_() {
+        if (!on_compact_hook_)
+            return;
+        on_compact_hook_();
+        stats_.shape_inval_on_compact++;
     }
 
     std::size_t initial_size_ = 0; // Issue #187: for shrink_to_fit()
@@ -538,6 +603,16 @@ private:
     // Issue #300 Phase 3: see request_defrag() / defrag_requested()
     // / clear_defrag_request() for semantics.
     std::atomic<bool> defrag_requested_{false};
+    std::function<void()> on_compact_hook_;
+};
+
+// Issue #685: aggregate auto-compact policy stats for observability.
+export struct ArenaAutoCompactPolicyStats {
+    std::uint64_t auto_triggers = 0;
+    std::uint64_t frag_reduced = 0;
+    std::uint64_t shape_inval_on_compact = 0;
+    std::uint64_t defrag_savings = 0;
+    std::uint64_t yield_checks_hit = 0;
 };
 
 // ── ArenaGroup — multi-arena manager ─────────────────────────────
@@ -833,6 +908,22 @@ public:
 
     // Number of managed arenas
     [[nodiscard]] std::size_t count() const { return arenas_.size(); }
+
+    // Issue #685: sum alloc-path + group-level auto-compact policy stats.
+    [[nodiscard]] ArenaAutoCompactPolicyStats auto_compact_policy_stats() const {
+        ArenaAutoCompactPolicyStats out;
+        for (auto& [_, arena] : arenas_) {
+            const auto s = arena->stats();
+            out.auto_triggers += s.auto_alloc_trigger_count;
+            out.frag_reduced += s.frag_reduced_bp;
+            out.shape_inval_on_compact += s.shape_inval_on_compact;
+            out.defrag_savings += s.defrag_savings_alloc;
+            out.yield_checks_hit += s.compaction_yield_checks;
+        }
+        out.auto_triggers += auto_compact_trigger_count();
+        out.yield_checks_hit += compaction_yield_checks_group();
+        return out;
+    }
 
     // Issue #187 (P0): JSON snapshot of all managed arenas for
     // observability (the `observability_json` primitive surfaces
