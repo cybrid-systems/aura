@@ -45,6 +45,71 @@ jobs:
     - name: Static checks (docs + lint + fixtures)
       run: python3 build.py gate
 
+    # Issue #476: clang-format enforcement. The .clang-format
+    # file lives at the repo root (LLVM style, 4-space indent,
+    # 100-column limit). This step is a dry-run with -Werror
+    # so a formatting drift fails the gate before the (slow)
+    # build-test job starts. Excludes the .github/ directory
+    # (workflow YAML doesn't follow the project's C++ style)
+    # and build*/ (generated files).
+    - name: Check C++ formatting (clang-format --dry-run)
+      run: |
+        set +e
+        files=$(find src tests -name '*.cpp' -o -name '*.ixx' -o -name '*.hh' -o -name '*.h' 2>/dev/null)
+        if [ -z "$files" ]; then
+          echo "::warning::no source files found (unexpected)"
+          exit 0
+        fi
+        echo "Files to check:"
+        echo "$files" | head -5
+        echo "(... + $(( $(echo "$files" | wc -l) - 5 )) more)"
+        # -Werror makes the exit code non-zero if any file needs
+        # reformatting. The CI image has clang-format pre-installed
+        # (ghcr.io/cybrid-systems/aura-ci:v1.0.1).
+        echo "$files" | xargs clang-format --dry-run --Werror
+        rc=$?
+        set -e
+        if [ "$rc" -ne 0 ]; then
+          echo "::error::clang-format --dry-run failed: some files need reformatting"
+          echo "Run 'clang-format -i <file>' locally to fix, then commit."
+          exit 1
+        fi
+        echo "✓ clang-format --dry-run clean"
+
+    # Issue #476: clang-tidy static analysis (subset).
+    # The .clang-tidy config (repo root) whitelists the
+    # modern-C++ checks that catch real bugs without too
+    # much noise. We run it on a representative file set
+    # rather than the entire tree — clang-tidy on a
+    # 150k+ line codebase takes ~5 minutes, and the gate
+    # job runs on every PR. The file list is the union
+    # of the new code added by recent commits + the files
+    # most likely to grow new bugs (compilers / primitives).
+    # Main branch runs the full set on a longer-running
+    # job (TODO: add a separate clang-tidy-full job).
+    - name: Static analysis (clang-tidy subset)
+      run: |
+        set +e
+        files=$(find src/compiler/evaluator_primitives_query_workspace.cpp \
+                     src/compiler/evaluator_primitives_observability.cpp \
+                     src/core/arena.ixx \
+                     src/core/concepts.ixx \
+                     -type f 2>/dev/null)
+        if [ -z "$files" ]; then
+          echo "::warning::clang-tidy: no files found (unexpected)"
+          exit 0
+        fi
+        # HeaderFilterRegex in .clang-tidy keeps clang-tidy
+        # focused on src/ + tests/. -p . provides the
+        # compile_commands.json (or we fall back to a
+        # warning). clang-tidy is non-blocking for now —
+        # any warning produces a log line but doesn't fail
+        # the gate (so the gate stays green while the
+        # baseline is established). Once the warning count
+        # stabilizes, promote to blocking.
+        echo "$files" | xargs -I {} clang-tidy --quiet -p . {} || true
+        echo "✓ clang-tidy scan complete (non-blocking; see .clang-tidy for filter)"
+
   build-test:
     needs: [gate]
     runs-on: ubuntu-latest
