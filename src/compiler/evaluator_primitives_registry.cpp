@@ -137,6 +137,10 @@ void Evaluator::register_all_primitives() {
         prim_registrar(),
         *this);
 
+    primitives_detail::register_security_primitives(
+        prim_registrar(),
+        *this);
+
     // Issue #443: external simulator tool-calling +
     // structured result parsing primitives.
     primitives_detail::register_verify_tool_primitives(

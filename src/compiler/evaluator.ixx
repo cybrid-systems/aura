@@ -623,6 +623,7 @@ void register_strategy_primitives(std::function<void(std::string, PrimFn)> add, 
 void register_memory_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
                                 std::function<void()> destroy_defuse_index);
 void register_policy_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+void register_security_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
 void register_eval_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
                               std::function<EvalValue(const std::string&, const std::string&)> mev,
                               std::function<void()> destroy_defuse_index);
@@ -735,6 +736,8 @@ export class Evaluator {
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<void()> destroy_defuse_index);
     friend void primitives_detail::register_policy_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_security_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_eval_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
@@ -2572,6 +2575,25 @@ private:
     // ── Capability 上下文栈 ─────────────────────────────────────
     // 每层包含当前作用域允许的 effect 名称列表
     std::vector<std::vector<std::string>> capability_stack_;
+    // Issue #676: persistent grants (security:grant-capability!)
+    std::vector<std::string> granted_capabilities_;
+    // Issue #676: sandbox mode — when true, sensitive primitives
+    // require matching capabilities (io/mutate/exec).
+    bool sandbox_mode_ = false;
+    static constexpr std::size_t kMutationAuditRingSize = 64;
+    struct MutationAuditEntry {
+        std::uint64_t seq = 0;
+        std::uint64_t timestamp_ms = 0;
+        std::int64_t fiber_id = 0;
+        std::uint32_t nodes_changed = 0;
+        std::uint32_t epoch_delta = 0;
+        std::uint32_t target_node = 0;
+        char op[48]{};
+    };
+    std::array<MutationAuditEntry, kMutationAuditRingSize> mutation_audit_ring_{};
+    std::atomic<std::uint64_t> mutation_audit_seq_{0};
+    std::atomic<std::uint64_t> mutation_audit_total_{0};
+    std::atomic<std::uint64_t> capability_denial_count_{0};
 
     // ── Concurrent Channels (fiber-safe message passing) ─────
     struct Channel {
@@ -2623,6 +2645,31 @@ public:
     void set_allow_macro_mutate(bool v) noexcept {
         allow_macro_mutate_ = v;
     }
+    // Issue #676: sandbox + capability model.
+    [[nodiscard]] bool sandbox_mode() const noexcept { return sandbox_mode_; }
+    void set_sandbox_mode(bool v) noexcept { sandbox_mode_ = v; }
+    [[nodiscard]] bool has_capability(std::string_view cap) const noexcept;
+    void grant_capability(std::string cap);
+    void bump_capability_denial() noexcept {
+        capability_denial_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t capability_denial_count() const noexcept {
+        return capability_denial_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t mutation_audit_total() const noexcept {
+        return mutation_audit_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t mutation_audit_seq() const noexcept {
+        return mutation_audit_seq_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::size_t granted_capability_count() const noexcept {
+        return granted_capabilities_.size();
+    }
+    [[nodiscard]] const MutationAuditEntry& mutation_audit_entry_at(std::uint64_t seq) const noexcept {
+        return mutation_audit_ring_[seq % kMutationAuditRingSize];
+    }
+    void emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
+                             std::string_view op, ast::NodeId target_node) noexcept;
     // Issue #211: test accessors for the (tag, arity) index.
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
         // Issue #371: shared_lock for read parity with
@@ -3508,6 +3555,17 @@ public:
             slot.epoch_delta = epoch_delta;
             slot.nodes_changed = nodes_changed;
             slot.reasons_mask = reasons_mask;
+            // Issue #676: security audit event for successful mutations.
+            std::string_view audit_op = "structural";
+            ast::NodeId audit_target = ast::NULL_NODE;
+            const auto& log = workspace_flat_->all_mutations();
+            if (post_size > cp.mutation_log_size && post_size <= log.size()) {
+                const auto& rec = log[post_size - 1];
+                audit_op = rec.operator_name;
+                audit_target = rec.target_node;
+            }
+            emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
+                                static_cast<std::uint32_t>(epoch_delta), audit_op, audit_target);
         }
         return cp;
     }
