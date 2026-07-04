@@ -449,20 +449,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         // local; the follow-up uses GlobalMetrics).
         const std::uint64_t gc_pauses =
             aura_fiber_static_gc_pause_attributed_to_mutation();
-        // For the P0, the per-fiber yield counts are
-        // 0 (they require a per-fiber aggregate; the
-        // follow-up adds it). The sum is the gc_pauses
-        // counter + 0, which the test verifies is
-        // non-negative.
-        const std::uint64_t sum = gc_pauses;
-        // Build a simple "{gc_pauses: N}" string.
-        // The follow-up returns a structured
-        // (yield_mutation_boundary, yield_explicit,
-        //  yield_scheduler_steal, yield_blocking_io,
-        //  yield_operation_boundary, steal_success,
-        //  steal_deferred, gc_pauses) tuple.
+        std::uint64_t eda_sv_cycles = 0;
+        std::uint64_t eda_sv_corruption = 0;
+        if (auto* ev = Evaluator::get_query_evaluator()) {
+            if (const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics())) {
+                eda_sv_cycles = m->eda_sv_evolution_cycles_total.load(
+                    std::memory_order_relaxed);
+                eda_sv_corruption = m->eda_sv_corruption_detected_total.load(
+                    std::memory_order_relaxed);
+            }
+        }
+        const std::uint64_t sum = gc_pauses + eda_sv_cycles;
         std::string result = "{\"gc_pauses_attributed_to_mutation\":";
         result += std::to_string(gc_pauses);
+        result += ",\"eda_sv_evolution_cycles\":";
+        result += std::to_string(eda_sv_cycles);
+        result += ",\"eda_sv_corruption_detected\":";
+        result += std::to_string(eda_sv_corruption);
         result += ",\"sum\":";
         result += std::to_string(sum);
         result += "}";

@@ -2543,6 +2543,14 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         int cycles = 100;
         if (a.size() >= 2 && is_int(a[1]))
             cycles = static_cast<int>(as_int(a[1]));
+        if (const char* env_cycles = std::getenv("AURA_SV_DEMO_CYCLES")) {
+            if (env_cycles[0] != '\0') {
+                char* end = nullptr;
+                const long parsed = std::strtol(env_cycles, &end, 10);
+                if (end != env_cycles && parsed > 0)
+                    cycles = static_cast<int>(parsed);
+            }
+        }
         if (cycles <= 0)
             return make_int(0);
         aura::ast::NodeId property_id = aura::ast::NULL_NODE;
