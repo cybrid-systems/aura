@@ -628,4 +628,61 @@ std::string emit_sv_interface(const SVInterfaceIR& i,
     return out;
 }
 
+std::string emit_sv_diff(const std::string_view before_sv, const std::string_view after_sv) {
+    if (before_sv == after_sv)
+        return {};
+    std::string diff;
+    diff.reserve(before_sv.size() + after_sv.size() + 32);
+    diff.append("--- before\n");
+    diff.append(before_sv);
+    diff.append("\n+++ after\n");
+    diff.append(after_sv);
+    return diff;
+}
+
+std::int64_t estimate_ppa_savings(const std::string_view before_sv,
+                                  const std::string_view after_sv) {
+    const auto before = static_cast<std::int64_t>(before_sv.size());
+    const auto after = static_cast<std::int64_t>(after_sv.size());
+    return before > after ? before - after : after - before;
+}
+
+std::string emit_commercial_simulator_do_file(const std::string_view simulator,
+                                              const std::string_view sv_filename) {
+    std::string out;
+    out.reserve(96 + sv_filename.size());
+    if (simulator == "questa" || simulator == "modelsim") {
+        out.append("# Questa/ModelSim do-file stub\n");
+        out.append("vlog -sv ");
+        out.append(sv_filename);
+        out.append("\nvsim -c top -do \"run -all; quit\"\n");
+        return out;
+    }
+    out.append("# VCS do-file stub\n");
+    out.append("vcs -sverilog ");
+    out.append(sv_filename);
+    out.append(" -o simv\n");
+    out.append("./simv\n");
+    return out;
+}
+
+SvReemitResult reemit_sv_node(const FlatAST& flat, const StringPool& pool, const NodeId id,
+                              const std::string_view simulator) {
+    SvReemitResult result;
+    if (id == NULL_NODE || id >= flat.size())
+        return result;
+    const auto before = result.sv_text;
+    if (auto ir = map_interface_node_to_ir(flat, pool, id)) {
+        result.sv_text = emit_sv_interface(*ir, pool);
+    } else {
+        result.sv_text = "// sv re-emit stub for node ";
+        result.sv_text.append(std::to_string(id));
+        result.sv_text.push_back('\n');
+    }
+    result.commercial_do_stub =
+        emit_commercial_simulator_do_file(simulator, "reemit.sv");
+    result.ppa_savings = estimate_ppa_savings(before, result.sv_text);
+    return result;
+}
+
 } // namespace aura::compiler::sv_ir

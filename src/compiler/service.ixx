@@ -5636,6 +5636,18 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         s.adt_pattern_provenance_complete_total =
             metrics_.adt_pattern_provenance_complete_total.load(
                 std::memory_order_relaxed);
+        s.hardware_backend_hook_calls_total =
+            metrics_.hardware_backend_hook_calls_total.load(
+                std::memory_order_relaxed);
+        s.commercial_reemits_total =
+            metrics_.commercial_reemits_total.load(std::memory_order_relaxed);
+        s.feedback_mutate_hits_total =
+            metrics_.feedback_mutate_hits_total.load(std::memory_order_relaxed);
+        s.ppa_savings_total =
+            metrics_.ppa_savings_total.load(std::memory_order_relaxed);
+        s.verification_loop_success_total =
+            metrics_.verification_loop_success_total.load(
+                std::memory_order_relaxed);
         // Issue #342: narrowing provenance
         // observability. Mirrors the lifetime
         // counter in CompilerMetrics.

@@ -352,4 +352,23 @@ export std::string emit_sv_modport(const SVModportIR& m,
 export std::string emit_sv_interface(const SVInterfaceIR& i,
                                     const aura::ast::StringPool& pool);
 
+// Issue #693: SV closed-loop emit helpers.
+export struct SvReemitResult {
+    std::string sv_text;
+    std::string commercial_do_stub;
+    std::int64_t ppa_savings = 0;
+};
+
+export std::string emit_sv_diff(std::string_view before_sv, std::string_view after_sv);
+
+export std::int64_t estimate_ppa_savings(std::string_view before_sv, std::string_view after_sv);
+
+export std::string emit_commercial_simulator_do_file(std::string_view simulator,
+                                                   std::string_view sv_filename);
+
+export SvReemitResult reemit_sv_node(const aura::ast::FlatAST& flat,
+                                     const aura::ast::StringPool& pool,
+                                     aura::ast::NodeId id,
+                                     std::string_view simulator = "vcs");
+
 } // namespace aura::compiler::sv_ir

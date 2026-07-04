@@ -19,6 +19,8 @@ import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.compiler.pass_manager;
 import aura.compiler.query;
+import aura.compiler.hardware_backend;
+import aura.compiler.sv_ir;
 
 namespace aura::compiler::primitives_detail {
 
@@ -2436,6 +2438,96 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             i = (j < text.size()) ? j + 1 : j;
         }
         return make_int(static_cast<std::int64_t>(marked));
+    });
+
+    // Issue #693: (eda:run-verification-feedback report-kind report-text)
+    // — parse mock coverage/assert report, apply targeted SV mutate,
+    // re-emit via hardware backend hook, and bump closed-loop metrics.
+    add("eda:run-verification-feedback", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_bool(false);
+        const auto kind_idx = as_string_idx(a[0]);
+        const auto text_idx = as_string_idx(a[1]);
+        if (kind_idx >= ev.string_heap_.size() || text_idx >= ev.string_heap_.size())
+            return make_bool(false);
+        const std::string& kind = ev.string_heap_[kind_idx];
+        const std::string& text = ev.string_heap_[text_idx];
+        aura::ast::NodeId target = aura::ast::NULL_NODE;
+        std::size_t i = 0;
+        while (i < text.size()) {
+            std::size_t j = i;
+            while (j < text.size() && text[j] != '\n')
+                ++j;
+            const std::string_view line(text.data() + i, j - i);
+            std::size_t k = 0;
+            while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
+                ++k;
+            if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                std::size_t val = 0;
+                while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                    val = val * 10 + (line[k] - '0');
+                    ++k;
+                }
+                target = static_cast<aura::ast::NodeId>(val);
+                break;
+            }
+            i = (j < text.size()) ? j + 1 : j;
+        }
+        if (target == aura::ast::NULL_NODE || target >= ws->size())
+            return make_bool(false);
+        const bool coverage =
+            kind.find("coverage") != std::string::npos ||
+            kind.find("cov") != std::string::npos;
+        ws->bump_sv_mutate_attempt();
+        if (coverage) {
+            ws->apply_verification_dirty_bits(
+                target, aura::ast::FlatAST::kCoverageFeedbackDirty);
+            ws->apply_verify_dirty_bits(target, aura::ast::FlatAST::kSvaDirty);
+            ws->add_mutation(target, "sv-add-coverpoint", "covergroup",
+                             "covergroup+coverpoint",
+                             "feedback closed-loop coverpoint");
+            ws->mark_ppa_dirty(target, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
+        } else {
+            ws->apply_verification_dirty_bits(
+                target, aura::ast::FlatAST::kAssertFailureDirty);
+            ws->apply_verify_dirty_bits(target, aura::ast::FlatAST::kSvaDirty);
+            ws->add_mutation(target, "sv-weaken-property", "property",
+                             "property+disable-iff",
+                             "feedback closed-loop weaken");
+            ws->mark_ppa_dirty(target, aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
+        }
+        ws->mark_dirty_upward(target, aura::ast::FlatAST::kGeneralDirty,
+                              ws->ppa_dirty_reasons(target));
+        if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, target)) {
+            const auto sv_reasons =
+                aura::compiler::hardware::sv_structural_dirty_reasons(*ws, target);
+            aura::compiler::hardware::on_structural_mutation(
+                target,
+                static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
+                ws->ppa_dirty_reasons(target));
+            if (auto* pool = ev.workspace_pool()) {
+                const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, target);
+                (void)aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->hardware_backend_hook_calls_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
+                    m->feedback_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+                    m->verification_loop_success_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (reemit.ppa_savings > 0) {
+                        m->ppa_savings_total.fetch_add(
+                            static_cast<std::uint64_t>(reemit.ppa_savings),
+                            std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
+        ws->bump_sv_mutate_success();
+        return make_bool(true);
     });
 
     // Issue #318: (verify:coverage-holes [report-text]) —

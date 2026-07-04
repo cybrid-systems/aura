@@ -4455,6 +4455,16 @@ public:
         // the key metric for whether the std::meta refactor is
         // worth it.
         mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #693: SV structural / SVA feedback nodes propagate
+        // verify_dirty_ upward for targeted sv_ir re-emit hints.
+        bool propagate_sva_verify = false;
+        if (id < tag_.size()) {
+            const auto src_tag = tag_[id];
+            propagate_sva_verify = (src_tag == NodeTag::Interface ||
+                                    src_tag == NodeTag::Modport);
+        }
+        if (!propagate_sva_verify && id < verify_dirty_.size())
+            propagate_sva_verify = (verify_dirty_[id] & kSvaDirty) != 0;
         std::uint64_t touched = 0;
         std::deque<NodeId> queue;
         queue.push_back(id);
@@ -4463,6 +4473,8 @@ public:
             queue.pop_front();
             mark_dirty(nid, reasons);
             apply_ppa_dirty_bits(nid, ppa_reasons);
+            if (propagate_sva_verify)
+                apply_verify_dirty_bits(nid, kSvaDirty);
             ++touched;
             auto p = parent_[nid];
             if (p != NULL_NODE)

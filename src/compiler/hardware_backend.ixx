@@ -26,4 +26,20 @@ export void on_structural_mutation(aura::ast::NodeId node, std::uint8_t dirty_re
 // Parse optional mutate primitive ppa-hint integer into a bitmask.
 export std::uint8_t parse_ppa_hint(std::int64_t hint) noexcept;
 
+// Issue #693: SV-specific dirty reason bits passed to the structural hook.
+export enum SvStructuralDirtyReason : std::uint8_t {
+    kSvInterfaceDirty = 0x10,
+    kSvModportDirty = 0x20,
+    kSvSvaFeedbackDirty = 0x40,
+};
+
+export [[nodiscard]] bool is_sv_structural_node(const aura::ast::FlatAST& flat,
+                                              aura::ast::NodeId id) noexcept;
+
+export [[nodiscard]] std::uint8_t
+sv_structural_dirty_reasons(const aura::ast::FlatAST& flat, aura::ast::NodeId id) noexcept;
+
+export [[nodiscard]] bool should_invoke_sv_closedloop_hook(
+    const aura::ast::FlatAST& flat, aura::ast::NodeId id) noexcept;
+
 } // namespace aura::compiler::hardware
