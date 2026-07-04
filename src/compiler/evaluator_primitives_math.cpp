@@ -55,68 +55,68 @@ void register_math_regex_and_arithmetic_primitives(
     });
 
     // ── Regex ──────────────────────────────────────────────────
-    add("regex-match?", [&string_heap, &error_values, primitive_error_counter](
-                          std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return make_int(0);
-        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
-        if (pi >= string_heap.size() || si >= string_heap.size())
-            return make_int(0);
-        try {
-            std::regex re(string_heap[pi]);
-            return make_int(std::regex_search(string_heap[si], re) ? 1 : 0);
-        } catch (...) {
-            return make_primitive_error(string_heap, error_values,
-                                      "regex-match?: invalid regular expression",
-                                      primitive_error_counter);
-        }
-    });
-
-    add("regex-find", [&string_heap, &error_values, primitive_error_counter](
-                         std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return make_void();
-        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
-        if (pi >= string_heap.size() || si >= string_heap.size())
-            return make_void();
-        try {
-            std::regex re(string_heap[pi]);
-            std::smatch m;
-            if (std::regex_search(string_heap[si], m, re)) {
-                auto id = string_heap.size();
-                string_heap.push_back(m.str());
-                return make_string(id);
+    add("regex-match?",
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+                return make_int(0);
+            auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
+            if (pi >= string_heap.size() || si >= string_heap.size())
+                return make_int(0);
+            try {
+                std::regex re(string_heap[pi]);
+                return make_int(std::regex_search(string_heap[si], re) ? 1 : 0);
+            } catch (...) {
+                return make_primitive_error(string_heap, error_values,
+                                            "regex-match?: invalid regular expression",
+                                            primitive_error_counter);
             }
-        } catch (...) {
-            return make_primitive_error(string_heap, error_values,
-                                      "regex-find: invalid regular expression",
-                                      primitive_error_counter);
-        }
-        return make_void();
-    });
+        });
 
-    add("regex-replace", [&string_heap, &error_values, primitive_error_counter](
-                            std::span<const EvalValue> a) {
-        if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
+    add("regex-find",
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+                return make_void();
+            auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
+            if (pi >= string_heap.size() || si >= string_heap.size())
+                return make_void();
+            try {
+                std::regex re(string_heap[pi]);
+                std::smatch m;
+                if (std::regex_search(string_heap[si], m, re)) {
+                    auto id = string_heap.size();
+                    string_heap.push_back(m.str());
+                    return make_string(id);
+                }
+            } catch (...) {
+                return make_primitive_error(string_heap, error_values,
+                                            "regex-find: invalid regular expression",
+                                            primitive_error_counter);
+            }
             return make_void();
-        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]), ri = as_string_idx(a[2]);
-        if (pi >= string_heap.size() || si >= string_heap.size() || ri >= string_heap.size())
-            return make_void();
-        try {
-            std::regex re(string_heap[pi]);
-            auto result = std::regex_replace(string_heap[si], re, string_heap[ri]);
-            auto id = string_heap.size();
-            string_heap.push_back(std::move(result));
-            return make_string(id);
-        } catch (...) {
-            return make_primitive_error(string_heap, error_values,
-                                      "regex-replace: invalid regular expression",
-                                      primitive_error_counter);
-        }
-    });
+        });
 
-    add("regex-split", [&string_heap, &pairs, &error_values, primitive_error_counter](
-                           std::span<const EvalValue> a) {
+    add("regex-replace",
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
+                return make_void();
+            auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]), ri = as_string_idx(a[2]);
+            if (pi >= string_heap.size() || si >= string_heap.size() || ri >= string_heap.size())
+                return make_void();
+            try {
+                std::regex re(string_heap[pi]);
+                auto result = std::regex_replace(string_heap[si], re, string_heap[ri]);
+                auto id = string_heap.size();
+                string_heap.push_back(std::move(result));
+                return make_string(id);
+            } catch (...) {
+                return make_primitive_error(string_heap, error_values,
+                                            "regex-replace: invalid regular expression",
+                                            primitive_error_counter);
+            }
+        });
+
+    add("regex-split", [&string_heap, &pairs, &error_values,
+                        primitive_error_counter](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_void();
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
@@ -140,8 +140,8 @@ void register_math_regex_and_arithmetic_primitives(
             return result;
         } catch (...) {
             return make_primitive_error(string_heap, error_values,
-                                      "regex-split: invalid regular expression",
-                                      primitive_error_counter);
+                                        "regex-split: invalid regular expression",
+                                        primitive_error_counter);
         }
     });
 
