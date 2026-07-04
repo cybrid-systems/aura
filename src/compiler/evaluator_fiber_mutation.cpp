@@ -196,6 +196,19 @@ thread_local aura::compiler::Evaluator* g_yield_hook_evaluator = nullptr;
 // guard dtors would see nullptr (yield_hook_evaluator
 // is only bound inside a guard).
 thread_local aura::compiler::Evaluator* g_query_evaluator = nullptr;
+// Issue #485: process-wide Evaluator for scheduler/fiber hooks
+// that run on worker threads (g_query_evaluator is thread_local).
+std::atomic<aura::compiler::Evaluator*> g_scheduler_stats_evaluator{nullptr};
+
+namespace {
+aura::compiler::Evaluator* evaluator_for_scheduler_hooks() noexcept {
+    if (auto* ev = aura::compiler::Evaluator::yield_hook_evaluator())
+        return ev;
+    if (auto* ev = aura::compiler::Evaluator::get_query_evaluator())
+        return ev;
+    return g_scheduler_stats_evaluator.load(std::memory_order_acquire);
+}
+} // namespace
 
 // Implementation of active_mutation_stack() — the
 // header has the declaration only (to avoid pulling
@@ -413,6 +426,7 @@ void Evaluator::bind_yield_hook_evaluator() {
 // Issue #456: per-thread query-evaluator accessors.
 void Evaluator::set_query_evaluator(Evaluator* ev) noexcept {
     g_query_evaluator = ev;
+    g_scheduler_stats_evaluator.store(ev, std::memory_order_release);
 }
 Evaluator* Evaluator::get_query_evaluator() noexcept {
     return g_query_evaluator;
@@ -658,6 +672,24 @@ extern "C" void aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms) {
     if (!ev)
         return; // no evaluator → no wait
     ev->wait_for_safepoint(timeout_ms);
+}
+
+// Issue #485: bump evaluator counters when the scheduler
+// defers a steal at MutationBoundary (inner guard active).
+extern "C" void aura_evaluator_bump_steal_deferred_violation() {
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    ev->bump_mutation_steal_violation_count();
+    ev->bump_boundary_violation_count();
+}
+
+// Issue #485: transfer mutation stack on Fiber::resume.
+extern "C" void aura_evaluator_resume_fiber_migration() {
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    ev->transfer_mutation_stack_to_current_fiber();
 }
 
 // Issue #683: linear ownership enforcement on work-steal.

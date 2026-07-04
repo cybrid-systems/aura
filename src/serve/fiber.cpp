@@ -16,6 +16,8 @@ import std;
 
 namespace aura::serve {
 
+extern "C" void aura_evaluator_resume_fiber_migration();
+
 std::atomic<uint64_t> Fiber::next_id_{1};
 std::atomic<std::uint64_t> Fiber::static_gc_pause_attributed_to_mutation_count_{0};
 
@@ -221,6 +223,8 @@ void Fiber::resume() {
     // Issue #588: bind per-fiber mutation stack on worker resume.
     if (g_fiber_sync_mutation_stack_)
         g_fiber_sync_mutation_stack_(mutation_stack_storage_);
+    // Issue #485: transfer mutation stack + bump migration stats.
+    aura_evaluator_resume_fiber_migration();
     state_.store(FiberState::Running, std::memory_order_release);
 
     // Swap from worker's loop context to fiber's context

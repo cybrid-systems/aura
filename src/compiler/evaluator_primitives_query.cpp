@@ -3216,9 +3216,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //     same reason — important for tuning the GC's
     //     epoch snapshot strategy)
     //
-    // P0: returns an integer = sum of all 4 counters.
-    // Follow-up: returns a 4-tuple
-    // (desync stale-refresh version-mismatch gc-skips)
+    //   - bindings_dual_sync_count_  (# of frames where
+    //     the dual-path length/order check succeeded —
+    //     expected to grow under normal mutation)
+    //
+    // P0: returns an integer = sum of all 5 counters.
+    // Follow-up: returns a 5-tuple
+    // (desync dual-sync stale-refresh version-mismatch gc-skips)
     // so the AI Agent can react to each category
     // independently (a desync > 0 should be a hard
     // alert; a version-mismatch > 0 is expected under
@@ -3229,10 +3233,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         if (!ev)
             return make_int(0);
         const std::uint64_t desync = ev->get_envframe_desync_detected();
+        const std::uint64_t dual_sync = ev->get_bindings_dual_sync_count();
         const std::uint64_t stale = ev->get_envframe_stale_refresh_count();
         const std::uint64_t mismatch = ev->get_envframe_version_mismatch_in_walk();
         const std::uint64_t gc_skips = ev->get_envframe_gc_walk_safe_skips();
-        return make_int(static_cast<std::int64_t>(desync + stale + mismatch + gc_skips));
+        return make_int(static_cast<std::int64_t>(desync + dual_sync + stale + mismatch + gc_skips));
     });
 
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {

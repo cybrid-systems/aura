@@ -13,6 +13,7 @@ import std;
 namespace aura::serve {
 
 extern "C" void aura_evaluator_probe_linear_on_steal();
+extern "C" void aura_evaluator_bump_steal_deferred_violation();
 
 // ── Constructor ───────────────────────────────────────
 
@@ -176,6 +177,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         if (stolen->is_stealable() &&
             stolen->last_yield_reason() == YieldReason::MutationBoundary) {
             stolen->bump_steal_deferred_mutation_boundary();
+            aura_evaluator_bump_steal_deferred_violation();
             metrics::adaptive_steal_stats().global_deferred_mutation_total.fetch_add(
                 1, std::memory_order_relaxed);
             metrics::adaptive_steal_stats().mutation_bias_hits.fetch_add(1,

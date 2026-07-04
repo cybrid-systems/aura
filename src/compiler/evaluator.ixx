@@ -2464,6 +2464,9 @@ private:
     // See the public-section comment above for the bump
     // semantics. All relaxed-ordering (stats-only).
     mutable std::atomic<std::uint64_t> envframe_desync_detected_{0};
+    // Issue #485: dual-path bindings_ vs bindings_symid_ length
+    // matched (consistency probe succeeded).
+    mutable std::atomic<std::uint64_t> bindings_dual_sync_count_{0};
     mutable std::atomic<std::uint64_t> envframe_stale_refresh_count_{0};
     mutable std::atomic<std::uint64_t> envframe_version_mismatch_in_walk_{0};
     mutable std::atomic<std::uint64_t> envframe_gc_walk_safe_skips_{0};
@@ -4051,6 +4054,9 @@ public:
     [[nodiscard]] std::uint64_t get_envframe_desync_detected() const noexcept {
         return envframe_desync_detected_.load(std::memory_order_relaxed);
     }
+    [[nodiscard]] std::uint64_t get_bindings_dual_sync_count() const noexcept {
+        return bindings_dual_sync_count_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] std::uint64_t get_envframe_stale_refresh_count() const noexcept {
         return envframe_stale_refresh_count_.load(std::memory_order_relaxed);
     }
@@ -4062,6 +4068,9 @@ public:
     }
     void bump_envframe_desync_detected() const noexcept {
         envframe_desync_detected_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_bindings_dual_sync_count() const noexcept {
+        bindings_dual_sync_count_.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_envframe_stale_refresh_count() const noexcept {
         envframe_stale_refresh_count_.fetch_add(1, std::memory_order_relaxed);
