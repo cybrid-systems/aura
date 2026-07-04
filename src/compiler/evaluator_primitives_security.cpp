@@ -621,12 +621,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const std::uint64_t fastpath_hits =
             m ? m->primitive_fastpath_hits_total.load(std::memory_order_relaxed) : 0;
         const std::uint64_t eda_registered = ev.primitives_.category_meta_count("eda") +
-                                           ev.primitives_.category_meta_count("sva") +
-                                           ev.primitives_.category_meta_count("verification");
+                                             ev.primitives_.category_meta_count("sva") +
+                                             ev.primitives_.category_meta_count("verification");
         const std::uint64_t slots = ev.primitives_.slot_count();
         const std::uint64_t documented = ev.primitives_.documented_meta_count();
-        const std::uint64_t consistency_rate =
-            slots > 0 ? (documented * 100) / slots : 100;
+        const std::uint64_t consistency_rate = slots > 0 ? (documented * 100) / slots : 100;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"capture-violations", make_int(static_cast<std::int64_t>(capture_viol))},
             {"fastpath-hits", make_int(static_cast<std::int64_t>(fastpath_hits))},
