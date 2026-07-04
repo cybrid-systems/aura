@@ -586,10 +586,17 @@ public:
             [this](aura::ast::NodeId root) { this->run_define_impact_scope(root); });
         // Phase 2: pre-populate v2 IR cache from workspace defines.
         // Called from (set-code ...) primitive after a successful parse.
-        // Plan A + Follow-up 3: hook now calls BOTH the lightweight
+        // Plan A + Follow-up 3: hook calls BOTH the lightweight
         // populate_dep_graph (no side effects) AND the heavy
-        // populate_ir_cache_v2 (which uses bind_in_env=false to skip the
-        // env pollution that broke tests in early Phase 3).
+        // populate_ir_cache_v2 (which uses bind_in_env=false to skip
+        // the env pollution that broke tests in early Phase 3).
+        //
+        // Issue #687: dep-graph doubling is now prevented via
+        // record_dependency idempotence. The multi-define binding
+        // issue (a/b/c not bound in top_ after eval-current) is
+        // fixed by eval-current explicitly syncing workspace
+        // defines into top_env after eval_flat (see eval-current
+        // implementation). The heavy populate stays as opt-in.
         evaluator_.set_pre_cache_workspace_defines_fn([this]() {
             this->populate_dep_graph_from_workspace();
             this->populate_ir_cache_v2_from_workspace();
@@ -7179,7 +7186,22 @@ private:
     std::unordered_map<std::string, DepEntry> dep_graph_;
 
     void record_dependency(const std::string& caller, const std::string& callee) {
-        dep_graph_[caller].calls.push_back(callee);
+        // Issue #687: idempotent — skip if (caller, callee) is
+        // already recorded. Without this, dep edges double
+        // (32 vs 16 expected) when both
+        // populate_dep_graph_from_workspace (lightweight AST
+        // walker) AND populate_ir_cache_v2_from_workspace
+        // (heavy via cache_define) fire on the same set-code
+        // — both find the same Variable refs and call this
+        // function. The walker uses a per-name `seen` set,
+        // but cache_define's cache_hits vector does not,
+        // leading to 2× edge counts.
+        auto& caller_entry = dep_graph_[caller];
+        if (std::find(caller_entry.calls.begin(), caller_entry.calls.end(), callee)
+            != caller_entry.calls.end()) {
+            return;  // already recorded — skip duplicate
+        }
+        caller_entry.calls.push_back(callee);
         dep_graph_[callee].called_by.push_back(caller);
     }
 
