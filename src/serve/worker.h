@@ -5,6 +5,7 @@
 #include "fiber.h"
 #include "ws_deque.h"
 #include "metrics.h"
+#include <cstring>
 #include <ucontext.h>
 #include <memory>
 #include <mutex>
@@ -98,7 +99,43 @@ struct StealBudget {
         total_attempts = 0;
         total_successes = 0;
     }
+
+    // Issue #706: when inner MutationBoundary steals are deferred,
+    // temporarily raise alertness so outermost/Explicit fibers are found.
+    void apply_deferred_pressure(std::uint64_t deferred_total) {
+        if (!adaptive_enabled || deferred_total == 0)
+            return;
+        const int before = max_before_sleep;
+        if (deferred_total > 50) {
+            max_before_sleep = std::max(max_before_sleep, 7);
+        } else if (deferred_total > 10) {
+            max_before_sleep = std::max(max_before_sleep, 5);
+        } else if (deferred_total > 0) {
+            max_before_sleep = std::max(max_before_sleep, 4);
+        }
+        if (max_before_sleep > before)
+            metrics::adaptive_steal_stats().deferred_pressure_boosts.fetch_add(
+                1, std::memory_order_relaxed);
+    }
 };
+
+// Issue #706: steal priority for LLM-bottleneck adaptive bias.
+// Higher = prefer stealing this yielded fiber.
+inline int fiber_steal_priority(Fiber* fiber) {
+    if (!fiber || !fiber->is_stealable())
+        return -1;
+    if (fiber->is_at_mutation_boundary_safe()) {
+        const char* cls = fiber->yield_classification();
+        if (std::strcmp(cls, "Explicit") == 0 || std::strcmp(cls, "OperationBoundary") == 0)
+            return 3;
+        if (std::strcmp(cls, "MutationBoundary/outermost") == 0)
+            return 2;
+        return 1;
+    }
+    if (fiber->last_yield_reason() == YieldReason::MutationBoundary)
+        return 0;
+    return 1;
+}
 
 // ── WorkerThread — per-OS-thread fiber runner ──────────
 //

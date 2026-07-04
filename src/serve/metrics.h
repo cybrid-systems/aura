@@ -323,6 +323,28 @@ inline const char* trace_type_name(TraceEvent::Type t) {
 
 #endif // AURA_FIBER_TRACE
 
+// Issue #706: adaptive StealBudget + work-stealing bias observability.
+struct AdaptiveStealStats {
+    std::atomic<std::uint64_t> mutation_bias_hits{0};
+    std::atomic<std::uint64_t> outermost_preferred{0};
+    std::atomic<std::uint64_t> llm_tail_reductions{0};
+    std::atomic<std::uint64_t> deferred_pressure_boosts{0};
+    std::atomic<std::uint64_t> global_deferred_mutation_total{0};
+};
+
+inline AdaptiveStealStats& adaptive_steal_stats() {
+    static AdaptiveStealStats stats;
+    return stats;
+}
+
 } // namespace aura::serve::metrics
+
+extern "C" {
+std::uint64_t aura_adaptive_steal_mutation_bias_hits();
+std::uint64_t aura_adaptive_steal_outermost_preferred();
+std::uint64_t aura_adaptive_steal_llm_tail_reductions();
+std::uint64_t aura_adaptive_steal_deferred_pressure_boosts();
+std::uint64_t aura_adaptive_steal_global_deferred_total();
+}
 
 #endif // AURA_SERVE_METRICS_H

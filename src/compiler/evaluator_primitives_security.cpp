@@ -9,6 +9,7 @@ module;
 #include "value_tags.h"
 #include "security_capabilities.h"
 #include "serve/http_health.h"
+#include "serve/metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -812,6 +813,62 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             {"verification-loop-convergence", make_int(static_cast<std::int64_t>(convergence_pct))},
             {"commercial-simulator-runs", make_int(static_cast<std::int64_t>(sim_runs))},
             {"sv-diff-emits", make_int(static_cast<std::int64_t>(diff_emits))},
+        };
+        return build_hash(kv);
+    });
+
+    // Issue #706: Scheduler StealBudget adaptive bias + LLM tail stats.
+    add("query:scheduler-stealbudget-adaptive-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"mutation-bias-hits",
+             make_int(static_cast<std::int64_t>(aura_adaptive_steal_mutation_bias_hits()))},
+            {"outermost-preferred",
+             make_int(static_cast<std::int64_t>(aura_adaptive_steal_outermost_preferred()))},
+            {"llm-tail-reductions",
+             make_int(static_cast<std::int64_t>(aura_adaptive_steal_llm_tail_reductions()))},
+            {"deferred-pressure-boosts",
+             make_int(static_cast<std::int64_t>(aura_adaptive_steal_deferred_pressure_boosts()))},
+            {"global-deferred-mutation-total",
+             make_int(static_cast<std::int64_t>(aura_adaptive_steal_global_deferred_total()))},
         };
         return build_hash(kv);
     });

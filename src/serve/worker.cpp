@@ -158,6 +158,15 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         // MutationBoundary with active inner/outer guard
         // (per-fiber stack depth > 0).
         if (stolen->is_stealable() && stolen->is_at_mutation_boundary_safe()) {
+            const int pri = fiber_steal_priority(stolen);
+            if (pri >= 2) {
+                metrics::adaptive_steal_stats().outermost_preferred.fetch_add(
+                    1, std::memory_order_relaxed);
+                if (pri >= 3) {
+                    metrics::adaptive_steal_stats().llm_tail_reductions.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
             stolen->bump_steal_success();
             aura_evaluator_probe_linear_on_steal();
             local_queue_.push(stolen);
@@ -167,6 +176,10 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         if (stolen->is_stealable() &&
             stolen->last_yield_reason() == YieldReason::MutationBoundary) {
             stolen->bump_steal_deferred_mutation_boundary();
+            metrics::adaptive_steal_stats().global_deferred_mutation_total.fetch_add(
+                1, std::memory_order_relaxed);
+            metrics::adaptive_steal_stats().mutation_bias_hits.fetch_add(
+                1, std::memory_order_relaxed);
         }
 
         // Not stealable — put it back on the victim's queue.
@@ -275,6 +288,9 @@ void WorkerThread::run() {
         }
 
         // ── Phase 3: try to steal ───────────────────
+        steal_budget_.apply_deferred_pressure(
+            metrics::adaptive_steal_stats().global_deferred_mutation_total.load(
+                std::memory_order_relaxed));
         if (!local_nonempty && any_pending && steal_budget_.should_steal()) {
             bool stole = false;
 
@@ -282,8 +298,12 @@ void WorkerThread::run() {
             if (scheduler_) {
                 int n_workers = scheduler_->num_workers();
                 if (n_workers > 1) {
-                    // Try up to 3 random victims
-                    for (int attempt = 0; attempt < 3; ++attempt) {
+                    const int steal_tries =
+                        metrics::adaptive_steal_stats().global_deferred_mutation_total.load(
+                            std::memory_order_relaxed) > 10
+                            ? 5
+                            : 3;
+                    for (int attempt = 0; attempt < steal_tries; ++attempt) {
                         int victim_id = std::rand() % n_workers;
                         if (victim_id == id_)
                             continue;
@@ -356,3 +376,26 @@ void WorkerThread::run() {
 }
 
 } // namespace aura::serve
+
+extern "C" {
+std::uint64_t aura_adaptive_steal_mutation_bias_hits() {
+    return aura::serve::metrics::adaptive_steal_stats().mutation_bias_hits.load(
+        std::memory_order_relaxed);
+}
+std::uint64_t aura_adaptive_steal_outermost_preferred() {
+    return aura::serve::metrics::adaptive_steal_stats().outermost_preferred.load(
+        std::memory_order_relaxed);
+}
+std::uint64_t aura_adaptive_steal_llm_tail_reductions() {
+    return aura::serve::metrics::adaptive_steal_stats().llm_tail_reductions.load(
+        std::memory_order_relaxed);
+}
+std::uint64_t aura_adaptive_steal_deferred_pressure_boosts() {
+    return aura::serve::metrics::adaptive_steal_stats().deferred_pressure_boosts.load(
+        std::memory_order_relaxed);
+}
+std::uint64_t aura_adaptive_steal_global_deferred_total() {
+    return aura::serve::metrics::adaptive_steal_stats().global_deferred_mutation_total.load(
+        std::memory_order_relaxed);
+}
+}
