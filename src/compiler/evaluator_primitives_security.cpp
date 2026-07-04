@@ -455,6 +455,74 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #695: EDA-SV verification closed-loop stress stats.
+    add("query:eda-sv-closedloop-stress-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t cycles = m
+            ? m->eda_sv_evolution_cycles_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t converged = m
+            ? m->eda_sv_verification_convergence_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t feedback_ok = m
+            ? m->eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t ref_inval = m
+            ? m->eda_sv_stable_ref_invalidation_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t stub_latency = m
+            ? m->eda_sv_commercial_stub_latency_us_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t corruption = m
+            ? m->eda_sv_corruption_detected_total.load(std::memory_order_relaxed) : 0;
+        std::uint64_t dirty_cost = 0;
+        if (auto* ws = ev.workspace_flat()) {
+            const auto calls = ws->mark_dirty_upward_call_count();
+            const auto nodes = ws->mark_dirty_total_nodes();
+            dirty_cost = calls > 0 ? nodes / calls : 0;
+        }
+        const std::uint64_t convergence_pct =
+            cycles > 0 ? (100 * converged / cycles) : (converged > 0 ? 100 : 0);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"evolution-cycles", make_int(static_cast<std::int64_t>(cycles))},
+            {"verification-convergence-rate",
+             make_int(static_cast<std::int64_t>(convergence_pct))},
+            {"feedback-mutate-success", make_int(static_cast<std::int64_t>(feedback_ok))},
+            {"stable-ref-invalidation-sv", make_int(static_cast<std::int64_t>(ref_inval))},
+            {"dirty-traversal-cost", make_int(static_cast<std::int64_t>(dirty_cost))},
+            {"commercial-stub-latency", make_int(static_cast<std::int64_t>(stub_latency))},
+            {"corruption-detected", make_int(static_cast<std::int64_t>(corruption))},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #694: SVA structured AST stats.
     add("query:sv-sva-structure-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

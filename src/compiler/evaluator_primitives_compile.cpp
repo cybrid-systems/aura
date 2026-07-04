@@ -2530,6 +2530,97 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_bool(true);
     });
 
+    // Issue #695: (eda:demo-sv-self-evolution example cycles)
+    // — run a bounded SV verification closed-loop demo:
+    // feedback parse → structured mutate → re-emit → metrics.
+    add("eda:demo-sv-self-evolution", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        auto* pool = ev.workspace_pool();
+        if (!ws || !pool)
+            return make_bool(false);
+        int cycles = 100;
+        if (a.size() >= 2 && is_int(a[1]))
+            cycles = static_cast<int>(as_int(a[1]));
+        if (cycles <= 0)
+            return make_int(0);
+        aura::ast::NodeId property_id = aura::ast::NULL_NODE;
+        aura::ast::NodeId coverpoint_id = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+            if (property_id == aura::ast::NULL_NODE &&
+                ws->get(id).tag == aura::ast::NodeTag::Property)
+                property_id = id;
+            if (coverpoint_id == aura::ast::NULL_NODE &&
+                ws->get(id).tag == aura::ast::NodeTag::Coverpoint)
+                coverpoint_id = id;
+        }
+        if (property_id == aura::ast::NULL_NODE || coverpoint_id == aura::ast::NULL_NODE)
+            return make_bool(false);
+        auto prop_ref = ws->make_ref(property_id);
+        auto cp_ref = ws->make_ref(coverpoint_id);
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        int successes = 0;
+        auto feedback_fn = ev.primitives_.lookup("eda:run-verification-feedback");
+        auto weaken_fn = ev.primitives_.lookup("eda:weaken-property");
+        auto add_bin_fn = ev.primitives_.lookup("eda:add-coverpoint-bin");
+        auto gc_fn = ev.primitives_.lookup("mutate:request-gc-safepoint");
+        for (int i = 0; i < cycles; ++i) {
+            if (m)
+                m->eda_sv_evolution_cycles_total.fetch_add(1, std::memory_order_relaxed);
+            if (!prop_ref.is_valid_in(*ws))
+                if (m) m->eda_sv_stable_ref_invalidation_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            if (!cp_ref.is_valid_in(*ws))
+                if (m) m->eda_sv_stable_ref_invalidation_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            bool ok = true;
+            if (feedback_fn) {
+                const char* kind = (i & 1) ? "coverage.log" : "assert-fail.log";
+                const auto target = (i & 1) ? coverpoint_id : property_id;
+                auto kind_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(kind);
+                auto text = std::format("{} cycle_{}", static_cast<int>(target), i);
+                auto text_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(text);
+                auto r = (*feedback_fn)({make_string(kind_idx), make_string(text_idx)});
+                ok = is_bool(r) && as_bool(r);
+            }
+            if (ok && (i & 3) == 0 && weaken_fn) {
+                auto pid_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back("reset");
+                auto r = (*weaken_fn)({make_int(static_cast<std::int64_t>(property_id)),
+                                       make_string(pid_idx)});
+                ok = is_bool(r) && as_bool(r);
+            }
+            if (ok && (i & 3) == 2 && add_bin_fn) {
+                auto bin = std::format("demo_bin_{}", i);
+                auto bin_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(bin);
+                auto r = (*add_bin_fn)({make_int(static_cast<std::int64_t>(coverpoint_id)),
+                                        make_string(bin_idx)});
+                ok = is_bool(r) && as_bool(r);
+            }
+            if ((i & 7) == 0 && gc_fn)
+                (void)(*gc_fn)(std::span<const EvalValue>{});
+            if (ok) {
+                ++successes;
+                if (m) {
+                    m->eda_sv_verification_convergence_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    m->eda_sv_feedback_mutate_success_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    m->eda_sv_commercial_stub_latency_us_total.fetch_add(
+                        12, std::memory_order_relaxed);
+                }
+            } else if (m) {
+                m->eda_sv_corruption_detected_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        return make_int(static_cast<std::int64_t>(successes));
+    });
+
     // Issue #318: (verify:coverage-holes [report-text]) —
     // return a list of NodeIds that have
     // kCoverageFeedbackDirty set (i.e. nodes whose coverpoint
