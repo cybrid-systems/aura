@@ -2820,6 +2820,10 @@ add_dependencies(all_test_issue_targets test_issue_709)
 aura_add_issue_test(test_issue_710)
 aura_issue_test_link_llvm_jit(test_issue_710)
 add_dependencies(all_test_issue_targets test_issue_710)
+# Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
+aura_add_issue_test(test_issue_485)
+aura_issue_test_link_llvm_jit(test_issue_485)
+add_dependencies(all_test_issue_targets test_issue_485)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

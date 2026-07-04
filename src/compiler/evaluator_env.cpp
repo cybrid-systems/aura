@@ -433,6 +433,8 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
 void Evaluator::ensure_envframe_dual_path_consistency(const EnvFrame& fr) const noexcept {
     if (fr.bindings_.size() != fr.bindings_symid_.size()) {
         bump_envframe_desync_detected();
+    } else {
+        bump_bindings_dual_sync_count();
     }
 }
 
