@@ -5627,6 +5627,15 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         s.adt_occurrence_narrow_in_match_total =
             metrics_.adt_occurrence_narrow_in_match_total.load(
                 std::memory_order_relaxed);
+        s.adt_pattern_narrow_refreshes_total =
+            metrics_.adt_pattern_narrow_refreshes_total.load(
+                std::memory_order_relaxed);
+        s.adt_non_exhaustive_caught_total =
+            metrics_.adt_non_exhaustive_caught_total.load(
+                std::memory_order_relaxed);
+        s.adt_pattern_provenance_complete_total =
+            metrics_.adt_pattern_provenance_complete_total.load(
+                std::memory_order_relaxed);
         // Issue #342: narrowing provenance
         // observability. Mirrors the lifetime
         // counter in CompilerMetrics.

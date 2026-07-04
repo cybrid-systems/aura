@@ -2761,6 +2761,10 @@ add_dependencies(all_test_issue_targets test_issue_690)
 aura_add_issue_test(test_issue_691)
 aura_issue_test_link_llvm_jit(test_issue_691)
 add_dependencies(all_test_issue_targets test_issue_691)
+# Issue #692: ADT exhaustiveness + pattern provenance typed-mutation.
+aura_add_issue_test(test_issue_692)
+aura_issue_test_link_llvm_jit(test_issue_692)
+add_dependencies(all_test_issue_targets test_issue_692)
 # Issue #464: Arena auto-compaction lifecycle + counter + primitive.
 aura_add_issue_test(test_issue_464_arena_auto_compaction)
 aura_issue_test_link_llvm_jit(test_issue_464_arena_auto_compaction)

@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**643** registrations scanned from `src/**/*.cpp`.
+**644** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 124 primitives (19%)
 - **core**: 190 primitives (30%)
-- **internal-observable**: 182 primitives (28%)
+- **internal-observable**: 183 primitives (28%)
 - **convenience**: 147 primitives (23%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,9 +21,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (182)
+## Query: (183)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:adt-exhaustiveness-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-auto-compact-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
@@ -1084,9 +1085,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (182)
+### Internal observable (stats/counters) (183)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:adt-exhaustiveness-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:aot-stats` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:arena-auto-compact-stats` — `src/compiler/evaluator_primitives_observability.cpp`
