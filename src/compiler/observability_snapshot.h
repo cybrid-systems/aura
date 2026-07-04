@@ -84,6 +84,10 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     std::uint64_t coercion_type_prop_hits_total = 0;
     std::uint64_t coercion_narrow_evidence_hits_total = 0;
     std::uint64_t coercion_zerooverhead_win_total = 0;
+    // Issue #691: CoercionMap + NarrowingRecord provenance linkage.
+    std::uint64_t coercion_post_narrow_elim_opportunities_total = 0;
+    std::uint64_t coercion_narrow_blame_chain_hits_total = 0;
+    std::uint64_t coercion_cast_elim_from_narrow_total = 0;
     // Issue #487: dirty propagation + IR re-lower
     // observability. Mirrors the 2 lifetime
     // counters in CompilerMetrics. The derived

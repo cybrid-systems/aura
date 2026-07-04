@@ -5363,6 +5363,15 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             metrics_.coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed);
         s.coercion_zerooverhead_win_total =
             metrics_.coercion_zerooverhead_win_total.load(std::memory_order_relaxed);
+        s.coercion_post_narrow_elim_opportunities_total =
+            metrics_.coercion_post_narrow_elim_opportunities_total.load(
+                std::memory_order_relaxed);
+        s.coercion_narrow_blame_chain_hits_total =
+            metrics_.coercion_narrow_blame_chain_hits_total.load(
+                std::memory_order_relaxed);
+        s.coercion_cast_elim_from_narrow_total =
+            metrics_.coercion_cast_elim_from_narrow_total.load(
+                std::memory_order_relaxed);
         // Issue #487: dirty propagation + IR re-lower
         // observability. Mirror the 2 lifetime
         // counters and compute the derived trigger

@@ -439,6 +439,13 @@ export class InferenceEngine {
     //   kNarrowProc   = 1 << 9   (procedure?)
     //   kNarrowCustom = 1 << 10  (type? "Name")
     std::uint32_t last_if_narrowing_ = 0;
+    // Issue #691: predicate cond NodeId from the most recent
+    // occurrence-narrowing context (for CoercionMap blame).
+    std::uint32_t last_predicate_cond_id_ = 0;
+    void add_deferred_coercion(const aura::ast::FlatAST& flat, aura::ast::NodeId parent,
+                               std::uint32_t child_index, aura::ast::NodeId original_child,
+                               std::uint32_t type_tag, std::uint32_t type_id,
+                               std::uint32_t src_line, std::uint32_t src_col);
 public:
     // Issue #79: set strict mode. Called by TypeChecker::infer_flat
     // before delegating to the engine.

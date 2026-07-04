@@ -1903,6 +1903,41 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
     return std::nullopt;
 }
 
+void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
+                                            std::uint32_t child_index, NodeId original_child,
+                                            std::uint32_t type_tag, std::uint32_t type_id,
+                                            std::uint32_t src_line, std::uint32_t src_col) {
+    std::uint32_t cond_node = last_predicate_cond_id_;
+    std::uint64_t mutation_id = 0;
+    std::uint32_t narrow_ev = last_if_narrowing_;
+    if (!flat.all_mutations().empty())
+        mutation_id = flat.all_mutations().back().mutation_id;
+    for (const auto& nr : flat.all_narrowings()) {
+        if (cond_node != 0 && nr.cond_node != cond_node)
+            continue;
+        if (nr.source_mutation_id != 0)
+            mutation_id = nr.source_mutation_id;
+        if (nr.narrow_evidence != 0)
+            narrow_ev = nr.narrow_evidence;
+        if (cond_node != 0)
+            break;
+    }
+    if (narrow_ev != 0 || cond_node != 0 || mutation_id != 0) {
+        coercions_.add(parent, child_index, original_child, type_tag, type_id, src_line, src_col,
+                       cond_node, mutation_id, narrow_ev);
+        if (cs_.metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+            m->coercion_post_narrow_elim_opportunities_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (cond_node != 0 && mutation_id != 0)
+                m->coercion_narrow_blame_chain_hits_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
+    } else {
+        coercions_.add(parent, child_index, original_child, type_tag, type_id, src_line, src_col);
+    }
+}
+
 void InferenceEngine::seed_mutation_touched_roots(
     const FlatAST& flat, const StringPool& pool,
     const std::vector<NodeId>& occurrence_targets, std::uint64_t mutation_id) {
@@ -2869,8 +2904,8 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                     // infer_flat). The type checker no longer mutates the
                     // FlatAST's structural links.
                     auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
-                    coercions_.add(v.id, static_cast<std::uint32_t>(i + 1), arg_id, type_tag,
-                                   ft.args[i].index, v.line, v.col);
+                    add_deferred_coercion(flat, v.id, static_cast<std::uint32_t>(i + 1), arg_id,
+                                          type_tag, ft.args[i].index, v.line, v.col);
                 } else {
                     auto msg = std::string("argument ") + std::to_string(i) + ": expected " +
                                std::string(reg_.format_type(ft.args[i])) + ", got " +
@@ -2881,8 +2916,8 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             } else if (arg_type == reg_.dynamic_type() && ft.args[i] != reg_.dynamic_type()) {
                 // Dynamic → Static: deferred CoercionNode (Issue #116)
                 auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
-                coercions_.add(v.id, static_cast<std::uint32_t>(i + 1), arg_id, type_tag,
-                               ft.args[i].index, v.line, v.col);
+                add_deferred_coercion(flat, v.id, static_cast<std::uint32_t>(i + 1), arg_id,
+                                      type_tag, ft.args[i].index, v.line, v.col);
             }
         }
         std::size_t num_args = v.children.size() > 1 ? v.children.size() - 1 : 0;
@@ -3279,6 +3314,13 @@ static void record_refreshed_narrowing_provenance(
         if (!occ.predicate_name.empty() && occ.source_cond_id != 0) {
             m->narrowing_provenance_total.fetch_add(1, std::memory_order_relaxed);
         }
+        if (narrow_evidence != 0) {
+            m->coercion_post_narrow_elim_opportunities_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (rec.source_mutation_id != 0 && occ.source_cond_id != 0)
+                m->coercion_narrow_blame_chain_hits_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
     }
 }
 
@@ -3514,6 +3556,7 @@ InferenceEngine::IfPredicateResolve InferenceEngine::resolve_if_predicate_occurr
         last_if_narrowing_ = 0;
     }
 
+    last_predicate_cond_id_ = occ && occ->source_cond_id != 0 ? occ->source_cond_id : 0;
     out.occ = occ;
     return out;
 }
@@ -3645,7 +3688,18 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             rec.is_negation = false;
             rec.narrow_evidence = last_if_narrowing_;
             rec.capture_epoch = cache_epoch_;
+            if (!flat.all_mutations().empty())
+                rec.source_mutation_id = flat.all_mutations().back().mutation_id;
+            const auto captured_mutation_id = rec.source_mutation_id;
             flat.record_narrowing(std::move(rec));
+            if (cs_.metrics_ && last_if_narrowing_ != 0) {
+                auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+                m->coercion_post_narrow_elim_opportunities_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                if (occ->source_cond_id != 0 && captured_mutation_id != 0)
+                    m->coercion_narrow_blame_chain_hits_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
         }
         return lub(then_type, else_type);
     }
@@ -4249,8 +4303,9 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                     auto parent_v = flat.get(parent_id);
                     for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
                         if (parent_v.child(static_cast<std::uint32_t>(ci)) == id) {
-                            coercions_.add(parent_id, static_cast<std::uint32_t>(ci), id, type_tag,
-                                           expected.index, src_v.line, src_v.col);
+                            add_deferred_coercion(flat, parent_id, static_cast<std::uint32_t>(ci),
+                                                  id, type_tag, expected.index, src_v.line,
+                                                  src_v.col);
                             break;
                         }
                     }
@@ -4259,8 +4314,8 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                     // parent_id = NULL_NODE; the apply pass will
                     // create the CoercionNode but won't rewrite
                     // any parent slot.
-                    coercions_.add(aura::ast::NULL_NODE, 0, id, type_tag, expected.index,
-                                   src_v.line, src_v.col);
+                    add_deferred_coercion(flat, aura::ast::NULL_NODE, 0, id, type_tag,
+                                          expected.index, src_v.line, src_v.col);
                 }
             } else {
                 auto msg = "type mismatch: expected " + std::string(reg_.format_type(expected)) +
@@ -4269,24 +4324,50 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                                  .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"}));
             }
         } else if (inferred == reg_.dynamic_type() && expected != reg_.dynamic_type()) {
-            // Dynamic → Static boundary: consistent_unify succeeded because
-            // DYNAMIC is consistent with everything, but we need a runtime
-            // check at the boundary. Deferred CoercionNode (Issue #116).
-            auto type_tag = type_tag_for_coercion(expected, &reg_);
-            auto src_v = flat.get(id);
-            auto parent_id = flat.parent_of(id);
-            if (parent_id != aura::ast::NULL_NODE) {
-                auto parent_v = flat.get(parent_id);
-                for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
-                    if (parent_v.child(static_cast<std::uint32_t>(ci)) == id) {
-                        coercions_.add(parent_id, static_cast<std::uint32_t>(ci), id, type_tag,
-                                       expected.index, src_v.line, src_v.col);
-                        break;
+            // Issue #691: skip coercion when env narrowing already matches expected.
+            bool narrowed_satisfies = false;
+            if (last_if_narrowing_ != 0 && v.tag == NodeTag::Variable) {
+                auto var_ty = env_.lookup(std::string(pool.resolve(v.sym_id)));
+                if (var_ty.valid()) {
+                    auto norm = cs_.normalize(var_ty);
+                    if (norm.index == expected.index || cs_.consistent_unify(norm, expected)) {
+                        narrowed_satisfies = true;
+                        if (cs_.metrics_) {
+                            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+                            m->coercion_post_narrow_elim_opportunities_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            m->coercion_cast_elim_from_narrow_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            if (last_predicate_cond_id_ != 0 &&
+                                !flat.all_mutations().empty()) {
+                                m->coercion_narrow_blame_chain_hits_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            }
+                        }
                     }
                 }
-            } else {
-                coercions_.add(aura::ast::NULL_NODE, 0, id, type_tag, expected.index, src_v.line,
-                               src_v.col);
+            }
+            if (!narrowed_satisfies) {
+                // Dynamic → Static boundary: consistent_unify succeeded because
+                // DYNAMIC is consistent with everything, but we need a runtime
+                // check at the boundary. Deferred CoercionNode (Issue #116).
+                auto type_tag = type_tag_for_coercion(expected, &reg_);
+                auto src_v = flat.get(id);
+                auto parent_id = flat.parent_of(id);
+                if (parent_id != aura::ast::NULL_NODE) {
+                    auto parent_v = flat.get(parent_id);
+                    for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
+                        if (parent_v.child(static_cast<std::uint32_t>(ci)) == id) {
+                            add_deferred_coercion(flat, parent_id, static_cast<std::uint32_t>(ci),
+                                                  id, type_tag, expected.index, src_v.line,
+                                                  src_v.col);
+                            break;
+                        }
+                    }
+                } else {
+                    add_deferred_coercion(flat, aura::ast::NULL_NODE, 0, id, type_tag,
+                                          expected.index, src_v.line, src_v.col);
+                }
             }
         }
     }
@@ -4308,14 +4389,14 @@ void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView 
                 auto parent_v = flat.get(parent_id);
                 for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
                     if (parent_v.child(static_cast<std::uint32_t>(ci)) == v.id) {
-                        coercions_.add(parent_id, static_cast<std::uint32_t>(ci), v.id, type_tag,
-                                       expected.index, v.line, v.col);
+                        add_deferred_coercion(flat, parent_id, static_cast<std::uint32_t>(ci), v.id,
+                                              type_tag, expected.index, v.line, v.col);
                         break;
                     }
                 }
             } else {
-                coercions_.add(aura::ast::NULL_NODE, 0, v.id, type_tag, expected.index, v.line,
-                               v.col);
+                add_deferred_coercion(flat, aura::ast::NULL_NODE, 0, v.id, type_tag,
+                                      expected.index, v.line, v.col);
             }
         } else {
             auto msg = "call return type mismatch: expected " +

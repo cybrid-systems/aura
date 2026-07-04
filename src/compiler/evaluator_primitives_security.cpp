@@ -455,6 +455,61 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #691: CoercionMap + NarrowingRecord provenance stats.
+    add("query:coercion-narrowing-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t opportunities = m
+            ? m->coercion_post_narrow_elim_opportunities_total.load(std::memory_order_relaxed)
+            : 0;
+        const std::uint64_t blame = m
+            ? m->coercion_narrow_blame_chain_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t elim = m
+            ? m->coercion_cast_elim_from_narrow_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t narrow_hits = m
+            ? m->coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t completeness_pct =
+            opportunities > 0 ? (100 * blame / opportunities) : (blame > 0 ? 100 : 0);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"post-narrow-elim-opportunities", make_int(static_cast<std::int64_t>(opportunities))},
+            {"blame-chain-hits", make_int(static_cast<std::int64_t>(blame))},
+            {"cast-elim-from-narrow", make_int(static_cast<std::int64_t>(elim + narrow_hits))},
+            {"blame-chain-completeness", make_int(static_cast<std::int64_t>(completeness_pct))},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #690: constraint typed-mutation reverify + blame stats.
     add("query:constraint-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
