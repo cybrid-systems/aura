@@ -24,7 +24,8 @@ inline constexpr std::string_view kPrimCategoryVerification = "verification";
 inline constexpr std::string_view kPrimCategoryGeneral = "general";
 
 // Issue #697 extension kit version (bumped when schema/contracts change).
-inline constexpr int kPrimitivesExtensionKitVersion = 1;
+// #709: capture contract + fast slot dispatch + registry stats.
+inline constexpr int kPrimitivesExtensionKitVersion = 2;
 
 // Agent-facing skeleton bundle returned by primitive:generate-skeleton.
 struct PrimitiveSkeleton {

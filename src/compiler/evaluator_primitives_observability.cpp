@@ -1972,6 +1972,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:eda-sv-closedloop-stress-stats",
             // Issue #697 — Declarative primitives extension kit
             "query:primitives-extension-stats",
+            // Issue #709 — Registry fast dispatch + capture discipline
+            "query:primitives-registry-stats",
             // Issue #698 — Hardware backend commercial interop
             "query:hardware-backend-commercial-stats",
             // Issue #706 — Scheduler StealBudget adaptive bias
@@ -1998,9 +2000,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 82 entries as of #708 ship (80 from #707 + 2 new
-        // query:aot-reload-stats + query:aot-checkpoint-version-stats).
-        return make_int(82);
+        // 83 entries as of #709 ship (82 from #708 + query:primitives-registry-stats).
+        return make_int(83);
     });
 }
 
