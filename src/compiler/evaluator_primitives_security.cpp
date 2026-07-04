@@ -640,6 +640,60 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #710: verify_tool/diagnostic Guard + StableRef + dirty propagation stats.
+    add("query:verify-tool-guard-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"guard-captures",
+             make_int(static_cast<std::int64_t>(ev.get_verify_tool_guard_captures_total()))},
+            {"dirty-propagation",
+             make_int(static_cast<std::int64_t>(ev.get_verify_tool_dirty_propagations_total()))},
+            {"stable-ref-hits",
+             make_int(static_cast<std::int64_t>(ev.get_verify_tool_stable_ref_hits_total()))},
+            {"feedback-mutate-success",
+             make_int(static_cast<std::int64_t>(ev.get_verify_tool_feedback_mutate_success_total()))},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #695: EDA-SV verification closed-loop stress stats.
     add("query:eda-sv-closedloop-stress-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

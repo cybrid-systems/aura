@@ -2816,6 +2816,10 @@ add_dependencies(all_test_issue_targets test_issue_708)
 aura_add_issue_test(test_issue_709)
 aura_issue_test_link_llvm_jit(test_issue_709)
 add_dependencies(all_test_issue_targets test_issue_709)
+# Issue #710: verify_tool/diagnostic Guard + StableRef closed-loop.
+aura_add_issue_test(test_issue_710)
+aura_issue_test_link_llvm_jit(test_issue_710)
+add_dependencies(all_test_issue_targets test_issue_710)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

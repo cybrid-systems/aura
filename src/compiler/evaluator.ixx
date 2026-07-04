@@ -2414,6 +2414,11 @@ private:
     std::atomic<std::uint64_t> verify_tool_calls_total_{0};
     std::atomic<std::uint64_t> verify_tool_cache_hits_total_{0};
     std::atomic<std::uint64_t> verify_tool_parse_errors_total_{0};
+    // Issue #710: Guard/StableRef/dirty propagation in verify_tool + diagnostic.
+    std::atomic<std::uint64_t> verify_tool_guard_captures_total_{0};
+    std::atomic<std::uint64_t> verify_tool_dirty_propagations_total_{0};
+    std::atomic<std::uint64_t> verify_tool_stable_ref_hits_total_{0};
+    std::atomic<std::uint64_t> verify_tool_feedback_mutate_success_total_{0};
     // Issue #443: result cache keyed by (cmd, gen).
     // Bounded LRU (P0: 64 entries, FIFO eviction; the
     // follow-up uses a proper LRU). Used by
@@ -3083,6 +3088,30 @@ public:
     }
     void bump_verify_tool_parse_error() noexcept {
         verify_tool_parse_errors_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_verify_tool_guard_captures_total() const noexcept {
+        return verify_tool_guard_captures_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_verify_tool_dirty_propagations_total() const noexcept {
+        return verify_tool_dirty_propagations_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_verify_tool_stable_ref_hits_total() const noexcept {
+        return verify_tool_stable_ref_hits_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_verify_tool_feedback_mutate_success_total() const noexcept {
+        return verify_tool_feedback_mutate_success_total_.load(std::memory_order_relaxed);
+    }
+    void bump_verify_tool_guard_capture() noexcept {
+        verify_tool_guard_captures_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_verify_tool_dirty_propagation() noexcept {
+        verify_tool_dirty_propagations_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_verify_tool_stable_ref_hit() noexcept {
+        verify_tool_stable_ref_hits_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_verify_tool_feedback_mutate_success() noexcept {
+        verify_tool_feedback_mutate_success_total_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #443: public cache accessors (called from
     // verify_tool.cpp's lambdas, which don't get

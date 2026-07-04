@@ -180,8 +180,8 @@ int main() {
         std::println("\n--- AC6: stats:count ---");
         auto count = cs.eval("(stats:count)");
         CHECK(count && aura::compiler::types::is_int(*count) &&
-                  aura::compiler::types::as_int(*count) == 83,
-              "stats:count == 83");
+                  aura::compiler::types::as_int(*count) == 84,
+              "stats:count == 84");
     }
 
     // AC7: fiber stress — concurrent eval + AOT query primitives

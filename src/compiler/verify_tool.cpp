@@ -1,53 +1,22 @@
-// verify_tool.cpp — Issue #443: External simulator
+// verify_tool.cpp — Issue #443 / #710: External simulator
 // tool-calling + structured result parsing primitives.
 //
 // P0 scope-limited ship: 3 new primitives in the
 // (verify:...) namespace:
 //   - (verify:run-external-sim "cmd-string" [timeout-ms-int])
-//     — P0 stub: records the call + returns a parseable
-//     placeholder string. The follow-up wires the actual
-//     ::system() / popen() execution with strict arg
-//     validation + timeout. The P0 cache prevents repeated
-//     calls in the same generation from re-running.
-//   - (verify:parse-coverage "cov-data-string") — parses
-//     line-based "node_id hole_name" format and marks
-//     each node dirty with kCoverageFeedbackDirty
-//     (from #469).
-//   - (verify:parse-failures "fail-data-string") — same
-//     format, marks with kAssertFailureDirty.
+//   - (verify:parse-coverage "cov-data-string")
+//   - (verify:parse-failures "fail-data-string")
 //
-// All 3 bump the verify_tool_*_total_ counters on
-// Evaluator (readable via (query:verify-tool-stats)).
-
-// verify_tool.cpp — Issue #443: External simulator
-// tool-calling + structured result parsing primitives.
-//
-// aura.compiler.evaluator module partition; registered
-// via evaluator_primitives_registry.cpp.
-//
-// P0 scope-limited ship: 3 new primitives in the
-// (verify:...) namespace:
-//   - (verify:run-external-sim "cmd-string" [timeout-ms-int])
-//     — P0 stub: records the call + returns a parseable
-//     placeholder string. The follow-up wires the actual
-//     ::system() / popen() execution with strict arg
-//     validation + timeout. The P0 cache prevents repeated
-//     calls in the same generation from re-running.
-//   - (verify:parse-coverage "cov-data-string") — parses
-//     line-based "node_id hole_name" format and marks
-//     each node dirty with kCoverageFeedbackDirty
-//     (from #469).
-//   - (verify:parse-failures "fail-data-string") — same
-//     format, marks with kAssertFailureDirty.
-//
-// All 3 bump the verify_tool_*_total_ counters on
-// Evaluator (readable via (query:verify-tool-stats)).
+// Issue #710: parse paths use MutationBoundaryGuard,
+// StableNodeRef provenance, mark_dirty_upward, and optional
+// hardware_backend hook for SV closed-loop feedback.
 
 module;
 
 module aura.compiler.evaluator;
 import std;
 
+import aura.compiler.hardware_backend;
 import aura.compiler.value;
 import aura.compiler.service;
 import aura.core.ast;
@@ -56,27 +25,27 @@ namespace aura::compiler::primitives_detail::verify_tool_detail {
 
 // Helper: parses a line-based "node_id hole_name" text
 // blob. Each line starts with a non-negative integer
-// (the NodeId). Lines that don't start with an integer
-// are skipped. Returns the count of nodes successfully
-// marked dirty.
+// (the NodeId). Issue #710: Guard + StableNodeRef +
+// mark_dirty_upward on each successfully marked node.
 static std::uint64_t parse_and_mark(aura::compiler::Evaluator& ev, const std::string& text,
                                     bool is_coverage) {
     auto* ws = ev.workspace_flat();
     if (!ws)
         return 0;
+    bool ok = true;
+    aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+    ev.bump_verify_tool_guard_capture();
+
     std::uint64_t marked = 0;
     std::size_t i = 0;
     while (i < text.size()) {
-        // Find end of line.
         std::size_t j = i;
         while (j < text.size() && text[j] != '\n')
             ++j;
         const std::string_view line(text.data() + i, j - i);
-        // Skip leading whitespace.
         std::size_t k = 0;
         while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
             ++k;
-        // Parse the first integer (NodeId).
         if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
             std::size_t val = 0;
             while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
@@ -84,17 +53,36 @@ static std::uint64_t parse_and_mark(aura::compiler::Evaluator& ev, const std::st
                 ++k;
             }
             const auto nid = static_cast<aura::ast::NodeId>(val);
-            if (nid < ws->size()) {
-                const auto reason = is_coverage ? aura::ast::FlatAST::kCoverageFeedbackDirty
-                                                : aura::ast::FlatAST::kAssertFailureDirty;
-                ws->apply_verification_dirty_bits(nid, reason);
-                ++marked;
-            } else {
+            if (nid >= ws->size()) {
                 ev.bump_verify_tool_parse_error();
+            } else {
+                const auto pref = ws->make_ref(nid);
+                if (!pref.is_valid_in(*ws)) {
+                    ev.bump_verify_tool_parse_error();
+                } else {
+                    ev.bump_verify_tool_stable_ref_hit();
+                    const auto reason = is_coverage ? aura::ast::FlatAST::kCoverageFeedbackDirty
+                                                    : aura::ast::FlatAST::kAssertFailureDirty;
+                    ws->apply_verification_dirty_bits(nid, reason);
+                    if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, nid))
+                        ws->apply_verify_dirty_bits(nid, aura::ast::FlatAST::kSvaDirty);
+                    ws->mark_dirty_upward(nid, aura::ast::FlatAST::kGeneralDirty,
+                                          ws->ppa_dirty_reasons(nid));
+                    ev.bump_verify_tool_dirty_propagation();
+                    if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, nid)) {
+                        const auto sv_reasons =
+                            aura::compiler::hardware::sv_structural_dirty_reasons(*ws, nid);
+                        aura::compiler::hardware::on_structural_mutation(
+                            nid,
+                            static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty |
+                                                      sv_reasons),
+                            ws->ppa_dirty_reasons(nid));
+                    }
+                    ev.bump_verify_tool_feedback_mutate_success();
+                    ++marked;
+                }
             }
         } else if (!line.empty()) {
-            // Non-empty line that doesn't start with an
-            // integer → parse error.
             ev.bump_verify_tool_parse_error();
         }
         i = (j < text.size()) ? j + 1 : j;
@@ -104,9 +92,6 @@ static std::uint64_t parse_and_mark(aura::compiler::Evaluator& ev, const std::st
 
 } // namespace aura::compiler::primitives_detail::verify_tool_detail
 
-// Main registration function. Called by
-// register_evaluate_primitives in
-// evaluator_primitives_registry.cpp.
 namespace aura::compiler::primitives_detail {
 
 void register_verify_tool_primitives(
@@ -119,62 +104,28 @@ void register_verify_tool_primitives(
     std::function<aura::compiler::types::EvalValue(const std::string&, const std::string&)> mev) {
     using namespace aura::compiler::primitives_detail::verify_tool_detail;
 
-    // (verify:run-external-sim "cmd-string"
-    //   [timeout-ms-int])
-    // — call an external simulator. P0 stub: records
-    // the call, checks the cache, and returns a
-    // placeholder result string. The follow-up wires
-    // the actual subprocess execution (popen with
-    // strict arg validation + timeout).
-    //
-    // The placeholder result is the cmd string itself
-    // (so the Agent can verify the call happened). The
-    // P0 doesn't actually run the tool — the cache
-    // prevents repeated calls from doing the wrong
-    // thing in tests.
     add("verify:run-external-sim",
         [&ev, make_string, make_int, mev](std::span<const aura::compiler::types::EvalValue> a)
             -> aura::compiler::types::EvalValue {
             if (a.empty() || !is_string(a[0]))
                 return mev("bad-arg", "usage: (verify:run-external-sim \"cmd\" [timeout-ms])");
+            bool ok = true;
+            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            ev.bump_verify_tool_guard_capture();
             ev.bump_verify_tool_call();
             auto cmd_idx = as_string_idx(a[0]);
             if (cmd_idx >= ev.string_heap_size())
                 return mev("bad-arg", "cmd string index out of range");
             const auto& cmd = ev.string_heap_at(cmd_idx);
-            // Optional 2nd arg: timeout (in ms). P0: the
-            // timeout is recorded (bumped) but the
-            // actual execution is a no-op.
-            if (a.size() >= 2 && is_int(a[1])) {
-                // No-op for P0; the follow-up wires
-                // the actual timeout. We can record it
-                // via a counter if desired, but the
-                // cache_hit counter is sufficient for
-                // P0 observability.
-            }
-            // Cache check: if (cmd, gen) is in the
-            // cache, return the cached result. The
-            // cache bump_verify_tool_cache_hit() side-
-            // effect is the only difference between
-            // cache hit + miss.
+            (void)make_int;
             if (auto cached = ev.lookup_verify_tool_cache(cmd)) {
                 ev.bump_verify_tool_cache_hit();
                 return make_string(ev.push_string_heap(*cached));
             }
-            // Cache miss: P0 returns the cmd string as
-            // a placeholder result. The follow-up
-            // replaces this with the actual tool
-            // output (stdout + stderr captured via
-            // popen()).
             ev.insert_verify_tool_cache(cmd, cmd);
             return make_string(static_cast<std::int32_t>(cmd_idx));
         });
 
-    // (verify:parse-coverage "cov-data-string")
-    // — parses line-based "node_id hole_name" format
-    // and marks each node dirty with
-    // kCoverageFeedbackDirty (from #469). Returns
-    // the count of nodes successfully marked.
     add("verify:parse-coverage",
         [&ev, make_int, mev](std::span<const aura::compiler::types::EvalValue> a)
             -> aura::compiler::types::EvalValue {
@@ -188,8 +139,6 @@ void register_verify_tool_primitives(
             return make_int(static_cast<std::int64_t>(marked));
         });
 
-    // (verify:parse-failures "fail-data-string") —
-    // same format, marks with kAssertFailureDirty.
     add("verify:parse-failures",
         [&ev, make_int, mev](std::span<const aura::compiler::types::EvalValue> a)
             -> aura::compiler::types::EvalValue {

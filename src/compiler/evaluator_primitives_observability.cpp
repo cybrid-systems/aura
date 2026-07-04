@@ -2100,6 +2100,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:primitives-extension-stats",
             // Issue #709 — Registry fast dispatch + capture discipline
             "query:primitives-registry-stats",
+            // Issue #710 — verify_tool/diagnostic Guard + StableRef wiring
+            "query:verify-tool-guard-stats",
             // Issue #698 — Hardware backend commercial interop
             "query:hardware-backend-commercial-stats",
             // Issue #706 — Scheduler StealBudget adaptive bias
@@ -2126,8 +2128,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 83 entries as of #709 ship (82 from #708 + query:primitives-registry-stats).
-        return make_int(83);
+        // 84 entries as of #710 ship (83 from #709 + query:verify-tool-guard-stats).
+        return make_int(84);
     });
 }
 
