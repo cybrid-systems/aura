@@ -6,6 +6,8 @@
     "test_issues_jit_tests",
     "test_issues_fiber",
     "test_issue_214",
-    "test_issue_237"
+    "test_issue_237",
+    "test_issue_695",
+    "test_eda_sv_verification_closedloop_stress"
   ]
 }
