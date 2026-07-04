@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <exception>
 namespace aura::compiler {
 
 // Bump when extension-kit capture contract version changes.
@@ -32,9 +33,42 @@ inline constexpr int kPrimCaptureContractVersion = 1;
 
 namespace primitives_detail {
 
+    // Issue #709: bump the aggregate fast-path counter only.
+    // Retained for backward compatibility — callers that don't have
+    // a slot in scope (rare; usually only in synthetic test
+    // fixtures) keep working. New code should prefer
+    // prim_record_fastpath_hit_for_slot which provides per-prim
+    // breakdown.
     inline void prim_record_fastpath_hit(CompilerMetrics* m) noexcept {
         if (m)
             m->primitive_fastpath_hits_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #479: bump BOTH the aggregate counter and the
+    // per-slot counter. The slow path (lazy-grow on first
+    // hit for a new slot) may allocate and could throw
+    // bad_alloc — we swallow it because observability is
+    // advisory, never correctness-critical. The hot path
+    // (slot < capacity) is lock-free and noexcept.
+    //
+    // Returns the post-increment per-slot count so callers
+    // that want to log "first N hits" don't need a second
+    // relaxed load. Not used by current callers but cheap
+    // to expose.
+    inline std::uint64_t prim_record_fastpath_hit_for_slot(CompilerMetrics* m,
+                                                           std::size_t slot) noexcept {
+        if (!m)
+            return 0;
+        m->primitive_fastpath_hits_total.fetch_add(1, std::memory_order_relaxed);
+        try {
+            return m->primitive_fastpath_hits_for_slot(slot).fetch_add(
+                1, std::memory_order_relaxed) +
+                   1;
+        } catch (...) {
+            // OOM in lazy-grow — swallow; aggregate counter is
+            // already updated, per-slot breakdown is best-effort.
+            return 0;
+        }
     }
 
     inline void prim_record_capture_violation(CompilerMetrics* m) noexcept {

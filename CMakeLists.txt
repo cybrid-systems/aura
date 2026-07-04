@@ -2816,6 +2816,13 @@ add_dependencies(all_test_issue_targets test_issue_708)
 aura_add_issue_test(test_issue_709)
 aura_issue_test_link_llvm_jit(test_issue_709)
 add_dependencies(all_test_issue_targets test_issue_709)
+# Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
+aura_add_issue_test(test_issue_479)
+# test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
+# reference FlatHashTable::create (defined in aura_jit_runtime.cpp); that
+# symbol isn't in libaura_test_objects.a, so we link LLVM JIT sources in.
+aura_issue_test_link_llvm_jit(test_issue_479)
+add_dependencies(all_test_issue_targets test_issue_479)
 # Issue #473 Tier 1: serve-async security hardening (JSON escape + stdin cap + auth/curl/platform).
 aura_add_issue_test(test_issue_473)
 target_compile_definitions(test_issue_473 PRIVATE AURA_TEST_SRC_DIR="${CMAKE_SOURCE_DIR}/src")

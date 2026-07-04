@@ -35,8 +35,9 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
                 return make_void();
-            primitives_detail::prim_record_fastpath_hit(
-                static_cast<CompilerMetrics*>(ev.compiler_metrics()));
+            // Issue #479: per-slot fast-path hit for "which prim is hottest".
+            primitives_detail::prim_record_fastpath_hit_for_slot(
+                static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
             return (*prim)({arg});
         }
         if (is_closure(fn)) {
@@ -52,8 +53,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
                 return false;
-            primitives_detail::prim_record_fastpath_hit(
-                static_cast<CompilerMetrics*>(ev.compiler_metrics()));
+            primitives_detail::prim_record_fastpath_hit_for_slot(
+                static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
             return aura::compiler::pure::is_truthy((*prim)({arg}));
         }
         if (is_closure(fn)) {
@@ -70,8 +71,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
                 return make_void();
-            primitives_detail::prim_record_fastpath_hit(
-                static_cast<CompilerMetrics*>(ev.compiler_metrics()));
+            primitives_detail::prim_record_fastpath_hit_for_slot(
+                static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
             return (*prim)({acc, arg});
         }
         if (is_closure(fn)) {

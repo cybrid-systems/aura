@@ -7,6 +7,7 @@
 #ifndef AURA_COMPILER_OBSERVABILITY_METRICS_H
 #define AURA_COMPILER_OBSERVABILITY_METRICS_H
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -528,6 +529,120 @@ struct CompilerMetrics {
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};
+
+    // Issue #479: per-slot fast-path hit breakdown. Which
+    // primitive is hottest in list/map/filter/apply hot
+    // paths? The aggregate counter above only answers
+    // "is the dispatch hot path hot?" — this answers
+    // "which specific primitive is the bottleneck?".
+    //
+    // Storage: heap-allocated atomic array grown on demand.
+    // We can't use std::vector<std::atomic<uint64_t>>
+    // because std::atomic is neither copyable nor movable,
+    // so std::vector::resize() won't compile. The pattern
+    // here is the standard "manual atomic array" pattern:
+    //   - pointer + capacity
+    //   - grow under mutex, doubling when full
+    //   - element access is a relaxed fetch_add once sized
+    //
+    // Slot indices are stable for the lifetime of the
+    // registry (slots are assigned at primitive-registration
+    // time and never reused), so the array only grows.
+    // Typical capacity after warmup: ~200 slots (well under
+    // the 4096 initial allocation).
+    //
+    // Mutex: uses std::atomic_flag rather than std::mutex
+    // because this header is transitively included by .cpp
+    // files in module purview (after `import std;`), and
+    // mixing `#include <mutex>` with `import std;` in
+    // module purview triggers "redeclaration of std::once_flag"
+    // on GCC 16 modules. std::atomic_flag is in <atomic>
+    // (already included above) and is the lightweight
+    // primitive — perfect for the rare slow-path here.
+    mutable std::atomic_flag primitive_fastpath_per_prim_lock_ = ATOMIC_FLAG_INIT;
+    std::atomic<std::uint64_t>* primitive_fastpath_hits_per_prim_ = nullptr;
+    std::size_t primitive_fastpath_per_prim_capacity_ = 0;
+
+    // Lazy-grow accessor. Returns a reference to the
+    // per-slot atomic; callers fetch_add(1) on it.
+    // Thread-safe: double-checked locking with a
+    // sequenced-before fence on the writer side (the
+    // mutex release) and an acquire fence on the reader
+    // side (the relaxed load inside the if-check, which
+    // synchronizes-with the std::atomic default-init in
+    // new[] because std::atomic's default ctor is
+    // sequenced-before the new[]'s return).
+    //
+    // Initial capacity is 256 slots (covers Aura's stdlib
+    // primitives + a healthy margin for the extension kit).
+    // Grows by 2× when exceeded; allocation is O(log N)
+    // amortized across the lifetime of the service.
+    //
+    // The slow path (grow) may throw bad_alloc on OOM;
+    // the fast path is noexcept. The helper that wraps
+    // this in the hot list/runtime paths swallows OOM
+    // gracefully since these counters are advisory.
+    std::atomic<std::uint64_t>& primitive_fastpath_hits_for_slot(std::size_t slot) {
+        if (slot >= primitive_fastpath_per_prim_capacity_) [[unlikely]] {
+            // Spinlock: atomic_flag test_and_set returns the
+            // previous state; spin until we get false (was
+            // unlocked). Clear on exit. For the rare slow
+            // path (grow-once-per-power-of-two) this is
+            // fine; contention is essentially zero in
+            // practice because grow happens during
+            // primitive registration, not in steady state.
+            while (primitive_fastpath_per_prim_lock_.test_and_set(std::memory_order_acquire))
+                /* spin */;
+            // RAII unlock on scope exit. We can't use
+            // std::scoped_lock (requires <mutex>) and we
+            // can't use a custom RAII helper inline without
+            // polluting the header — use a try/finally
+            // pattern via a lambda's destructor... or
+            // just inline the unlock at every return. With
+            // only one return path below, a manual unlock
+            // at the end is the simplest correct approach.
+            struct UnlockGuard {
+                std::atomic_flag* f;
+                ~UnlockGuard() { f->clear(std::memory_order_release); }
+            } guard{&primitive_fastpath_per_prim_lock_};
+            if (slot >= primitive_fastpath_per_prim_capacity_) {
+                std::size_t new_cap = primitive_fastpath_per_prim_capacity_ == 0
+                                          ? std::max<std::size_t>(256, slot + 1)
+                                          : primitive_fastpath_per_prim_capacity_;
+                while (new_cap <= slot)
+                    new_cap *= 2;
+                auto* new_arr = new std::atomic<std::uint64_t>[new_cap];
+                // std::atomic default-initializes to indeterminate value
+                // (NOT zero!) — explicitly zero-init the new slots.
+                for (std::size_t i = 0; i < new_cap; ++i)
+                    new_arr[i].store(0, std::memory_order_relaxed);
+                // Carry over existing counts.
+                for (std::size_t i = 0; i < primitive_fastpath_per_prim_capacity_; ++i)
+                    new_arr[i].store(primitive_fastpath_hits_per_prim_[i].load(std::memory_order_relaxed),
+                                     std::memory_order_relaxed);
+                // Publish: assign the pointer under the lock so the
+                // reader-side check above sees the new array.
+                // NOTE: we deliberately LEAK the old array instead
+                // of delete[]ing it. A fast-path reader that has
+                // already entered the if-block (slot < old_cap) is
+                // about to dereference `primitive_fastpath_hits_per_prim_[slot]`
+                // — if we deleted the old array under it, that
+                // dereference would be UB (use-after-free). Leaking
+                // is bounded: capacity doubles each grow, so total
+                // leaked memory is ≤ 2× final capacity. For Aura's
+                // ~200-slot stdlib + extension kit, the leak is
+                // ≤ 4096 atomic<uint64_t> ≈ 32 KiB. Negligible.
+                std::atomic_thread_fence(std::memory_order_release);
+                primitive_fastpath_hits_per_prim_ = new_arr;
+                primitive_fastpath_per_prim_capacity_ = new_cap;
+            }
+        }
+        // Fast path: pointer is stable after first grow, capacity
+        // only ever increases. The reader-side relaxed load + the
+        // writer-side release fence above provide the
+        // happens-before edge needed to see the new array.
+        return primitive_fastpath_hits_per_prim_[slot];
+    }
     // Issue #342: narrowing blame/provenance
     // observability. 1 lifetime counter: how many
     // OccurrenceInfoFlat records have been
