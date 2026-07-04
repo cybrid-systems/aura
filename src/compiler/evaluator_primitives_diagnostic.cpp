@@ -156,6 +156,9 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
     add("apply-fix", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_pair(a[1]))
             return make_bool(false);
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        ev.bump_verify_tool_guard_capture();
         auto code_idx = as_string_idx(a[0]);
         if (code_idx >= ev.string_heap_.size())
             return make_bool(false);
@@ -219,6 +222,8 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             result = code;
         }
 
+        if (result != code)
+            ev.bump_verify_tool_feedback_mutate_success();
         auto sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(result);
         return make_string(sidx);
@@ -230,10 +235,17 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
     add("check-preconditions", [&ev](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_int(a[0]) || !ev.workspace_flat_)
             return make_bool(false);
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        ev.bump_verify_tool_guard_capture();
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *ev.workspace_flat_;
         if (node >= flat.size())
             return make_bool(false);
+        const auto pref = flat.make_ref(node);
+        if (!pref.is_valid_in(flat))
+            return make_bool(false);
+        ev.bump_verify_tool_stable_ref_hit();
         auto nv = flat.get(node);
 
         // String arg: type compatibility check

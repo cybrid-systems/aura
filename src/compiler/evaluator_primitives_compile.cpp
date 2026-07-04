@@ -2334,6 +2334,9 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         auto* ws = ev.workspace_flat();
         if (!ws)
             return make_bool(false);
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        ev.bump_verify_tool_guard_capture();
         const auto kind_idx = as_string_idx(a[0]);
         const auto text_idx = as_string_idx(a[1]);
         if (kind_idx >= ev.string_heap_.size() || text_idx >= ev.string_heap_.size())
@@ -2363,6 +2366,10 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         if (target == aura::ast::NULL_NODE || target >= ws->size())
             return make_bool(false);
+        const auto pref = ws->make_ref(target);
+        if (!pref.is_valid_in(*ws))
+            return make_bool(false);
+        ev.bump_verify_tool_stable_ref_hit();
         const bool coverage =
             kind.find("coverage") != std::string::npos || kind.find("cov") != std::string::npos;
         ws->bump_sv_mutate_attempt();
@@ -2381,6 +2388,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         ws->mark_dirty_upward(target, aura::ast::FlatAST::kGeneralDirty,
                               ws->ppa_dirty_reasons(target));
+        ev.bump_verify_tool_dirty_propagation();
         if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, target)) {
             const auto sv_reasons =
                 aura::compiler::hardware::sv_structural_dirty_reasons(*ws, target);
@@ -2411,6 +2419,7 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
             }
         }
+        ev.bump_verify_tool_feedback_mutate_success();
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });
