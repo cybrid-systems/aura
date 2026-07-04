@@ -283,6 +283,11 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     std::uint64_t feedback_mutate_hits_total = 0;
     std::uint64_t ppa_savings_total = 0;
     std::uint64_t verification_loop_success_total = 0;
+    // Issue #698: Hardware backend commercial interop + emit validation.
+    std::uint64_t sv_emit_parse_success_total = 0;
+    std::uint64_t sv_emit_parse_fail_total = 0;
+    std::uint64_t commercial_simulator_runs_total = 0;
+    std::uint64_t sv_diff_emits_total = 0;
     std::uint64_t sva_structured_mutate_hits_total = 0;
     std::uint64_t eda_sv_evolution_cycles_total = 0;
     std::uint64_t eda_sv_verification_convergence_total = 0;

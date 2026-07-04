@@ -756,6 +756,57 @@ std::string emit_commercial_simulator_do_file(const std::string_view simulator,
     return out;
 }
 
+SvEmitValidation validate_sv_emit(const std::string_view sv_text) {
+    SvEmitValidation result;
+    if (sv_text.empty()) {
+        result.error = "empty emit";
+        return result;
+    }
+    int paren = 0;
+    int brace = 0;
+    for (char c : sv_text) {
+        if (c == '(')
+            ++paren;
+        else if (c == ')') {
+            if (--paren < 0) {
+                result.error = "unbalanced )";
+                return result;
+            }
+        } else if (c == '{')
+            ++brace;
+        else if (c == '}') {
+            if (--brace < 0) {
+                result.error = "unbalanced }";
+                return result;
+            }
+        }
+    }
+    if (paren != 0) {
+        result.error = "unbalanced (";
+        return result;
+    }
+    if (brace != 0) {
+        result.error = "unbalanced {";
+        return result;
+    }
+    static constexpr std::string_view k_keywords[] = {
+        "interface", "property", "coverpoint", "covergroup",
+        "sequence", "assert", "modport", "endmodule", "endinterface"};
+    bool found = sv_text.find("// sv re-emit stub") != std::string_view::npos;
+    for (const auto kw : k_keywords) {
+        if (sv_text.find(kw) != std::string_view::npos) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        result.error = "no SV construct keyword";
+        return result;
+    }
+    result.ok = true;
+    return result;
+}
+
 SvReemitResult reemit_sv_node(const FlatAST& flat, const StringPool& pool, const NodeId id,
                               const std::string_view simulator) {
     SvReemitResult result;

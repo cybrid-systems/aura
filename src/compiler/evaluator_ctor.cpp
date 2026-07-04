@@ -126,9 +126,17 @@ void Evaluator::backfill_eda_sv_primitive_meta() {
                  .doc = "Bounded EDA-SV verification self-evolution demo harness.",
                  .category = "eda",
                  .schema = "(string int) -> int"});
+    primitives_.set_meta_for_name(
+        "eda:run-commercial-simulator-stub",
+        PrimMeta{.arity = 2,
+                 .pure = false,
+                 .safety_flags = static_cast<std::uint8_t>(kPrimSafetyMutates | kPrimSafetyFiber),
+                 .doc = "Run commercial simulator stub: re-emit + validate SV for node.",
+                 .category = "eda",
+                 .schema = "(string int) -> bool"});
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->primitive_eda_meta_backfill_total.fetch_add(
-            4, std::memory_order_relaxed);
+            5, std::memory_order_relaxed);
 }
 
 Evaluator::~Evaluator() {

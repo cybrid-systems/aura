@@ -1901,6 +1901,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:eda-sv-closedloop-stress-stats",
             // Issue #697 — Declarative primitives extension kit
             "query:primitives-extension-stats",
+            // Issue #698 — Hardware backend commercial interop
+            "query:hardware-backend-commercial-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1918,9 +1920,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 77 entries as of #697 ship (76 from #695 + 1 new
-        // query:primitives-extension-stats).
-        return make_int(77);
+        // 78 entries as of #698 ship (77 from #697 + 1 new
+        // query:hardware-backend-commercial-stats).
+        return make_int(78);
     });
 
 }
