@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**640** registrations scanned from `src/**/*.cpp`.
+**642** registrations scanned from `src/**/*.cpp`.
 Runtime canonical list: `(api-reference)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 124 primitives (19%)
 - **core**: 190 primitives (30%)
-- **internal-observable**: 179 primitives (28%)
+- **internal-observable**: 181 primitives (28%)
 - **convenience**: 147 primitives (23%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
@@ -21,7 +21,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `eval-current-output` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `set-code` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Query: (179)
+## Query: (181)
 
 - `query:adt-exhaustiveness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-match-exhaust-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -52,8 +52,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:compiler-incremental-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:compiler-runtime-production-readiness-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:consolidated-production-priority-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-delta-blame-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-delta-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:constraint-typed-mutate-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_security.cpp`
 - `query:cxx26-hotpath-invariants` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:cxx26-invariants` *[internal-observable]* — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:dead-coercion-zerooverhead-stats` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -1081,7 +1083,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (179)
+### Internal observable (stats/counters) (181)
 
 - `query:adt-exhaustiveness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:adt-match-exhaust-stats` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1112,8 +1114,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:compiler-incremental-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:compiler-runtime-production-readiness-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:consolidated-production-priority-stats` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:constraint-delta-blame-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-delta-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:constraint-stats` — `src/compiler/evaluator_primitives_compile.cpp`
+- `query:constraint-typed-mutate-stats` — `src/compiler/evaluator_primitives_security.cpp`
 - `query:cxx26-hotpath-invariants` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:cxx26-invariants` — `src/compiler/evaluator_primitives_observability.cpp`
 - `query:dead-coercion-zerooverhead-stats` — `src/compiler/evaluator_primitives_query.cpp`

@@ -248,6 +248,9 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     // Issue #466: solve_delta cross-delta conflict observability.
     std::uint64_t delta_conflict_reverify_total = 0;
     std::uint64_t delta_conflict_detected_total = 0;
+    // Issue #690: constraint typed-mutation reverify + blame completeness.
+    std::uint64_t reverify_truncated_total = 0;
+    std::uint64_t constraint_blame_chain_complete_total = 0;
     // Issue #628: solve_delta full-solve fallback observability.
     std::uint64_t solve_delta_full_solve_fallback_total = 0;
     std::uint64_t delta_solve_constraints_ratio_bp = 0;

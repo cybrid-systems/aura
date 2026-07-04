@@ -5573,6 +5573,11 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             metrics_.delta_conflict_reverify_total.load(std::memory_order_relaxed);
         s.delta_conflict_detected_total =
             metrics_.delta_conflict_detected_total.load(std::memory_order_relaxed);
+        s.reverify_truncated_total =
+            metrics_.reverify_truncated_total.load(std::memory_order_relaxed);
+        s.constraint_blame_chain_complete_total =
+            metrics_.constraint_blame_chain_complete_total.load(
+                std::memory_order_relaxed);
         s.solve_delta_full_solve_fallback_total =
             metrics_.solve_delta_full_solve_fallback_total.load(std::memory_order_relaxed);
         if (s.delta_constraints_total > 0) {

@@ -124,8 +124,12 @@ export class ConstraintSystem {
     std::function<void(std::size_t)> on_touched_roots_snapshot_;
     std::function<void()> on_cross_delta_conflict_;
     static constexpr std::size_t kReverifyCleanScanLimit = 256;
+    static constexpr std::size_t kReverifyCleanScanMax = 4096;
+    std::uint64_t active_mutation_id_ = 0;
     void note_touched_var(aura::core::TypeId id);
     bool constraint_references_touched(const Constraint& c) const;
+    [[nodiscard]] std::size_t effective_reverify_limit() const noexcept;
+    void record_cross_delta_blame_hit();
     bool reverify_clean_constraints_for_touched();
     void clear_touched_roots() { touched_roots_.clear(); }
     // Issue #466: when true, consistent_unify records constraints
@@ -193,6 +197,11 @@ public:
     void set_delta_record_mode(bool on) noexcept { delta_record_mode_ = on; }
     [[nodiscard]] bool delta_record_mode() const noexcept {
         return delta_record_mode_;
+    }
+    // Issue #690: link cross-delta conflicts to the active mutation
+    // for blame-chain completeness metrics.
+    void set_active_mutation_id(std::uint64_t id) noexcept {
+        active_mutation_id_ = id;
     }
     // Issue #466: mark a type variable root as touched for the
     // post-delta clean-constraint re-verify scan.
@@ -460,6 +469,18 @@ public:
         cs_.set_solve_delta_observability_hooks(std::move(on_snapshot),
                                                 std::move(on_conflict));
     }
+    // Issue #690: mutation-scoped touched_roots seeding for
+    // infer_flat_partial structural typed mutation.
+    void set_active_mutation_id(std::uint64_t id) noexcept {
+        cs_.set_active_mutation_id(id);
+    }
+    [[nodiscard]] std::size_t constraint_touched_roots_size() const noexcept {
+        return cs_.touched_roots_size();
+    }
+    void seed_mutation_touched_roots(const aura::ast::FlatAST& flat,
+                                     const aura::ast::StringPool& pool,
+                                     const std::vector<aura::ast::NodeId>& occurrence_targets,
+                                     std::uint64_t mutation_id);
     std::uint64_t epoch_invalidations() const { return epoch_invalidations_; }
 
     // Issue #283 follow-up #5: bidirectional-mode flag. When

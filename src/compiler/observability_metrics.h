@@ -447,6 +447,13 @@ struct CompilerMetrics {
     //     unify) detected a cross-delta CONFLICT
     std::atomic<std::uint64_t> delta_conflict_reverify_total{0};
     std::atomic<std::uint64_t> delta_conflict_detected_total{0};
+    // Issue #690: constraint typed-mutation reverify + blame completeness.
+    //   - reverify_truncated_total: clean-constraint reverify scans that
+    //     hit the dynamic scan cap before checking all candidates
+    //   - constraint_blame_chain_complete_total: cross-delta conflicts
+    //     where active_mutation_id was set (auditable blame chain)
+    std::atomic<std::uint64_t> reverify_truncated_total{0};
+    std::atomic<std::uint64_t> constraint_blame_chain_complete_total{0};
     // Issue #628: solve_delta safety observability.
     //   - solve_delta_full_solve_fallback_total: infer_flat
     //     used full solve() instead of solve_delta in an
