@@ -309,6 +309,32 @@ map_interface_node_to_ir(const aura::ast::FlatAST& flat,
                          const aura::ast::StringPool& pool,
                          aura::ast::NodeId id);
 
+// Issue #694: AST tag → string-based SVA IR mappers.
+export std::optional<PropertyIR>
+map_property_node_to_ir(const aura::ast::FlatAST& flat,
+                        const aura::ast::StringPool& pool,
+                        aura::ast::NodeId id);
+
+export std::optional<SequenceIR>
+map_sequence_node_to_ir(const aura::ast::FlatAST& flat,
+                      const aura::ast::StringPool& pool,
+                      aura::ast::NodeId id);
+
+export std::optional<CoverpointIR>
+map_coverpoint_node_to_ir(const aura::ast::FlatAST& flat,
+                          const aura::ast::StringPool& pool,
+                          aura::ast::NodeId id);
+
+export std::optional<CovergroupIR>
+map_covergroup_node_to_ir(const aura::ast::FlatAST& flat,
+                          const aura::ast::StringPool& pool,
+                          aura::ast::NodeId id);
+
+export std::optional<PropertyIR>
+map_assert_node_to_ir(const aura::ast::FlatAST& flat,
+                      const aura::ast::StringPool& pool,
+                      aura::ast::NodeId id);
+
 // Debug helpers (SymId-aware — resolve via the pool).
 export std::string debug_sv_modport(const SVModportIR& m,
                                      const aura::ast::StringPool& pool);

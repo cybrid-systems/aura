@@ -140,6 +140,13 @@ export enum class NodeTag : std::uint32_t {
     // constructors + side-table population + lowering hooks.
     Interface = 0x1B,
     Modport = 0x1C,
+    // Issue #694: SVA structural tags for verification-driven
+    // self-evolution (property/sequence/assert/covergroup/coverpoint).
+    Property = 0x1D,
+    Sequence = 0x1E,
+    Assert = 0x1F,
+    Covergroup = 0x20,
+    Coverpoint = 0x21,
 };
 
 // Issue #402: FlatAST summary flags. Bit-set computed eagerly
@@ -400,7 +407,7 @@ export struct NodeMeta {
 // Tag-to-metadata mapping, indexed by `tag - 1`.
 // Tags must be sequential starting from 1 (LiteralInt = 0x01).
 // Gap at 0x0C is filled with a sentinel.
-export constexpr std::array<NodeMeta, 28> kNodeMeta = {{
+export constexpr std::array<NodeMeta, 33> kNodeMeta = {{
     {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true, false, false},       // 0x01
     {NodeTag::Variable, "Variable", 0, false, true, false, false, false},           // 0x02
     {NodeTag::Call, "Call", 1, true, false, false, false, false},                   // 0x03
@@ -436,6 +443,11 @@ export constexpr std::array<NodeMeta, 28> kNodeMeta = {{
     // methods land in a follow-up.
     {NodeTag::Interface, "Interface", 0, true, false, false, false, false},         // 0x1B
     {NodeTag::Modport, "Modport", 0, true, false, false, false, false},              // 0x1C
+    {NodeTag::Property, "Property", 1, false, true, false, false, false},            // 0x1D
+    {NodeTag::Sequence, "Sequence", 1, false, true, false, false, false},            // 0x1E
+    {NodeTag::Assert, "Assert", 1, false, true, false, false, false},              // 0x1F
+    {NodeTag::Covergroup, "Covergroup", 0, true, false, false, false, false},        // 0x20
+    {NodeTag::Coverpoint, "Coverpoint", 0, true, false, false, false, false},        // 0x21
 }};
 
 
@@ -2737,6 +2749,67 @@ public:
         return id;
     }
 
+    // Issue #694: SVA builders. Property/Sequence store the expr as a
+    // LiteralString child; Coverpoint uses param_data_ for bins (like
+    // Modport); Covergroup stores Coverpoint children; Assert references
+    // a Property child.
+    [[nodiscard]] NodeId add_property(SymId name, SymId expr_sym) {
+        auto expr_id = add_literalstring(expr_sym);
+        auto id = add_node(NodeTag::Property);
+        sym_id_[id] = name;
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t) -> NodeId { return expr_id; });
+        link_children(id);
+        return id;
+    }
+
+    [[nodiscard]] NodeId add_sequence(SymId name, SymId expr_sym) {
+        auto expr_id = add_literalstring(expr_sym);
+        auto id = add_node(NodeTag::Sequence);
+        sym_id_[id] = name;
+        children_[id] =
+            PersistentChildVector<NodeId>(1, [&](std::size_t) -> NodeId { return expr_id; });
+        link_children(id);
+        return id;
+    }
+
+    [[nodiscard]] NodeId add_coverpoint(SymId var, std::span<const SymId> bins) {
+        auto id = add_node(NodeTag::Coverpoint);
+        sym_id_[id] = var;
+        auto pstart = static_cast<std::uint32_t>(param_data_.size());
+        param_data_.insert(param_data_.end(), bins.begin(), bins.end());
+        param_annot_data_.resize(param_annot_data_.size() + bins.size(), NULL_NODE);
+        param_begin_[id] = pstart;
+        param_count_[id] = static_cast<std::uint32_t>(bins.size());
+        return id;
+    }
+
+    [[nodiscard]] NodeId add_covergroup(SymId name, std::span<const NodeId> coverpoints) {
+        auto id = add_node(NodeTag::Covergroup);
+        sym_id_[id] = name;
+        children_[id] = PersistentChildVector<NodeId>(
+            coverpoints.size(), [&](std::size_t i) -> NodeId { return coverpoints[i]; });
+        link_children(id);
+        return id;
+    }
+
+    [[nodiscard]] NodeId add_assert(SymId name, NodeId property_id) {
+        auto id = add_node(NodeTag::Assert);
+        sym_id_[id] = name;
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t) -> NodeId { return property_id; });
+        link_children(id);
+        return id;
+    }
+
+    void append_param(NodeId id, SymId val) {
+        if (id >= param_begin_.size())
+            return;
+        param_data_.push_back(val);
+        param_annot_data_.push_back(NULL_NODE);
+        ++param_count_[id];
+    }
+
     [[nodiscard]] NodeId add_set(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Set);
         sym_id_[id] = name;
@@ -4460,8 +4533,11 @@ public:
         bool propagate_sva_verify = false;
         if (id < tag_.size()) {
             const auto src_tag = tag_[id];
-            propagate_sva_verify = (src_tag == NodeTag::Interface ||
-                                    src_tag == NodeTag::Modport);
+            propagate_sva_verify =
+                (src_tag == NodeTag::Interface || src_tag == NodeTag::Modport ||
+                 src_tag == NodeTag::Property || src_tag == NodeTag::Sequence ||
+                 src_tag == NodeTag::Assert || src_tag == NodeTag::Covergroup ||
+                 src_tag == NodeTag::Coverpoint);
         }
         if (!propagate_sva_verify && id < verify_dirty_.size())
             propagate_sva_verify = (verify_dirty_[id] & kSvaDirty) != 0;

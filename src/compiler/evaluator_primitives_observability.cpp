@@ -1815,6 +1815,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:adt-exhaustiveness-typed-mutate-stats",
             // Issue #693 — Hardware backend SV commercial closed-loop
             "query:hardware-backend-sv-closedloop-stats",
+            // Issue #694 — SVA structured AST tags + mutate stats
+            "query:sv-sva-structure-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1832,9 +1834,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 74 entries as of #693 ship (73 from #692 + 1 new
-        // query:hardware-backend-sv-closedloop-stats).
-        return make_int(74);
+        // 75 entries as of #694 ship (74 from #693 + 1 new
+        // query:sv-sva-structure-stats).
+        return make_int(75);
     });
 
 }

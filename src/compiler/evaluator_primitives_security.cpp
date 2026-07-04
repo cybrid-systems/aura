@@ -455,6 +455,81 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #694: SVA structured AST stats.
+    add("query:sv-sva-structure-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::uint64_t property_count = 0;
+        std::uint64_t sequence_count = 0;
+        std::uint64_t assert_count = 0;
+        std::uint64_t covergroup_count = 0;
+        std::uint64_t coverpoint_count = 0;
+        std::uint64_t sva_dirty = 0;
+        if (auto* ws = ev.workspace_flat()) {
+            for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                switch (ws->get(id).tag) {
+                    case aura::ast::NodeTag::Property: ++property_count; break;
+                    case aura::ast::NodeTag::Sequence: ++sequence_count; break;
+                    case aura::ast::NodeTag::Assert: ++assert_count; break;
+                    case aura::ast::NodeTag::Covergroup: ++covergroup_count; break;
+                    case aura::ast::NodeTag::Coverpoint: ++coverpoint_count; break;
+                    default: break;
+                }
+                if ((ws->verify_dirty(id) & aura::ast::FlatAST::kSvaDirty) != 0)
+                    ++sva_dirty;
+            }
+        }
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t mutate_hits = m
+            ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t sv_attempts = ev.workspace_flat()
+            ? ev.workspace_flat()->sv_mutate_attempts_total() : 0;
+        const std::uint64_t sv_success = ev.workspace_flat()
+            ? ev.workspace_flat()->sv_mutate_success_total() : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"property-count", make_int(static_cast<std::int64_t>(property_count))},
+            {"sequence-count", make_int(static_cast<std::int64_t>(sequence_count))},
+            {"assert-count", make_int(static_cast<std::int64_t>(assert_count))},
+            {"covergroup-count", make_int(static_cast<std::int64_t>(covergroup_count))},
+            {"coverpoint-count", make_int(static_cast<std::int64_t>(coverpoint_count))},
+            {"sva-dirty-total", make_int(static_cast<std::int64_t>(sva_dirty))},
+            {"structured-mutate-hits", make_int(static_cast<std::int64_t>(mutate_hits))},
+            {"sv-mutate-attempts", make_int(static_cast<std::int64_t>(sv_attempts))},
+            {"sv-mutate-success", make_int(static_cast<std::int64_t>(sv_success))},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #693: Hardware backend SV commercial closed-loop stats.
     add("query:hardware-backend-sv-closedloop-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

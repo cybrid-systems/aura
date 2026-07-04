@@ -56,7 +56,12 @@ enum Tag : std::uint8_t {
     // hook that populates them.
     Interface = 0x1B,
     Modport = 0x1C,
-    TAG_COUNT = 0x1D // one past max
+    Property = 0x1D,
+    Sequence = 0x1E,
+    Assert = 0x1F,
+    Covergroup = 0x20,
+    Coverpoint = 0x21,
+    TAG_COUNT = 0x22 // one past max
 };
 
 using ReadFn = void* (*)(void*);
