@@ -537,7 +537,6 @@ private:
         if (size <= SmallObjectPool::kMaxSmallSize) {
             void* ptr = small_pool_.try_allocate(size);
             if (ptr) {
-                stats_.allocation_count++;
                 maybe_auto_compact_on_alloc();
                 return ptr;
             }
@@ -547,7 +546,6 @@ private:
         // Allocate from main pmr buffer
         void* ptr = resource_.allocate(size, alignment);
         stats_.used += size;
-        stats_.allocation_count++;
         maybe_auto_compact_on_alloc();
         return ptr;
     }
