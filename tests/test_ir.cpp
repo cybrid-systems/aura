@@ -2041,8 +2041,9 @@ int main() {
             DiagnosticCollector diag;
             TypeChecker tc(treg);
 
-            auto run_occ_test = [&](std::string_view name, std::string_view pred,
+            auto run_occ_test = [&](std::string_view name, std::string_view pred_unused,
                                     std::string_view code) -> bool {
+                (void)pred_unused; // Issue #477: kept for historical test symmetry, suppress unused
                 diag.clear();
                 ASTArena arena;
                 auto alloc = arena.allocator();

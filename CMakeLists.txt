@@ -316,6 +316,11 @@ target_sources(test_ir PRIVATE
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+# Issue #477: production-quality test file — enforce [[nodiscard]],
+# unused-parameter, and sign-compare warnings on test_ir.cpp itself.
+# The linked-in production sources (aura_test_objects, the per-target
+# source list above) keep the lax `aura_test_compile_options` settings.
+aura_strict_test_warnings(tests/test_ir.cpp)
 aura_test_compile_options(test_ir)
 target_include_directories(test_ir PRIVATE src src/compiler)
 target_link_libraries(test_ir PRIVATE stdc++ stdc++exp aura-reflect)
@@ -370,6 +375,9 @@ target_include_directories(test_concurrent PRIVATE src src/compiler)
 target_compile_definitions(test_concurrent PRIVATE AURA_HAVE_LLVM=1)
 target_include_directories(test_concurrent PRIVATE ${LLVM_INCLUDE_DIRS})
 target_link_libraries(test_concurrent PRIVATE ${llvm_libs})
+# Issue #477: test_concurrent.cpp is the main concurrency specification;
+# opt the test source itself into strict warnings.
+aura_strict_test_warnings(tests/test_concurrent.cpp)
 aura_test_compile_options(test_concurrent)
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
@@ -605,6 +613,9 @@ endif()
 add_executable(test_contracts tests/test_contracts.cpp)
 set_source_files_properties(tests/test_contracts.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
 target_compile_options(test_contracts PRIVATE -fcontracts)
+# Issue #477: contract test is small + production-quality; opt into strict
+# warnings for the test source itself.
+aura_strict_test_warnings(tests/test_contracts.cpp)
 # Issue #278 follow-up: pre-existing build fix. contract_handler.cpp
 # provides `handle_contract_violation` for C++26 contract checks.
 target_sources(test_contracts PRIVATE src/core/contract_handler.cpp)

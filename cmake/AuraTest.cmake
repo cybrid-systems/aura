@@ -26,6 +26,35 @@ function(aura_test_compile_options TARGET)
     )
 endfunction()
 
+# Issue #477: stricter compile options for production-quality test files.
+#
+# These are test files that should be held to production-quality
+# standards because they are the canonical specification of behavior
+# (e.g., test_ir.cpp) or because they are the main entry point for a
+# test category (test_concurrent.cpp, test_contracts.cpp).
+#
+# Usage:
+#   aura_strict_test_warnings(tests/test_ir.cpp)
+#
+# This uses set_source_files_properties(COMPILE_OPTIONS ...) so the
+# stricter warnings apply ONLY to the named source file. The rest of
+# the target (linked-in libraries like aura_test_objects) keep the
+# lax `aura_test_compile_options` settings — the strictness is scoped
+# to the test code itself.
+#
+# The 3 categories removed (per #477's analysis):
+#   -Wno-unused-result  →  [[nodiscard]] violations hide real bugs
+#                          (mutation ops + error checks not verified)
+#   -Wno-unused-parameter  →  unused params indicate mismatched
+#                              signatures / incomplete test logic
+#   -Wno-sign-compare  →  signed/unsigned comparison bugs (silent
+#                          wrap on negative values)
+function(aura_strict_test_warnings SOURCE_FILE)
+    set_source_files_properties(${SOURCE_FILE} PROPERTIES
+        COMPILE_OPTIONS "-Werror=unused-result;-Werror=unused-parameter;-Werror=sign-compare"
+    )
+endfunction()
+
 function(aura_test_compile_options_reflect TARGET)
     target_compile_options(${TARGET} PRIVATE -freflection)
     aura_test_compile_options(${TARGET})
