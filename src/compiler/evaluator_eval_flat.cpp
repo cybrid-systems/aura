@@ -3822,6 +3822,58 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
     return re_expanded;
 }
 
+// Issue #488: post-mutate reflect validation hook for Guard success path.
+bool Evaluator::post_mutation_reflect_validate() const noexcept {
+    auto* ws = workspace_flat_;
+    if (!ws || ws->size() == 0) {
+        bump_schema_validation_fail_count();
+        return false;
+    }
+    using aura::ast::FlatAST;
+    using aura::ast::NodeId;
+
+    struct ReflectHealth {
+        bool marker_consistent = true;
+        bool generation_healthy = true;
+        std::uint64_t dirty_nodes = 0;
+        std::uint64_t macro_markers = 0;
+    } health;
+    if (ws->root >= ws->size()) {
+        bump_schema_validation_fail_count();
+        return false;
+    }
+    health.generation_healthy = ws->generation_wrap_count() < 1'000'000;
+    constexpr auto kExpansion =
+        static_cast<std::uint8_t>(FlatAST::MacroDirtyReason::kMacroExpansion);
+    for (NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_dirty(id))
+            ++health.dirty_nodes;
+        if (ws->is_macro_introduced(id)) {
+            ++health.macro_markers;
+            if ((ws->macro_dirty(id) & kExpansion) == 0)
+                health.marker_consistent = false;
+        }
+        const auto parent = ws->parent_of(id);
+        if (parent != aura::ast::NULL_NODE && parent >= ws->size())
+            health.marker_consistent = false;
+    }
+    set_dirty_nodes_in_snapshot(health.dirty_nodes);
+    set_macro_markers_in_snapshot(health.macro_markers);
+    const bool ok = health.generation_healthy && health.marker_consistent;
+    if (ok)
+        bump_schema_validation_pass_count();
+    else
+        bump_schema_validation_fail_count();
+    return ok;
+}
+
+Evaluator::MutationImpactEntry Evaluator::get_latest_mutation_impact_entry() const noexcept {
+    const auto seq = mutation_impact_ring_seq_.load(std::memory_order_acquire);
+    if (seq == 0)
+        return {};
+    return mutation_impact_ring_[(seq - 1) % kMutationImpactRingSize];
+}
+
 // Issue #420: end-to-end MacroIntroduced hygiene contract.
 // clone_macro_body / expand_inner_macros stamp both
 // SyntaxMarker::MacroIntroduced and kMacroExpansion on

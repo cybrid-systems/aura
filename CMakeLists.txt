@@ -2828,6 +2828,10 @@ add_dependencies(all_test_issue_targets test_issue_485)
 aura_add_issue_test(test_issue_486)
 aura_issue_test_link_llvm_jit(test_issue_486)
 add_dependencies(all_test_issue_targets test_issue_486)
+# Issue #488: post-mutate reflect validation + Guard impact snapshot.
+aura_add_issue_test(test_issue_488)
+aura_issue_test_link_llvm_jit(test_issue_488)
+add_dependencies(all_test_issue_targets test_issue_488)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which

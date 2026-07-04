@@ -2321,6 +2321,7 @@ private:
     mutable std::atomic<std::uint64_t> schema_validation_pass_count_{0};
     mutable std::atomic<std::uint64_t> schema_validation_fail_count_{0};
     mutable std::atomic<std::uint64_t> dirty_nodes_in_snapshot_{0};
+    mutable std::atomic<std::uint64_t> macro_markers_in_snapshot_{0};
     // Issue #555: Task1 typed self-mod observability counters.
     // Exposed via (query:typed-mutation-stats-task1) primitive.
     // Stats-only (relaxed-ordering).
@@ -2963,6 +2964,15 @@ public:
     void set_dirty_nodes_in_snapshot(std::uint64_t v) const noexcept {
         dirty_nodes_in_snapshot_.store(v, std::memory_order_relaxed);
     }
+    [[nodiscard]] std::uint64_t get_macro_markers_in_snapshot() const noexcept {
+        return macro_markers_in_snapshot_.load(std::memory_order_relaxed);
+    }
+    void set_macro_markers_in_snapshot(std::uint64_t v) const noexcept {
+        macro_markers_in_snapshot_.store(v, std::memory_order_relaxed);
+    }
+    // Issue #488: post-mutate reflect validation + latest impact entry.
+    [[nodiscard]] bool post_mutation_reflect_validate() const noexcept;
+    [[nodiscard]] MutationImpactEntry get_latest_mutation_impact_entry() const noexcept;
     // Issue #555: Task1 typed self-mod accessors + bump helpers.
     [[nodiscard]] std::uint64_t get_dirty_propagation_count() const noexcept {
         return dirty_propagation_count_.load(std::memory_order_relaxed);
@@ -3743,6 +3753,8 @@ public:
             }
             emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
                                 static_cast<std::uint32_t>(epoch_delta), audit_op, audit_target);
+            // Issue #488: post-mutate reflect validation + snapshot fields.
+            (void)post_mutation_reflect_validate();
         }
         return cp;
     }
