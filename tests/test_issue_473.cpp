@@ -57,15 +57,15 @@ static std::string slurp(const std::string& path) {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg)                                                              \
-    do {                                                                              \
-        if (cond) {                                                                   \
-            ++g_passed;                                                               \
-            std::println(std::cout, "  PASS: {}", msg);                               \
-        } else {                                                                      \
-            ++g_failed;                                                               \
-            std::println(std::cerr, "  FAIL: {}", msg);                               \
-        }                                                                             \
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
     } while (0)
 
 // Issue #473 §5: std::println's `{}` format for std::string truncates at the
@@ -78,27 +78,26 @@ template <typename T> std::string size_str(const T& v) {
     else
         return std::string{"<n/a>"};
 }
-}
-#define CHECK_EQ(a, b, msg)                                                           \
-    do {                                                                              \
-        auto av = (a);                                                               \
-        auto bv = (b);                                                               \
-        if (av == bv) {                                                               \
-            ++g_passed;                                                               \
-            std::println("  PASS: {} (sz={})", msg, detail_t::size_str(av));         \
-        } else {                                                                      \
-            ++g_failed;                                                               \
-            std::println("  FAIL: {} (av.sz={} bv.sz={})",                            \
-                         msg, detail_t::size_str(av), detail_t::size_str(bv));       \
-        }                                                                             \
+} // namespace detail_t
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto av = (a);                                                                             \
+        auto bv = (b);                                                                             \
+        if (av == bv) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {} (sz={})", msg, detail_t::size_str(av));                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {} (av.sz={} bv.sz={})", msg, detail_t::size_str(av),            \
+                         detail_t::size_str(bv));                                                  \
+        }                                                                                          \
     } while (0)
 
 // ── AC1: cap constant exists + is 1 MiB ───────────────────────────────
 
 static bool ac_cap_constant() {
     std::println("\n--- AC1: kMaxServeAsyncLineBytes = 1 MiB ---");
-    CHECK_EQ(kMaxServeAsyncLineBytes, std::size_t{1u << 20},
-             "cap is 1 MiB (1048576 bytes)");
+    CHECK_EQ(kMaxServeAsyncLineBytes, std::size_t{1u << 20}, "cap is 1 MiB (1048576 bytes)");
     return g_failed == 0;
 }
 
@@ -106,12 +105,12 @@ static bool ac_cap_constant() {
 
 static bool ac_escape_basic() {
     std::println("\n--- AC2: json_escape basics (\\\" \\\\ \\n \\r \\t) ---");
-    CHECK_EQ(json_escape("hello"),  std::string{"hello"},  "no-op on innocuous string");
-    CHECK_EQ(json_escape("\""),     std::string{"\\\""},  "quote");
-    CHECK_EQ(json_escape("\\"),     std::string{"\\\\"},  "backslash");
-    CHECK_EQ(json_escape("\n"),     std::string{"\\n"},   "newline");
-    CHECK_EQ(json_escape("\r"),     std::string{"\\r"},   "carriage return");
-    CHECK_EQ(json_escape("\t"),     std::string{"\\t"},   "tab");
+    CHECK_EQ(json_escape("hello"), std::string{"hello"}, "no-op on innocuous string");
+    CHECK_EQ(json_escape("\""), std::string{"\\\""}, "quote");
+    CHECK_EQ(json_escape("\\"), std::string{"\\\\"}, "backslash");
+    CHECK_EQ(json_escape("\n"), std::string{"\\n"}, "newline");
+    CHECK_EQ(json_escape("\r"), std::string{"\\r"}, "carriage return");
+    CHECK_EQ(json_escape("\t"), std::string{"\\t"}, "tab");
     return g_failed == 0;
 }
 
@@ -139,10 +138,8 @@ static bool ac_escape_control() {
     CHECK_EQ(json_escape(std::string_view("\x0d", 1)), std::string{"\\r"},
              "carriage return keeps short \\r");
     // 0x20 (space) and beyond: NOT escaped
-    CHECK_EQ(json_escape(std::string_view(" ")), std::string{" "},
-             "space (U+0020) NOT escaped");
-    CHECK_EQ(json_escape(std::string_view("A")), std::string{"A"},
-             "printable ASCII NOT escaped");
+    CHECK_EQ(json_escape(std::string_view(" ")), std::string{" "}, "space (U+0020) NOT escaped");
+    CHECK_EQ(json_escape(std::string_view("A")), std::string{"A"}, "printable ASCII NOT escaped");
     return g_failed == 0;
 }
 
@@ -152,7 +149,8 @@ static bool ac_escape_mixed() {
     // bytes smuggled inside an ostensibly valid field value.
     // Use explicit-length string (the literal contains a NUL byte so a
     // bare string_view would otherwise truncate at the first NUL).
-    const char attack_buf[] = {'s','a','f','e','\x00','\x01','\x02','\x03','t','e','x','t'};
+    const char attack_buf[] = {'s',    'a',    'f', 'e', '\x00', '\x01',
+                               '\x02', '\x03', 't', 'e', 'x',    't'};
     std::string_view attack{attack_buf, sizeof(attack_buf)};
     std::string escaped = json_escape(attack);
     // Expected: literal \u0000\u0001\u0002\u0003 (NOT interpreted as
@@ -169,28 +167,22 @@ static bool ac_field_extract() {
     std::println("\n--- AC5: json_field extracts value ---");
     {
         std::string_view j = R"json({"cmd": "exec", "code": "(+ 1 2)"})json";
-        CHECK_EQ(json_field(j, "cmd"),  std::string{"exec"},
-                 "extract `cmd` (space after colon)");
-        CHECK_EQ(json_field(j, "code"), std::string{"(+ 1 2)"},
-                 "extract `code`");
+        CHECK_EQ(json_field(j, "cmd"), std::string{"exec"}, "extract `cmd` (space after colon)");
+        CHECK_EQ(json_field(j, "code"), std::string{"(+ 1 2)"}, "extract `code`");
     }
     {
         std::string_view j = R"json({"cmd":"exec","code":"(+ 1 2)"})json";
-        CHECK_EQ(json_field(j, "cmd"),  std::string{"exec"},
-                 "extract `cmd` (no space)");
-        CHECK_EQ(json_field(j, "code"), std::string{"(+ 1 2)"},
-                 "extract `code` (no space)");
+        CHECK_EQ(json_field(j, "cmd"), std::string{"exec"}, "extract `cmd` (no space)");
+        CHECK_EQ(json_field(j, "code"), std::string{"(+ 1 2)"}, "extract `code` (no space)");
     }
     {
         std::string_view j = R"json({"missing_key":"v"})json";
-        CHECK_EQ(json_field(j, "cmd"), std::string{""},
-                 "missing field returns empty");
+        CHECK_EQ(json_field(j, "cmd"), std::string{""}, "missing field returns empty");
     }
     {
         // Field value contains an escaped quote
         std::string_view j = R"json({"name": "a\"b"})json";
-        CHECK_EQ(json_field(j, "name"), std::string{"a\"b"},
-                 "unescape \\\" inside value");
+        CHECK_EQ(json_field(j, "name"), std::string{"a\"b"}, "unescape \\\" inside value");
     }
     {
         // Field value contains a smuggled NUL byte (control char) — field
@@ -203,8 +195,7 @@ static bool ac_field_extract() {
         expected.push_back('\0');
         expected.push_back('b');
         std::println("  DEBUG: got.sz={} expected.sz={}", got.size(), expected.size());
-        CHECK_EQ(got, expected,
-                 R"(\u0000 unescapes to NUL byte inside value)");
+        CHECK_EQ(got, expected, R"(\u0000 unescapes to NUL byte inside value)");
     }
     return g_failed == 0;
 }
@@ -219,8 +210,7 @@ static bool ac_cap_behavior() {
     // a sanity window).
     CHECK(kMaxServeAsyncLineBytes >= (1u << 10),
           "cap >= 1 KiB (don't reject legitimate large requests)");
-    CHECK(kMaxServeAsyncLineBytes <= (64u << 20),
-          "cap <= 64 MiB (bounded memory)");
+    CHECK(kMaxServeAsyncLineBytes <= (64u << 20), "cap <= 64 MiB (bounded memory)");
     return g_failed == 0;
 }
 
@@ -238,10 +228,8 @@ static bool ac_header_guards() {
     // least one `\"` token when the input contains a quote.
     std::string_view plain = R"json(value with "quote")json";
     std::string esc = json_escape(plain);
-    CHECK(esc.find(R"(\")") != std::string::npos,
-          "input `\"` becomes `\\\"` in output");
-    CHECK(esc.find(R"(\n)") == std::string::npos,
-          "no false \\n escape when no newline in input");
+    CHECK(esc.find(R"(\")") != std::string::npos, "input `\"` becomes `\\\"` in output");
+    CHECK(esc.find(R"(\n)") == std::string::npos, "no false \\n escape when no newline in input");
     // Same check for tab: literal tab becomes \t
     std::string esc2 = json_escape("a\tb");
     CHECK_EQ(esc2, std::string{R"(a\tb)"}, "tab becomes \\t");
@@ -278,7 +266,10 @@ static bool ac_libcurl_fallback() {
     // host we can't dlopen any of them — skip with a notice rather than
     // failing, since the fallback is correct on systems that have libcurl.
     static constexpr const char* kCandidates[] = {
-        "libcurl.so.4", "libcurl.so", "libcurl.4.dylib", "libcurl.dylib",
+        "libcurl.so.4",
+        "libcurl.so",
+        "libcurl.4.dylib",
+        "libcurl.dylib",
     };
     int loaded = 0;
     for (auto* name : kCandidates) {
@@ -287,8 +278,8 @@ static bool ac_libcurl_fallback() {
             // Verify the loadable handle exposes the symbols we need.
             auto* ei = (void*)::dlsym(h, "curl_easy_init");
             auto* sa = (void*)::dlsym(h, "curl_slist_append");
-            CHECK(ei && sa,
-                  std::string{"dlopen(\""} + name + "\") exposes curl_easy_init + curl_slist_append");
+            CHECK(ei && sa, std::string{"dlopen(\""} + name +
+                                "\") exposes curl_easy_init + curl_slist_append");
             ::dlclose(h);
         }
     }
@@ -345,8 +336,8 @@ static bool ac_auth_token_in_process() {
           "http_post_in_process helper is defined");
     CHECK(serve_src.find("CURLOPT_HTTPHEADER") != std::string::npos,
           "in-process HTTP path uses CURLOPT_HTTPHEADER");
-    CHECK(serve_src.find("curl_slist_append") != std::string::npos
-          || serve_src.find("slist_append(headers") != std::string::npos,
+    CHECK(serve_src.find("curl_slist_append") != std::string::npos ||
+              serve_src.find("slist_append(headers") != std::string::npos,
           "auth header is appended via curl_slist API (in-process only)");
     // Negative: the g_http_post_async lambda in run_serve_async must NOT
     // contain a fork+execvp curl with the auth header pushed into argv.
@@ -355,16 +346,14 @@ static bool ac_auth_token_in_process() {
     // handler (the bench path retains the old pattern and is explicitly
     // out of scope for #473 §8 — see MEMORY note).
     auto main_start = serve_src.find("aura::messaging::g_http_post_async");
-    CHECK(main_start != std::string::npos,
-          "main g_http_post_async lambda is registered");
+    CHECK(main_start != std::string::npos, "main g_http_post_async lambda is registered");
     if (main_start != std::string::npos) {
         // Slice from the main handler to the next major registration
         // (session:create) to scope the negative check.
         auto slice_end = serve_src.find("g_session_create", main_start);
-        std::string slice =
-            (slice_end == std::string::npos)
-                ? serve_src.substr(main_start)
-                : serve_src.substr(main_start, slice_end - main_start);
+        std::string slice = (slice_end == std::string::npos)
+                                ? serve_src.substr(main_start)
+                                : serve_src.substr(main_start, slice_end - main_start);
         // The main handler should NOT contain argv.push_back( for auth.
         // The simple check: the substring "argv.push_back(\"-H\")" must
         // NOT appear, because that means the old fork+exec path is back.
