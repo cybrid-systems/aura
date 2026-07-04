@@ -66,7 +66,8 @@ int main() {
     {
         std::println("\n--- AC1: query:aot-reload-stats ---");
         auto stats = cs.eval("(query:aot-reload-stats)");
-        CHECK(stats && aura::compiler::types::is_hash(*stats), "query:aot-reload-stats returns hash");
+        CHECK(stats && aura::compiler::types::is_hash(*stats),
+              "query:aot-reload-stats returns hash");
         CHECK(reload_stat(cs, "reload-attempts") >= 0, "reload-attempts present");
         CHECK(reload_stat(cs, "reload-success") >= 0, "reload-success present");
         CHECK(reload_stat(cs, "stale-rejected") >= 0, "stale-rejected present");
@@ -117,9 +118,8 @@ int main() {
         const bool drift = aura_aot_probe_checkpoint_version(1, 0);
         CHECK(drift, "aura_aot_probe_checkpoint_version detects defuse drift");
         const auto drifts_after = checkpoint_stat(cs, "checkpoint-version-drifts");
-        CHECK(drifts_after > drifts_before,
-              std::format("checkpoint-version-drifts grew ({} -> {})", drifts_before,
-                          drifts_after));
+        CHECK(drifts_after > drifts_before, std::format("checkpoint-version-drifts grew ({} -> {})",
+                                                        drifts_before, drifts_after));
         aura_aot_record_deopt_on_steal();
         CHECK(reload_stat(cs, "deopt-on-steal") >= 1, "deopt-on-steal bumped");
         aura_set_aot_defuse_version(0);
@@ -134,7 +134,8 @@ int main() {
         constexpr int k_fibers = 32;
         std::thread reload_worker([&] {
             for (int i = 0; i < 20; ++i) {
-                if (aura_reload_aot_module("/tmp/aura_708_stress.so", static_cast<std::uint64_t>(i)))
+                if (aura_reload_aot_module("/tmp/aura_708_stress.so",
+                                           static_cast<std::uint64_t>(i)))
                     reload_ok.fetch_add(1);
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
@@ -206,8 +207,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() > 0,
-              std::format("fiber stress produced {} successful AOT stats queries", ok_count.load()));
+        CHECK(
+            ok_count.load() > 0,
+            std::format("fiber stress produced {} successful AOT stats queries", ok_count.load()));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
