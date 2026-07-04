@@ -5,12 +5,153 @@ module;
 
 #include "messaging_bridge.h"
 #include "serve/fiber.h"
+#include "serve/metrics.h"
 
 module aura.compiler.evaluator;
 
 import std;
 
 namespace aura::compiler {
+
+namespace fiber_stack_pool_detail {
+
+using MutationVec = Evaluator::MutationCheckpoint;
+using YieldVec = Evaluator::YieldBoundaryCheckpoint;
+
+inline auto& pool_stats() { return aura::serve::metrics::per_fiber_stack_pool_stats(); }
+
+// Issue #707: bounded scheduler-local vector pool for per-fiber stacks.
+template <typename T>
+class BoundedVectorPool {
+public:
+    static constexpr std::size_t kInitialCapacity = 12;
+    static constexpr std::size_t kGrowthThreshold = 32;
+    static constexpr std::size_t kMaxPooled = 128;
+
+    T* acquire() {
+        {
+            std::lock_guard lock(mutex_);
+            if (!pool_.empty()) {
+                T* v = pool_.back();
+                pool_.pop_back();
+                pool_stats().pool_hits.fetch_add(1, std::memory_order_relaxed);
+                pool_stats().churn_reductions.fetch_add(1, std::memory_order_relaxed);
+                v->clear();
+                maybe_shrink(*v);
+                return v;
+            }
+        }
+        pool_stats().lazy_allocs.fetch_add(1, std::memory_order_relaxed);
+        auto* v = new T();
+        v->reserve(kInitialCapacity);
+        return v;
+    }
+
+    void release(T* v) {
+        if (!v)
+            return;
+        v->clear();
+        maybe_shrink(*v);
+        std::lock_guard lock(mutex_);
+        if (pool_.size() < kMaxPooled) {
+            pool_.push_back(v);
+            return;
+        }
+        delete v;
+    }
+
+    void track_depth(std::size_t depth) {
+        auto& max_d = pool_stats().max_depth;
+        std::uint64_t cur = max_d.load(std::memory_order_relaxed);
+        while (depth > cur &&
+               !max_d.compare_exchange_weak(cur, depth, std::memory_order_relaxed,
+                                            std::memory_order_relaxed)) {
+        }
+    }
+
+private:
+    void maybe_shrink(T& v) {
+        if (v.capacity() > kGrowthThreshold) {
+            v.shrink_to_fit();
+            pool_stats().growth_warnings.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    std::mutex mutex_;
+    std::vector<T*> pool_;
+};
+
+BoundedVectorPool<std::vector<MutationVec>> g_mutation_pool;
+BoundedVectorPool<std::vector<YieldVec>> g_yield_pool;
+
+using MutationStackVec = std::vector<MutationVec>;
+using YieldStackVec = std::vector<YieldVec>;
+
+MutationStackVec* acquire_mutation_stack() { return g_mutation_pool.acquire(); }
+
+YieldStackVec* acquire_yield_stack() { return g_yield_pool.acquire(); }
+
+void release_mutation_stack(void* p) {
+    g_mutation_pool.release(static_cast<MutationStackVec*>(p));
+}
+
+void release_yield_stack(void* p) {
+    g_yield_pool.release(static_cast<YieldStackVec*>(p));
+}
+
+MutationStackVec& mutation_stack_from_ptr(void* p) {
+    return *static_cast<MutationStackVec*>(p);
+}
+
+YieldStackVec& yield_stack_from_ptr(void* p) {
+    return *static_cast<YieldStackVec*>(p);
+}
+
+MutationStackVec* ensure_mutation_stack_ptr(aura::serve::Fiber* fiber) {
+    void* p = fiber->mutation_stack_ptr();
+    if (p == nullptr) {
+        p = acquire_mutation_stack();
+        fiber->set_mutation_stack_ptr(p);
+    }
+    return static_cast<MutationStackVec*>(p);
+}
+
+YieldStackVec* ensure_yield_stack_ptr(aura::serve::Fiber* fiber) {
+    void* p = fiber->yield_checkpoint_ptr();
+    if (p == nullptr) {
+        p = acquire_yield_stack();
+        fiber->set_yield_checkpoint_ptr(p);
+    }
+    return static_cast<YieldStackVec*>(p);
+}
+
+void restamp_yield_checkpoint_top(Evaluator* ev, aura::serve::Fiber* fiber) {
+    if (!ev || !fiber)
+        return;
+    void* yp = fiber->yield_checkpoint_ptr();
+    if (yp == nullptr)
+        return;
+    auto& ystack = yield_stack_from_ptr(yp);
+    if (ystack.empty())
+        return;
+    void* mp = fiber->mutation_stack_ptr();
+    const std::size_t mdepth = mp ? mutation_stack_from_ptr(mp).size() : 0;
+    const std::size_t bdepth = Evaluator::mutation_boundary_depth();
+    const std::uint64_t ver = ev->defuse_version_snapshot();
+    auto& top = ystack.back();
+    const bool mismatch = top.mutation_stack_depth != mdepth || top.boundary_depth != bdepth ||
+                          top.defuse_version != ver ||
+                          top.thread_id != std::this_thread::get_id();
+    if (mismatch)
+        pool_stats().size_mismatches_caught.fetch_add(1, std::memory_order_relaxed);
+    top.mutation_stack_depth = mdepth;
+    top.boundary_depth = bdepth;
+    top.defuse_version = ver;
+    top.thread_id = std::this_thread::get_id();
+    pool_stats().restamps.fetch_add(1, std::memory_order_relaxed);
+}
+
+} // namespace fiber_stack_pool_detail
 
 // Issue #177: per-fiber MutationCheckpoint stack. The
 // declaration is in Evaluator (evaluator.ixx); the
@@ -54,13 +195,9 @@ std::vector<aura::compiler::Evaluator::MutationCheckpoint>&
 aura::compiler::Evaluator::active_mutation_stack() {
     if (g_current_fiber_void != nullptr) {
         auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
-        void* p = fiber->mutation_stack_ptr();
-        if (p == nullptr) {
-            // Lazy allocation: first enter on this fiber.
-            p = new std::vector<MutationCheckpoint>();
-            fiber->set_mutation_stack_ptr(p);
-        }
-        return *static_cast<std::vector<MutationCheckpoint>*>(p);
+        auto* stack = fiber_stack_pool_detail::ensure_mutation_stack_ptr(fiber);
+        fiber_stack_pool_detail::g_mutation_pool.track_depth(stack->size());
+        return *stack;
     }
     return g_main_thread_stack;
 }
@@ -69,12 +206,9 @@ std::vector<aura::compiler::Evaluator::YieldBoundaryCheckpoint>&
 aura::compiler::Evaluator::active_yield_checkpoint_stack() {
     if (g_current_fiber_void != nullptr) {
         auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
-        void* p = fiber->yield_checkpoint_ptr();
-        if (p == nullptr) {
-            p = new std::vector<YieldBoundaryCheckpoint>();
-            fiber->set_yield_checkpoint_ptr(p);
-        }
-        return *static_cast<std::vector<YieldBoundaryCheckpoint>*>(p);
+        auto* stack = fiber_stack_pool_detail::ensure_yield_stack_ptr(fiber);
+        fiber_stack_pool_detail::g_yield_pool.track_depth(stack->size());
+        return *stack;
     }
     return g_main_thread_yield_checkpoints;
 }
@@ -83,12 +217,9 @@ std::vector<aura::compiler::Evaluator::YieldBoundaryCheckpoint>&
 aura::compiler::Evaluator::active_yield_checkpoint_stack_static() {
     if (g_current_fiber_void != nullptr) {
         auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
-        void* p = fiber->yield_checkpoint_ptr();
-        if (p == nullptr) {
-            p = new std::vector<YieldBoundaryCheckpoint>();
-            fiber->set_yield_checkpoint_ptr(p);
-        }
-        return *static_cast<std::vector<YieldBoundaryCheckpoint>*>(p);
+        auto* stack = fiber_stack_pool_detail::ensure_yield_stack_ptr(fiber);
+        fiber_stack_pool_detail::g_yield_pool.track_depth(stack->size());
+        return *stack;
     }
     return g_main_thread_yield_checkpoints;
 }
@@ -126,7 +257,9 @@ void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_bound
     cp.mutation_stack_depth = active_mutation_stack().size();
     cp.thread_id = std::this_thread::get_id();
     cp.had_active_boundary = had_boundary || at_mutation_boundary_yield;
-    active_yield_checkpoint_stack().push_back(cp);
+    auto& ystack = active_yield_checkpoint_stack();
+    ystack.push_back(cp);
+    fiber_stack_pool_detail::g_yield_pool.track_depth(ystack.size());
     mutation_yield_count_.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -135,13 +268,30 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
     if (stack.empty())
         return true;
     auto cp = stack.back();
+    const std::size_t current_mdepth = active_mutation_stack().size();
+    const std::size_t current_bdepth = mutation_boundary_depth();
+    bool thread_migrated = cp.thread_id != std::this_thread::get_id();
+    bool size_mismatch = cp.mutation_stack_depth != current_mdepth;
+    bool depth_mismatch = current_bdepth != cp.boundary_depth;
+    if (thread_migrated || size_mismatch || depth_mismatch) {
+        fiber_stack_pool_detail::pool_stats().size_mismatches_caught.fetch_add(
+            1, std::memory_order_relaxed);
+        if (thread_migrated) {
+            cp.thread_id = std::this_thread::get_id();
+            cp.boundary_depth = current_bdepth;
+            cp.mutation_stack_depth = current_mdepth;
+            cp.defuse_version = defuse_version_snapshot();
+            fiber_stack_pool_detail::pool_stats().restamps.fetch_add(1, std::memory_order_relaxed);
+            thread_migrated = false;
+            size_mismatch = false;
+            depth_mismatch = (current_bdepth != cp.boundary_depth);
+        }
+    }
     stack.pop_back();
     if (!cp.had_active_boundary)
         return true;
-    bool thread_migrated = cp.thread_id != std::this_thread::get_id();
     bool version_drift = !is_version_current(cp.defuse_version);
-    bool depth_mismatch = mutation_boundary_depth() != cp.boundary_depth;
-    if (thread_migrated || version_drift || depth_mismatch) {
+    if (thread_migrated || version_drift || depth_mismatch || size_mismatch) {
         cross_fiber_rollback_count_.fetch_add(1, std::memory_order_relaxed);
         if (outermost_mutation_success_flag_)
             *outermost_mutation_success_flag_ = false;
@@ -163,12 +313,10 @@ namespace {
         return prev;
     }
     void fiber_storage_deleter_impl(void* p) {
-        using C = aura::compiler::Evaluator::MutationCheckpoint;
-        delete static_cast<std::vector<C>*>(p);
+        fiber_stack_pool_detail::release_mutation_stack(p);
     }
     void fiber_yield_checkpoint_deleter_impl(void* p) {
-        using C = aura::compiler::Evaluator::YieldBoundaryCheckpoint;
-        delete static_cast<std::vector<C>*>(p);
+        fiber_stack_pool_detail::release_yield_stack(p);
     }
     void fiber_yield_checkpoint_impl(uint8_t reason) {
         if (!g_yield_hook_evaluator)
@@ -204,17 +352,11 @@ static FiberHookRegistrar g_fiber_hook_registrar{};
 
 std::vector<aura::compiler::Evaluator::MutationCheckpoint>&
 aura::compiler::Evaluator::active_mutation_stack_static() {
-    // The static version uses the same per-fiber / main-thread
-    // routing logic. We could call active_mutation_stack() but
-    // it's a non-static member, so we inline the routing here.
     if (g_current_fiber_void != nullptr) {
         auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
-        void* p = fiber->mutation_stack_ptr();
-        if (p == nullptr) {
-            p = new std::vector<MutationCheckpoint>();
-            fiber->set_mutation_stack_ptr(p);
-        }
-        return *static_cast<std::vector<MutationCheckpoint>*>(p);
+        auto* stack = fiber_stack_pool_detail::ensure_mutation_stack_ptr(fiber);
+        fiber_stack_pool_detail::g_mutation_pool.track_depth(stack->size());
+        return *stack;
     }
     return g_main_thread_stack;
 }
@@ -380,11 +522,10 @@ namespace {
         if (!ev->pending_panic_checkpoint())
             return;
         ev->bump_panic_checkpoint_transfer_count();
-        // The actual "re-stamp" is a follow-up to #453: a full
-        // implementation would walk the per-fiber storage and
-        // bump a generation counter so stale observers can detect
-        // the transfer. For the scope-limited P0 ship, the metric
-        // bump is enough to make the transfer observable.
+        if (Evaluator::g_current_fiber_void != nullptr) {
+            auto* fiber = static_cast<aura::serve::Fiber*>(Evaluator::g_current_fiber_void);
+            fiber_stack_pool_detail::restamp_yield_checkpoint_top(ev, fiber);
+        }
     }
 
     // (3) g_block_gc_for_pending_checkpoint: bumps the GC-block
@@ -463,11 +604,9 @@ void Evaluator::sync_per_fiber_mutation_stack(void* per_fiber_stack) noexcept {
     if (g_current_fiber_void == nullptr)
         return;
     auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
-    void* p = per_fiber_stack != nullptr ? per_fiber_stack : fiber->mutation_stack_ptr();
-    if (p == nullptr) {
-        p = new std::vector<MutationCheckpoint>();
-        fiber->set_mutation_stack_ptr(p);
-    }
+    if (per_fiber_stack != nullptr)
+        fiber->set_mutation_stack_ptr(per_fiber_stack);
+    (void)fiber_stack_pool_detail::ensure_mutation_stack_ptr(fiber);
 }
 
 // Test seam (#588): push/pop a synthetic checkpoint on the
@@ -507,6 +646,37 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     if (!ev)
         return;
     ev->probe_linear_ownership_on_fiber_steal();
+}
+
+extern "C" {
+std::uint64_t aura_per_fiber_stack_pool_hits() {
+    return aura::serve::metrics::per_fiber_stack_pool_stats().pool_hits.load(
+        std::memory_order_relaxed);
+}
+std::uint64_t aura_per_fiber_stack_pool_lazy_allocs() {
+    return aura::serve::metrics::per_fiber_stack_pool_stats().lazy_allocs.load(
+        std::memory_order_relaxed);
+}
+std::uint64_t aura_per_fiber_stack_pool_max_depth() {
+    return aura::serve::metrics::per_fiber_stack_pool_stats().max_depth.load(
+        std::memory_order_relaxed);
+}
+std::uint64_t aura_per_fiber_stack_pool_churn_reductions() {
+    return aura::serve::metrics::per_fiber_stack_pool_stats().churn_reductions.load(
+        std::memory_order_relaxed);
+}
+std::uint64_t aura_per_fiber_stack_pool_size_mismatches() {
+    return aura::serve::metrics::per_fiber_stack_pool_stats().size_mismatches_caught.load(
+        std::memory_order_relaxed);
+}
+std::uint64_t aura_per_fiber_stack_pool_growth_warnings() {
+    return aura::serve::metrics::per_fiber_stack_pool_stats().growth_warnings.load(
+        std::memory_order_relaxed);
+}
+std::uint64_t aura_per_fiber_stack_pool_restamps() {
+    return aura::serve::metrics::per_fiber_stack_pool_stats().restamps.load(
+        std::memory_order_relaxed);
+}
 }
 
 } // namespace aura::compiler

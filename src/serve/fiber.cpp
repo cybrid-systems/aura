@@ -188,7 +188,7 @@ Fiber::~Fiber() {
         mutation_stack_storage_ = nullptr;
     }
     if (yield_checkpoint_storage_) {
-        if (g_fiber_storage_deleter_) {
+        if (g_fiber_yield_checkpoint_deleter_) {
             g_fiber_yield_checkpoint_deleter_(yield_checkpoint_storage_);
         }
         yield_checkpoint_storage_ = nullptr;

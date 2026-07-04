@@ -187,6 +187,11 @@ private:
     // Metrics collection
     metrics::GlobalMetrics metrics_;
     std::atomic<bool> metrics_on_{true};
+
+    // Issue #707: per-scheduler fiber ownership so ~Fiber returns
+    // per-fiber stack storage to the bounded pool on teardown.
+    std::vector<std::unique_ptr<Fiber>> owned_fibers_;
+    std::mutex owned_fibers_mutex_;
 };
 
 } // namespace aura::serve

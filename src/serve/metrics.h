@@ -337,6 +337,22 @@ inline AdaptiveStealStats& adaptive_steal_stats() {
     return stats;
 }
 
+// Issue #707: bounded per-fiber MutationStack / YieldCheckpoint pool.
+struct PerFiberStackPoolStats {
+    std::atomic<std::uint64_t> pool_hits{0};
+    std::atomic<std::uint64_t> lazy_allocs{0};
+    std::atomic<std::uint64_t> max_depth{0};
+    std::atomic<std::uint64_t> churn_reductions{0};
+    std::atomic<std::uint64_t> size_mismatches_caught{0};
+    std::atomic<std::uint64_t> growth_warnings{0};
+    std::atomic<std::uint64_t> restamps{0};
+};
+
+inline PerFiberStackPoolStats& per_fiber_stack_pool_stats() {
+    static PerFiberStackPoolStats stats;
+    return stats;
+}
+
 } // namespace aura::serve::metrics
 
 extern "C" {
@@ -345,6 +361,13 @@ std::uint64_t aura_adaptive_steal_outermost_preferred();
 std::uint64_t aura_adaptive_steal_llm_tail_reductions();
 std::uint64_t aura_adaptive_steal_deferred_pressure_boosts();
 std::uint64_t aura_adaptive_steal_global_deferred_total();
+std::uint64_t aura_per_fiber_stack_pool_hits();
+std::uint64_t aura_per_fiber_stack_pool_lazy_allocs();
+std::uint64_t aura_per_fiber_stack_pool_max_depth();
+std::uint64_t aura_per_fiber_stack_pool_churn_reductions();
+std::uint64_t aura_per_fiber_stack_pool_size_mismatches();
+std::uint64_t aura_per_fiber_stack_pool_growth_warnings();
+std::uint64_t aura_per_fiber_stack_pool_restamps();
 }
 
 #endif // AURA_SERVE_METRICS_H
