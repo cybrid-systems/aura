@@ -5648,6 +5648,9 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         s.verification_loop_success_total =
             metrics_.verification_loop_success_total.load(
                 std::memory_order_relaxed);
+        s.sva_structured_mutate_hits_total =
+            metrics_.sva_structured_mutate_hits_total.load(
+                std::memory_order_relaxed);
         // Issue #342: narrowing provenance
         // observability. Mirrors the lifetime
         // counter in CompilerMetrics.

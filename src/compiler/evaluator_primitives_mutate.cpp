@@ -3773,6 +3773,92 @@ void register_mutate_primitives(
         return make_bool(true);
     });
 
+    // Issue #694: (eda:weaken-property property-id disable-clause-string)
+    // — Guard + StableNodeRef-safe weaken on Property AST nodes.
+    add_mutate("eda:weaken-property", [&ev](const auto& a) -> EvalValue {
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        auto* pool = ev.workspace_pool();
+        if (!ws || !pool)
+            return make_bool(false);
+        const auto pid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (pid >= ws->size())
+            return make_bool(false);
+        StableNodeRef pref = ws->make_ref(pid);
+        if (!pref.is_valid_in(*ws))
+            return make_bool(false);
+        auto pv = ws->get(pid);
+        if (pv.tag != aura::ast::NodeTag::Property)
+            return make_bool(false);
+        if (pv.children.empty())
+            return make_bool(false);
+        const auto expr_id = pv.child(0);
+        if (expr_id >= ws->size() || ws->get(expr_id).tag != aura::ast::NodeTag::LiteralString)
+            return make_bool(false);
+        auto clause_idx = as_string_idx(a[1]);
+        if (clause_idx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto& clause = ev.string_heap_[clause_idx];
+        const auto old_expr = pool->resolve(ws->get(expr_id).sym_id);
+        const auto new_expr = "disable iff (" + clause + ") " + old_expr;
+        ws->set_sym(expr_id, pool->intern(new_expr));
+        ws->bump_sv_mutate_attempt();
+        ws->add_mutation(pid, "eda-weaken-property", "property", "property+disable-iff",
+                         "weakened property via #694 structured mutate");
+        ws->apply_verification_dirty_bits(pid, aura::ast::FlatAST::kAssertFailureDirty);
+        ws->apply_verify_dirty_bits(pid, aura::ast::FlatAST::kSvaDirty);
+        ws->mark_ppa_dirty(pid, aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
+        ws->mark_dirty_upward(pid, aura::ast::FlatAST::kGeneralDirty,
+                              aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
+        maybe_sv_hardware_closedloop(ev, pid);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->sva_structured_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+        ws->bump_sv_mutate_success();
+        return make_bool(true);
+    });
+
+    // Issue #694: (eda:add-coverpoint-bin coverpoint-id bin-name-string)
+    add_mutate("eda:add-coverpoint-bin", [&ev](const auto& a) -> EvalValue {
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        auto* pool = ev.workspace_pool();
+        if (!ws || !pool)
+            return make_bool(false);
+        const auto cp_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (cp_id >= ws->size())
+            return make_bool(false);
+        StableNodeRef cref = ws->make_ref(cp_id);
+        if (!cref.is_valid_in(*ws))
+            return make_bool(false);
+        if (ws->get(cp_id).tag != aura::ast::NodeTag::Coverpoint)
+            return make_bool(false);
+        auto bin_idx = as_string_idx(a[1]);
+        if (bin_idx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto& bin_name = ev.string_heap_[bin_idx];
+        ws->append_param(cp_id, pool->intern(bin_name));
+        ws->bump_sv_mutate_attempt();
+        ws->add_mutation(cp_id, "eda-add-coverpoint-bin", "coverpoint",
+                         "coverpoint+bin", "added coverpoint bin via #694");
+        ws->apply_verification_dirty_bits(
+            cp_id, aura::ast::FlatAST::kCoverageFeedbackDirty);
+        ws->apply_verify_dirty_bits(cp_id, aura::ast::FlatAST::kSvaDirty);
+        ws->mark_ppa_dirty(cp_id, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
+        ws->mark_dirty_upward(cp_id, aura::ast::FlatAST::kGeneralDirty,
+                              aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
+        maybe_sv_hardware_closedloop(ev, cp_id);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->sva_structured_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+        ws->bump_sv_mutate_success();
+        return make_bool(true);
+    });
+
 }
 
 } // namespace aura::compiler::primitives_detail

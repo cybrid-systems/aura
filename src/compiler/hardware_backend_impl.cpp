@@ -31,7 +31,10 @@ bool is_sv_structural_node(const aura::ast::FlatAST& flat,
     if (id == aura::ast::NULL_NODE || id >= flat.size())
         return false;
     const auto tag = flat.get(id).tag;
-    if (tag == aura::ast::NodeTag::Interface || tag == aura::ast::NodeTag::Modport)
+    if (tag == aura::ast::NodeTag::Interface || tag == aura::ast::NodeTag::Modport ||
+        tag == aura::ast::NodeTag::Property || tag == aura::ast::NodeTag::Sequence ||
+        tag == aura::ast::NodeTag::Assert || tag == aura::ast::NodeTag::Covergroup ||
+        tag == aura::ast::NodeTag::Coverpoint)
         return true;
     return (flat.verify_dirty(id) & aura::ast::FlatAST::kSvaDirty) != 0;
 }

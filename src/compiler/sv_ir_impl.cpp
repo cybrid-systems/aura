@@ -551,6 +551,96 @@ map_interface_node_to_ir(const FlatAST& flat,
     return ir;
 }
 
+static std::string resolve_expr_child(const FlatAST& flat, const StringPool& pool,
+                                      NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return {};
+    for (NodeId child : flat.children(id)) {
+        auto cv = flat.get(child);
+        if (cv.tag == NodeTag::LiteralString && cv.sym_id != INVALID_SYM)
+            return std::string(pool.resolve(cv.sym_id));
+    }
+    return {};
+}
+
+std::optional<PropertyIR>
+map_property_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return std::nullopt;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Property)
+        return std::nullopt;
+    if (v.sym_id == INVALID_SYM)
+        return std::nullopt;
+    auto expr = resolve_expr_child(flat, pool, id);
+    return make_property(pool.resolve(v.sym_id), expr);
+}
+
+std::optional<SequenceIR>
+map_sequence_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return std::nullopt;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Sequence)
+        return std::nullopt;
+    if (v.sym_id == INVALID_SYM)
+        return std::nullopt;
+    auto expr = resolve_expr_child(flat, pool, id);
+    return make_sequence(pool.resolve(v.sym_id), expr);
+}
+
+std::optional<CoverpointIR>
+map_coverpoint_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return std::nullopt;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Coverpoint)
+        return std::nullopt;
+    if (v.sym_id == INVALID_SYM)
+        return std::nullopt;
+    CoverpointIR cp;
+    cp.var = pool.resolve(v.sym_id);
+    for (std::uint32_t i = 0; i < 64; ++i) {
+        SymId bin = flat.param_at(id, i);
+        if (bin == INVALID_SYM)
+            break;
+        cp.bins.emplace_back(pool.resolve(bin));
+    }
+    return cp;
+}
+
+std::optional<CovergroupIR>
+map_covergroup_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return std::nullopt;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Covergroup)
+        return std::nullopt;
+    if (v.sym_id == INVALID_SYM)
+        return std::nullopt;
+    CovergroupIR cg;
+    cg.name = pool.resolve(v.sym_id);
+    for (NodeId child : flat.children(id)) {
+        if (auto cp = map_coverpoint_node_to_ir(flat, pool, child))
+            cg.coverpoint_strs.push_back(emit_coverpoint(*cp));
+    }
+    return cg;
+}
+
+std::optional<PropertyIR>
+map_assert_node_to_ir(const FlatAST& flat, const StringPool& pool, NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return std::nullopt;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Assert)
+        return std::nullopt;
+    for (NodeId child : flat.children(id)) {
+        if (auto p = map_property_node_to_ir(flat, pool, child))
+            return p;
+    }
+    return std::nullopt;
+}
+
 std::string debug_sv_modport(const SVModportIR& m,
                               const StringPool& pool) {
     std::string out;
@@ -672,8 +762,25 @@ SvReemitResult reemit_sv_node(const FlatAST& flat, const StringPool& pool, const
     if (id == NULL_NODE || id >= flat.size())
         return result;
     const auto before = result.sv_text;
-    if (auto ir = map_interface_node_to_ir(flat, pool, id)) {
-        result.sv_text = emit_sv_interface(*ir, pool);
+    const auto tag = flat.get(id).tag;
+    if (tag == NodeTag::Interface) {
+        if (auto ir = map_interface_node_to_ir(flat, pool, id))
+            result.sv_text = emit_sv_interface(*ir, pool);
+    } else if (tag == NodeTag::Property) {
+        if (auto ir = map_property_node_to_ir(flat, pool, id))
+            result.sv_text = emit_property(*ir);
+    } else if (tag == NodeTag::Sequence) {
+        if (auto ir = map_sequence_node_to_ir(flat, pool, id))
+            result.sv_text = emit_sequence(*ir);
+    } else if (tag == NodeTag::Coverpoint) {
+        if (auto ir = map_coverpoint_node_to_ir(flat, pool, id))
+            result.sv_text = emit_coverpoint(*ir);
+    } else if (tag == NodeTag::Covergroup) {
+        if (auto ir = map_covergroup_node_to_ir(flat, pool, id))
+            result.sv_text = emit_covergroup(*ir);
+    } else if (tag == NodeTag::Assert) {
+        if (auto ir = map_assert_node_to_ir(flat, pool, id))
+            result.sv_text = emit_property(*ir);
     } else {
         result.sv_text = "// sv re-emit stub for node ";
         result.sv_text.append(std::to_string(id));

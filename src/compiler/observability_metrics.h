@@ -508,6 +508,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> feedback_mutate_hits_total{0};
     std::atomic<std::uint64_t> ppa_savings_total{0};
     std::atomic<std::uint64_t> verification_loop_success_total{0};
+    // Issue #694: SVA structured AST mutate observability.
+    std::atomic<std::uint64_t> sva_structured_mutate_hits_total{0};
     // Issue #342: narrowing blame/provenance
     // observability. 1 lifetime counter: how many
     // OccurrenceInfoFlat records have been
