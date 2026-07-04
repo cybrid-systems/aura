@@ -397,4 +397,12 @@ export SvReemitResult reemit_sv_node(const aura::ast::FlatAST& flat,
                                      aura::ast::NodeId id,
                                      std::string_view simulator = "vcs");
 
+// Issue #698: mock SV emit validator (balanced delimiters + construct keywords).
+export struct SvEmitValidation {
+    bool ok = false;
+    std::string error;
+};
+
+export SvEmitValidation validate_sv_emit(std::string_view sv_text);
+
 } // namespace aura::compiler::sv_ir

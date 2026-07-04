@@ -2510,14 +2510,24 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
                 ws->ppa_dirty_reasons(target));
             if (auto* pool = ev.workspace_pool()) {
                 const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, target);
-                (void)aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
+                const auto diff = aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
+                const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     m->hardware_backend_hook_calls_total.fetch_add(
                         1, std::memory_order_relaxed);
                     m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
                     m->feedback_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
-                    m->verification_loop_success_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    if (!diff.empty())
+                        m->sv_diff_emits_total.fetch_add(1, std::memory_order_relaxed);
+                    if (validation.ok) {
+                        m->sv_emit_parse_success_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        m->verification_loop_success_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    } else {
+                        m->sv_emit_parse_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                     if (reemit.ppa_savings > 0) {
                         m->ppa_savings_total.fetch_add(
                             static_cast<std::uint64_t>(reemit.ppa_savings),
@@ -2527,6 +2537,51 @@ void register_compile_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         }
         ws->bump_sv_mutate_success();
+        return make_bool(true);
+    });
+
+    // Issue #698: (eda:run-commercial-simulator-stub simulator node-id)
+    // — re-emit SV for node, validate emit, return commercial do-file stub.
+    add("eda:run-commercial-simulator-stub", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
+            return make_bool(false);
+        auto* ws = ev.workspace_flat();
+        auto* pool = ev.workspace_pool();
+        if (!ws || !pool)
+            return make_bool(false);
+        const auto sim_idx = as_string_idx(a[0]);
+        if (sim_idx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto& simulator = ev.string_heap_[sim_idx];
+        const auto nid = static_cast<aura::ast::NodeId>(as_int(a[1]));
+        if (nid >= ws->size())
+            return make_bool(false);
+        if (!aura::compiler::hardware::is_sv_structural_node(*ws, nid))
+            return make_bool(false);
+        const auto reemit =
+            aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, nid, simulator);
+        const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
+        if (!validation.ok)
+            return make_bool(false);
+        if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, nid)) {
+            const auto sv_reasons =
+                aura::compiler::hardware::sv_structural_dirty_reasons(*ws, nid);
+            aura::compiler::hardware::on_structural_mutation(
+                nid,
+                static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
+                ws->ppa_dirty_reasons(nid));
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->commercial_simulator_runs_total.fetch_add(1, std::memory_order_relaxed);
+            m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
+            m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
+            m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
+            if (reemit.ppa_savings > 0) {
+                m->ppa_savings_total.fetch_add(
+                    static_cast<std::uint64_t>(reemit.ppa_savings),
+                    std::memory_order_relaxed);
+            }
+        }
         return make_bool(true);
     });
 

@@ -92,9 +92,16 @@ void maybe_sv_hardware_closedloop(Evaluator& ev, aura::ast::NodeId node) {
     const auto* pool = ev.workspace_pool();
     if (pool) {
         const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, node);
-        (void)aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
+        const auto diff = aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
+        const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
+            if (!diff.empty())
+                m->sv_diff_emits_total.fetch_add(1, std::memory_order_relaxed);
+            if (validation.ok)
+                m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
+            else
+                m->sv_emit_parse_fail_total.fetch_add(1, std::memory_order_relaxed);
             if (reemit.ppa_savings > 0) {
                 m->ppa_savings_total.fetch_add(
                     static_cast<std::uint64_t>(reemit.ppa_savings),

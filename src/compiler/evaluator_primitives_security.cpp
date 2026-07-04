@@ -662,6 +662,78 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #698: Hardware backend commercial interop stats.
+    add("query:hardware-backend-commercial-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t hook_calls = m
+            ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t reemits = m
+            ? m->commercial_reemits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t feedback_hits = m
+            ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t parse_ok = m
+            ? m->sv_emit_parse_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t parse_fail = m
+            ? m->sv_emit_parse_fail_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t ppa_savings = m
+            ? m->ppa_savings_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t loop_success = m
+            ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t sim_runs = m
+            ? m->commercial_simulator_runs_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t diff_emits = m
+            ? m->sv_diff_emits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t convergence_pct =
+            (loop_success + parse_fail) > 0
+                ? (100 * loop_success / (loop_success + parse_fail))
+                : (loop_success > 0 ? 100 : 0);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"hook-calls", make_int(static_cast<std::int64_t>(hook_calls))},
+            {"commercial-reemits", make_int(static_cast<std::int64_t>(reemits))},
+            {"feedback-mutate-hits", make_int(static_cast<std::int64_t>(feedback_hits))},
+            {"emit-parse-success", make_int(static_cast<std::int64_t>(parse_ok))},
+            {"emit-parse-fail", make_int(static_cast<std::int64_t>(parse_fail))},
+            {"ppa-savings", make_int(static_cast<std::int64_t>(ppa_savings))},
+            {"verification-loop-convergence",
+             make_int(static_cast<std::int64_t>(convergence_pct))},
+            {"commercial-simulator-runs", make_int(static_cast<std::int64_t>(sim_runs))},
+            {"sv-diff-emits", make_int(static_cast<std::int64_t>(diff_emits))},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #693: Hardware backend SV commercial closed-loop stats.
     add("query:hardware-backend-sv-closedloop-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

@@ -5648,6 +5648,16 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         s.verification_loop_success_total =
             metrics_.verification_loop_success_total.load(
                 std::memory_order_relaxed);
+        s.sv_emit_parse_success_total =
+            metrics_.sv_emit_parse_success_total.load(
+                std::memory_order_relaxed);
+        s.sv_emit_parse_fail_total =
+            metrics_.sv_emit_parse_fail_total.load(std::memory_order_relaxed);
+        s.commercial_simulator_runs_total =
+            metrics_.commercial_simulator_runs_total.load(
+                std::memory_order_relaxed);
+        s.sv_diff_emits_total =
+            metrics_.sv_diff_emits_total.load(std::memory_order_relaxed);
         s.sva_structured_mutate_hits_total =
             metrics_.sva_structured_mutate_hits_total.load(
                 std::memory_order_relaxed);
