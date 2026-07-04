@@ -2789,6 +2789,10 @@ add_dependencies(all_test_issue_targets test_issue_697)
 aura_add_issue_test(test_issue_698)
 aura_issue_test_link_llvm_jit(test_issue_698)
 add_dependencies(all_test_issue_targets test_issue_698)
+# Issue #706: Adaptive StealBudget + work-stealing bias for LLM bottleneck.
+aura_add_issue_test(test_issue_706)
+aura_issue_test_link_llvm_jit(test_issue_706)
+add_dependencies(all_test_issue_targets test_issue_706)
 # Issue #464: Arena auto-compaction lifecycle + counter + primitive.
 aura_add_issue_test(test_issue_464_arena_auto_compaction)
 aura_issue_test_link_llvm_jit(test_issue_464_arena_auto_compaction)

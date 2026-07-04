@@ -1974,6 +1974,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:primitives-extension-stats",
             // Issue #698 — Hardware backend commercial interop
             "query:hardware-backend-commercial-stats",
+            // Issue #706 — Scheduler StealBudget adaptive bias
+            "query:scheduler-stealbudget-adaptive-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1991,9 +1993,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 78 entries as of #698 ship (77 from #697 + 1 new
-        // query:hardware-backend-commercial-stats).
-        return make_int(78);
+        // 79 entries as of #706 ship (78 from #698 + 1 new
+        // query:scheduler-stealbudget-adaptive-stats).
+        return make_int(79);
     });
 }
 
