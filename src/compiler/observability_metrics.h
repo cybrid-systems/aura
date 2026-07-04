@@ -502,6 +502,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> adt_pattern_narrow_refreshes_total{0};
     std::atomic<std::uint64_t> adt_non_exhaustive_caught_total{0};
     std::atomic<std::uint64_t> adt_pattern_provenance_complete_total{0};
+    // Issue #693: Hardware backend SV commercial closed-loop.
+    std::atomic<std::uint64_t> hardware_backend_hook_calls_total{0};
+    std::atomic<std::uint64_t> commercial_reemits_total{0};
+    std::atomic<std::uint64_t> feedback_mutate_hits_total{0};
+    std::atomic<std::uint64_t> ppa_savings_total{0};
+    std::atomic<std::uint64_t> verification_loop_success_total{0};
     // Issue #342: narrowing blame/provenance
     // observability. 1 lifetime counter: how many
     // OccurrenceInfoFlat records have been

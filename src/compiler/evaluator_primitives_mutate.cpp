@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
 #include "security_capabilities.h"
+#include "observability_metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -20,6 +21,7 @@ import aura.parser.parser;
 import aura.core.mutators;  // Phase 4 follow-up #3: migrate mutate:* primitives to strategy dispatch
 import aura.diag;
 import aura.compiler.hardware_backend;
+import aura.compiler.sv_ir;
 
 namespace aura::compiler::primitives_detail {
 
@@ -73,6 +75,35 @@ bool subtree_has_closure(const aura::ast::FlatAST& flat, aura::ast::NodeId root)
         return false;
     };
     return walk(walk, root);
+}
+
+void maybe_sv_hardware_closedloop(Evaluator& ev, aura::ast::NodeId node) {
+    auto* ws = ev.workspace_flat();
+    if (!ws || node >= ws->size())
+        return;
+    if (!aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, node))
+        return;
+    const auto sv_reasons = aura::compiler::hardware::sv_structural_dirty_reasons(*ws, node);
+    const auto ppa_reasons = ws->ppa_dirty_reasons(node);
+    aura::compiler::hardware::on_structural_mutation(
+        node,
+        static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
+        ppa_reasons);
+    const auto* pool = ev.workspace_pool();
+    if (pool) {
+        const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, node);
+        (void)aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
+            if (reemit.ppa_savings > 0) {
+                m->ppa_savings_total.fetch_add(
+                    static_cast<std::uint64_t>(reemit.ppa_savings),
+                    std::memory_order_relaxed);
+            }
+        }
+    }
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 bool define_needs_precise_invalidation(const aura::ast::FlatAST& flat,
@@ -3699,6 +3730,13 @@ void register_mutate_primitives(
         ws->add_mutation(cg_id, "sv-add-coverpoint",
                          "covergroup", "covergroup+coverpoint",
                          "added coverpoint via #469 closed-loop");
+        ws->apply_verification_dirty_bits(
+            cg_id, aura::ast::FlatAST::kCoverageFeedbackDirty);
+        ws->apply_verify_dirty_bits(cg_id, aura::ast::FlatAST::kSvaDirty);
+        ws->mark_ppa_dirty(cg_id, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
+        ws->mark_dirty_upward(cg_id, aura::ast::FlatAST::kGeneralDirty,
+                              aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
+        maybe_sv_hardware_closedloop(ev, cg_id);
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });
@@ -3724,6 +3762,13 @@ void register_mutate_primitives(
         ws->add_mutation(pid, "sv-weaken-property",
                          "property", "property+disable-iff",
                          "weakened property via #469 closed-loop");
+        ws->apply_verification_dirty_bits(
+            pid, aura::ast::FlatAST::kAssertFailureDirty);
+        ws->apply_verify_dirty_bits(pid, aura::ast::FlatAST::kSvaDirty);
+        ws->mark_ppa_dirty(pid, aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
+        ws->mark_dirty_upward(pid, aura::ast::FlatAST::kGeneralDirty,
+                              aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
+        maybe_sv_hardware_closedloop(ev, pid);
         ws->bump_sv_mutate_success();
         return make_bool(true);
     });
