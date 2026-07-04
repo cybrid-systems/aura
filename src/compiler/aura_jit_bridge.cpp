@@ -280,8 +280,7 @@ extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
         return;
     auto& slot = g_aot_func_slots[idx];
     const std::uintptr_t new_ptr = static_cast<std::uintptr_t>(fn_ptr);
-    const std::uintptr_t old_ptr =
-        slot.fn_ptr.exchange(new_ptr, std::memory_order_acq_rel);
+    const std::uintptr_t old_ptr = slot.fn_ptr.exchange(new_ptr, std::memory_order_acq_rel);
     if (old_ptr != 0 && old_ptr != new_ptr)
         slot.grace_refcount.fetch_add(1, std::memory_order_relaxed);
     slot.table_generation.store(g_aot_table_epoch.load(std::memory_order_acquire),

@@ -543,7 +543,7 @@ namespace {
             fiber_stack_pool_detail::restamp_yield_checkpoint_top(ev, fiber);
         }
         if (aura_aot_probe_checkpoint_version(ev->defuse_version_snapshot(),
-                                            ev->current_bridge_epoch())) {
+                                              ev->current_bridge_epoch())) {
             aura_aot_record_deopt_on_steal();
         }
     }
@@ -666,7 +666,8 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     if (!ev)
         return;
     ev->probe_linear_ownership_on_fiber_steal();
-    if (aura_aot_probe_checkpoint_version(ev->defuse_version_snapshot(), ev->current_bridge_epoch()))
+    if (aura_aot_probe_checkpoint_version(ev->defuse_version_snapshot(),
+                                          ev->current_bridge_epoch()))
         aura_aot_record_deopt_on_steal();
 }
 

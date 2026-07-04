@@ -979,8 +979,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             m ? m->aot_hot_update_success_.load(std::memory_order_relaxed) : 0;
         const std::uint64_t stale =
             m ? m->aot_stale_reject_count_.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t swaps =
-            m ? m->aot_refcount_swaps_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t swaps = m ? m->aot_refcount_swaps_.load(std::memory_order_relaxed) : 0;
         const std::uint64_t region_viol =
             m ? m->aot_region_mismatch_.load(std::memory_order_relaxed) : 0;
         const std::uint64_t deopt_steal =
@@ -1043,10 +1042,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
         const std::uint64_t drifts =
             m ? m->aot_checkpoint_version_drifts_.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t deopt =
-            m ? m->aot_deopt_on_steal_.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t swaps =
-            m ? m->aot_refcount_swaps_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t deopt = m ? m->aot_deopt_on_steal_.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t swaps = m ? m->aot_refcount_swaps_.load(std::memory_order_relaxed) : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"checkpoint-version-drifts", make_int(static_cast<std::int64_t>(drifts))},
             {"deopt-on-steal", make_int(static_cast<std::int64_t>(deopt))},
