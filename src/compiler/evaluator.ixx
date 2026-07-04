@@ -73,11 +73,14 @@ public:
 };
 
 // Issue #480: lightweight metadata for self-describing primitives.
+// Issue #697: category + schema/contracts for AI Agent extension kit.
 export struct PrimMeta {
     std::uint8_t arity = 255;  // 255 = variadic
     bool pure = true;
     std::uint8_t safety_flags = 0;  // 0x01=mutates, 0x02=io, 0x04=fiber
     std::string doc;
+    std::string category;  // eda | sva | verification | general
+    std::string schema;    // e.g. "(int string) -> bool"
 };
 
 export class Primitives {
@@ -107,6 +110,26 @@ public:
         std::size_t n = 0;
         for (const auto& m : meta_)
             if (!m.doc.empty())
+                ++n;
+        return n;
+    }
+    // Issue #697: post-registration meta backfill for domain primitives.
+    void set_meta_for_name(const std::string& name, PrimMeta meta) {
+        const auto slot = slot_for_name(name);
+        if (slot < meta_.size())
+            meta_[slot] = std::move(meta);
+    }
+    [[nodiscard]] std::size_t category_meta_count(std::string_view category) const noexcept {
+        std::size_t n = 0;
+        for (const auto& m : meta_)
+            if (m.category == category)
+                ++n;
+        return n;
+    }
+    [[nodiscard]] std::size_t schema_documented_meta_count() const noexcept {
+        std::size_t n = 0;
+        for (const auto& m : meta_)
+            if (!m.doc.empty() && !m.schema.empty())
                 ++n;
         return n;
     }
@@ -1743,6 +1766,8 @@ private:
     void register_all_primitives();
     void install_defuse_subsystem();
     void build_primitive_slots();
+    // Issue #697: post-registration SV/EDA PrimMeta backfill.
+    void backfill_eda_sv_primitive_meta();
     // Dynamic ADT ctor registration (define-type eval path).
     void register_adt_ctor(const std::string& ctor_name, types::EvalValue tag_str, int field_count);
     [[nodiscard]] types::EvalValue make_adt_zero_arg_ctor(types::EvalValue tag_str);

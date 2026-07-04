@@ -290,6 +290,9 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     std::uint64_t eda_sv_stable_ref_invalidation_total = 0;
     std::uint64_t eda_sv_commercial_stub_latency_us_total = 0;
     std::uint64_t eda_sv_corruption_detected_total = 0;
+    // Issue #697: Declarative primitives extension kit observability.
+    std::uint64_t primitive_skeleton_generations_total = 0;
+    std::uint64_t primitive_eda_meta_backfill_total = 0;
     // Issue #342: narrowing blame/provenance
     // observability. Mirrors the lifetime counter
     // in CompilerMetrics. The provenance fields

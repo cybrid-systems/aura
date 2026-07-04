@@ -5669,6 +5669,12 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         s.eda_sv_corruption_detected_total =
             metrics_.eda_sv_corruption_detected_total.load(
                 std::memory_order_relaxed);
+        s.primitive_skeleton_generations_total =
+            metrics_.primitive_skeleton_generations_total.load(
+                std::memory_order_relaxed);
+        s.primitive_eda_meta_backfill_total =
+            metrics_.primitive_eda_meta_backfill_total.load(
+                std::memory_order_relaxed);
         // Issue #342: narrowing provenance
         // observability. Mirrors the lifetime
         // counter in CompilerMetrics.
