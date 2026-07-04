@@ -4,6 +4,7 @@
 
 module;
 
+#include "primitives_detail.h"
 #include "runtime_shared.h"
 
 module aura.compiler.evaluator;
@@ -306,9 +307,12 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
-            auto pfn = ev.primitives_.lookup(ev.primitives_.name_for_slot(slot));
-            if (pfn)
+            auto pfn = ev.primitives_.slot_lookup_fast(slot);
+            if (pfn) {
+                primitives_detail::prim_record_fastpath_hit(
+                    static_cast<CompilerMetrics*>(ev.compiler_metrics()));
                 return (*pfn)(args);
+            }
         }
         if (is_closure(fn)) {
             auto cid = as_closure_id(fn);

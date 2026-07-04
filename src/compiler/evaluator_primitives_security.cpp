@@ -4,6 +4,7 @@ module;
 
 #include "runtime_shared.h"
 #include "compiler/observability_metrics.h"
+#include "primitives_detail.h"
 #include "primitives_meta.h"
 #include "shape.h"
 #include "value_tags.h"
@@ -567,6 +568,73 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             {"documented-with-schema", make_int(static_cast<std::int64_t>(schema_doc))},
             {"describe-calls", make_int(static_cast<std::int64_t>(describes))},
             {"registry-slots", make_int(static_cast<std::int64_t>(slots))},
+            {"extension-kit-version",
+             make_int(static_cast<std::int64_t>(kPrimitivesExtensionKitVersion))},
+        };
+        return build_hash(kv);
+    });
+
+    // Issue #709: registry fast dispatch + capture discipline + EDA integration stats.
+    add("query:primitives-registry-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t capture_viol =
+            m ? m->primitive_capture_violations_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t fastpath_hits =
+            m ? m->primitive_fastpath_hits_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t eda_registered = ev.primitives_.category_meta_count("eda") +
+                                           ev.primitives_.category_meta_count("sva") +
+                                           ev.primitives_.category_meta_count("verification");
+        const std::uint64_t slots = ev.primitives_.slot_count();
+        const std::uint64_t documented = ev.primitives_.documented_meta_count();
+        const std::uint64_t consistency_rate =
+            slots > 0 ? (documented * 100) / slots : 100;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"capture-violations", make_int(static_cast<std::int64_t>(capture_viol))},
+            {"fastpath-hits", make_int(static_cast<std::int64_t>(fastpath_hits))},
+            {"eda-registered", make_int(static_cast<std::int64_t>(eda_registered))},
+            {"consistency-rate", make_int(static_cast<std::int64_t>(consistency_rate))},
+            {"registry-slots", make_int(static_cast<std::int64_t>(slots))},
+            {"capture-contract-version",
+             make_int(static_cast<std::int64_t>(kPrimCaptureContractVersion))},
             {"extension-kit-version",
              make_int(static_cast<std::int64_t>(kPrimitivesExtensionKitVersion))},
         };

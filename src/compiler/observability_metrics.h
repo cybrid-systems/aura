@@ -525,6 +525,9 @@ struct CompilerMetrics {
     // Issue #697: Declarative primitives extension kit observability.
     std::atomic<std::uint64_t> primitive_skeleton_generations_total{0};
     std::atomic<std::uint64_t> primitive_eda_meta_backfill_total{0};
+    // Issue #709: registry fast dispatch + capture discipline telemetry.
+    std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
+    std::atomic<std::uint64_t> primitive_capture_violations_total{0};
     // Issue #342: narrowing blame/provenance
     // observability. 1 lifetime counter: how many
     // OccurrenceInfoFlat records have been

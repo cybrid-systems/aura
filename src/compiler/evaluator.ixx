@@ -90,9 +90,16 @@ public:
     std::optional<PrimFn> lookup(const std::string& n) const pre(!n.empty());
     void add(const std::string& name, PrimFn fn) { add(name, std::move(fn), PrimMeta{}); }
     void add(const std::string& name, PrimFn fn, PrimMeta meta) {
-        table_[name] = std::move(fn);
         ordered_names_.push_back(name);
         meta_.push_back(std::move(meta));
+        fn_slots_.push_back(fn);
+        table_[name] = std::move(fn);
+    }
+    // Issue #709: O(1) slot dispatch — dense table parallel to ordered_names_.
+    [[nodiscard]] std::optional<PrimFn> slot_lookup_fast(std::size_t slot) const {
+        if (slot >= fn_slots_.size())
+            return std::nullopt;
+        return fn_slots_[slot];
     }
     void set_string_heap(std::pmr::vector<std::string>* h) { string_heap_ = h; }
     std::span<const std::string> string_heap() const { return *string_heap_; }
@@ -141,6 +148,7 @@ private:
     std::pmr::vector<std::string>* string_heap_ = nullptr;
     std::vector<std::string> ordered_names_;
     std::vector<PrimMeta> meta_;
+    std::vector<PrimFn> fn_slots_;
 };
 
 // Forward declaration: Evaluator is defined below.
@@ -1800,6 +1808,12 @@ private:
     [[nodiscard]] std::function<void(std::string, PrimFn)> prim_registrar() {
         return [this](std::string name, PrimFn fn) {
             primitives_.add(std::move(name), std::move(fn));
+        };
+    }
+    // Issue #709: meta-aware registrar for EDA/SV primitives with DEFINE_PRIMITIVE_META.
+    [[nodiscard]] std::function<void(std::string, PrimFn, PrimMeta)> prim_registrar_with_meta() {
+        return [this](std::string name, PrimFn fn, PrimMeta meta) {
+            primitives_.add(std::move(name), std::move(fn), std::move(meta));
         };
     }
     // Load a module file, return module object (or void on failure)

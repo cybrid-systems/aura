@@ -3,6 +3,7 @@
 
 module;
 
+#include "primitives_detail.h"
 
 module aura.compiler.evaluator;
 
@@ -31,11 +32,11 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     auto apply_unary = [&ev](const EvalValue& fn, const EvalValue& arg) -> EvalValue {
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
-            if (slot >= ev.primitives_.slot_count())
-                return make_void();
-            auto prim = ev.primitives_.lookup(ev.primitives_.name_for_slot(slot));
+            auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
                 return make_void();
+            primitives_detail::prim_record_fastpath_hit(
+                static_cast<CompilerMetrics*>(ev.compiler_metrics()));
             return (*prim)({arg});
         }
         if (is_closure(fn)) {
@@ -48,11 +49,11 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     auto apply_pred = [&ev](const EvalValue& fn, const EvalValue& arg) -> bool {
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
-            if (slot >= ev.primitives_.slot_count())
-                return false;
-            auto prim = ev.primitives_.lookup(ev.primitives_.name_for_slot(slot));
+            auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
                 return false;
+            primitives_detail::prim_record_fastpath_hit(
+                static_cast<CompilerMetrics*>(ev.compiler_metrics()));
             return aura::compiler::pure::is_truthy((*prim)({arg}));
         }
         if (is_closure(fn)) {
@@ -66,11 +67,11 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               const EvalValue& arg) -> EvalValue {
         if (is_primitive(fn)) {
             auto slot = as_primitive_slot(fn);
-            if (slot >= ev.primitives_.slot_count())
-                return make_void();
-            auto prim = ev.primitives_.lookup(ev.primitives_.name_for_slot(slot));
+            auto prim = ev.primitives_.slot_lookup_fast(slot);
             if (!prim)
                 return make_void();
+            primitives_detail::prim_record_fastpath_hit(
+                static_cast<CompilerMetrics*>(ev.compiler_metrics()));
             return (*prim)({acc, arg});
         }
         if (is_closure(fn)) {

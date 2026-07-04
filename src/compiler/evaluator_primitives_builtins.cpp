@@ -142,10 +142,11 @@ Primitives::Primitives() {
         (void)a;
         return make_int(static_cast<std::int64_t>(std::time(nullptr)));
     };
-    // Populate ordered_names_ + default meta_ for ctor-registered builtins.
-    for (auto& [name, _] : table_) {
+    // Populate ordered_names_ + fn_slots_ + default meta_ for ctor builtins.
+    for (auto& [name, fn] : table_) {
         if (std::find(ordered_names_.begin(), ordered_names_.end(), name) == ordered_names_.end()) {
             ordered_names_.push_back(name);
+            fn_slots_.push_back(fn);
             meta_.push_back(PrimMeta{});
         }
     }

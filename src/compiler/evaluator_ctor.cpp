@@ -5,6 +5,7 @@ module;
 
 #include "messaging_bridge.h"
 #include "observability_metrics.h"
+#include "primitives_detail.h"
 #include "primitives_meta.h"
 
 module aura.compiler.evaluator;
@@ -76,12 +77,9 @@ Evaluator::Evaluator() {
 void Evaluator::backfill_eda_sv_primitive_meta() {
     primitives_.set_meta_for_name(
         "eda:weaken-property",
-        PrimMeta{.arity = 2,
-                 .pure = false,
-                 .safety_flags = kPrimSafetyMutates,
-                 .doc = "Weaken SVA property with disable-iff clause on Property nodes.",
-                 .category = "sva",
-                 .schema = "(int string) -> bool"});
+        DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, "sva",
+                              "Weaken SVA property with disable-iff clause on Property nodes.",
+                              "(int string) -> bool"));
     primitives_.set_meta_for_name(
         "eda:add-coverpoint-bin",
         PrimMeta{.arity = 2,
