@@ -284,6 +284,12 @@ std::uint64_t dead_coercion_eliminated_total = 0;
     std::uint64_t ppa_savings_total = 0;
     std::uint64_t verification_loop_success_total = 0;
     std::uint64_t sva_structured_mutate_hits_total = 0;
+    std::uint64_t eda_sv_evolution_cycles_total = 0;
+    std::uint64_t eda_sv_verification_convergence_total = 0;
+    std::uint64_t eda_sv_feedback_mutate_success_total = 0;
+    std::uint64_t eda_sv_stable_ref_invalidation_total = 0;
+    std::uint64_t eda_sv_commercial_stub_latency_us_total = 0;
+    std::uint64_t eda_sv_corruption_detected_total = 0;
     // Issue #342: narrowing blame/provenance
     // observability. Mirrors the lifetime counter
     // in CompilerMetrics. The provenance fields

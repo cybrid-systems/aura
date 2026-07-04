@@ -2773,6 +2773,10 @@ add_dependencies(all_test_issue_targets test_issue_693)
 aura_add_issue_test(test_issue_694)
 aura_issue_test_link_llvm_jit(test_issue_694)
 add_dependencies(all_test_issue_targets test_issue_694)
+# Issue #695: EDA-SV verification closed-loop stress harness.
+aura_add_issue_test(test_issue_695)
+aura_issue_test_link_llvm_jit(test_issue_695)
+add_dependencies(all_test_issue_targets test_issue_695)
 # Issue #464: Arena auto-compaction lifecycle + counter + primitive.
 aura_add_issue_test(test_issue_464_arena_auto_compaction)
 aura_issue_test_link_llvm_jit(test_issue_464_arena_auto_compaction)
