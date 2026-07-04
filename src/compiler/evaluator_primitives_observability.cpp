@@ -1804,6 +1804,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:shape-value-pass-stats",
             // Issue #688 — Linear OwnershipEnv post-mutate typed-mutation
             "query:linear-ownership-typed-mutate-stats",
+            // Issue #689 — Occurrence typing deep predicate + provenance
+            "query:occurrence-typing-mutate-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1821,9 +1823,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 68 entries as of #688 ship (67 from #471 + 1 new
-        // query:linear-ownership-typed-mutate-stats).
-        return make_int(68);
+        // 69 entries as of #689 ship (68 from #688 + 1 new
+        // query:occurrence-typing-mutate-stats).
+        return make_int(69);
     });
 
 }

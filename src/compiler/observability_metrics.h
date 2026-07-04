@@ -502,6 +502,12 @@ struct CompilerMetrics {
     //     are both populated (auditable blame chain)
     std::atomic<std::uint64_t> occurrence_stale_refreshes_total{0};
     std::atomic<std::uint64_t> occurrence_blame_chain_complete_total{0};
+    // Issue #689: deep nested and/or/not predicate re-narrow in
+    // infer_flat_partial post structural typed mutation.
+    std::atomic<std::uint64_t> deep_narrow_refreshes_total{0};
+    // Issue #689: provenance completeness hits (predicate_name +
+    // source_cond_id + mutation_id all populated after refresh).
+    std::atomic<std::uint64_t> provenance_completeness_hits_total{0};
     // Issue #639: occurrence narrowing blame + stale invalidation.
     //   - narrow_stale_caught_total: stale narrowing detected
     //     at use-site before re-analysis
