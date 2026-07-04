@@ -1103,6 +1103,32 @@ template <typename T> bool auto_validate(const T& obj, std::string* error = null
     return ok;
 }
 
+// Issue #488: mutation-specific reflect health probe for Guard
+// dtor snapshots (marker consistency + generation sanity).
+struct MutationReflectHealth {
+    bool marker_consistent = true;
+    bool generation_healthy = true;
+    std::uint64_t dirty_nodes = 0;
+    std::uint64_t macro_markers = 0;
+};
+
+inline bool validate_mutation_reflect_health(const MutationReflectHealth& health,
+                                             std::string* error = nullptr) {
+    if (!health.generation_healthy) {
+        if (error)
+            *error = "generation health check failed";
+        return false;
+    }
+    if (!health.marker_consistent) {
+        if (error)
+            *error = "macro marker consistency check failed";
+        return false;
+    }
+    (void)health.dirty_nodes;
+    (void)health.macro_markers;
+    return true;
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  Recursive binary serialization — auto_bin_write / auto_bin_read
 //

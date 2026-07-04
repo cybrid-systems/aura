@@ -239,6 +239,58 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(ev->get_mutation_impact_count()));
     });
 
+    // Issue #488: query:mutation-impact-snapshot. Hash view of the
+    // most recent Guard success impact summary for AI decision loops.
+    add("query:mutation-impact-snapshot",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto entry = ev->get_latest_mutation_impact_entry();
+            auto* ht = FlatHashTable::create(12);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("epoch-after", static_cast<std::int64_t>(entry.epoch_after));
+            insert_kv("epoch-delta", static_cast<std::int64_t>(entry.epoch_delta));
+            insert_kv("nodes-changed", static_cast<std::int64_t>(entry.nodes_changed));
+            insert_kv("reasons-mask", static_cast<std::int64_t>(entry.reasons_mask));
+            insert_kv("dirty-nodes", static_cast<std::int64_t>(ev->get_dirty_nodes_in_snapshot()));
+            insert_kv("macro-markers",
+                      static_cast<std::int64_t>(ev->get_macro_markers_in_snapshot()));
+            insert_kv("schema-pass",
+                      static_cast<std::int64_t>(ev->get_schema_validation_pass_count()));
+            insert_kv("schema-fail",
+                      static_cast<std::int64_t>(ev->get_schema_validation_fail_count()));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #456: query:epoch-stats. Returns the current
     // defuse_version_ epoch (the global counter bumped
     // on every mutation boundary entry/exit). Stamps
