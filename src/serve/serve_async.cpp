@@ -9,7 +9,12 @@
 #include "thread_pool.h"
 #include "aura_platform.h"
 
+#include <array>
+#include <atomic>
+#include <cstdio>
+#include <cstring>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -35,69 +40,15 @@ std::string prometheus_scheduler_metrics() {
 }
 
 // ── Helpers ─────────────────────────────────────────────
+//
+// `json_escape` and `json_field` live in `aura::serve::detail`
+// (see serve_async.h) so they can be unit-tested. The .cpp
+// delegates to them via short static aliases to keep call sites
+// tidy — the actual logic is in the header.
 
-static std::string json_escape(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 16);
-    for (auto c : s) {
-        switch (c) {
-            case '"':
-                out += "\\\"";
-                break;
-            case '\\':
-                out += "\\\\";
-                break;
-            case '\n':
-                out += "\\n";
-                break;
-            case '\r':
-                out += "\\r";
-                break;
-            case '\t':
-                out += "\\t";
-                break;
-            default:
-                out += c;
-        }
-    }
-    return out;
-}
-
-// Minimal JSON field extractor (no full parser needed for protocol)
-static std::string json_field(const std::string& json, const std::string& field) {
-    // Try with space after colon, then without
-    auto key = "\"" + field + "\": \"";
-    auto pos = json.find(key);
-    if (pos == std::string::npos) {
-        key = "\"" + field + "\":\"";
-        pos = json.find(key);
-    }
-    if (pos == std::string::npos)
-        return {};
-    pos += key.size();
-    std::string val;
-    while (pos < json.size() && json[pos] != '"') {
-        if (json[pos] == '\\' && pos + 1 < json.size()) {
-            auto next = json[pos + 1];
-            if (next == 'n')
-                val += '\n';
-            else if (next == 't')
-                val += '\t';
-            else if (next == 'r')
-                val += '\r';
-            else if (next == '"')
-                val += '"';
-            else if (next == '\\')
-                val += '\\';
-            else
-                val += next;
-            pos += 2;
-        } else {
-            val += json[pos++];
-        }
-    }
-    return val;
-}
+using aura::serve::detail::json_escape;
+using aura::serve::detail::json_field;
+using aura::serve::detail::kMaxServeAsyncLineBytes;
 
 // ── Value formatting ─────────────────────────────────────
 
@@ -108,6 +59,134 @@ static std::string fmt_val(const EvalValue& v, aura::compiler::CompilerService& 
     return aura::compiler::format_value(v, cs.evaluator().primitives().string_heap(),
                                         cs.evaluator().pairs(), 0, &cs.evaluator().primitives(),
                                         cs.evaluator().keyword_table());
+}
+
+// ── In-process libcurl (Issue #473 §8) ────────────────────────────
+//
+// The async HTTP handler used to fork+exec curl with the auth token in
+// argv (which leaks into /proc/*/cmdline). We now do the HTTP POST in
+// process via libcurl loaded with dlopen — identical to the path used
+// by the `http-post` primitive — so the auth header stays in process
+// memory (set via CURLOPT_HTTPHEADER) and never lands on a cmdline.
+//
+// This duplicates the small CurlAPI struct in evaluator_primitives_io.cpp.
+// Consolidation into a shared header is a future refactor; the duplication
+// keeps the security-critical change inside serve_async.cpp's audit
+// surface.
+namespace {
+
+typedef void CURL;
+struct curl_slist {};
+using CURLcode = int;
+using CURLoption = int;
+constexpr CURLoption CURLOPT_URL = 10002;
+constexpr CURLoption CURLOPT_POST = 47;
+constexpr CURLoption CURLOPT_POSTFIELDS = 10015;
+constexpr CURLoption CURLOPT_POSTFIELDSIZE = 60;
+constexpr CURLoption CURLOPT_HTTPHEADER = 10023;
+constexpr CURLoption CURLOPT_WRITEFUNCTION = 20011;
+constexpr CURLoption CURLOPT_WRITEDATA = 10001;
+constexpr CURLoption CURLOPT_TIMEOUT = 13;
+constexpr CURLoption CURLOPT_CONNECTTIMEOUT = 78;
+constexpr CURLoption CURLOPT_SSL_VERIFYPEER = 64;
+constexpr CURLoption CURLOPT_SSL_VERIFYHOST = 81;
+constexpr CURLoption CURLOPT_USERAGENT = 10018;
+constexpr CURLcode CURLE_OK = 0;
+
+struct CurlAPI {
+    void* handle = nullptr;
+    CURL* (*easy_init)() = nullptr;
+    CURLcode (*easy_setopt)(CURL*, CURLoption, ...) = nullptr;
+    CURLcode (*easy_perform)(CURL*) = nullptr;
+    void (*easy_cleanup)(CURL*) = nullptr;
+    struct curl_slist* (*slist_append)(struct curl_slist*, const char*) = nullptr;
+    void (*slist_free_all)(struct curl_slist*) = nullptr;
+
+    bool load() {
+        if (handle)
+            return true;
+        static constexpr const char* kSonames[] = {
+            "libcurl.so.4",
+            "libcurl.so",
+            "libcurl.4.dylib",
+            "libcurl.dylib",
+            "libcurl.so.5",
+        };
+        std::vector<void*> candidates;
+        if (auto* h = ::dlopen(nullptr, RTLD_LAZY | RTLD_LOCAL))
+            candidates.push_back(h);
+        for (auto* name : kSonames) {
+            if (auto* h = ::dlopen(name, RTLD_LAZY | RTLD_LOCAL))
+                candidates.push_back(h);
+        }
+        for (auto* h : candidates) {
+            auto* ei = (CURL * (*)())::dlsym(h, "curl_easy_init");
+            auto* es = (CURLcode (*)(CURL*, CURLoption, ...))::dlsym(h, "curl_easy_setopt");
+            auto* ep = (CURLcode (*)(CURL*))::dlsym(h, "curl_easy_perform");
+            auto* ec = (void (*)(CURL*))::dlsym(h, "curl_easy_cleanup");
+            auto* sa = (struct curl_slist * (*)(struct curl_slist*, const char*))::dlsym(
+                h, "curl_slist_append");
+            auto* sf = (void (*)(struct curl_slist*))::dlsym(h, "curl_slist_free_all");
+            if (ei && es && ep && ec && sa && sf) {
+                handle = h;
+                easy_init = ei;
+                easy_setopt = es;
+                easy_perform = ep;
+                easy_cleanup = ec;
+                slist_append = sa;
+                slist_free_all = sf;
+                return true;
+            }
+        }
+        return false;
+    }
+};
+CurlAPI& get_curl_async() {
+    static CurlAPI c;
+    return c;
+}
+
+std::size_t curl_writer_buf(char* ptr, std::size_t size, std::size_t nmemb, void* ud) {
+    auto* out = static_cast<std::string*>(ud);
+    std::size_t total = size * nmemb;
+    out->append(ptr, total);
+    return total;
+}
+
+} // anonymous namespace
+
+// Issue #473 §8: in-process HTTP POST — never puts auth on cmdline.
+static std::string http_post_in_process(const std::string& url, const std::string& body,
+                                        const std::string& auth) {
+    auto& c = get_curl_async();
+    if (!c.load())
+        return {};
+    CURL* curl = c.easy_init();
+    if (!curl)
+        return {};
+    struct curl_slist* headers = nullptr;
+    headers = c.slist_append(headers, "Content-Type: application/json");
+    if (!auth.empty()) {
+        std::string h = "Authorization: Bearer " + auth;
+        headers = c.slist_append(headers, h.c_str());
+    }
+    std::string response;
+    c.easy_setopt(curl, CURLOPT_URL, url.c_str());
+    c.easy_setopt(curl, CURLOPT_POST, 1L);
+    c.easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+    c.easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+    c.easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    c.easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_writer_buf);
+    c.easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    c.easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    c.easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    c.easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    c.easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    c.easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
+    CURLcode res = c.easy_perform(curl);
+    c.slist_free_all(headers);
+    c.easy_cleanup(curl);
+    return res == CURLE_OK ? response : std::string{};
 }
 
 // ── run_serve_async ─────────────────────────────────────
@@ -462,9 +541,22 @@ void run_serve_async(int num_workers) {
                 }
             }
 
-            // Extract complete lines from buffer (do this BEFORE EOF check)
+            // Extract complete lines from buffer (do this BEFORE EOF check).
+            // Issue #473 §1: 1 MiB cap on per-line input. Lines without
+            // \n past the cap are dropped (and logged to stderr) to bound
+            // the reader's memory growth against malicious clients that
+            // stream unbounded bytes without newlines.
             auto nl = buf.find('\n');
             while (nl != std::string::npos) {
+                if (nl >= kMaxServeAsyncLineBytes) {
+                    // Single line exceeded the cap — drop it and skip to next \n.
+                    std::fprintf(stderr,
+                                 "serve-async: dropping line of %zu bytes (cap=%zu)\n",
+                                 nl, kMaxServeAsyncLineBytes);
+                    buf.erase(0, nl + 1);
+                    nl = buf.find('\n');
+                    continue;
+                }
                 auto line = buf.substr(0, nl);
                 // Skip comment, blank, and empty lines
                 auto s = line.find_first_not_of(" \t\r\n");
@@ -472,6 +564,16 @@ void run_serve_async(int num_workers) {
                     stdin_lines.push_back(std::move(line));
                 buf.erase(0, nl + 1);
                 nl = buf.find('\n');
+            }
+            // Cap safety net: if buf grows without any \n and exceeds the
+            // cap by a wide margin (e.g. 2× cap with no progress), the
+            // request can never complete — evict it to prevent OOM. This
+            // catches pathological inputs that never contain \n.
+            if (buf.size() >= 2 * kMaxServeAsyncLineBytes) {
+                std::fprintf(stderr,
+                             "serve-async: dropping %zu bytes of unterminated input (no newline)\n",
+                             buf.size());
+                buf.clear();
             }
 
             if (local_eof) {
@@ -543,8 +645,10 @@ void run_serve_async(int num_workers) {
         register_session_root(*sessions["default"], 0);
     }
 
-    // Register async HTTP handler (uses thread + fork+exec curl + pipe with drain)
-    // Thread does blocking fork+exec; pipe read has a 30s timeout to avoid deadlock.
+    // Register async HTTP handler (Issue #473 §8: in-process libcurl via
+    // dlopen. Auth header is set via CURLOPT_HTTPHEADER and never appears
+    // on any cmdline. libcurl's easy_perform blocks, so we run it on a
+    // worker thread and signal the fiber via eventfd when complete.)
     aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
                                             const std::string& auth) -> std::string {
         auto* fiber = aura::serve::g_current_fiber;
@@ -554,91 +658,9 @@ void run_serve_async(int num_workers) {
         if (evfd < 0)
             return {};
 
-        std::string result;
-        std::thread t([evfd, url, body, auth, &result]() {
-            int in[2], out[2];
-            if (::pipe(in) < 0 || ::pipe(out) < 0) {
-                uint64_t v = 1;
-                ::write(evfd, &v, sizeof(v));
-                return;
-            }
-
-            pid_t pid = ::fork();
-            if (pid < 0) {
-                ::close(in[0]);
-                ::close(in[1]);
-                ::close(out[0]);
-                ::close(out[1]);
-                uint64_t v = 1;
-                ::write(evfd, &v, sizeof(v));
-                return;
-            }
-
-            if (pid == 0) {
-                ::close(in[1]);
-                ::close(out[0]);
-                ::dup2(in[0], STDIN_FILENO);
-                ::dup2(out[1], STDOUT_FILENO);
-                ::close(in[0]);
-                ::close(out[1]);
-
-                // Build argv
-                std::vector<const char*> argv;
-                argv.push_back("curl");
-                argv.push_back("-s");
-                argv.push_back("-X");
-                argv.push_back("POST");
-                argv.push_back("--data-binary");
-                argv.push_back("@-");
-                argv.push_back("-H");
-                argv.push_back("Content-Type: application/json");
-                if (!auth.empty()) {
-                    auto auth_hdr = "Authorization: Bearer " + auth;
-                    argv.push_back("-H");
-                    argv.push_back(auth_hdr.c_str());
-                }
-                argv.push_back("--max-time");
-                argv.push_back("30");
-                argv.push_back("--connect-timeout");
-                argv.push_back("10");
-                argv.push_back(url.c_str());
-                argv.push_back(nullptr);
-
-                ::execvp("curl", const_cast<char* const*>(argv.data()));
-                ::_exit(1);
-            }
-
-            // Parent: send body, close stdin pipe
-            ::close(in[0]);
-            ::close(out[1]);
-            ::write(in[1], body.data(), body.size());
-            ::close(in[1]);
-
-            // Read response with timeout to prevent pipe deadlock
-            // Large LLM responses (>64KB pipe buffer) can block child write
-            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(35);
-            std::array<char, 65536> fbuf; // Large buffer to drain pipe fast
-            struct pollfd pfd = {out[0], POLLIN, 0};
-            ssize_t nr;
-            while (true) {
-                auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                     deadline - std::chrono::steady_clock::now())
-                                     .count();
-                if (remaining <= 0)
-                    break;
-                int pr = ::poll(&pfd, 1, static_cast<int>(remaining));
-                if (pr <= 0)
-                    break;
-                nr = ::read(out[0], fbuf.data(), fbuf.size());
-                if (nr <= 0)
-                    break;
-                result.append(fbuf.data(), static_cast<std::size_t>(nr));
-            }
-            ::close(out[0]);
-
-            int cstat;
-            ::waitpid(pid, &cstat, 0);
-
+        auto result = std::make_shared<std::string>();
+        std::thread t([evfd, url, body, auth, result]() {
+            *result = http_post_in_process(url, body, auth);
             uint64_t v = 1;
             ::write(evfd, &v, sizeof(v));
         });
@@ -647,7 +669,7 @@ void run_serve_async(int num_workers) {
         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
         aura::serve::Fiber::yield();
 
-        return result;
+        return std::move(*result);
     };
 
     // Register session:create for Aura code (primitive in evaluator)

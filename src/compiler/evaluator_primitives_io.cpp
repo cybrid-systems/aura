@@ -64,18 +64,50 @@ namespace {
         bool load() {
             if (handle)
                 return true;
-            handle = ::dlopen("libcurl.so.4", RTLD_LAZY | RTLD_LOCAL);
-            if (!handle)
-                return false;
-            easy_init = (CURL * (*)())::dlsym(handle, "curl_easy_init");
-            easy_setopt = (CURLcode (*)(CURL*, CURLoption, ...))::dlsym(handle, "curl_easy_setopt");
-            easy_perform = (CURLcode (*)(CURL*))::dlsym(handle, "curl_easy_perform");
-            easy_cleanup = (void (*)(CURL*))::dlsym(handle, "curl_easy_cleanup");
-            slist_append = (struct curl_slist * (*)(struct curl_slist*, const char*))::dlsym(
-                handle, "curl_slist_append");
-            slist_free_all = (void (*)(struct curl_slist*))::dlsym(handle, "curl_slist_free_all");
-            return easy_init && easy_setopt && easy_perform && easy_cleanup && slist_append &&
-                   slist_free_all;
+            // Issue #473 §7: multi-platform libcurl soname fallback.
+            // Try the already-loaded image first (covers static linking or
+            // distributions where libcurl is dlopen'd by another dep),
+            // then walk a small list of platform-specific sonames.
+            // The order matters: RTLD_DEFAULT walk via dlopen(NULL) on
+            // some systems returns null even when symbols exist, so we
+            // still probe individual names afterwards.
+            static constexpr const char* kSonames[] = {
+                "libcurl.so.4",     // Linux + glibc
+                "libcurl.so",       // Linux generic
+                "libcurl.4.dylib",  // macOS Sonoma+ (and Homebrew)
+                "libcurl.dylib",    // macOS legacy
+                "libcurl.so.5",     // future-proofing (libcurl 8+)
+            };
+            // Build a small list of probe candidates — start with the
+            // global handle, then the named sonames. We attempt each in
+            // turn and fully resolve symbols before accepting it.
+            std::vector<void*> candidates;
+            if (auto* h = ::dlopen(nullptr, RTLD_LAZY | RTLD_LOCAL))
+                candidates.push_back(h);
+            for (auto* name : kSonames) {
+                if (auto* h = ::dlopen(name, RTLD_LAZY | RTLD_LOCAL))
+                    candidates.push_back(h);
+            }
+            for (auto* h : candidates) {
+                auto* ei = (CURL * (*)())::dlsym(h, "curl_easy_init");
+                auto* es = (CURLcode (*)(CURL*, CURLoption, ...))::dlsym(h, "curl_easy_setopt");
+                auto* ep = (CURLcode (*)(CURL*))::dlsym(h, "curl_easy_perform");
+                auto* ec = (void (*)(CURL*))::dlsym(h, "curl_easy_cleanup");
+                auto* sa = (struct curl_slist * (*)(struct curl_slist*, const char*))::dlsym(
+                    h, "curl_slist_append");
+                auto* sf = (void (*)(struct curl_slist*))::dlsym(h, "curl_slist_free_all");
+                if (ei && es && ep && ec && sa && sf) {
+                    handle = h;
+                    easy_init = ei;
+                    easy_setopt = es;
+                    easy_perform = ep;
+                    easy_cleanup = ec;
+                    slist_append = sa;
+                    slist_free_all = sf;
+                    return true;
+                }
+            }
+            return false;
         }
         ~CurlAPI() {
             if (handle)
@@ -211,19 +243,38 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         } else
 #endif
         {
-            // Fallback: popen with single-quote escaping
-            std::string esc;
-            esc.reserve(msg.size() + 2);
-            esc += '\'';
-            for (char c : msg) {
-                if (c == '\'')
-                    esc += "'\\\''";
-                else
-                    esc += c;
+            // Issue #473 §6: replace `::system()` with explicit fork+execlp.
+            // `::system(cmd)` invokes /bin/sh -c and runs the entire `cmd`
+            // string through shell interpretation. With single-quote
+            // escaping there are still edge cases (NUL bytes, certain
+            // locales) where injection can leak through. fork+execlp with
+            // explicit argv avoids shell parsing entirely. stderr is
+            // redirected to /dev/null to preserve the legacy silent-fail
+            // behavior the previous `2>/dev/null` provided.
+            std::string msg_copy = msg; // NUL-terminated owned buffer
+            pid_t pid = ::fork();
+            if (pid == 0) {
+                // Child: redirect stderr to /dev/null then exec git.
+                int devnull = ::open("/dev/null", O_WRONLY);
+                if (devnull >= 0) {
+                    ::dup2(devnull, STDERR_FILENO);
+                    ::close(devnull);
+                }
+                ::execlp("git", "git", "commit", "-m", msg_copy.c_str(),
+                         static_cast<char*>(nullptr));
+                ::_exit(127); // exec failed
             }
-            esc += '\'';
-            std::string cmd = "git commit -m " + esc + " 2>/dev/null";
-            rc = ::system(cmd.c_str());
+            if (pid > 0) {
+                int status = 0;
+                if (::waitpid(pid, &status, 0) != -1) {
+                    if (WIFEXITED(status))
+                        rc = WEXITSTATUS(status);
+                } else {
+                    rc = -1;
+                }
+            } else {
+                rc = -1; // fork failed
+            }
         }
         return make_int(rc);
     });
