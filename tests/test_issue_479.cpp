@@ -52,15 +52,15 @@ namespace aura_issue_479_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg)                                                                       \
-    do {                                                                                       \
-        if (cond) {                                                                            \
-            ++g_passed;                                                                        \
-            std::println(std::cout, "  PASS: {}", msg);                                        \
-        } else {                                                                               \
-            ++g_failed;                                                                        \
-            std::println(std::cerr, "  FAIL: {}", msg);                                        \
-        }                                                                                      \
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
     } while (0)
 
 // Read an int field from a hash-returning Aura expression.
@@ -150,8 +150,7 @@ int main() {
     std::println("\n--- AC2: hash fields present ---");
     constexpr auto stats_src = "(query:primitive-fastpath-per-prim)";
     CHECK(hash_int(cs, stats_src, "total") >= 0, "total field present (>= 0)");
-    CHECK(hash_int(cs, stats_src, "distinct-prims") >= 0,
-          "distinct-prims field present (>= 0)");
+    CHECK(hash_int(cs, stats_src, "distinct-prims") >= 0, "distinct-prims field present (>= 0)");
     CHECK(hash_int(cs, stats_src, "capacity") >= 0, "capacity field present (>= 0)");
     auto top_field = cs.eval("(hash-ref (query:primitive-fastpath-per-prim) 'top)");
     CHECK(top_field.has_value(), "top field present");
@@ -161,8 +160,8 @@ int main() {
     const auto total_baseline = hash_int(cs, stats_src, "total");
     const auto distinct_baseline = hash_int(cs, stats_src, "distinct-prims");
     const auto capacity_baseline = hash_int(cs, stats_src, "capacity");
-    std::println("  baseline total={} distinct={} capacity={}", total_baseline,
-                 distinct_baseline, capacity_baseline);
+    std::println("  baseline total={} distinct={} capacity={}", total_baseline, distinct_baseline,
+                 capacity_baseline);
     CHECK(total_baseline >= 0, "baseline total >= 0");
     CHECK(distinct_baseline >= 0, "baseline distinct-prims >= 0");
     CHECK(capacity_baseline >= 0, "baseline capacity >= 0");
@@ -222,8 +221,8 @@ int main() {
           std::format("'null?' per-prim count grew ({} -> {})", null_before, null_after));
     const auto total_after_null = hash_int(cs, stats_src, "total");
     CHECK(total_after_null > total_before_null,
-          std::format("total grew from {} to {} after (filter null? big)",
-                      total_before_null, total_after_null));
+          std::format("total grew from {} to {} after (filter null? big)", total_before_null,
+                      total_after_null));
 
     // AC6: (foldl + 0 big) bumps per-prim count for '+' via apply_binary path.
     std::println("\n--- AC6: (foldl + 0 big) bumps '+' via apply_binary ---");
@@ -242,8 +241,8 @@ int main() {
     (void)cs.eval("(apply + '(1 2 3))");
     const auto plus_after_apply = count_of("+");
     CHECK(plus_after_apply > plus_before_apply,
-          std::format("'+' per-prim count grew via apply: {} -> {}",
-                      plus_before_apply, plus_after_apply));
+          std::format("'+' per-prim count grew via apply: {} -> {}", plus_before_apply,
+                      plus_after_apply));
 
     // AC8: total == sum of per-prim counts (invariance).
     std::println("\n--- AC8: total == sum of per-prim counts ---");
@@ -261,25 +260,22 @@ int main() {
     CHECK(len3 >= 0 && len3 <= 3,
           std::format("top-N=3 returns list of length <= 3 (got {})", len3));
     if (len1 >= 0 && len3 >= 0) {
-        CHECK(len3 >= len1,
-              std::format("top-N=3 (len {}) >= top-N=1 (len {})", len3, len1));
+        CHECK(len3 >= len1, std::format("top-N=3 (len {}) >= top-N=1 (len {})", len3, len1));
     }
 
     // AC10: top list is sorted desc by count.
     std::println("\n--- AC10: top list sorted desc by count ---");
-    CHECK(is_sorted_desc(),
-          "top list is sorted desc by count");
+    CHECK(is_sorted_desc(), "top list is sorted desc by count");
 
     // AC11: aggregate counter primitive_fastpath_hits_total still bumps
     // (backward compat — observed via query:primitives-registry-stats 'fastpath-hits').
     std::println("\n--- AC11: aggregate counter still bumps ---");
     constexpr auto reg_src = "(query:primitives-registry-stats)";
     const auto reg_total = hash_int(cs, reg_src, "fastpath-hits");
-    CHECK(reg_total > 0,
-          std::format("aggregate 'fastpath-hits' > 0 (got {})", reg_total));
-    CHECK(reg_total == total_now,
-          std::format("aggregate 'fastpath-hits' ({}) == per-prim total ({})",
-                      reg_total, total_now));
+    CHECK(reg_total > 0, std::format("aggregate 'fastpath-hits' > 0 (got {})", reg_total));
+    CHECK(
+        reg_total == total_now,
+        std::format("aggregate 'fastpath-hits' ({}) == per-prim total ({})", reg_total, total_now));
 
     // AC12: distinct-prims grew from baseline.
     std::println("\n--- AC12: distinct-prims grew ---");

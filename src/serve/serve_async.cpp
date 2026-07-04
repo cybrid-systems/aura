@@ -75,83 +75,79 @@ static std::string fmt_val(const EvalValue& v, aura::compiler::CompilerService& 
 // surface.
 namespace {
 
-typedef void CURL;
-struct curl_slist {};
-using CURLcode = int;
-using CURLoption = int;
-constexpr CURLoption CURLOPT_URL = 10002;
-constexpr CURLoption CURLOPT_POST = 47;
-constexpr CURLoption CURLOPT_POSTFIELDS = 10015;
-constexpr CURLoption CURLOPT_POSTFIELDSIZE = 60;
-constexpr CURLoption CURLOPT_HTTPHEADER = 10023;
-constexpr CURLoption CURLOPT_WRITEFUNCTION = 20011;
-constexpr CURLoption CURLOPT_WRITEDATA = 10001;
-constexpr CURLoption CURLOPT_TIMEOUT = 13;
-constexpr CURLoption CURLOPT_CONNECTTIMEOUT = 78;
-constexpr CURLoption CURLOPT_SSL_VERIFYPEER = 64;
-constexpr CURLoption CURLOPT_SSL_VERIFYHOST = 81;
-constexpr CURLoption CURLOPT_USERAGENT = 10018;
-constexpr CURLcode CURLE_OK = 0;
+    typedef void CURL;
+    struct curl_slist {};
+    using CURLcode = int;
+    using CURLoption = int;
+    constexpr CURLoption CURLOPT_URL = 10002;
+    constexpr CURLoption CURLOPT_POST = 47;
+    constexpr CURLoption CURLOPT_POSTFIELDS = 10015;
+    constexpr CURLoption CURLOPT_POSTFIELDSIZE = 60;
+    constexpr CURLoption CURLOPT_HTTPHEADER = 10023;
+    constexpr CURLoption CURLOPT_WRITEFUNCTION = 20011;
+    constexpr CURLoption CURLOPT_WRITEDATA = 10001;
+    constexpr CURLoption CURLOPT_TIMEOUT = 13;
+    constexpr CURLoption CURLOPT_CONNECTTIMEOUT = 78;
+    constexpr CURLoption CURLOPT_SSL_VERIFYPEER = 64;
+    constexpr CURLoption CURLOPT_SSL_VERIFYHOST = 81;
+    constexpr CURLoption CURLOPT_USERAGENT = 10018;
+    constexpr CURLcode CURLE_OK = 0;
 
-struct CurlAPI {
-    void* handle = nullptr;
-    CURL* (*easy_init)() = nullptr;
-    CURLcode (*easy_setopt)(CURL*, CURLoption, ...) = nullptr;
-    CURLcode (*easy_perform)(CURL*) = nullptr;
-    void (*easy_cleanup)(CURL*) = nullptr;
-    struct curl_slist* (*slist_append)(struct curl_slist*, const char*) = nullptr;
-    void (*slist_free_all)(struct curl_slist*) = nullptr;
+    struct CurlAPI {
+        void* handle = nullptr;
+        CURL* (*easy_init)() = nullptr;
+        CURLcode (*easy_setopt)(CURL*, CURLoption, ...) = nullptr;
+        CURLcode (*easy_perform)(CURL*) = nullptr;
+        void (*easy_cleanup)(CURL*) = nullptr;
+        struct curl_slist* (*slist_append)(struct curl_slist*, const char*) = nullptr;
+        void (*slist_free_all)(struct curl_slist*) = nullptr;
 
-    bool load() {
-        if (handle)
-            return true;
-        static constexpr const char* kSonames[] = {
-            "libcurl.so.4",
-            "libcurl.so",
-            "libcurl.4.dylib",
-            "libcurl.dylib",
-            "libcurl.so.5",
-        };
-        std::vector<void*> candidates;
-        if (auto* h = ::dlopen(nullptr, RTLD_LAZY | RTLD_LOCAL))
-            candidates.push_back(h);
-        for (auto* name : kSonames) {
-            if (auto* h = ::dlopen(name, RTLD_LAZY | RTLD_LOCAL))
-                candidates.push_back(h);
-        }
-        for (auto* h : candidates) {
-            auto* ei = (CURL * (*)())::dlsym(h, "curl_easy_init");
-            auto* es = (CURLcode (*)(CURL*, CURLoption, ...))::dlsym(h, "curl_easy_setopt");
-            auto* ep = (CURLcode (*)(CURL*))::dlsym(h, "curl_easy_perform");
-            auto* ec = (void (*)(CURL*))::dlsym(h, "curl_easy_cleanup");
-            auto* sa = (struct curl_slist * (*)(struct curl_slist*, const char*))::dlsym(
-                h, "curl_slist_append");
-            auto* sf = (void (*)(struct curl_slist*))::dlsym(h, "curl_slist_free_all");
-            if (ei && es && ep && ec && sa && sf) {
-                handle = h;
-                easy_init = ei;
-                easy_setopt = es;
-                easy_perform = ep;
-                easy_cleanup = ec;
-                slist_append = sa;
-                slist_free_all = sf;
+        bool load() {
+            if (handle)
                 return true;
+            static constexpr const char* kSonames[] = {
+                "libcurl.so.4", "libcurl.so", "libcurl.4.dylib", "libcurl.dylib", "libcurl.so.5",
+            };
+            std::vector<void*> candidates;
+            if (auto* h = ::dlopen(nullptr, RTLD_LAZY | RTLD_LOCAL))
+                candidates.push_back(h);
+            for (auto* name : kSonames) {
+                if (auto* h = ::dlopen(name, RTLD_LAZY | RTLD_LOCAL))
+                    candidates.push_back(h);
             }
+            for (auto* h : candidates) {
+                auto* ei = (CURL * (*)())::dlsym(h, "curl_easy_init");
+                auto* es = (CURLcode (*)(CURL*, CURLoption, ...))::dlsym(h, "curl_easy_setopt");
+                auto* ep = (CURLcode (*)(CURL*))::dlsym(h, "curl_easy_perform");
+                auto* ec = (void (*)(CURL*))::dlsym(h, "curl_easy_cleanup");
+                auto* sa = (struct curl_slist *
+                            (*)(struct curl_slist*, const char*))::dlsym(h, "curl_slist_append");
+                auto* sf = (void (*)(struct curl_slist*))::dlsym(h, "curl_slist_free_all");
+                if (ei && es && ep && ec && sa && sf) {
+                    handle = h;
+                    easy_init = ei;
+                    easy_setopt = es;
+                    easy_perform = ep;
+                    easy_cleanup = ec;
+                    slist_append = sa;
+                    slist_free_all = sf;
+                    return true;
+                }
+            }
+            return false;
         }
-        return false;
+    };
+    CurlAPI& get_curl_async() {
+        static CurlAPI c;
+        return c;
     }
-};
-CurlAPI& get_curl_async() {
-    static CurlAPI c;
-    return c;
-}
 
-std::size_t curl_writer_buf(char* ptr, std::size_t size, std::size_t nmemb, void* ud) {
-    auto* out = static_cast<std::string*>(ud);
-    std::size_t total = size * nmemb;
-    out->append(ptr, total);
-    return total;
-}
+    std::size_t curl_writer_buf(char* ptr, std::size_t size, std::size_t nmemb, void* ud) {
+        auto* out = static_cast<std::string*>(ud);
+        std::size_t total = size * nmemb;
+        out->append(ptr, total);
+        return total;
+    }
 
 } // anonymous namespace
 
@@ -550,9 +546,8 @@ void run_serve_async(int num_workers) {
             while (nl != std::string::npos) {
                 if (nl >= kMaxServeAsyncLineBytes) {
                     // Single line exceeded the cap — drop it and skip to next \n.
-                    std::fprintf(stderr,
-                                 "serve-async: dropping line of %zu bytes (cap=%zu)\n",
-                                 nl, kMaxServeAsyncLineBytes);
+                    std::fprintf(stderr, "serve-async: dropping line of %zu bytes (cap=%zu)\n", nl,
+                                 kMaxServeAsyncLineBytes);
                     buf.erase(0, nl + 1);
                     nl = buf.find('\n');
                     continue;

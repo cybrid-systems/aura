@@ -618,8 +618,9 @@ struct CompilerMetrics {
                     new_arr[i].store(0, std::memory_order_relaxed);
                 // Carry over existing counts.
                 for (std::size_t i = 0; i < primitive_fastpath_per_prim_capacity_; ++i)
-                    new_arr[i].store(primitive_fastpath_hits_per_prim_[i].load(std::memory_order_relaxed),
-                                     std::memory_order_relaxed);
+                    new_arr[i].store(
+                        primitive_fastpath_hits_per_prim_[i].load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
                 // Publish: assign the pointer under the lock so the
                 // reader-side check above sees the new array.
                 // NOTE: we deliberately LEAK the old array instead
