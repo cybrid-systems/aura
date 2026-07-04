@@ -3094,6 +3094,48 @@ static bool handle_stale_narrowing_at_if(aura::ast::FlatAST& flat, aura::ast::No
     return true;
 }
 
+// Issue #689: true when cond is (and ...), (or ...), or (not ...).
+static bool is_deep_predicate_cond_node(const FlatAST& flat, const StringPool& pool,
+                                        NodeId cond_id) {
+    if (cond_id == NULL_NODE || cond_id >= flat.size())
+        return false;
+    auto cond = flat.get(cond_id);
+    if (cond.tag != NodeTag::Call || cond.children.empty())
+        return false;
+    auto fn = flat.get(cond.child(0));
+    if (fn.tag != NodeTag::Variable)
+        return false;
+    const auto name = pool.resolve(fn.sym_id);
+    return name == "and" || name == "or" || name == "not";
+}
+
+// Issue #689: collect IfExpr nodes whose cond uses deep and/or/not
+// predicates anywhere in `root`'s subtree (mutation-affected paths).
+static void collect_deep_predicate_if_exprs_in_subtree(
+    const FlatAST& flat, const StringPool& pool, NodeId root,
+    std::vector<NodeId>& out, std::unordered_set<NodeId>& seen) {
+    if (root == NULL_NODE || root >= flat.size())
+        return;
+    std::vector<NodeId> stack;
+    stack.push_back(root);
+    while (!stack.empty()) {
+        const auto id = stack.back();
+        stack.pop_back();
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        const auto v = flat.get(id);
+        if (v.tag == NodeTag::IfExpr && !v.children.empty()) {
+            const auto cond_id = v.child(0);
+            if (is_deep_predicate_cond_node(flat, pool, cond_id) && seen.insert(id).second)
+                out.push_back(id);
+        }
+        for (auto c : v.children) {
+            if (c != NULL_NODE)
+                stack.push_back(c);
+        }
+    }
+}
+
 // Issue #518: collect IfExpr nodes in `root`'s subtree that
 // carry kOccurrenceDirty or the occurrence-stale column.
 static void collect_occurrence_dirty_if_exprs_in_subtree(
@@ -3177,6 +3219,7 @@ static void record_refreshed_narrowing_provenance(
         if (rec.source_mutation_id != 0 && !occ.predicate_name.empty() &&
             occ.source_cond_id != 0) {
             m->occurrence_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+            m->provenance_completeness_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
         if (!occ.predicate_name.empty() && occ.source_cond_id != 0) {
             m->narrowing_provenance_total.fetch_add(1, std::memory_order_relaxed);
@@ -3215,6 +3258,10 @@ std::size_t InferenceEngine::reanalyze_occurrence_contexts(
         auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_, meet_used, join_used);
         stats_.and_or_meet_uses += meet_used ? 1 : 0;
         stats_.and_or_join_uses += join_used ? 1 : 0;
+        if (is_deep_predicate_cond_node(flat, pool, cond_id) && cs_.metrics_) {
+            static_cast<struct CompilerMetrics*>(cs_.metrics_)
+                ->deep_narrow_refreshes_total.fetch_add(1, std::memory_order_relaxed);
+        }
         predicate_memo_[cond_id] = PredicateMemoEntry{cond_id, cache_epoch_, occ};
         if (predicate_memo_.size() > PREDICATE_MEMO_MAX_ENTRIES) {
             ++predicate_memo_evictions_;
@@ -4691,6 +4738,21 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
         collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.parent_id,
                                                      occurrence_targets, occurrence_seen);
+    // Issue #689: deep and/or/not predicates in mutation-affected subtrees.
+    for (auto id : affected)
+        collect_deep_predicate_if_exprs_in_subtree(flat, pool, id, occurrence_targets,
+                                                   occurrence_seen);
+    if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
+        collect_deep_predicate_if_exprs_in_subtree(flat, pool, rec.target_node,
+                                                 occurrence_targets, occurrence_seen);
+    {
+        const std::uint8_t kOccurrenceBit =
+            static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);
+        for (auto id : occurrence_targets) {
+            flat.mark_dirty(id, kOccurrenceBit);
+            flat.mark_occurrence_stale(id);
+        }
+    }
 
     // Spin up a per-call engine. Same pattern as the existing
     // TypeChecker::infer_flat — short-lived engine per
