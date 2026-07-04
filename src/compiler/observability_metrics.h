@@ -517,6 +517,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> eda_sv_stable_ref_invalidation_total{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};
     std::atomic<std::uint64_t> eda_sv_corruption_detected_total{0};
+    // Issue #697: Declarative primitives extension kit observability.
+    std::atomic<std::uint64_t> primitive_skeleton_generations_total{0};
+    std::atomic<std::uint64_t> primitive_eda_meta_backfill_total{0};
     // Issue #342: narrowing blame/provenance
     // observability. 1 lifetime counter: how many
     // OccurrenceInfoFlat records have been

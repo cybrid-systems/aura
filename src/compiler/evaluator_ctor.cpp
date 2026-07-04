@@ -4,6 +4,8 @@
 module;
 
 #include "messaging_bridge.h"
+#include "observability_metrics.h"
+#include "primitives_meta.h"
 
 module aura.compiler.evaluator;
 
@@ -85,6 +87,48 @@ Evaluator::Evaluator() {
     primitives_detail::register_policy_primitives(
         prim_registrar(),
         *this);
+
+    // Issue #697: backfill SV/EDA PrimMeta after compile partition registers
+    // eda:run-verification-feedback and eda:demo-sv-self-evolution.
+    backfill_eda_sv_primitive_meta();
+}
+
+void Evaluator::backfill_eda_sv_primitive_meta() {
+    primitives_.set_meta_for_name(
+        "eda:weaken-property",
+        PrimMeta{.arity = 2,
+                 .pure = false,
+                 .safety_flags = kPrimSafetyMutates,
+                 .doc = "Weaken SVA property with disable-iff clause on Property nodes.",
+                 .category = "sva",
+                 .schema = "(int string) -> bool"});
+    primitives_.set_meta_for_name(
+        "eda:add-coverpoint-bin",
+        PrimMeta{.arity = 2,
+                 .pure = false,
+                 .safety_flags = kPrimSafetyMutates,
+                 .doc = "Append a named bin to a structured Coverpoint AST node.",
+                 .category = "sva",
+                 .schema = "(int string) -> bool"});
+    primitives_.set_meta_for_name(
+        "eda:run-verification-feedback",
+        PrimMeta{.arity = 2,
+                 .pure = false,
+                 .safety_flags = static_cast<std::uint8_t>(kPrimSafetyMutates | kPrimSafetyFiber),
+                 .doc = "Parse verification report and apply targeted SV mutate + re-emit.",
+                 .category = "verification",
+                 .schema = "(string string) -> bool"});
+    primitives_.set_meta_for_name(
+        "eda:demo-sv-self-evolution",
+        PrimMeta{.arity = 2,
+                 .pure = false,
+                 .safety_flags = static_cast<std::uint8_t>(kPrimSafetyMutates | kPrimSafetyFiber),
+                 .doc = "Bounded EDA-SV verification self-evolution demo harness.",
+                 .category = "eda",
+                 .schema = "(string int) -> int"});
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->primitive_eda_meta_backfill_total.fetch_add(
+            4, std::memory_order_relaxed);
 }
 
 Evaluator::~Evaluator() {

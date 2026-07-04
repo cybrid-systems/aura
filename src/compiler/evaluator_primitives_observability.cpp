@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "observability_metrics.h"
 #include "ci_build_info.h"
+#include "primitives_meta.h"
 
 module aura.compiler.evaluator;
 
@@ -24,15 +25,23 @@ using namespace types;
 void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
 
     auto meta_to_pair = [&ev](const PrimMeta& m) -> EvalValue {
+        auto schema_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(m.schema);
+        auto cat_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(m.category);
         auto doc_idx = ev.string_heap_.size();
         ev.string_heap_.push_back(m.doc);
+        auto pid0 = ev.pairs_.size();
+        ev.pairs_.push_back({make_string(cat_idx), make_string(schema_idx)});
         auto pid1 = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(m.safety_flags), make_string(doc_idx)});
+        ev.pairs_.push_back({make_string(doc_idx), make_pair(pid0)});
         auto pid2 = ev.pairs_.size();
-        ev.pairs_.push_back({make_bool(m.pure), make_pair(pid1)});
+        ev.pairs_.push_back({make_int(m.safety_flags), make_pair(pid1)});
         auto pid3 = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(m.arity), make_pair(pid2)});
-        return make_pair(pid3);
+        ev.pairs_.push_back({make_bool(m.pure), make_pair(pid2)});
+        auto pid4 = ev.pairs_.size();
+        ev.pairs_.push_back({make_int(m.arity), make_pair(pid3)});
+        return make_pair(pid4);
     };
 
     // (typecheck-status) — Returns the last mutate typecheck result.
@@ -103,7 +112,9 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         },
         PrimMeta{.arity = 1,
                  .pure = true,
-                 .doc = "Return metadata for a registered primitive by name."});
+                 .doc = "Return metadata for a registered primitive by name.",
+                 .category = "general",
+                 .schema = "(string) -> pair"});
 
     // Issue #480: (query:primitive-list-with-meta) — list of
     // (name . meta-pair) for every registered primitive.
@@ -127,7 +138,76 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         },
         PrimMeta{.arity = 0,
                  .pure = true,
-                 .doc = "List every primitive with its PrimMeta pair."});
+                 .doc = "List every primitive with its PrimMeta pair.",
+                 .category = "general",
+                 .schema = "() -> list"});
+
+    // Issue #697: (primitive:generate-skeleton description-string)
+    // — AI-friendly primitive extension bundle: C++ lambda, spec,
+    // test snippet, and DEFINE_PRIMITIVE_META registration code.
+    ev.primitives_.add(
+        "primitive:generate-skeleton",
+        [&ev](const auto& a) -> EvalValue {
+            if (a.size() != 1 || !is_string(a[0]))
+                return make_void();
+            const auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_void();
+            const auto sk = generate_primitive_skeleton(ev.string_heap_[idx]);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->primitive_skeleton_generations_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv)
+                -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht) return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF) fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp; keys[slot] = key_ev.val;
+                            vals[slot] = v.val; ht->size++;
+                            inserted = true; break;
+                        }
+                    }
+                    if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            auto push_str = [&](const std::string& s) -> EvalValue {
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(s);
+                return make_string(sidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"category", push_str(sk.category)},
+                {"spec", push_str(sk.spec)},
+                {"cpp-lambda", push_str(sk.cpp_lambda)},
+                {"test-snippet", push_str(sk.test_snippet)},
+                {"registration", push_str(sk.registration)},
+            };
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 1,
+                 .pure = true,
+                 .doc = "Generate AI-friendly primitive extension skeleton from description.",
+                 .category = "general",
+                 .schema = "(string) -> hash"});
 
     // Issue #478: query:primitive-error-stats — returns a pair
     // (error-count . error-values-size) for Agent recovery loops.
@@ -1819,6 +1899,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             "query:sv-sva-structure-stats",
             // Issue #695 — EDA-SV verification closed-loop stress
             "query:eda-sv-closedloop-stress-stats",
+            // Issue #697 — Declarative primitives extension kit
+            "query:primitives-extension-stats",
         };
         // Convert the C++ vector to an Aura list of strings.
         EvalValue result = make_void();
@@ -1836,9 +1918,9 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 76 entries as of #695 ship (75 from #694 + 1 new
-        // query:eda-sv-closedloop-stress-stats).
-        return make_int(76);
+        // 77 entries as of #697 ship (76 from #695 + 1 new
+        // query:primitives-extension-stats).
+        return make_int(77);
     });
 
 }
