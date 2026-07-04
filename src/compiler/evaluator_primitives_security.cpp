@@ -873,6 +873,62 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #707: Per-fiber MutationStack / YieldCheckpoint pool stats.
+    add("query:per-fiber-stack-pool-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"pool-hits", make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_hits()))},
+            {"lazy-allocs", make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_lazy_allocs()))},
+            {"max-depth", make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_max_depth()))},
+            {"churn-reductions",
+             make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_churn_reductions()))},
+            {"size-mismatches-caught",
+             make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_size_mismatches()))},
+            {"growth-warnings",
+             make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_growth_warnings()))},
+            {"restamps", make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_restamps()))},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #693: Hardware backend SV commercial closed-loop stats.
     add("query:hardware-backend-sv-closedloop-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {

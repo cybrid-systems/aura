@@ -86,6 +86,12 @@ Scheduler::~Scheduler() {
         w->join();
     }
     workers_.clear();
+    // Issue #707: destroy owned fibers so per-fiber stack vectors
+    // return to the bounded pool instead of leaking until process exit.
+    {
+        std::lock_guard<std::mutex> lock(owned_fibers_mutex_);
+        owned_fibers_.clear();
+    }
     if (epoll_fd_ >= 0)
         ::close(epoll_fd_);
 }
@@ -110,12 +116,10 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
         wait_map_[ptr->eventfd()] = ptr;
     }
 
-    // Store fiber for lifetime management
-    static std::mutex s_fibers_mutex;
-    static std::vector<std::unique_ptr<Fiber>> s_fibers;
+    // Store fiber for lifetime management (Issue #707: per-scheduler).
     {
-        std::lock_guard<std::mutex> lock(s_fibers_mutex);
-        s_fibers.push_back(std::move(fb));
+        std::lock_guard<std::mutex> lock(owned_fibers_mutex_);
+        owned_fibers_.push_back(std::move(fb));
     }
 
     // Assign to a worker (load-aware when enabled, fallback to round-robin)
@@ -160,11 +164,9 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
         wait_map_[ptr->eventfd()] = ptr;
     }
 
-    static std::mutex s_fibers_mutex;
-    static std::vector<std::unique_ptr<Fiber>> s_fibers;
     {
-        std::lock_guard<std::mutex> lock(s_fibers_mutex);
-        s_fibers.push_back(std::move(fb));
+        std::lock_guard<std::mutex> lock(owned_fibers_mutex_);
+        owned_fibers_.push_back(std::move(fb));
     }
 
     workers_[worker_id]->enqueue(ptr);
