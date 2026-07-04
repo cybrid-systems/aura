@@ -707,6 +707,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             constraint + coercion + occurrence + jit_elision));
     });
 
+    // Issue #690: query:constraint-delta-blame-stats. Returns the
+    // sum of cross-delta constraint blame-chain completeness hits
+    // plus occurrence narrowing blame-chain completeness.
+    add("query:constraint-delta-blame-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        auto* ev = Evaluator::get_query_evaluator();
+        if (!ev) return make_int(0);
+        const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+        const std::uint64_t constraint_blame = m
+            ? m->constraint_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t occurrence_blame = m
+            ? m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
+        return make_int(static_cast<std::int64_t>(constraint_blame + occurrence_blame));
+    });
+
     // Issue #509: query:constraint-delta-stats. Returns the sum
     // of 2 solve_delta touched_roots soundness counters:
     //   - touched_roots_hits: delta_conflict_reverify_total

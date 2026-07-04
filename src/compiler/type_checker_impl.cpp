@@ -226,6 +226,19 @@ void ConstraintSystem::mark_touched_on_delta(TypeId var) {
     note_touched_var(var);
 }
 
+std::size_t ConstraintSystem::effective_reverify_limit() const noexcept {
+    const std::size_t impact = dirty_count_ * 8 + touched_roots_.size() * 4;
+    const std::size_t scaled = std::max(kReverifyCleanScanLimit, impact);
+    return std::min(scaled, kReverifyCleanScanMax);
+}
+
+void ConstraintSystem::record_cross_delta_blame_hit() {
+    if (!metrics_ || active_mutation_id_ == 0)
+        return;
+    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+    m->constraint_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool ConstraintSystem::constraint_references_touched(const Constraint& c) const {
     auto refs_touched = [&](TypeId id) {
         if (!id.valid())
@@ -260,20 +273,26 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
             if (idx < constraint_dirty_.size() && constraint_dirty_[idx])
                 continue;
             to_check.insert(idx);
-            if (to_check.size() >= kReverifyCleanScanLimit)
-                break;
         }
-        if (to_check.size() >= kReverifyCleanScanLimit)
-            break;
     }
+
+    const auto scan_limit = effective_reverify_limit();
+    const bool truncated = to_check.size() > scan_limit;
 
     if (metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->delta_conflict_reverify_total.fetch_add(
             1, std::memory_order_relaxed);
+        if (truncated) {
+            m->reverify_truncated_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
     }
 
+    std::size_t scanned = 0;
     for (auto idx : to_check) {
+        if (scanned++ >= scan_limit)
+            break;
         const auto& c = constraints_[idx];
         bool ok = false;
         if (c.kind == Constraint::EQUAL)
@@ -286,6 +305,7 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
                 m->delta_conflict_detected_total.fetch_add(
                     1, std::memory_order_relaxed);
             }
+            record_cross_delta_blame_hit();
             delta_record_mode_ = saved_record;
             return false;
         }
@@ -914,6 +934,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                     m->delta_conflict_detected_total.fetch_add(
                         1, std::memory_order_relaxed);
                 }
+                record_cross_delta_blame_hit();
                 if (!touched_roots_.empty() && on_cross_delta_conflict_)
                     on_cross_delta_conflict_();
                 return SolveResult::CONFLICT;
@@ -1880,6 +1901,40 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
     }
 
     return std::nullopt;
+}
+
+void InferenceEngine::seed_mutation_touched_roots(
+    const FlatAST& flat, const StringPool& pool,
+    const std::vector<NodeId>& occurrence_targets, std::uint64_t mutation_id) {
+    std::unordered_set<NodeId> target_set(occurrence_targets.begin(),
+                                          occurrence_targets.end());
+    for (const auto& nr : flat.all_narrowings()) {
+        if (nr.source_mutation_id != 0 && nr.source_mutation_id != mutation_id)
+            continue;
+        if (!target_set.empty() && target_set.count(nr.if_node) == 0 &&
+            nr.source_mutation_id != mutation_id)
+            continue;
+        if (!nr.refined_type_str.empty()) {
+            auto tid = reg_.lookup_type(nr.refined_type_str);
+            if (tid.valid() && reg_.is_var(tid))
+                cs_.mark_touched_on_delta(tid);
+        }
+    }
+    for (auto if_id : occurrence_targets) {
+        if (if_id == NULL_NODE || if_id >= flat.size())
+            continue;
+        auto v = flat.get(if_id);
+        if (v.children.empty())
+            continue;
+        auto cond_id = v.child(0);
+        if (cond_id == NULL_NODE)
+            continue;
+        bool meet_used = false;
+        bool join_used = false;
+        auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_, meet_used, join_used);
+        if (occ && occ->refined_type.valid() && reg_.is_var(occ->refined_type))
+            cs_.mark_touched_on_delta(occ->refined_type);
+    }
 }
 
 TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, bool preserve_cs) {
@@ -4768,6 +4823,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     engine.set_narrowing_observability_hooks(on_narrowing_refresh_, on_selective_recheck_);
     engine.set_solve_delta_observability_hooks(on_touched_roots_snapshot_,
                                                on_cross_delta_conflict_);
+    engine.set_active_mutation_id(rec.mutation_id);
+    if (on_touched_roots_snapshot_)
+        on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
 
     // Issue #518: re-narrow dirty if-contexts before the infer
     // loop, then propagate narrowed-variable use-sites into the
@@ -4776,6 +4834,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         engine.reanalyze_occurrence_contexts(flat, const_cast<StringPool&>(pool),
                                              occurrence_targets);
     engine.propagate_narrowing_to_uses(flat, const_cast<StringPool&>(pool), affected);
+    engine.seed_mutation_touched_roots(flat, pool, occurrence_targets, rec.mutation_id);
+    if (on_touched_roots_snapshot_)
+        on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
 
     std::size_t re_inferred = 0;
     std::uint32_t max_narrow_evidence = 0;
@@ -4829,6 +4890,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             ++re_inferred;
         }
     }
+    if (on_touched_roots_snapshot_)
+        on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
 
     // Accumulate per-call engine stats into TypeChecker stats.
     auto es = engine.stats();

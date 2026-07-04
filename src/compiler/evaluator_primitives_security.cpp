@@ -455,6 +455,62 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
+    // Issue #690: constraint typed-mutation reverify + blame stats.
+    add("query:constraint-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF) fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp; keys[idx] = key_ev.val;
+                        vals[idx] = v.val; ht->size++;
+                        inserted = true; break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto* m =
+            static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        const std::uint64_t reverify_scans = m
+            ? m->delta_conflict_reverify_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t conflicts = ev.get_cross_delta_conflicts_caught();
+        const std::uint64_t blame_complete = m
+            ? m->constraint_blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t truncated = m
+            ? m->reverify_truncated_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t detected = m
+            ? m->delta_conflict_detected_total.load(std::memory_order_relaxed) : 0;
+        const std::uint64_t completeness_pct =
+            detected > 0 ? (100 * blame_complete / detected)
+                         : (blame_complete > 0 ? 100 : 0);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"reverify-scans", make_int(static_cast<std::int64_t>(reverify_scans))},
+            {"cross-delta-conflicts-caught", make_int(static_cast<std::int64_t>(conflicts))},
+            {"blame-chain-completeness", make_int(static_cast<std::int64_t>(completeness_pct))},
+            {"truncated-reverify", make_int(static_cast<std::int64_t>(truncated))},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #688: linear OwnershipEnv post-mutate typed-mutation stats.
     add("query:linear-ownership-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
