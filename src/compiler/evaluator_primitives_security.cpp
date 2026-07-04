@@ -916,8 +916,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"pool-hits", make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_hits()))},
-            {"lazy-allocs", make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_lazy_allocs()))},
-            {"max-depth", make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_max_depth()))},
+            {"lazy-allocs",
+             make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_lazy_allocs()))},
+            {"max-depth",
+             make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_max_depth()))},
             {"churn-reductions",
              make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_churn_reductions()))},
             {"size-mismatches-caught",

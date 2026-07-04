@@ -119,14 +119,11 @@ int main() {
                      "max_depth={}",
                      pool_delta, lazy_delta, wave2_lazy, wave2_pool, wave2_reuse_pct,
                      stat_int(cs, "max-depth"));
-        CHECK(lazy_delta <= 128,
-              std::format("lazy allocs bounded ({} <= 128)", lazy_delta));
-        CHECK(wave2_lazy <= 8,
-              std::format("wave-2 lazy allocs minimal ({} <= 8)", wave2_lazy));
+        CHECK(lazy_delta <= 128, std::format("lazy allocs bounded ({} <= 128)", lazy_delta));
+        CHECK(wave2_lazy <= 8, std::format("wave-2 lazy allocs minimal ({} <= 8)", wave2_lazy));
         CHECK(wave2_reuse_pct >= 80,
               std::format("wave-2 pool reuse >= 80% (got {}%)", wave2_reuse_pct));
-        CHECK(stat_int(cs, "churn-reductions") >= pool_delta,
-              "churn-reductions tracks pool hits");
+        CHECK(stat_int(cs, "churn-reductions") >= pool_delta, "churn-reductions tracks pool hits");
     }
 
     // AC3: mixed steal/yield/panic cycles — metrics grow, max_depth bounded
@@ -200,9 +197,9 @@ int main() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        CHECK(ok_count.load() > 0,
-              std::format("fiber stress produced {} successful pool-stats queries",
-                          ok_count.load()));
+        CHECK(
+            ok_count.load() > 0,
+            std::format("fiber stress produced {} successful pool-stats queries", ok_count.load()));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

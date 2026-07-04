@@ -178,8 +178,8 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             stolen->bump_steal_deferred_mutation_boundary();
             metrics::adaptive_steal_stats().global_deferred_mutation_total.fetch_add(
                 1, std::memory_order_relaxed);
-            metrics::adaptive_steal_stats().mutation_bias_hits.fetch_add(
-                1, std::memory_order_relaxed);
+            metrics::adaptive_steal_stats().mutation_bias_hits.fetch_add(1,
+                                                                         std::memory_order_relaxed);
         }
 
         // Not stealable — put it back on the victim's queue.

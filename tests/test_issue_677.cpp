@@ -38,12 +38,12 @@ static int g_failed = 0;
 static std::string find_aura_binary() {
     // Check common locations in priority order.
     for (const char* path : {
-        "./aura",                 // cwd = build/
-        "./build/aura",           // cwd = repo root, build is direct child
-        "../build/aura",          // cwd = tests/
-        "../aura",                // cwd = build/, parent has aura
-        "../../build/aura",       // deeper nesting
-    }) {
+             "./aura",           // cwd = build/
+             "./build/aura",     // cwd = repo root, build is direct child
+             "../build/aura",    // cwd = tests/
+             "../aura",          // cwd = build/, parent has aura
+             "../../build/aura", // deeper nesting
+         }) {
         if (fs::is_regular_file(path))
             return fs::absolute(path).string();
     }

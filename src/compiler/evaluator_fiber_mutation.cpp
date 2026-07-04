@@ -20,141 +20,146 @@ namespace aura::compiler {
 
 namespace fiber_stack_pool_detail {
 
-using MutationVec = Evaluator::MutationCheckpoint;
-using YieldVec = Evaluator::YieldBoundaryCheckpoint;
+    using MutationVec = Evaluator::MutationCheckpoint;
+    using YieldVec = Evaluator::YieldBoundaryCheckpoint;
 
-inline auto& pool_stats() { return aura::serve::metrics::per_fiber_stack_pool_stats(); }
+    inline auto& pool_stats() {
+        return aura::serve::metrics::per_fiber_stack_pool_stats();
+    }
 
-// Issue #707: bounded scheduler-local vector pool for per-fiber stacks.
-template <typename T>
-class BoundedVectorPool {
-public:
-    static constexpr std::size_t kInitialCapacity = 12;
-    static constexpr std::size_t kGrowthThreshold = 32;
-    static constexpr std::size_t kMaxPooled = 128;
+    // Issue #707: bounded scheduler-local vector pool for per-fiber stacks.
+    template <typename T> class BoundedVectorPool {
+    public:
+        static constexpr std::size_t kInitialCapacity = 12;
+        static constexpr std::size_t kGrowthThreshold = 32;
+        static constexpr std::size_t kMaxPooled = 128;
 
-    T* acquire() {
-        {
+        T* acquire() {
+            {
+                std::lock_guard lock(mutex_);
+                if (!pool_.empty()) {
+                    T* v = pool_.back();
+                    pool_.pop_back();
+                    pool_stats().pool_hits.fetch_add(1, std::memory_order_relaxed);
+                    pool_stats().churn_reductions.fetch_add(1, std::memory_order_relaxed);
+                    v->clear();
+                    maybe_shrink(*v);
+                    return v;
+                }
+            }
+            pool_stats().lazy_allocs.fetch_add(1, std::memory_order_relaxed);
+            auto* v = new T();
+            v->reserve(kInitialCapacity);
+            return v;
+        }
+
+        void release(T* v) {
+            if (!v)
+                return;
+            v->clear();
+            maybe_shrink(*v);
             std::lock_guard lock(mutex_);
-            if (!pool_.empty()) {
-                T* v = pool_.back();
-                pool_.pop_back();
-                pool_stats().pool_hits.fetch_add(1, std::memory_order_relaxed);
-                pool_stats().churn_reductions.fetch_add(1, std::memory_order_relaxed);
-                v->clear();
-                maybe_shrink(*v);
-                return v;
+            if (pool_.size() < kMaxPooled) {
+                pool_.push_back(v);
+                return;
+            }
+            delete v;
+        }
+
+        void track_depth(std::size_t depth) {
+            auto& max_d = pool_stats().max_depth;
+            std::uint64_t cur = max_d.load(std::memory_order_relaxed);
+            while (depth > cur &&
+                   !max_d.compare_exchange_weak(cur, depth, std::memory_order_relaxed,
+                                                std::memory_order_relaxed)) {
             }
         }
-        pool_stats().lazy_allocs.fetch_add(1, std::memory_order_relaxed);
-        auto* v = new T();
-        v->reserve(kInitialCapacity);
-        return v;
+
+    private:
+        void maybe_shrink(T& v) {
+            if (v.capacity() > kGrowthThreshold) {
+                v.shrink_to_fit();
+                pool_stats().growth_warnings.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
+        std::mutex mutex_;
+        std::vector<T*> pool_;
+    };
+
+    BoundedVectorPool<std::vector<MutationVec>> g_mutation_pool;
+    BoundedVectorPool<std::vector<YieldVec>> g_yield_pool;
+
+    using MutationStackVec = std::vector<MutationVec>;
+    using YieldStackVec = std::vector<YieldVec>;
+
+    MutationStackVec* acquire_mutation_stack() {
+        return g_mutation_pool.acquire();
     }
 
-    void release(T* v) {
-        if (!v)
+    YieldStackVec* acquire_yield_stack() {
+        return g_yield_pool.acquire();
+    }
+
+    void release_mutation_stack(void* p) {
+        g_mutation_pool.release(static_cast<MutationStackVec*>(p));
+    }
+
+    void release_yield_stack(void* p) {
+        g_yield_pool.release(static_cast<YieldStackVec*>(p));
+    }
+
+    MutationStackVec& mutation_stack_from_ptr(void* p) {
+        return *static_cast<MutationStackVec*>(p);
+    }
+
+    YieldStackVec& yield_stack_from_ptr(void* p) {
+        return *static_cast<YieldStackVec*>(p);
+    }
+
+    MutationStackVec* ensure_mutation_stack_ptr(aura::serve::Fiber* fiber) {
+        void* p = fiber->mutation_stack_ptr();
+        if (p == nullptr) {
+            p = acquire_mutation_stack();
+            fiber->set_mutation_stack_ptr(p);
+        }
+        return static_cast<MutationStackVec*>(p);
+    }
+
+    YieldStackVec* ensure_yield_stack_ptr(aura::serve::Fiber* fiber) {
+        void* p = fiber->yield_checkpoint_ptr();
+        if (p == nullptr) {
+            p = acquire_yield_stack();
+            fiber->set_yield_checkpoint_ptr(p);
+        }
+        return static_cast<YieldStackVec*>(p);
+    }
+
+    void restamp_yield_checkpoint_top(Evaluator* ev, aura::serve::Fiber* fiber) {
+        if (!ev || !fiber)
             return;
-        v->clear();
-        maybe_shrink(*v);
-        std::lock_guard lock(mutex_);
-        if (pool_.size() < kMaxPooled) {
-            pool_.push_back(v);
+        void* yp = fiber->yield_checkpoint_ptr();
+        if (yp == nullptr)
             return;
-        }
-        delete v;
+        auto& ystack = yield_stack_from_ptr(yp);
+        if (ystack.empty())
+            return;
+        void* mp = fiber->mutation_stack_ptr();
+        const std::size_t mdepth = mp ? mutation_stack_from_ptr(mp).size() : 0;
+        const std::size_t bdepth = Evaluator::mutation_boundary_depth();
+        const std::uint64_t ver = ev->defuse_version_snapshot();
+        auto& top = ystack.back();
+        const bool mismatch = top.mutation_stack_depth != mdepth || top.boundary_depth != bdepth ||
+                              top.defuse_version != ver ||
+                              top.thread_id != std::this_thread::get_id();
+        if (mismatch)
+            pool_stats().size_mismatches_caught.fetch_add(1, std::memory_order_relaxed);
+        top.mutation_stack_depth = mdepth;
+        top.boundary_depth = bdepth;
+        top.defuse_version = ver;
+        top.thread_id = std::this_thread::get_id();
+        pool_stats().restamps.fetch_add(1, std::memory_order_relaxed);
     }
-
-    void track_depth(std::size_t depth) {
-        auto& max_d = pool_stats().max_depth;
-        std::uint64_t cur = max_d.load(std::memory_order_relaxed);
-        while (depth > cur &&
-               !max_d.compare_exchange_weak(cur, depth, std::memory_order_relaxed,
-                                            std::memory_order_relaxed)) {
-        }
-    }
-
-private:
-    void maybe_shrink(T& v) {
-        if (v.capacity() > kGrowthThreshold) {
-            v.shrink_to_fit();
-            pool_stats().growth_warnings.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-
-    std::mutex mutex_;
-    std::vector<T*> pool_;
-};
-
-BoundedVectorPool<std::vector<MutationVec>> g_mutation_pool;
-BoundedVectorPool<std::vector<YieldVec>> g_yield_pool;
-
-using MutationStackVec = std::vector<MutationVec>;
-using YieldStackVec = std::vector<YieldVec>;
-
-MutationStackVec* acquire_mutation_stack() { return g_mutation_pool.acquire(); }
-
-YieldStackVec* acquire_yield_stack() { return g_yield_pool.acquire(); }
-
-void release_mutation_stack(void* p) {
-    g_mutation_pool.release(static_cast<MutationStackVec*>(p));
-}
-
-void release_yield_stack(void* p) {
-    g_yield_pool.release(static_cast<YieldStackVec*>(p));
-}
-
-MutationStackVec& mutation_stack_from_ptr(void* p) {
-    return *static_cast<MutationStackVec*>(p);
-}
-
-YieldStackVec& yield_stack_from_ptr(void* p) {
-    return *static_cast<YieldStackVec*>(p);
-}
-
-MutationStackVec* ensure_mutation_stack_ptr(aura::serve::Fiber* fiber) {
-    void* p = fiber->mutation_stack_ptr();
-    if (p == nullptr) {
-        p = acquire_mutation_stack();
-        fiber->set_mutation_stack_ptr(p);
-    }
-    return static_cast<MutationStackVec*>(p);
-}
-
-YieldStackVec* ensure_yield_stack_ptr(aura::serve::Fiber* fiber) {
-    void* p = fiber->yield_checkpoint_ptr();
-    if (p == nullptr) {
-        p = acquire_yield_stack();
-        fiber->set_yield_checkpoint_ptr(p);
-    }
-    return static_cast<YieldStackVec*>(p);
-}
-
-void restamp_yield_checkpoint_top(Evaluator* ev, aura::serve::Fiber* fiber) {
-    if (!ev || !fiber)
-        return;
-    void* yp = fiber->yield_checkpoint_ptr();
-    if (yp == nullptr)
-        return;
-    auto& ystack = yield_stack_from_ptr(yp);
-    if (ystack.empty())
-        return;
-    void* mp = fiber->mutation_stack_ptr();
-    const std::size_t mdepth = mp ? mutation_stack_from_ptr(mp).size() : 0;
-    const std::size_t bdepth = Evaluator::mutation_boundary_depth();
-    const std::uint64_t ver = ev->defuse_version_snapshot();
-    auto& top = ystack.back();
-    const bool mismatch = top.mutation_stack_depth != mdepth || top.boundary_depth != bdepth ||
-                          top.defuse_version != ver ||
-                          top.thread_id != std::this_thread::get_id();
-    if (mismatch)
-        pool_stats().size_mismatches_caught.fetch_add(1, std::memory_order_relaxed);
-    top.mutation_stack_depth = mdepth;
-    top.boundary_depth = bdepth;
-    top.defuse_version = ver;
-    top.thread_id = std::this_thread::get_id();
-    pool_stats().restamps.fetch_add(1, std::memory_order_relaxed);
-}
 
 } // namespace fiber_stack_pool_detail
 

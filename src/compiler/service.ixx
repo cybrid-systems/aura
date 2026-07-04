@@ -7092,9 +7092,9 @@ private:
         // but cache_define's cache_hits vector does not,
         // leading to 2× edge counts.
         auto& caller_entry = dep_graph_[caller];
-        if (std::find(caller_entry.calls.begin(), caller_entry.calls.end(), callee)
-            != caller_entry.calls.end()) {
-            return;  // already recorded — skip duplicate
+        if (std::find(caller_entry.calls.begin(), caller_entry.calls.end(), callee) !=
+            caller_entry.calls.end()) {
+            return; // already recorded — skip duplicate
         }
         caller_entry.calls.push_back(callee);
         dep_graph_[callee].called_by.push_back(caller);

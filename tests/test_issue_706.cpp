@@ -36,8 +36,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (query:scheduler-stealbudget-adaptive-stats) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (query:scheduler-stealbudget-adaptive-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -48,10 +48,10 @@ static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_vi
 int main() {
     using namespace aura_issue_706_detail;
     using aura::serve::Fiber;
+    using aura::serve::fiber_steal_priority;
     using aura::serve::Scheduler;
     using aura::serve::StealBudget;
     using aura::serve::YieldReason;
-    using aura::serve::fiber_steal_priority;
 
     std::println("=== Issue #706: Adaptive StealBudget + work-stealing bias ===");
 
