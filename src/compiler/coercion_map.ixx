@@ -71,6 +71,9 @@ export struct CoercionEntry {
     // provenance carried into apply_coercion_map. 0 = unset.
     std::uint32_t predicate_cond_node = 0;
     std::uint64_t source_mutation_id = 0;
+    // Issue #691: narrowing-evidence bitmask for post-narrow
+    // CastOp elision (stored on Coercion node float_val_).
+    std::uint32_t narrow_evidence = 0;
 };
 
 // ── CoercionMap — accumulated coercion intent ────────────
@@ -93,11 +96,12 @@ public:
     void add(aura::ast::NodeId parent, std::uint32_t child_index, aura::ast::NodeId original_child,
              std::uint32_t type_tag, std::uint32_t type_id, std::uint32_t src_line,
              std::uint32_t src_col, std::uint32_t predicate_cond_node,
-             std::uint64_t source_mutation_id) {
+             std::uint64_t source_mutation_id,
+             std::uint32_t narrow_evidence = 0) {
         entries_.push_back(CoercionEntry{static_cast<std::uint32_t>(parent), child_index,
                                          static_cast<std::uint32_t>(original_child), type_tag,
                                          type_id, src_line, src_col, predicate_cond_node,
-                                         source_mutation_id});
+                                         source_mutation_id, narrow_evidence});
     }
 
     const std::vector<CoercionEntry>& entries() const { return entries_; }
@@ -147,6 +151,13 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             // handled by add_coercion).
             auto coercion_id = flat.add_coercion(e.original_child, e.type_tag, e.type_id);
             flat.set_loc(coercion_id, e.src_line, e.src_col);
+            if (e.narrow_evidence != 0)
+                flat.set_float(coercion_id, static_cast<double>(e.narrow_evidence));
+            if (e.predicate_cond_node != 0)
+                flat.set_provenance(coercion_id, e.predicate_cond_node);
+            else if (e.source_mutation_id != 0)
+                flat.set_provenance(coercion_id,
+                                    static_cast<std::uint32_t>(e.source_mutation_id & 0xFFFFFFFFu));
             ++applied;
             continue;
         }
@@ -164,10 +175,13 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         // Build the CoercionNode wrapping the original child.
         auto coercion_id = flat.add_coercion(e.original_child, e.type_tag, e.type_id);
         flat.set_loc(coercion_id, e.src_line, e.src_col);
-        // Issue #537: stamp provenance on the coercion node when
-        // the entry carries a mutation id (low 32 bits of the
-        // mutation id index into the provenance column).
-        if (e.source_mutation_id != 0)
+        // Issue #691: stamp narrowing evidence + predicate/mutation
+        // provenance on the coercion node for lowering elision.
+        if (e.narrow_evidence != 0)
+            flat.set_float(coercion_id, static_cast<double>(e.narrow_evidence));
+        if (e.predicate_cond_node != 0)
+            flat.set_provenance(coercion_id, e.predicate_cond_node);
+        else if (e.source_mutation_id != 0)
             flat.set_provenance(coercion_id,
                                 static_cast<std::uint32_t>(e.source_mutation_id & 0xFFFFFFFFu));
         // Rewrite the parent's child_index to point at the

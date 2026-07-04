@@ -221,6 +221,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> coercion_type_prop_hits_total{0};
     std::atomic<std::uint64_t> coercion_narrow_evidence_hits_total{0};
     std::atomic<std::uint64_t> coercion_zerooverhead_win_total{0};
+    // Issue #691: CoercionMap + NarrowingRecord provenance linkage.
+    //   - coercion_post_narrow_elim_opportunities_total: deferred
+    //     coercions recorded with narrowing evidence/provenance
+    //   - coercion_narrow_blame_chain_hits_total: entries with both
+    //     predicate_cond_node + source_mutation_id populated
+    //   - coercion_cast_elim_from_narrow_total: lowering elided a
+    //     CastOp because post-narrow evidence matched concrete types
+    std::atomic<std::uint64_t> coercion_post_narrow_elim_opportunities_total{0};
+    std::atomic<std::uint64_t> coercion_narrow_blame_chain_hits_total{0};
+    std::atomic<std::uint64_t> coercion_cast_elim_from_narrow_total{0};
     // Issue #487: dirty propagation + IR re-lower
     // observability. 2 lifetime counters:
     //   - should_relower_total: count of times

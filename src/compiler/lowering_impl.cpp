@@ -1314,19 +1314,28 @@ static std::uint32_t lower_flat_expr(
         }
         case NodeTag::Coercion: {
             auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            auto slot = state.alloc_local();
             std::uint32_t type_tag = static_cast<std::uint32_t>(v.int_value);
+            auto target_type_id = flat.type_id(v.id);
+            const auto inner_type_id = flat.type_id(v.child(0));
+            const std::uint32_t entry_narrow_ev =
+                v.float_value != 0.0 ? static_cast<std::uint32_t>(v.float_value) : 0u;
+            const std::uint32_t narrow_ev =
+                entry_narrow_ev != 0 ? entry_narrow_ev : state.current_narrowing_evidence;
+            // Issue #691: post-narrow cast elision when evidence + concrete types match.
+            if (narrow_ev != 0 && target_type_id != 0 && inner_type_id != 0 &&
+                target_type_id == inner_type_id) {
+                return inner;
+            }
+            auto slot = state.alloc_local();
             std::uint32_t blame_loc = (static_cast<std::uint32_t>(v.line) << 16) |
                                       (static_cast<std::uint32_t>(v.col) & 0xFFFFu);
             // CastOp type_id = coercion target type (stored on the Coercion node)
             // blame info is carried via blame_loc operand and source_id, not type_id
-            auto target_type_id = flat.type_id(v.id);
-            // Issue #629: attach narrow_evidence to coercion CastOps
-            // when lowering inside a narrowed if-branch context.
-            if (state.current_narrowing_evidence != 0) {
-                state.emit_with_metadata(IROpcode::CastOp, target_type_id, 0, 0,
-                                         state.current_narrowing_evidence, slot, inner, type_tag,
-                                         blame_loc);
+            // Issue #629 / #691: attach narrow_evidence to coercion CastOps
+            // from entry provenance or enclosing if-branch context.
+            if (narrow_ev != 0) {
+                state.emit_with_metadata(IROpcode::CastOp, target_type_id, 0, 0, narrow_ev, slot,
+                                         inner, type_tag, blame_loc);
             } else {
                 state.emit_with_type(IROpcode::CastOp, target_type_id, slot, inner, type_tag,
                                      blame_loc);
