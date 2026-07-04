@@ -1345,8 +1345,9 @@ void register_workspace_query_primitives(
     // The pattern is parsed as an S-expression. A Variable named "..." acts as
     // wildcard and matches any single node or subtree.
     //
-    // Optional keyword (Issue #267):
+    // Optional keywords (Issue #267 / #486):
     //   :include-macro-introduced [#t|#f]
+    //   :allow-macro-introduced [#t|#f]  — discoverable alias (#486)
     // When absent or #f, macro-introduced root positions are skipped
     // (Issue #140 hygiene default). When #t, they are included.
     add("query:pattern", [ws, mev, &ev](const auto& a) -> EvalValue {
@@ -1354,7 +1355,8 @@ void register_workspace_query_primitives(
         if (a.empty())
             return mev("bad-arg",
                        "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                       " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
+                       " [:allow-macro-introduced [#t]] [:nested-arity [#t|#f]]"
+                       " [:strict-arity [#t]] [:with-markers [#t]])");
         if (!ws.workspace_flat || !ws.workspace_pool)
             return mev("no-workspace", "no workspace AST loaded");
 
@@ -1407,7 +1409,7 @@ void register_workspace_query_primitives(
                         ++ai;
                     }
                 };
-                if (kw == ":include-macro-introduced") {
+                if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced") {
                     consume_bool(include_macro_introduced);
                 } else if (kw == ":respect-hygiene") {
                     // Issue #547: discoverable alias for
@@ -1448,7 +1450,8 @@ void register_workspace_query_primitives(
             } else {
                 return mev("bad-arg",
                            "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                           " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
+                           " [:allow-macro-introduced [#t]] [:nested-arity [#t|#f]]"
+                           " [:strict-arity [#t]] [:with-markers [#t]])");
             }
         }
         if (!have_pattern)
