@@ -2286,7 +2286,14 @@ public:
             auto snap = ir_interp.inspect_closure(cid);
             if (!snap)
                 return std::nullopt;
-            aura::compiler::Env ne;
+            // Bridge Env must inherit `owner_` from top_env so primitive
+            // dispatch (which calls eval_env.owner()->bump_primitive_call_count)
+            // can find the CompilerMetrics via the SoA walk. Default-constructing
+            // `Env ne` leaves owner_=nullptr → SIGSEGV (si_addr=0x528, vtable
+            // slot offset) on the first primitive call inside an IR bridge,
+            // e.g. `(map (lambda (x) (+ x 1)) (list 1 2 3))`. Mirrors
+            // dispatch_ir_define_closure's pattern at the cached-define site.
+            aura::compiler::Env ne(&evaluator_.top_env());
             ne.set_primitives(&evaluator_.primitives());
             for (std::size_t i = 0; i < snap->env.size() && i < snap->func_free_vars.size(); ++i)
                 ne.bind(snap->func_free_vars[i], snap->env[i]);
