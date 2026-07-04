@@ -309,8 +309,11 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             auto slot = as_primitive_slot(fn);
             auto pfn = ev.primitives_.slot_lookup_fast(slot);
             if (pfn) {
-                primitives_detail::prim_record_fastpath_hit(
-                    static_cast<CompilerMetrics*>(ev.compiler_metrics()));
+                // Issue #479: per-slot fast-path hit. This is the
+                // 4th wired site (apply in runtime); the other 3
+                // are apply_unary/pred/binary in list.cpp.
+                primitives_detail::prim_record_fastpath_hit_for_slot(
+                    static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
                 return (*pfn)(args);
             }
         }
