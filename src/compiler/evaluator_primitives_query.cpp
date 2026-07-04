@@ -571,6 +571,60 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(static_cast<std::int64_t>(skips + violations));
     });
 
+    // Issue #486: query:macro-hygiene-stats. Hash view of the
+    // MacroIntroduced hygiene decision surface for AI self-evolution
+    // loops (non-duplicative with #547 2-counter int sum and #421
+    // 7-counter pattern-macro-filter bundle):
+    //   - root-skips: macro_introduced_skipped_in_query_
+    //   - recursive-skips: pattern_recursive_macro_skipped_
+    //   - hygiene-violations: hygiene_violation_count_
+    //   - macro-markers: workspace MacroIntroduced marker tally
+    add("query:macro-hygiene-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("root-skips",
+                      static_cast<std::int64_t>(ev->get_macro_introduced_skipped_in_query()));
+            insert_kv("recursive-skips",
+                      static_cast<std::int64_t>(ev->get_pattern_recursive_macro_skipped()));
+            insert_kv("hygiene-violations",
+                      static_cast<std::int64_t>(ev->get_hygiene_violation_count()));
+            insert_kv("macro-markers",
+                      static_cast<std::int64_t>(workspace_marker_macro_introduced(ev)));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #548: query:panic-checkpoint-lifecycle-stats.
     // Returns the sum of the 4 panic-checkpoint lifecycle
     // observability counters:

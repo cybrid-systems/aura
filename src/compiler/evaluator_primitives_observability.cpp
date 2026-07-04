@@ -1860,6 +1860,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #547 — Pattern + MacroIntroduced hygiene
             "query:pattern-index-stats",
             "query:pattern-hygiene-stats",
+            // Issue #486 — MacroIntroduced hygiene decision hash
+            "query:macro-hygiene-stats",
             // Issue #548 — Panic-checkpoint lifecycle
             "query:panic-checkpoint-lifecycle-stats",
             // Issue #549 — Self-evolution stability
@@ -2128,8 +2130,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
     // Returns the # of registered *-stats primitives.
     add("stats:count", [&ev](const auto&) -> EvalValue {
         // Source of truth = (stats:list) entry count.
-        // 84 entries as of #710 ship (83 from #709 + query:verify-tool-guard-stats).
-        return make_int(84);
+        // 85 entries as of #486 ship (84 from #710 + query:macro-hygiene-stats).
+        return make_int(85);
     });
 }
 

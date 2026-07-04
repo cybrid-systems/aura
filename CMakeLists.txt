@@ -2824,6 +2824,10 @@ add_dependencies(all_test_issue_targets test_issue_710)
 aura_add_issue_test(test_issue_485)
 aura_issue_test_link_llvm_jit(test_issue_485)
 add_dependencies(all_test_issue_targets test_issue_485)
+# Issue #486: query:pattern MacroIntroduced filter + macro-hygiene-stats.
+aura_add_issue_test(test_issue_486)
+aura_issue_test_link_llvm_jit(test_issue_486)
+add_dependencies(all_test_issue_targets test_issue_486)
 # Issue #479: per-prim fast-path hit tracking + (query:primitive-fastpath-per-prim).
 aura_add_issue_test(test_issue_479)
 # test uses (list ...) + (map ...) + (filter ...) + (apply ...) primitives which
