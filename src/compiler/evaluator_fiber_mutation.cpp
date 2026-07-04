@@ -11,6 +11,11 @@ module aura.compiler.evaluator;
 
 import std;
 
+extern "C" {
+bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch);
+void aura_aot_record_deopt_on_steal();
+}
+
 namespace aura::compiler {
 
 namespace fiber_stack_pool_detail {
@@ -291,6 +296,8 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
     if (!cp.had_active_boundary)
         return true;
     bool version_drift = !is_version_current(cp.defuse_version);
+    if (aura_aot_probe_checkpoint_version(cp.defuse_version, current_bridge_epoch()))
+        version_drift = true;
     if (thread_migrated || version_drift || depth_mismatch || size_mismatch) {
         cross_fiber_rollback_count_.fetch_add(1, std::memory_order_relaxed);
         if (outermost_mutation_success_flag_)
@@ -328,6 +335,10 @@ namespace {
     void fiber_resume_validate_impl() {
         if (!g_yield_hook_evaluator)
             return;
+        const std::uint64_t ver = g_yield_hook_evaluator->defuse_version_snapshot();
+        const std::uint64_t bridge = g_yield_hook_evaluator->current_bridge_epoch();
+        if (aura_aot_probe_checkpoint_version(ver, bridge))
+            aura_aot_record_deopt_on_steal();
         (void)g_yield_hook_evaluator->restore_post_yield_or_rollback();
     }
     void fiber_sync_mutation_stack_impl(void* per_fiber_stack) {
@@ -526,6 +537,10 @@ namespace {
             auto* fiber = static_cast<aura::serve::Fiber*>(Evaluator::g_current_fiber_void);
             fiber_stack_pool_detail::restamp_yield_checkpoint_top(ev, fiber);
         }
+        if (aura_aot_probe_checkpoint_version(ev->defuse_version_snapshot(),
+                                            ev->current_bridge_epoch())) {
+            aura_aot_record_deopt_on_steal();
+        }
     }
 
     // (3) g_block_gc_for_pending_checkpoint: bumps the GC-block
@@ -646,6 +661,8 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     if (!ev)
         return;
     ev->probe_linear_ownership_on_fiber_steal();
+    if (aura_aot_probe_checkpoint_version(ev->defuse_version_snapshot(), ev->current_bridge_epoch()))
+        aura_aot_record_deopt_on_steal();
 }
 
 extern "C" {

@@ -45,11 +45,17 @@ std::uint64_t aura_get_module_version(void);
 //   version - expected aot_emit_version; 0 = trust binary's own
 //
 // Returns true on a successful load (dlopen OK + version check
-// passed). On failure, logs to stderr and returns false. The
-// caller is responsible for keeping the old module alive
-// during the swap and for the version-keyed func_table remap
-// (follow-up to #287).
+// passed). On failure, logs to stderr and returns false.
 bool aura_reload_aot_module(const char* path, std::uint64_t version);
+
+// Issue #708 — region isolation + func_table refcount tracking.
+void aura_set_aot_region_mask(std::uint64_t mask);
+std::uint64_t aura_get_aot_region_mask(void);
+void aura_set_aot_emit_region_mask(std::uint64_t mask);
+void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr);
+std::uint64_t aura_aot_func_table_epoch(void);
+bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch);
+void aura_aot_record_deopt_on_steal(void);
 
 // Issue #358 — incremental re-AOT foundation.
 //

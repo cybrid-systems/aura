@@ -98,8 +98,24 @@ extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m) {
 // build's user-facing version alongside the internal one.
 static std::uint64_t g_aot_module_version = 0;
 
+// Issue #708: per-agent region isolation mask for hot-reload filtering.
+static std::uint64_t g_aot_emit_region_mask = 0;
+static std::atomic<std::uint64_t> g_aot_host_region_mask{0};
+
 extern "C" void aura_set_module_version(std::uint64_t v) {
     g_aot_module_version = v;
+}
+
+extern "C" void aura_set_aot_region_mask(std::uint64_t mask) {
+    g_aot_host_region_mask.store(mask, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_get_aot_region_mask(void) {
+    return g_aot_host_region_mask.load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_set_aot_emit_region_mask(std::uint64_t mask) {
+    g_aot_emit_region_mask = mask;
 }
 
 extern "C" std::uint64_t aura_get_module_version(void) {
@@ -223,7 +239,73 @@ extern "C" int aura_filter_dirty_flat_functions(const void* functions, unsigned 
 // rejected — a binary from a future mutation epoch is invalid by
 // definition.
 #include <dlfcn.h>
+
+namespace {
+
+constexpr unsigned kMaxAotFuncs = 4096;
+
+struct AotFuncSlot {
+    std::atomic<std::uintptr_t> fn_ptr{0};
+    std::atomic<std::uint64_t> grace_refcount{0};
+    std::atomic<std::uint64_t> table_generation{0};
+};
+
+AotFuncSlot g_aot_func_slots[kMaxAotFuncs];
+std::atomic<std::uint64_t> g_aot_table_epoch{1};
+
+void bump_reload_attempt() {
+    if (g_aot_metrics)
+        g_aot_metrics->aot_reload_attempts_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void commit_func_table_swap() {
+    g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel);
+    if (g_aot_metrics) {
+        g_aot_metrics->aot_refcount_swaps_.fetch_add(1, std::memory_order_relaxed);
+        g_aot_metrics->aot_concurrent_safe_reloads_.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+} // namespace
+
+extern "C" std::uint64_t aura_aot_func_table_epoch(void) {
+    return g_aot_table_epoch.load(std::memory_order_acquire);
+}
+
+extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
+    if (func_id < 0)
+        return;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kMaxAotFuncs)
+        return;
+    auto& slot = g_aot_func_slots[idx];
+    const std::uintptr_t new_ptr = static_cast<std::uintptr_t>(fn_ptr);
+    const std::uintptr_t old_ptr =
+        slot.fn_ptr.exchange(new_ptr, std::memory_order_acq_rel);
+    if (old_ptr != 0 && old_ptr != new_ptr)
+        slot.grace_refcount.fetch_add(1, std::memory_order_relaxed);
+    slot.table_generation.store(g_aot_table_epoch.load(std::memory_order_acquire),
+                                std::memory_order_relaxed);
+}
+
+extern "C" bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version,
+                                                  std::uint64_t bridge_epoch) {
+    const std::uint64_t emit_ver = g_aot_defuse_version;
+    const std::uint64_t table_epoch = g_aot_table_epoch.load(std::memory_order_relaxed);
+    const bool drift = (defuse_version != 0 && emit_ver != 0 && defuse_version != emit_ver) ||
+                       (bridge_epoch != 0 && bridge_epoch != table_epoch);
+    if (drift && g_aot_metrics)
+        g_aot_metrics->aot_checkpoint_version_drifts_.fetch_add(1, std::memory_order_relaxed);
+    return drift;
+}
+
+extern "C" void aura_aot_record_deopt_on_steal() {
+    if (g_aot_metrics)
+        g_aot_metrics->aot_deopt_on_steal_.fetch_add(1, std::memory_order_relaxed);
+}
+
 extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) {
+    bump_reload_attempt();
     if (!path) {
         std::fprintf(stderr, "aura_reload_aot_module: null path\n");
         return false;
@@ -273,12 +355,26 @@ extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) 
             return false;
         }
     }
-    // The constructor aura_aot_register_fns is __attribute__((constructor))
-    // and runs automatically on dlopen (since the .so exports it).
-    // Nothing more to do here; the runtime's func_table now has
-    // the new module's fn_ptrs alongside any old ones (or replaced,
-    // depending on the runtime's dispatch policy — that's the
-    // closure-dispatch follow-up).
+    // Issue #708: region isolation — reject reload when binary region
+    // mask disagrees with the host's expected agent/workspace region.
+    const std::uint64_t host_region = g_aot_host_region_mask.load(std::memory_order_relaxed);
+    if (host_region != 0) {
+        auto* binary_region = static_cast<std::uint64_t*>(::dlsym(handle, "aot_region_mask"));
+        if (binary_region && *binary_region != host_region) {
+            std::fprintf(stderr,
+                         "aura_reload_aot_module: region mismatch "
+                         "(binary=%llu, host=%llu) for %s\n",
+                         static_cast<unsigned long long>(*binary_region),
+                         static_cast<unsigned long long>(host_region), path);
+            ::dlclose(handle);
+            if (g_aot_metrics)
+                g_aot_metrics->aot_region_mismatch_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
+    // The constructor aura_aot_register_fns runs on dlopen and calls
+    // aura_register_fn (which forwards to aura_register_fn_tracked).
+    commit_func_table_swap();
     // Issue #452: bump hot-update success counter.
     if (g_aot_metrics)
         g_aot_metrics->aot_hot_update_success_.fetch_add(1, std::memory_order_relaxed);
@@ -435,6 +531,11 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "\n// Issue #243: AOT emit version (for staleness detection)\n");
     fprintf(f, "const unsigned long long aot_emit_version = %llull;\n",
             static_cast<unsigned long long>(emit_version));
+
+    // Issue #708: region mask for multi-agent hot-reload isolation.
+    fprintf(f, "\n// Issue #708: AOT region mask (multi-agent isolation)\n");
+    fprintf(f, "const unsigned long long aot_region_mask = %llull;\n",
+            static_cast<unsigned long long>(g_aot_emit_region_mask));
 
     // Issue #287: AOT module version (hot-reload / multi-agent).
     // The host sets `g_aot_module_version` before
