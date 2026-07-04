@@ -30,8 +30,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.service;
@@ -39,9 +39,8 @@ import aura.core;
 import aura.compiler.value;
 
 
-
 namespace aura_issue_210_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 // ── Test 1: env populated via bind_symid has bindings_legacy_uses == 0 ──
 // The new path (bind_symid, no legacy access) leaves the
@@ -55,8 +54,8 @@ bool test_bind_symid_path_keeps_metric_zero() {
     env.set_pool(&pool);
     env.bind_symid(pool.intern("x"), aura::compiler::types::make_int(1));
     env.bind_symid(pool.intern("y"), aura::compiler::types::make_int(2));
-    CHECK(env.bindings_legacy_uses() == 0,
-          "bind_symid does NOT bump bindings_legacy_uses (the metric tracks the accessor, not the field)");
+    CHECK(env.bindings_legacy_uses() == 0, "bind_symid does NOT bump bindings_legacy_uses (the "
+                                           "metric tracks the accessor, not the field)");
     // The env is fully usable via the new accessors.
     auto view = env.bindings_symid_iter();
     CHECK(view.size() == 2, "2 bindings via bindings_symid_iter");
@@ -65,8 +64,7 @@ bool test_bind_symid_path_keeps_metric_zero() {
     CHECK(named[0].first == "x", "[0] is 'x'");
     CHECK(named[1].first == "y", "[1] is 'y'");
     // Metric still 0 after using the new accessors.
-    CHECK(env.bindings_legacy_uses() == 0,
-          "metric still 0 after using new accessors");
+    CHECK(env.bindings_legacy_uses() == 0, "metric still 0 after using new accessors");
     return true;
 }
 
@@ -83,8 +81,7 @@ bool test_legacy_bindings_accessor_still_works() {
     env.bind_symid(pool.intern("bar"), aura::compiler::types::make_int(99));
     CHECK(env.bindings_legacy_uses() == 0, "counter starts at 0");
     auto legacy = env.bindings();
-    CHECK(env.bindings_legacy_uses() == 1,
-          "counter bumps to 1 after one legacy access");
+    CHECK(env.bindings_legacy_uses() == 1, "counter bumps to 1 after one legacy access");
     // The legacy accessor returns the same data as the
     // new one (data parity).
     auto view = env.bindings_symid_iter();
@@ -113,8 +110,7 @@ bool test_data_parity_with_pool() {
     CHECK(named.size() == legacy.size(), "same size");
     CHECK(named.size() == 3, "3 bindings");
     for (std::size_t i = 0; i < 3; ++i) {
-        CHECK(named[i].first == legacy[i].first,
-              "name at index " + std::to_string(i) + " matches");
+        CHECK(named[i].first == legacy[i].first, "name at index " + std::to_string(i) + " matches");
         CHECK(named[i].second == legacy[i].second,
               "value at index " + std::to_string(i) + " matches");
     }
@@ -125,8 +121,7 @@ bool test_data_parity_with_pool() {
     // - named accessor: 0 bumps
     // - legacy accessor: 1 bump
     // Net: 1 bump after the bindings() call.
-    CHECK(env.bindings_legacy_uses() == 1,
-          "bindings() bumped the counter once; named did not");
+    CHECK(env.bindings_legacy_uses() == 1, "bindings() bumped the counter once; named did not");
     return true;
 }
 
@@ -136,12 +131,11 @@ bool test_data_parity_with_pool() {
 // (with the '@symid:N' fallback for names).
 bool test_env_without_pool_uses_fallback() {
     PRINTLN("\n--- Test 4: env without pool_ uses '@symid:N' fallback ---");
-    aura::compiler::Env env;  // no set_pool
+    aura::compiler::Env env; // no set_pool
     env.bind_symid(42, aura::compiler::types::make_int(123));
     auto named = env.bindings_with_names();
     CHECK(named.size() == 1, "1 binding");
-    CHECK(named[0].first == "@symid:42",
-          "name is '@symid:42' (fallback for no-pool env)");
+    CHECK(named[0].first == "@symid:42", "name is '@symid:42' (fallback for no-pool env)");
     // This binding is visible via bindings_symid_iter (the
     // canonical accessor) but NOT via the legacy
     // bindings() accessor (which uses bindings_, which is
@@ -172,7 +166,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_210_detail
+} // namespace aura_issue_210_detail
 
-int aura_issue_210_run() { return aura_issue_210_detail::run_tests(); }
-
+int aura_issue_210_run() {
+    return aura_issue_210_detail::run_tests();
+}

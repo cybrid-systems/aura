@@ -23,22 +23,23 @@ import aura.compiler.service;
 
 namespace aura_629_detail {
 
-using aura::ir::IRFunction;
-using aura::ir::IRInstruction;
-using aura::ir::IRModule;
-using aura::ir::IROpcode;
 using aura::compiler::CompilerService;
 using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::TypeSpecializationWrap;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
+using aura::ir::IRFunction;
+using aura::ir::IRInstruction;
+using aura::ir::IRModule;
+using aura::ir::IROpcode;
 
 static std::size_t count_cast_ops(const IRModule& mod) {
     std::size_t n = 0;
     for (const auto& f : mod.functions)
         for (const auto& b : f.blocks)
             for (const auto& i : b.instructions)
-                if (i.opcode == IROpcode::CastOp) ++n;
+                if (i.opcode == IROpcode::CastOp)
+                    ++n;
     return n;
 }
 

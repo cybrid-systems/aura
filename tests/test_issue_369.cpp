@@ -46,8 +46,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.service;
 import aura.compiler.evaluator;
@@ -66,8 +66,8 @@ namespace aura_issue_369_detail {
 
 bool test_structural_rollback_op_aliases() {
     std::println("\n--- AC1: structural_rollback_op alias map ---");
-    using aura::ast::mutation::structural_rollback_op;
     using aura::ast::StructuralRollbackOp;
+    using aura::ast::mutation::structural_rollback_op;
 
     auto canonical_set = structural_rollback_op("structural-set-child");
     CHECK(canonical_set && *canonical_set == StructuralRollbackOp::SetChild,
@@ -94,8 +94,7 @@ bool test_structural_rollback_op_aliases() {
           "alias 'set-body' -> SetChild");
 
     auto unknown = structural_rollback_op("splice"); // not yet migrated
-    CHECK(!unknown,
-          "unknown op (splice) returns error (not migrated in #369)");
+    CHECK(!unknown, "unknown op (splice) returns error (not migrated in #369)");
 
     return true;
 }
@@ -117,12 +116,11 @@ bool test_structural_mutation_log_entry() {
 
     // Use the helper. Records a SetChild op with
     // has_rollback_data=true.
-    auto mid = flat.add_structural_mutation_log_entry(
-        parent, 0, child, aura::ast::NULL_NODE, "remove-node");
+    auto mid = flat.add_structural_mutation_log_entry(parent, 0, child, aura::ast::NULL_NODE,
+                                                      "remove-node");
 
     CHECK(mid > 0, "add_structural_mutation_log_entry returns mutation_id");
-    CHECK(flat.mutation_log_view().size() == 1,
-          "mutation_log has 1 entry");
+    CHECK(flat.mutation_log_view().size() == 1, "mutation_log has 1 entry");
     return true;
 }
 
@@ -131,7 +129,8 @@ bool test_structural_mutation_log_entry() {
 // ═══════════════════════════════════════════════════════════
 
 bool test_try_rollback_restores_children() {
-    std::println("\n--- AC3: structural_rollback_op dispatcher handles wrapper-op alias + log entry ---");
+    std::println(
+        "\n--- AC3: structural_rollback_op dispatcher handles wrapper-op alias + log entry ---");
     auto arena = std::make_unique<aura::ast::ASTArena>();
     auto alloc = arena->allocator();
     aura::ast::FlatAST flat(alloc);
@@ -148,8 +147,7 @@ bool test_try_rollback_restores_children() {
     // Record a structural remove-child op via the wrapper name.
     auto structural_mid = flat.add_structural_mutation_log_entry(
         parent, 0, child, aura::ast::NULL_NODE, "remove-node");
-    CHECK(structural_mid > 0,
-          "add_structural_mutation_log_entry('remove-node') returned id");
+    CHECK(structural_mid > 0, "add_structural_mutation_log_entry('remove-node') returned id");
     (void)size_before; // captured for diagnostic only
 
     // Rollback via the public dispatch. The structural_rollback_op
@@ -159,14 +157,12 @@ bool test_try_rollback_restores_children() {
     // rollback in isolation is a no-op for set_child since the
     // recorded new_child is NULL_NODE = current state).
     bool rb_ok = flat.rollback(structural_mid);
-    CHECK(rb_ok,
-          "rollback(mutation_id) returns true for wrapper-op alias");
+    CHECK(rb_ok, "rollback(mutation_id) returns true for wrapper-op alias");
 
     // The structural_rollback_success counter should have
     // incremented by at least 1.
     auto success = flat.structural_rollback_success();
-    CHECK(success >= 1,
-          "structural_rollback_success counter incremented");
+    CHECK(success >= 1, "structural_rollback_success counter incremented");
     return true;
 }
 
@@ -204,6 +200,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_369_detail
+} // namespace aura_issue_369_detail
 
-int aura_issue_369_run() { return aura_issue_369_detail::run_tests(); }
+int aura_issue_369_run() {
+    return aura_issue_369_detail::run_tests();
+}

@@ -21,10 +21,16 @@ namespace aura_issue_678_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:span-lifetime-stats) '{}')", key));
@@ -33,7 +39,7 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
     return aura::compiler::types::as_int(*r);
 }
 
-}  // namespace aura_issue_678_detail
+} // namespace aura_issue_678_detail
 
 int main() {
     using namespace aura_issue_678_detail;
@@ -154,9 +160,8 @@ int main() {
         std::println("\n--- AC5: stats:list + stats:count ---");
         aura::compiler::CompilerService cs;
         auto r = cs.eval("(stats:count)");
-        const auto n = r && aura::compiler::types::is_int(*r)
-                           ? aura::compiler::types::as_int(*r)
-                           : 0;
+        const auto n =
+            r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r) : 0;
         CHECK(n >= 57, std::format("stats:count >= 57 (got {})", n));
         auto lst = cs.eval("(stats:list)");
         CHECK(lst.has_value(), "stats:list eval ok");

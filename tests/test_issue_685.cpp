@@ -17,20 +17,25 @@ namespace aura_issue_685_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:arena-auto-compact-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:arena-auto-compact-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-}  // namespace aura_issue_685_detail
+} // namespace aura_issue_685_detail
 
 int main() {
     using namespace aura_issue_685_detail;
@@ -79,19 +84,17 @@ int main() {
         (void)cs.eval("(arena:request-defrag)");
         for (int i = 0; i < 30; ++i)
             (void)cs.eval("(fact 3)");
-        cs.eval(
-            "(mutate:rebind \"fact\" "
-            "\"(lambda (n) (if (= n 0) 1 (* n (fact (- n 1)))))\" "
-            "\"issue-685\")");
+        cs.eval("(mutate:rebind \"fact\" "
+                "\"(lambda (n) (if (= n 0) 1 (* n (fact (- n 1)))))\" "
+                "\"issue-685\")");
         cs.eval("(eval-current)");
         const auto triggers_after = stat_int(cs, "auto-triggers");
         const auto defrag_after = stat_int(cs, "defrag-savings");
         CHECK(triggers_after >= triggers_before,
-              std::format("auto-triggers non-decreasing ({} -> {})",
-                          triggers_before, triggers_after));
+              std::format("auto-triggers non-decreasing ({} -> {})", triggers_before,
+                          triggers_after));
         CHECK(defrag_after >= defrag_before,
-              std::format("defrag-savings non-decreasing ({} -> {})",
-                          defrag_before, defrag_after));
+              std::format("defrag-savings non-decreasing ({} -> {})", defrag_before, defrag_after));
     }
 
     // AC4: repeated eval + adaptive compact + fiber stress
@@ -121,17 +124,15 @@ int main() {
         t1.join();
         t2.join();
         CHECK(ok_count.load() == k_iters * 2,
-              std::format("fiber stress: {} / {} correct",
-                          ok_count.load(), k_iters * 2));
+              std::format("fiber stress: {} / {} correct", ok_count.load(), k_iters * 2));
     }
 
     // AC5: stats registry
     {
         std::println("\n--- AC5: stats:list + stats:count ---");
         auto r = cs.eval("(stats:count)");
-        const auto n = r && aura::compiler::types::is_int(*r)
-                           ? aura::compiler::types::as_int(*r)
-                           : 0;
+        const auto n =
+            r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r) : 0;
         CHECK(n >= 65, std::format("stats:count >= 65 (got {})", n));
     }
 

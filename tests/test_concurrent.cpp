@@ -21,15 +21,16 @@ import std;
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::println(std::cerr, "  FAIL: {} (line {})", msg, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while(0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            std::println(std::cerr, "  FAIL: {} (line {})", msg, __LINE__);                        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ── wait_for_atomic: poll an atomic counter until it reaches
 // `expected` or `timeout` elapses. Returns true on success.
@@ -44,13 +45,11 @@ static int g_failed = 0;
 // we still fail (correctly), but we don't fail spuriously under
 // brief system-load spikes. The CHECK message includes the
 // actual count vs. expected so flakes are diagnosable.
-template<typename T>
+template <typename T>
 bool wait_for_atomic(const std::atomic<T>& counter, T expected,
-                     std::chrono::milliseconds timeout =
-                         std::chrono::seconds(5)) {
+                     std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
     auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (counter.load() < expected &&
-           std::chrono::steady_clock::now() < deadline) {
+    while (counter.load() < expected && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return counter.load() >= expected;
@@ -65,11 +64,9 @@ bool test_fiber_lifecycle() {
     bool ran = false;
 
     // Manually create and run a fiber via the scheduler
-    aura::serve::Scheduler sched(2);  // 2 workers
+    aura::serve::Scheduler sched(2); // 2 workers
 
-    sched.spawn([&ran]() {
-        ran = true;
-    });
+    sched.spawn([&ran]() { ran = true; });
 
     // Run the scheduler with a timeout (spawned fiber should complete)
     // Run in a background thread to allow timeout
@@ -120,7 +117,7 @@ bool test_multi_fiber_parallel() {
     constexpr int NUM_FIBERS = 10;
     std::atomic<int> completed{0};
 
-    aura::serve::Scheduler sched(4);  // 4 workers
+    aura::serve::Scheduler sched(4); // 4 workers
 
     for (int i = 0; i < NUM_FIBERS; ++i) {
         sched.spawn([&completed, i]() {
@@ -140,7 +137,8 @@ bool test_multi_fiber_parallel() {
     sched.stop();
     t.join();
 
-    CHECK(completed.load() == NUM_FIBERS, "all " + std::to_string(NUM_FIBERS) + " fibers completed");
+    CHECK(completed.load() == NUM_FIBERS,
+          "all " + std::to_string(NUM_FIBERS) + " fibers completed");
     return true;
 }
 
@@ -171,12 +169,12 @@ bool test_eventfd_wakeup() {
 
     // Wait for fiber to reach waiting state
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    
+
     // The fiber goes Waiting, then IO thread needs to wake it.
     // We need to trigger an event on the fiber's eventfd.
     // But we don't have direct access to the eventfd from here.
     // For now: stop and check stage = 1 (fiber ran, then waited)
-    
+
     sched.stop();
     t.join();
 
@@ -224,11 +222,9 @@ bool test_fiber_spawns_fiber() {
 
     sched.spawn([&counter, &sched]() {
         counter.fetch_add(1);
-        
+
         // Spawn another fiber from within a fiber
-        sched.spawn([&counter]() {
-            counter.fetch_add(10);
-        });
+        sched.spawn([&counter]() { counter.fetch_add(10); });
 
         // Wait a bit
         aura::serve::Fiber::yield();
@@ -257,9 +253,7 @@ bool test_stress_many_fibers() {
     aura::serve::Scheduler sched(8);
 
     for (int i = 0; i < N; ++i) {
-        sched.spawn([&completed]() {
-            completed.fetch_add(1);
-        });
+        sched.spawn([&completed]() { completed.fetch_add(1); });
     }
 
     std::thread t([&sched]() { sched.run(); });
@@ -270,9 +264,8 @@ bool test_stress_many_fibers() {
     sched.stop();
     t.join();
 
-    CHECK(completed.load() == N,
-          "all " + std::to_string(N) + " fibers completed (got " +
-              std::to_string(completed.load()) + ")");
+    CHECK(completed.load() == N, "all " + std::to_string(N) + " fibers completed (got " +
+                                     std::to_string(completed.load()) + ")");
     return true;
 }
 
@@ -282,7 +275,7 @@ bool test_stress_many_fibers() {
 bool test_worker_lifecycle() {
     std::println("\n--- Test: Worker lifecycle ---");
 
-    aura::serve::Scheduler sched(4);  // creates 4 workers but doesn't start them yet
+    aura::serve::Scheduler sched(4); // creates 4 workers but doesn't start them yet
 
     // Verify workers exist
     bool valid = true;
@@ -335,10 +328,9 @@ bool test_work_stealing() {
     sched.stop();
     t.join();
 
-    CHECK(completed.load() == NUM_FIBERS,
-          "all " + std::to_string(NUM_FIBERS) +
-              " fibers completed via work-stealing (got " +
-              std::to_string(completed.load()) + ")");
+    CHECK(completed.load() == NUM_FIBERS, "all " + std::to_string(NUM_FIBERS) +
+                                              " fibers completed via work-stealing (got " +
+                                              std::to_string(completed.load()) + ")");
     return true;
 }
 
@@ -392,7 +384,8 @@ bool test_adaptive_steal_budget() {
             budget.record_failure();
     }
     // After 10 entries in window, 5 successes = 50% rate → max_before_sleep = 4
-    CHECK(budget.max_before_sleep == 4, "50% success rate = medium steal budget (max_before_sleep=4)");
+    CHECK(budget.max_before_sleep == 4,
+          "50% success rate = medium steal budget (max_before_sleep=4)");
 
     return true;
 }
@@ -412,7 +405,8 @@ bool test_load_aware_distribution() {
     for (int i = 0; i < 40; ++i) {
         sched.spawn([&completed]() {
             volatile int sum = 0;
-            for (int j = 0; j < 200000; ++j) sum += j;
+            for (int j = 0; j < 200000; ++j)
+                sum += j;
             completed.fetch_add(1);
         });
     }
@@ -445,8 +439,8 @@ bool test_metrics_sanity() {
     double sr = wm.steal_success_rate();
     CHECK(sr > 39.9 && sr < 40.1, "steal success rate = 40%");
 
-    wm.record_busy(100000000);  // 100ms
-    wm.record_idle(400000000);  // 400ms
+    wm.record_busy(100000000); // 100ms
+    wm.record_idle(400000000); // 400ms
     double util = wm.utilization();
     CHECK(util > 19.9 && util < 20.1, "utilization = 20% (100ms busy / 500ms total)");
 
@@ -566,7 +560,8 @@ bool test_stress_1k_fibers() {
     for (int i = 0; i < N; ++i) {
         sched.spawn([&completed]() {
             volatile int sum = 0;
-            for (int j = 0; j < 10000; ++j) sum += j;
+            for (int j = 0; j < 10000; ++j)
+                sum += j;
             completed.fetch_add(1);
         });
     }
@@ -579,10 +574,8 @@ bool test_stress_1k_fibers() {
     sched.stop();
     t.join();
 
-    CHECK(completed.load() == N,
-          "all " + std::to_string(N) +
-              " fibers completed (2 workers, got " +
-              std::to_string(completed.load()) + ")");
+    CHECK(completed.load() == N, "all " + std::to_string(N) + " fibers completed (2 workers, got " +
+                                     std::to_string(completed.load()) + ")");
     return true;
 }
 
@@ -603,9 +596,7 @@ bool test_spawn_chain() {
         }
         // Spawn 3 children
         for (int i = 0; i < 3; ++i) {
-            sched.spawn([depth, &spawn_level]() {
-                spawn_level(depth - 1);
-            });
+            sched.spawn([depth, &spawn_level]() { spawn_level(depth - 1); });
         }
         aura::serve::Fiber::yield();
     };
@@ -618,7 +609,8 @@ bool test_spawn_chain() {
     t.join();
 
     // 3^4 = 81 leaf fibers + intermediate fibers = 121 total increments
-    CHECK(counter.load() > 0, "spawn chain executed (counter=" + std::to_string(counter.load()) + ")");
+    CHECK(counter.load() > 0,
+          "spawn chain executed (counter=" + std::to_string(counter.load()) + ")");
     return true;
 }
 
@@ -636,7 +628,8 @@ bool test_mixed_cpu_io() {
     for (int i = 0; i < 20; ++i) {
         sched.spawn([&cpu_done]() {
             volatile double x = 1.0;
-            for (int j = 0; j < 500000; ++j) x = x * 1.000001 / 1.000001;
+            for (int j = 0; j < 500000; ++j)
+                x = x * 1.000001 / 1.000001;
             cpu_done.fetch_add(1);
         });
     }
@@ -646,7 +639,8 @@ bool test_mixed_cpu_io() {
         sched.spawn([&io_done]() {
             for (int k = 0; k < 5; ++k) {
                 volatile int sum = 0;
-                for (int j = 0; j < 5000; ++j) sum += j;
+                for (int j = 0; j < 5000; ++j)
+                    sum += j;
                 aura::serve::Fiber::yield();
             }
             io_done.fetch_add(1);
@@ -704,17 +698,18 @@ bool test_fiber_ping_pong() {
 bool test_auto_worker_count() {
     std::println("\n--- Test: Auto-detect worker count ---");
 
-    aura::serve::Scheduler sched(0);  // auto
+    aura::serve::Scheduler sched(0); // auto
     std::atomic<int> completed{0};
 
     // Verify we got a reasonable number of workers
-    CHECK(sched.num_workers() >= 2, "auto-detect gave >= 2 workers (got " +
-          std::to_string(sched.num_workers()) + ")");
+    CHECK(sched.num_workers() >= 2,
+          "auto-detect gave >= 2 workers (got " + std::to_string(sched.num_workers()) + ")");
 
     for (int i = 0; i < 20; ++i) {
         sched.spawn([&completed]() {
             volatile int sum = 0;
-            for (int j = 0; j < 100000; ++j) sum += j;
+            for (int j = 0; j < 100000; ++j)
+                sum += j;
             completed.fetch_add(1);
         });
     }
@@ -753,7 +748,8 @@ bool test_ws_deque_resize() {
     int popped_bottom = 0;
     for (int i = 0; i < 100; ++i) {
         auto val = dq.pop();
-        if (val != nullptr) ++popped_bottom;
+        if (val != nullptr)
+            ++popped_bottom;
     }
     CHECK(popped_bottom == 100, "100 non-null items popped from bottom after resize");
     CHECK(dq.size_approx() == 100, "deque has 100 items after 100 pops");
@@ -762,7 +758,8 @@ bool test_ws_deque_resize() {
     int stolen = 0;
     for (int i = 0; i < 60; ++i) {
         auto val = dq.steal();
-        if (val != nullptr) ++stolen;
+        if (val != nullptr)
+            ++stolen;
     }
     CHECK(stolen >= 40, "steal returned >= 40 non-null items");
 
@@ -771,11 +768,12 @@ bool test_ws_deque_resize() {
     int remaining = static_cast<int>(dq.size_approx());
     for (int i = 0; i < remaining + 10; ++i) {
         auto val = dq.pop();
-        if (val != nullptr) ++popped_remaining;
+        if (val != nullptr)
+            ++popped_remaining;
     }
-    CHECK(popped_remaining == remaining,
-          std::to_string(popped_remaining) + " items popped from remaining ~" +
-          std::to_string(remaining));
+    CHECK(popped_remaining == remaining, std::to_string(popped_remaining) +
+                                             " items popped from remaining ~" +
+                                             std::to_string(remaining));
 
     CHECK(dq.empty_approx(), "deque empty after draining all items");
     return true;
@@ -837,7 +835,8 @@ bool test_metrics_disabled() {
     for (int i = 0; i < 10; ++i) {
         sched.spawn([&completed]() {
             volatile int sum = 0;
-            for (int j = 0; j < 100000; ++j) sum += j;
+            for (int j = 0; j < 100000; ++j)
+                sum += j;
             completed.fetch_add(1);
         });
     }
@@ -869,7 +868,8 @@ bool test_metrics_post_run() {
             aura::serve::Fiber::yield();
             // Some more work
             volatile int sum = 0;
-            for (int j = 0; j < 10000; ++j) sum += j;
+            for (int j = 0; j < 10000; ++j)
+                sum += j;
         });
     }
 
@@ -921,9 +921,7 @@ bool test_rapid_fibers() {
     aura::serve::Scheduler sched(4);
 
     for (int i = 0; i < N; ++i) {
-        sched.spawn([&completed]() {
-            completed.fetch_add(1);
-        });
+        sched.spawn([&completed]() { completed.fetch_add(1); });
     }
 
     std::thread t([&sched]() { sched.run(); });
@@ -931,9 +929,8 @@ bool test_rapid_fibers() {
     sched.stop();
     t.join();
 
-    CHECK(completed.load() == N,
-          "all " + std::to_string(N) + " rapid fibers completed (got " +
-              std::to_string(completed.load()) + ")");
+    CHECK(completed.load() == N, "all " + std::to_string(N) + " rapid fibers completed (got " +
+                                     std::to_string(completed.load()) + ")");
     return true;
 }
 
@@ -949,7 +946,8 @@ bool test_single_worker() {
     for (int i = 0; i < 20; ++i) {
         sched.spawn([&completed, i]() {
             volatile int sum = 0;
-            for (int j = 0; j < 50000; ++j) sum += j;
+            for (int j = 0; j < 50000; ++j)
+                sum += j;
             completed.fetch_add(1);
         });
     }
@@ -996,7 +994,8 @@ bool test_ws_deque_concurrent_stress() {
     std::thread owner([&]() {
         int local = 0;
         for (int attempt = 0; attempt < 2000; ++attempt) {
-            if (dq.pop()) ++local;
+            if (dq.pop())
+                ++local;
             std::this_thread::yield();
         }
         owner_popped.store(local, std::memory_order_release);
@@ -1007,7 +1006,8 @@ bool test_ws_deque_concurrent_stress() {
         stealers.push_back(std::thread([&]() {
             int local = 0;
             for (int attempt = 0; attempt < 3000; ++attempt) {
-                if (dq.steal()) ++local;
+                if (dq.steal())
+                    ++local;
                 std::this_thread::yield();
             }
             stolen_count.fetch_add(local, std::memory_order_release);
@@ -1015,17 +1015,16 @@ bool test_ws_deque_concurrent_stress() {
     }
 
     owner.join();
-    for (auto& t : stealers) t.join();
+    for (auto& t : stealers)
+        t.join();
 
     int total_stolen = stolen_count.load(std::memory_order_acquire);
     int popped = owner_popped.load(std::memory_order_acquire);
     int total = total_stolen + popped;
 
-    CHECK(total == TOTAL,
-          std::to_string(total) + " items processed (" +
-          std::to_string(TOTAL) + " total, owner popped " +
-          std::to_string(popped) + ", stealers took " +
-          std::to_string(total_stolen) + ")");
+    CHECK(total == TOTAL, std::to_string(total) + " items processed (" + std::to_string(TOTAL) +
+                              " total, owner popped " + std::to_string(popped) +
+                              ", stealers took " + std::to_string(total_stolen) + ")");
 
     CHECK(dq.empty_approx(), "deque is empty after stress test");
     return true;
@@ -1054,7 +1053,7 @@ bool test_ws_deque_steal_contention() {
         stealers.push_back(std::thread([&]() {
             int local = 0;
             int attempts = 0;
-            int max_attempts = TOTAL / NUM_STEALERS + 1000;  // generous
+            int max_attempts = TOTAL / NUM_STEALERS + 1000; // generous
             while (attempts < max_attempts) {
                 if (auto* item = dq.steal()) {
                     (void)item;
@@ -1069,17 +1068,18 @@ bool test_ws_deque_steal_contention() {
         }));
     }
 
-    for (auto& t : stealers) t.join();
+    for (auto& t : stealers)
+        t.join();
 
     // Also try to pop any remaining items
     int remaining = 0;
-    while (dq.pop()) ++remaining;
+    while (dq.pop())
+        ++remaining;
 
     int total = stolen_total.load(std::memory_order_acquire) + remaining;
-    CHECK(total == TOTAL,
-          "all " + std::to_string(TOTAL) + " items processed (stolen=" +
-          std::to_string(stolen_total.load(std::memory_order_acquire)) +
-          ", remaining=" + std::to_string(remaining) + ")");
+    CHECK(total == TOTAL, "all " + std::to_string(TOTAL) + " items processed (stolen=" +
+                              std::to_string(stolen_total.load(std::memory_order_acquire)) +
+                              ", remaining=" + std::to_string(remaining) + ")");
     CHECK(dq.empty_approx(), "deque empty after steal contention");
     return true;
 }
@@ -1126,11 +1126,11 @@ bool test_ws_deque_grow_during_steal() {
     }
     popped.store(local_pop, std::memory_order_release);
 
-    int total = stolen.load(std::memory_order_acquire) +
-                popped.load(std::memory_order_acquire);
-    CHECK(total == 200, std::to_string(total) + " items processed (stolen=" +
-          std::to_string(stolen.load(std::memory_order_acquire)) +
-          ", popped=" + std::to_string(popped.load(std::memory_order_acquire)) + ")");
+    int total = stolen.load(std::memory_order_acquire) + popped.load(std::memory_order_acquire);
+    CHECK(total == 200,
+          std::to_string(total) +
+              " items processed (stolen=" + std::to_string(stolen.load(std::memory_order_acquire)) +
+              ", popped=" + std::to_string(popped.load(std::memory_order_acquire)) + ")");
     CHECK(dq.empty_approx(), "deque empty after grow+steal");
     return true;
 }
@@ -1158,21 +1158,22 @@ bool test_ws_deque_multi_instance() {
     for (int d = 0; d < NUM_DEQUES; ++d) {
         threads.push_back(std::thread([&, d]() {
             int count = 0;
-            while (deques[d].pop()) ++count;
+            while (deques[d].pop())
+                ++count;
             if (count == 10)
                 total_ok.fetch_add(1, std::memory_order_relaxed);
         }));
     }
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
 
-    CHECK(total_ok.load() == NUM_DEQUES,
-          std::to_string(total_ok.load()) + " of " +
-          std::to_string(NUM_DEQUES) + " deques returned all 10 items");
+    CHECK(total_ok.load() == NUM_DEQUES, std::to_string(total_ok.load()) + " of " +
+                                             std::to_string(NUM_DEQUES) +
+                                             " deques returned all 10 items");
 
     // Also verify with steal
     for (int d = 0; d < NUM_DEQUES; ++d) {
-        CHECK(deques[d].empty_approx(),
-              "deque[" + std::to_string(d) + "] is empty");
+        CHECK(deques[d].empty_approx(), "deque[" + std::to_string(d) + "] is empty");
     }
     return true;
 }
@@ -1197,16 +1198,15 @@ bool test_ws_deque_rapid_cycles() {
         auto* p2 = dq.pop();
 
         if (!s || !p1 || !p2) {
-            std::println("  FAIL at cycle {}: s={}, p1={}, p2={}",
-                         cycle, (intptr_t)s, (intptr_t)p1, (intptr_t)p2);
+            std::println("  FAIL at cycle {}: s={}, p1={}, p2={}", cycle, (intptr_t)s, (intptr_t)p1,
+                         (intptr_t)p2);
             return false;
         }
 
         CHECK(dq.empty_approx(), "deque empty after cycle " + std::to_string(cycle));
     }
 
-    CHECK(dq.empty_approx(),
-          "deque empty after " + std::to_string(CYCLES) + " cycles");
+    CHECK(dq.empty_approx(), "deque empty after " + std::to_string(CYCLES) + " cycles");
     return true;
 }
 
@@ -1225,39 +1225,37 @@ bool test_ws_deque_grow_wrapped() {
     for (int i = 0; i < 30; ++i)
         dq.pop();
 
-    CHECK(dq.size_approx() == 30,
-          "phase 1: 30 items remain after 30 pops");
+    CHECK(dq.size_approx() == 30, "phase 1: 30 items remain after 30 pops");
 
     // Phase 2: push 60 more (triggers grow: bottom=90, top=0)
     for (int i = 61; i <= 120; ++i)
         dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(i)));
 
-    CHECK(dq.size_approx() == 90,
-          "phase 2: 90 items remain after grow+bottom wrap");
+    CHECK(dq.size_approx() == 90, "phase 2: 90 items remain after grow+bottom wrap");
 
     // Phase 3: steal 40 (moves top_ to 40)
     for (int i = 0; i < 40; ++i)
         dq.steal();
 
-    CHECK(dq.size_approx() == 50,
-          "phase 3: 50 items remain after 40 steals");
+    CHECK(dq.size_approx() == 50, "phase 3: 50 items remain after 40 steals");
 
     // Phase 4: push 100 more (triggers second grow with wrapped indices)
     for (int i = 121; i <= 220; ++i)
         dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(i)));
 
-    CHECK(dq.size_approx() == 150,
-          "phase 4: 150 items remain after second grow");
+    CHECK(dq.size_approx() == 150, "phase 4: 150 items remain after second grow");
 
     // Phase 5: drain all via steal + pop
     int stolen = 0;
-    while (dq.steal()) ++stolen;
+    while (dq.steal())
+        ++stolen;
     int popped = 0;
-    while (dq.pop()) ++popped;
+    while (dq.pop())
+        ++popped;
 
-    CHECK(stolen + popped == 150,
-          std::to_string(stolen + popped) + " items drained (" +
-          std::to_string(stolen) + " stolen + " + std::to_string(popped) + " popped)");
+    CHECK(stolen + popped == 150, std::to_string(stolen + popped) + " items drained (" +
+                                      std::to_string(stolen) + " stolen + " +
+                                      std::to_string(popped) + " popped)");
 
     CHECK(dq.empty_approx(), "deque empty after all phases");
     return true;
@@ -1275,7 +1273,8 @@ bool test_round_robin_fallback() {
     for (int i = 0; i < 8; ++i) {
         sched.spawn([&completed]() {
             volatile int sum = 0;
-            for (int j = 0; j < 100000; ++j) sum += j;
+            for (int j = 0; j < 100000; ++j)
+                sum += j;
             completed.fetch_add(1);
         });
     }
@@ -1304,9 +1303,7 @@ bool test_exec_adapter_basic() {
     aura::exec::fiber_scheduler fs(sched);
     std::atomic<int> ran{0};
 
-    auto sender = fs.schedule([&ran]() {
-        ran.store(1, std::memory_order_release);
-    });
+    auto sender = fs.schedule([&ran]() { ran.store(1, std::memory_order_release); });
 
     auto op = std::move(sender).connect(aura::exec::fiber_receiver{});
     op.start();
@@ -1336,7 +1333,8 @@ bool test_exec_when_all() {
     for (int i = 0; i < N; ++i) {
         fns.push_back([&counter]() {
             volatile int sum = 0;
-            for (int j = 0; j < 50000; ++j) sum += j;
+            for (int j = 0; j < 50000; ++j)
+                sum += j;
             counter.fetch_add(1, std::memory_order_release);
         });
     }
@@ -1352,8 +1350,7 @@ bool test_exec_when_all() {
     sched.stop();
     t.join();
 
-    CHECK(counter.load() == N,
-          "when_all executed all " + std::to_string(N) + " functions");
+    CHECK(counter.load() == N, "when_all executed all " + std::to_string(N) + " functions");
     return true;
 }
 
@@ -1367,9 +1364,7 @@ bool test_exec_let_value() {
     std::atomic<int> stage{0};
 
     std::vector<std::function<void()>> pipeline;
-    pipeline.push_back([&stage]() {
-        stage.store(1, std::memory_order_release);
-    });
+    pipeline.push_back([&stage]() { stage.store(1, std::memory_order_release); });
     pipeline.push_back([&stage]() {
         int s = stage.load(std::memory_order_acquire);
         stage.store(s + 10, std::memory_order_release);
@@ -1390,8 +1385,7 @@ bool test_exec_let_value() {
     sched.stop();
     t.join();
 
-    CHECK(stage.load() == 111,
-          "let_value pipeline executed stages (1+10+100 = 111)");
+    CHECK(stage.load() == 111, "let_value pipeline executed stages (1+10+100 = 111)");
     return true;
 }
 
@@ -1419,9 +1413,7 @@ bool test_exec_retry() {
     auto sender = aura::exec::retry(fs, std::move(fn), 3);
     auto op = std::move(sender).connect(aura::exec::fiber_receiver(
         [&success]() { success = true; },
-        [&error_caught](std::exception_ptr) { error_caught = true; },
-        []() {}
-    ));
+        [&error_caught](std::exception_ptr) { error_caught = true; }, []() {}));
     op.start();
 
     std::thread t([&sched]() { sched.run(); });
@@ -1455,17 +1447,17 @@ bool test_exec_when_all_error() {
     fns.push_back([]() { throw std::runtime_error("intentional"); });
 
     auto sender = aura::exec::when_all(fs, std::move(fns));
-    auto op = std::move(sender).connect(aura::exec::fiber_receiver(
-        []() { /* success — won't be called */ },
-        [&got_error](std::exception_ptr e) {
-            got_error = true;
-            try { std::rethrow_exception(e); }
-            catch (const std::runtime_error& ex) {
-                // expected
-            }
-        },
-        []() {}
-    ));
+    auto op = std::move(sender).connect(
+        aura::exec::fiber_receiver([]() { /* success — won't be called */ },
+                                   [&got_error](std::exception_ptr e) {
+                                       got_error = true;
+                                       try {
+                                           std::rethrow_exception(e);
+                                       } catch (const std::runtime_error& ex) {
+                                           // expected
+                                       }
+                                   },
+                                   []() {}));
     op.start();
 
     std::thread t([&sched]() { sched.run(); });
@@ -1491,7 +1483,7 @@ bool test_exec_let_value_error() {
 
     std::vector<std::function<void()>> pipeline;
     pipeline.push_back([&steps_run]() {
-        steps_run.fetch_add(1);  // step 1
+        steps_run.fetch_add(1); // step 1
     });
     pipeline.push_back([&steps_run]() {
         steps_run.fetch_add(10); // step 2 — will fail
@@ -1503,10 +1495,7 @@ bool test_exec_let_value_error() {
 
     auto sender = aura::exec::let_value(fs, std::move(pipeline));
     auto op = std::move(sender).connect(aura::exec::fiber_receiver(
-        []() {},
-        [&got_error](std::exception_ptr) { got_error = true; },
-        []() {}
-    ));
+        []() {}, [&got_error](std::exception_ptr) { got_error = true; }, []() {}));
     op.start();
 
     std::thread t([&sched]() { sched.run(); });
@@ -1515,9 +1504,8 @@ bool test_exec_let_value_error() {
     t.join();
 
     CHECK(got_error, "let_value error propagates when mid-step fails");
-    CHECK(steps_run.load() <= 11,
-          "let_value stopped after error (steps_run=" +
-          std::to_string(steps_run.load()) + ", expected <= 11)");
+    CHECK(steps_run.load() <= 11, "let_value stopped after error (steps_run=" +
+                                      std::to_string(steps_run.load()) + ", expected <= 11)");
     return true;
 }
 
@@ -1531,18 +1519,15 @@ bool test_exec_retry_all_fail() {
     std::atomic<int> attempts{0};
     bool got_error = false;
 
-    auto sender = aura::exec::retry(fs,
+    auto sender = aura::exec::retry(
+        fs,
         [&attempts]() {
             attempts.fetch_add(1);
             throw std::runtime_error("always fails");
         },
-        5
-    );
+        5);
     auto op = std::move(sender).connect(aura::exec::fiber_receiver(
-        []() {},
-        [&got_error](std::exception_ptr) { got_error = true; },
-        []() {}
-    ));
+        []() {}, [&got_error](std::exception_ptr) { got_error = true; }, []() {}));
     op.start();
 
     std::thread t([&sched]() { sched.run(); });
@@ -1570,7 +1555,8 @@ bool test_exec_multi_when_all() {
         for (int i = 0; i < 5; ++i)
             fns.push_back([&total]() {
                 volatile int sum = 0;
-                for (int j = 0; j < 20000; ++j) sum += j;
+                for (int j = 0; j < 20000; ++j)
+                    sum += j;
                 total.fetch_add(1);
             });
         return aura::exec::when_all(fs, std::move(fns));
@@ -1581,9 +1567,12 @@ bool test_exec_multi_when_all() {
     auto s2 = make_when_all();
     auto s3 = make_when_all();
 
-    auto o1 = std::move(s1).connect(aura::exec::fiber_receiver{}); o1.start();
-    auto o2 = std::move(s2).connect(aura::exec::fiber_receiver{}); o2.start();
-    auto o3 = std::move(s3).connect(aura::exec::fiber_receiver{}); o3.start();
+    auto o1 = std::move(s1).connect(aura::exec::fiber_receiver{});
+    o1.start();
+    auto o2 = std::move(s2).connect(aura::exec::fiber_receiver{});
+    o2.start();
+    auto o3 = std::move(s3).connect(aura::exec::fiber_receiver{});
+    o3.start();
 
     std::thread t([&sched]() { sched.run(); });
     // Issue: replaced fixed sleep_for with wait_for_atomic
@@ -1610,15 +1599,18 @@ bool test_exec_mixed_schedule() {
     // Solo fibers via schedule
     auto snd1 = fs.schedule([&solo]() { solo.fetch_add(1); });
     auto snd2 = fs.schedule([&solo]() { solo.fetch_add(1); });
-    auto o1 = std::move(snd1).connect(aura::exec::fiber_receiver{}); o1.start();
-    auto o2 = std::move(snd2).connect(aura::exec::fiber_receiver{}); o2.start();
+    auto o1 = std::move(snd1).connect(aura::exec::fiber_receiver{});
+    o1.start();
+    auto o2 = std::move(snd2).connect(aura::exec::fiber_receiver{});
+    o2.start();
 
     // Group via when_all
     std::vector<std::function<void()>> fns;
     for (int i = 0; i < 5; ++i)
         fns.push_back([&group]() { group.fetch_add(1); });
     auto ws = aura::exec::when_all(fs, std::move(fns));
-    auto ow = std::move(ws).connect(aura::exec::fiber_receiver{}); ow.start();
+    auto ow = std::move(ws).connect(aura::exec::fiber_receiver{});
+    ow.start();
 
     std::thread t([&sched]() { sched.run(); });
     // Issue: replaced fixed sleep_for with wait_for_atomic
@@ -1642,15 +1634,10 @@ bool test_exec_receiver_callback() {
     aura::exec::fiber_scheduler fs(sched);
     std::atomic<int> callbacks{0};
 
-    auto sender = fs.schedule([&callbacks]() {
-        callbacks.fetch_add(1);
-    });
+    auto sender = fs.schedule([&callbacks]() { callbacks.fetch_add(1); });
 
     auto op = std::move(sender).connect(aura::exec::fiber_receiver(
-        [&callbacks]() { callbacks.fetch_add(10); },
-        [](std::exception_ptr) {},
-        []() {}
-    ));
+        [&callbacks]() { callbacks.fetch_add(10); }, [](std::exception_ptr) {}, []() {}));
     op.start();
 
     std::thread t([&sched]() { sched.run(); });
@@ -1659,9 +1646,8 @@ bool test_exec_receiver_callback() {
     t.join();
 
     // Function ran (1) + set_value called (10) = 11
-    CHECK(callbacks.load() == 11,
-          "fiber ran + receiver set_value = " + std::to_string(callbacks.load()) +
-          " (expected 11)");
+    CHECK(callbacks.load() == 11, "fiber ran + receiver set_value = " +
+                                      std::to_string(callbacks.load()) + " (expected 11)");
     return true;
 }
 
@@ -1679,15 +1665,13 @@ bool test_yield_reason_tracking() {
 
     sched.spawn([&stage]() {
         // Default reason after construction should be Explicit
-        CHECK(aura::serve::g_current_fiber->is_stealable(),
-              "default fiber is stealable");
+        CHECK(aura::serve::g_current_fiber->is_stealable(), "default fiber is stealable");
         stage.store(1);
 
         // Yield explicitly — should be stealable
         aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
         stage.store(2);
-        CHECK(aura::serve::g_current_fiber->is_stealable(),
-              "fiber stealable after Explicit yield");
+        CHECK(aura::serve::g_current_fiber->is_stealable(), "fiber stealable after Explicit yield");
 
         // Yield at mutation boundary — stealable
         aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
@@ -1697,7 +1681,7 @@ bool test_yield_reason_tracking() {
 
         // Check last_yield_reason
         CHECK(aura::serve::g_current_fiber->last_yield_reason() ==
-              aura::serve::YieldReason::MutationBoundary,
+                  aura::serve::YieldReason::MutationBoundary,
               "last_yield_reason = MutationBoundary");
 
         // Default yield() also sets Explicit
@@ -1714,8 +1698,8 @@ bool test_yield_reason_tracking() {
     sched.stop();
     t.join();
 
-    CHECK(stage.load() == 4, "all yield stages executed (stage=" +
-          std::to_string(stage.load()) + ")");
+    CHECK(stage.load() == 4,
+          "all yield stages executed (stage=" + std::to_string(stage.load()) + ")");
     return true;
 }
 
@@ -1729,8 +1713,7 @@ bool test_yield_blocking_io_state() {
 
     sched.spawn([&stage]() {
         // Initially Running
-        CHECK(aura::serve::g_current_fiber->state() ==
-              aura::serve::FiberState::Running,
+        CHECK(aura::serve::g_current_fiber->state() == aura::serve::FiberState::Running,
               "initial state = Running");
         stage.store(1);
 
@@ -1738,8 +1721,7 @@ bool test_yield_blocking_io_state() {
         aura::serve::Fiber::yield(aura::serve::YieldReason::BlockingIO);
 
         // After resume (should happen if epoll wakes us): still Running
-        CHECK(aura::serve::g_current_fiber->state() ==
-              aura::serve::FiberState::Running,
+        CHECK(aura::serve::g_current_fiber->state() == aura::serve::FiberState::Running,
               "after resume state = Running");
         stage.store(2);
     });
@@ -1749,8 +1731,7 @@ bool test_yield_blocking_io_state() {
     sched.stop();
     t.join();
 
-    CHECK(stage.load() >= 1, "fiber at least started (stage=" +
-          std::to_string(stage.load()) + ")");
+    CHECK(stage.load() >= 1, "fiber at least started (stage=" + std::to_string(stage.load()) + ")");
     return true;
 }
 
@@ -1776,9 +1757,8 @@ bool test_yield_explicit_state() {
     sched.stop();
     t.join();
 
-    CHECK(counter.load() == 11,
-          "fiber with Explicit yields preserves state (1+10 = " +
-          std::to_string(counter.load()) + ")");
+    CHECK(counter.load() == 11, "fiber with Explicit yields preserves state (1+10 = " +
+                                    std::to_string(counter.load()) + ")");
     return true;
 }
 
@@ -1796,27 +1776,25 @@ bool test_yield_reason_chain() {
         aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
         stage.store(1);
         CHECK(aura::serve::g_current_fiber->last_yield_reason() ==
-              aura::serve::YieldReason::Explicit,
+                  aura::serve::YieldReason::Explicit,
               "reason 1 = Explicit");
 
         aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
         stage.store(2);
         CHECK(aura::serve::g_current_fiber->last_yield_reason() ==
-              aura::serve::YieldReason::MutationBoundary,
+                  aura::serve::YieldReason::MutationBoundary,
               "reason 2 = MutationBoundary");
-        CHECK(aura::serve::g_current_fiber->is_stealable(),
-              "stealable after MutationBoundary");
+        CHECK(aura::serve::g_current_fiber->is_stealable(), "stealable after MutationBoundary");
 
         aura::serve::Fiber::yield();
         stage.store(3);
         CHECK(aura::serve::g_current_fiber->last_yield_reason() ==
-              aura::serve::YieldReason::Explicit,
+                  aura::serve::YieldReason::Explicit,
               "reason 3 = Explicit (default yield)");
 
         aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
         stage.store(4);
-        CHECK(aura::serve::g_current_fiber->is_stealable(),
-              "stealable after Explicit");
+        CHECK(aura::serve::g_current_fiber->is_stealable(), "stealable after Explicit");
     });
 
     std::thread t([&sched]() { sched.run(); });
@@ -1862,8 +1840,7 @@ bool test_yield_mixed_reasons() {
     t.join();
 
     CHECK(stealable_count.load() == 5,
-          std::to_string(stealable_count.load()) +
-          " fibers reported stealable (expected 5)");
+          std::to_string(stealable_count.load()) + " fibers reported stealable (expected 5)");
     return true;
 }
 
@@ -1883,7 +1860,8 @@ bool test_metrics_after_workload() {
     for (int i = 0; i < N; ++i) {
         sched.spawn([&completed]() {
             volatile int sum = 0;
-            for (int j = 0; j < 10000; ++j) sum += j;
+            for (int j = 0; j < 10000; ++j)
+                sum += j;
             completed.fetch_add(1);
         });
     }
@@ -1895,19 +1873,18 @@ bool test_metrics_after_workload() {
 
     auto& m = sched.metrics();
     CHECK(m.fibers_spawned.load() >= static_cast<uint64_t>(N),
-          "fibers_spawned >= " + std::to_string(N) +
-          " (got " + std::to_string(m.fibers_spawned.load()) + ")");
+          "fibers_spawned >= " + std::to_string(N) + " (got " +
+              std::to_string(m.fibers_spawned.load()) + ")");
     CHECK(m.fibers_completed.load() >= static_cast<uint64_t>(N),
-          "fibers_completed >= " + std::to_string(N) +
-          " (got " + std::to_string(m.fibers_completed.load()) + ")");
+          "fibers_completed >= " + std::to_string(N) + " (got " +
+              std::to_string(m.fibers_completed.load()) + ")");
 
     // At least one worker had activity
     uint64_t total_executed = 0;
     for (size_t i = 0; i < m.num_workers(); ++i)
         total_executed += m.worker(i).fibers_executed.load();
     CHECK(total_executed >= static_cast<uint64_t>(N),
-          "total fibers_executed across workers >= " +
-          std::to_string(N));
+          "total fibers_executed across workers >= " + std::to_string(N));
 
     return true;
 }
@@ -1923,7 +1900,8 @@ bool test_metrics_reset() {
     // Run a small workload
     sched.spawn([&done]() {
         volatile int sum = 0;
-        for (int j = 0; j < 50000; ++j) sum += j;
+        for (int j = 0; j < 50000; ++j)
+            sum += j;
         done.store(1);
     });
 
@@ -1935,8 +1913,7 @@ bool test_metrics_reset() {
     t.join();
 
     CHECK(done.load() == 1, "fiber completed before reset test");
-    CHECK(sched.metrics().fibers_spawned.load() > 0,
-          "fibers_spawned > 0 before reset");
+    CHECK(sched.metrics().fibers_spawned.load() > 0, "fibers_spawned > 0 before reset");
 
     // Reset metrics via resize (reinitializes all counters to zero)
     auto n = sched.metrics().num_workers();
@@ -1952,8 +1929,7 @@ bool test_metrics_reset() {
     }
     // Also verify the scheduler properly reports metrics after reset
     auto json = sched.metrics_json();
-    CHECK(json.find("fibers_spawned") != std::string::npos,
-          "JSON still works after reset");
+    CHECK(json.find("fibers_spawned") != std::string::npos, "JSON still works after reset");
     return true;
 }
 
@@ -1977,12 +1953,9 @@ bool test_metrics_json_format() {
     std::string json = sched.metrics_json();
 
     CHECK(!json.empty(), "JSON output is non-empty");
-    CHECK(json.find("fibers_spawned") != std::string::npos,
-          "JSON contains fibers_spawned");
-    CHECK(json.find("fibers_completed") != std::string::npos,
-          "JSON contains fibers_completed");
-    CHECK(json.find("workers") != std::string::npos,
-          "JSON contains workers array");
+    CHECK(json.find("fibers_spawned") != std::string::npos, "JSON contains fibers_spawned");
+    CHECK(json.find("fibers_completed") != std::string::npos, "JSON contains fibers_completed");
+    CHECK(json.find("workers") != std::string::npos, "JSON contains workers array");
 
     // Verify it's valid JSON by checking basic structure
     CHECK(json.front() == '{', "JSON starts with {");
@@ -1991,8 +1964,7 @@ bool test_metrics_json_format() {
     while (!trimmed.empty() && (trimmed.back() == '\n' || trimmed.back() == ' '))
         trimmed.pop_back();
     CHECK(trimmed.back() == '}', "JSON ends with }");
-    CHECK(json.find("fibers_spawned") != std::string::npos,
-          "JSON contains fibers_spawned key");
+    CHECK(json.find("fibers_spawned") != std::string::npos, "JSON contains fibers_spawned key");
 
     return true;
 }
@@ -2010,7 +1982,8 @@ bool test_metrics_mixed_workload() {
     for (int i = 0; i < 10; ++i)
         sched.spawn([&cpu_done]() {
             volatile int sum = 0;
-            for (int j = 0; j < 100000; ++j) sum += j;
+            for (int j = 0; j < 100000; ++j)
+                sum += j;
             cpu_done.fetch_add(1);
         });
 
@@ -2019,7 +1992,8 @@ bool test_metrics_mixed_workload() {
         sched.spawn([&io_done]() {
             for (int k = 0; k < 3; ++k) {
                 volatile int sum = 0;
-                for (int j = 0; j < 5000; ++j) sum += j;
+                for (int j = 0; j < 5000; ++j)
+                    sum += j;
                 aura::serve::Fiber::yield();
             }
             io_done.fetch_add(1);
@@ -2037,26 +2011,22 @@ bool test_metrics_mixed_workload() {
 
     auto& m = sched.metrics();
     CHECK(m.fibers_spawned.load() >= 20,
-          "fibers_spawned >= 20 (got " +
-          std::to_string(m.fibers_spawned.load()) + ")");
+          "fibers_spawned >= 20 (got " + std::to_string(m.fibers_spawned.load()) + ")");
     CHECK(m.fibers_completed.load() >= 20,
-          "fibers_completed >= 20 (got " +
-          std::to_string(m.fibers_completed.load()) + ")");
+          "fibers_completed >= 20 (got " + std::to_string(m.fibers_completed.load()) + ")");
 
     // Check that yields were recorded (IO fibers call yield)
     uint64_t total_yields = 0;
     for (size_t i = 0; i < m.num_workers(); ++i)
         total_yields += m.worker(i).fibers_yielded.load();
     CHECK(total_yields > 0,
-          "some worker recorded yield events (" +
-          std::to_string(total_yields) + ")");
+          "some worker recorded yield events (" + std::to_string(total_yields) + ")");
 
     // Utilization should be non-zero
     double total_util = 0;
     for (size_t i = 0; i < m.num_workers(); ++i)
         total_util += m.worker(i).utilization();
-    CHECK(total_util > 0,
-          "workers have non-zero utilization");
+    CHECK(total_util > 0, "workers have non-zero utilization");
 
     return true;
 }
@@ -2071,7 +2041,7 @@ bool test_metrics_multiple_queries() {
     // Query metrics before spawning — should contain the key
     auto json1 = sched.metrics_json();
     CHECK(json1.find(R"("fibers_spawned": 0)") != std::string::npos ||
-          json1.find(R"("fibers_spawned")") != std::string::npos,
+              json1.find(R"("fibers_spawned")") != std::string::npos,
           "initial JSON has fibers_spawned key");
 
     // Spawn and run
@@ -2090,7 +2060,7 @@ bool test_metrics_multiple_queries() {
     // Query again after run
     auto json2 = sched.metrics_json();
     CHECK(json2.find(R"("fibers_spawned": 1)") != std::string::npos ||
-          json2.find(R"("fibers_spawned")") != std::string::npos,
+              json2.find(R"("fibers_spawned")") != std::string::npos,
           "JSON after run has fibers_spawned key");
 
     // Both queries should differ (counters changed)
@@ -2120,16 +2090,13 @@ bool test_metrics_no_workers() {
 
     // Metrics with 1 worker should still produce valid JSON
     auto json = sched.metrics_json();
-    CHECK(json.find("workers") != std::string::npos,
-          "JSON has workers array with 1 worker");
-    CHECK(json.find("fibers_spawned") != std::string::npos,
-          "JSON has fibers_spawned");
+    CHECK(json.find("workers") != std::string::npos, "JSON has workers array with 1 worker");
+    CHECK(json.find("fibers_spawned") != std::string::npos, "JSON has fibers_spawned");
 
     // Check single worker metrics
     auto& m = sched.metrics();
     CHECK(m.num_workers() == 1, "exactly 1 worker in metrics");
-    CHECK(m.worker(0).fibers_executed.load() >= 1,
-          "worker 0 executed >= 1 fiber");
+    CHECK(m.worker(0).fibers_executed.load() >= 1, "worker 0 executed >= 1 fiber");
     CHECK(m.worker(0).steal_attempts.load() == 0,
           "single worker: 0 steal attempts (no one to steal from)");
 
@@ -2148,7 +2115,8 @@ bool test_metrics_consistency() {
     for (int i = 0; i < N; ++i) {
         sched.spawn([&completed]() {
             volatile int sum = 0;
-            for (int j = 0; j < 10000; ++j) sum += j;
+            for (int j = 0; j < 10000; ++j)
+                sum += j;
             completed.fetch_add(1);
             aura::serve::Fiber::yield();
         });
@@ -2168,11 +2136,9 @@ bool test_metrics_consistency() {
     auto completed_cnt = m.fibers_completed.load();
 
     CHECK(spawned >= static_cast<uint64_t>(N),
-          "spawned >= " + std::to_string(N) +
-          " (got " + std::to_string(spawned) + ")");
+          "spawned >= " + std::to_string(N) + " (got " + std::to_string(spawned) + ")");
     CHECK(completed_cnt >= static_cast<uint64_t>(N),
-          "completed >= " + std::to_string(N) +
-          " (got " + std::to_string(completed_cnt) + ")");
+          "completed >= " + std::to_string(N) + " (got " + std::to_string(completed_cnt) + ")");
 
     // Total executed across workers should match or exceed completed
     uint64_t total_exec = 0;
@@ -2185,21 +2151,20 @@ bool test_metrics_consistency() {
         total_exec += w.fibers_executed.load();
         total_steal_attempts += w.steal_attempts.load();
         total_steal_successes += w.steal_successes.load();
-        if (w.fibers_executed.load() > 0) ++workers_with_activity;
+        if (w.fibers_executed.load() > 0)
+            ++workers_with_activity;
     }
 
     CHECK(total_exec > 0, "some fibers were executed across workers");
     CHECK(workers_with_activity > 0,
-          std::to_string(workers_with_activity) +
-          " workers had activity (expected >= 1)");
+          std::to_string(workers_with_activity) + " workers had activity (expected >= 1)");
 
     // If steal attempts > 0, verify success rate makes sense
     if (total_steal_attempts > 0) {
         double rate = static_cast<double>(total_steal_successes) * 100.0 /
                       static_cast<double>(total_steal_attempts);
         CHECK(rate >= 0.0 && rate <= 100.0,
-              "steal success rate " +
-              std::to_string(rate) + "% in [0, 100]");
+              "steal success rate " + std::to_string(rate) + "% in [0, 100]");
     }
 
     // Verify at least some pushes/pops happened
@@ -2215,8 +2180,7 @@ bool test_metrics_consistency() {
     // Verify JSON is still valid
     auto json = sched.metrics_json();
     CHECK(!json.empty(), "JSON output non-empty after consistency run");
-    CHECK(json.find("fibers_spawned") != std::string::npos,
-          "JSON contains fibers_spawned");
+    CHECK(json.find("fibers_spawned") != std::string::npos, "JSON contains fibers_spawned");
 
     return true;
 }
@@ -2293,7 +2257,8 @@ bool test_incr_clear_dirty_preserves_cache() {
 
     sched.spawn([&done]() {
         volatile int sum = 0;
-        for (int j = 0; j < 10000; ++j) sum += j;
+        for (int j = 0; j < 10000; ++j)
+            sum += j;
         done.store(1);
     });
 
@@ -2307,8 +2272,7 @@ bool test_incr_clear_dirty_preserves_cache() {
     CHECK(done.load() == 1, "fiber completed");
 
     // After run, metrics should be non-zero (confirms scheduler ran)
-    CHECK(sched.metrics().fibers_spawned.load() > 0,
-          "metrics recorded after scheduler run");
+    CHECK(sched.metrics().fibers_spawned.load() > 0, "metrics recorded after scheduler run");
 
     return true;
 }
@@ -2325,7 +2289,8 @@ bool test_incr_repeated_spawn() {
 
         sched.spawn([&done]() {
             volatile int sum = 0;
-            for (int j = 0; j < 5000; ++j) sum += j;
+            for (int j = 0; j < 5000; ++j)
+                sum += j;
             done.store(1);
         });
 
@@ -2336,8 +2301,7 @@ bool test_incr_repeated_spawn() {
         sched.stop();
         t.join();
 
-        CHECK(done.load() == 1,
-              "cycle " + std::to_string(cycle) + " fiber completed");
+        CHECK(done.load() == 1, "cycle " + std::to_string(cycle) + " fiber completed");
     }
 
     return true;
@@ -2429,13 +2393,11 @@ int main() {
             try {
                 return fn();
             } catch (const std::exception& e) {
-                std::println(std::cerr,
-                    "  FLAKE-EXCEPTION: test threw std::exception: {}\n",
-                    e.what());
+                std::println(std::cerr, "  FLAKE-EXCEPTION: test threw std::exception: {}\n",
+                             e.what());
                 return false;
             } catch (...) {
-                std::println(std::cerr,
-                    "  FLAKE-EXCEPTION: test threw unknown exception\n");
+                std::println(std::cerr, "  FLAKE-EXCEPTION: test threw unknown exception\n");
                 return false;
             }
         };
@@ -2549,8 +2511,7 @@ int main() {
     run_test("test_gc_collect_hook", test_gc_collect_hook);
     run_test("test_gc_heap_mutex_hook", test_gc_heap_mutex_hook);
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
 
     return g_failed > 0 ? 1 : 0;
@@ -2568,13 +2529,16 @@ bool test_fiber_affinity() {
     std::atomic<int> worker_seen{-1};
 
     // Spawn a fiber pinned to worker 0
-    sched.spawn_with_affinity([&completed, &worker_seen]() {
-        // Record which worker we're running on
-        worker_seen.store(1);  // fiber always runs on worker 0
-        volatile int sum = 0;
-        for (int j = 0; j < 10000; ++j) sum += j;
-        completed.store(1);
-    }, 0);
+    sched.spawn_with_affinity(
+        [&completed, &worker_seen]() {
+            // Record which worker we're running on
+            worker_seen.store(1); // fiber always runs on worker 0
+            volatile int sum = 0;
+            for (int j = 0; j < 10000; ++j)
+                sum += j;
+            completed.store(1);
+        },
+        0);
 
     std::thread t([&sched]() { sched.run(); });
     // Issue: replaced fixed sleep_for with wait_for_atomic
@@ -2599,18 +2563,24 @@ bool test_steal_skips_pinned() {
     std::atomic<int> completed_b{0};
 
     // Fiber pinned to worker 0 — should always stay on worker 0
-    sched.spawn_with_affinity([&completed_a]() {
-        volatile int sum = 0;
-        for (int j = 0; j < 500000; ++j) sum += j;
-        completed_a.store(1);
-    }, 0);
+    sched.spawn_with_affinity(
+        [&completed_a]() {
+            volatile int sum = 0;
+            for (int j = 0; j < 500000; ++j)
+                sum += j;
+            completed_a.store(1);
+        },
+        0);
 
     // Fiber pinned to worker 1 — should always stay on worker 1
-    sched.spawn_with_affinity([&completed_b]() {
-        volatile int sum = 0;
-        for (int j = 0; j < 500000; ++j) sum += j;
-        completed_b.store(1);
-    }, 1);
+    sched.spawn_with_affinity(
+        [&completed_b]() {
+            volatile int sum = 0;
+            for (int j = 0; j < 500000; ++j)
+                sum += j;
+            completed_b.store(1);
+        },
+        1);
 
     std::thread t([&sched]() { sched.run(); });
     // Issue: replaced fixed sleep_for with wait_for_atomic
@@ -2647,7 +2617,8 @@ bool test_broadcast_primitive() {
     std::vector<std::string> sessions = {"a", "b", "c", "d", "e"};
     int sent = 0;
     for (auto& s : sessions) {
-        if (!s.empty()) ++sent;
+        if (!s.empty())
+            ++sent;
     }
     CHECK(sent == 5, "broadcast to 5 targets would send 5");
     return true;
@@ -2664,11 +2635,14 @@ bool test_scheduler_pin_primitive() {
     std::atomic<int> completed{0};
 
     // Pin a fiber to worker 2 using the C++ API
-    auto* fb = sched.spawn_with_affinity([&completed]() {
-        volatile int sum = 0;
-        for (int j = 0; j < 100000; ++j) sum += j;
-        completed.store(1);
-    }, 2);
+    auto* fb = sched.spawn_with_affinity(
+        [&completed]() {
+            volatile int sum = 0;
+            for (int j = 0; j < 100000; ++j)
+                sum += j;
+            completed.store(1);
+        },
+        2);
 
     CHECK(fb->affinity() == 2, "fiber pinned to worker 2");
 
@@ -2709,15 +2683,14 @@ bool test_gc_safepoint_all_stop() {
             }
             // After safepoint, do work
             volatile int64_t sum = 0;
-            for (int j = 0; j < 100000; ++j) sum += j;
+            for (int j = 0; j < 100000; ++j)
+                sum += j;
             fibers_done.fetch_add(1, std::memory_order_release);
         });
     }
 
     // Start workers first
-    std::thread t([&sched]() {
-        sched.run();
-    });
+    std::thread t([&sched]() { sched.run(); });
 
     // Give fibers time to start
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -2783,16 +2756,14 @@ bool test_gc_coordinator_basic() {
     CHECK(!triggered, "GC not triggered with 0 allocs");
 
     // Reduce threshold and pretend we did 100k allocs
-    gc->set_alloc_threshold(1);  // very low threshold
+    gc->set_alloc_threshold(1); // very low threshold
     gc->reset_alloc_counter();
-    gc->record_alloc();          // 1 alloc → should trigger
+    gc->record_alloc(); // 1 alloc → should trigger
     triggered = gc->request();
     CHECK(triggered, "GC triggered after crossing threshold");
 
     // Run scheduler briefly
-    std::thread t([&sched]() {
-        sched.run();
-    });
+    std::thread t([&sched]() { sched.run(); });
 
     // Give time for workers to start
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2825,7 +2796,8 @@ bool test_gc_multiple_cycles() {
         sched.spawn([&fc]() {
             for (int j = 0; j < 50; ++j) {
                 volatile int64_t s = 0;
-                for (int k = 0; k < 1000; ++k) s += k;
+                for (int k = 0; k < 1000; ++k)
+                    s += k;
                 aura::serve::Fiber::check_gc_safepoint();
                 aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
             }
@@ -2878,7 +2850,8 @@ bool test_gc_safepoint_stress() {
             for (int cycle = 0; cycle < 50; ++cycle) {
                 // Simulate work + alloc pattern
                 volatile int64_t sum = 0;
-                for (int j = 0; j < 1000; ++j) sum += j;
+                for (int j = 0; j < 1000; ++j)
+                    sum += j;
                 aura::serve::Fiber::check_gc_safepoint();
                 aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
             }
@@ -2925,7 +2898,8 @@ bool test_gc_metrics_sanity() {
         sched.spawn([&fc]() {
             for (int j = 0; j < 30; ++j) {
                 volatile int64_t s = 0;
-                for (int k = 0; k < 1000; ++k) s += k;
+                for (int k = 0; k < 1000; ++k)
+                    s += k;
                 aura::serve::Fiber::check_gc_safepoint();
                 aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
             }
@@ -2973,10 +2947,10 @@ bool test_gc_root_collection() {
 
     // Register a simulated evaluator root source
     gc->register_root_source(0, [](aura::serve::GCRootSet& out) {
-        out.string_roots.push_back(1);   // string "hello"
-        out.string_roots.push_back(2);   // string "world"
-        out.pair_roots.push_back(100);   // pair at index 100
-        out.closure_roots.push_back(50); // closure #50
+        out.string_roots.push_back(1);        // string "hello"
+        out.string_roots.push_back(2);        // string "world"
+        out.pair_roots.push_back(100);        // pair at index 100
+        out.closure_roots.push_back(50);      // closure #50
         out.fiber_result_roots.push_back(99); // fiber result
     });
 
@@ -2986,7 +2960,8 @@ bool test_gc_root_collection() {
         sched.spawn([&fc]() {
             for (int j = 0; j < 20; ++j) {
                 volatile int64_t s = 0;
-                for (int k = 0; k < 1000; ++k) s += k;
+                for (int k = 0; k < 1000; ++k)
+                    s += k;
                 aura::serve::Fiber::check_gc_safepoint();
                 aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
             }
@@ -3042,7 +3017,8 @@ bool test_gc_root_multiple_sources() {
         sched.spawn([&fc]() {
             for (int j = 0; j < 10; ++j) {
                 volatile int64_t s = 0;
-                for (int k = 0; k < 500; ++k) s += k;
+                for (int k = 0; k < 500; ++k)
+                    s += k;
                 aura::serve::Fiber::check_gc_safepoint();
                 aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
             }
@@ -3080,7 +3056,8 @@ bool test_gc_root_no_sources() {
     sched.spawn([&fc]() {
         for (int j = 0; j < 10; ++j) {
             volatile int64_t s = 0;
-            for (int k = 0; k < 500; ++k) s += k;
+            for (int k = 0; k < 500; ++k)
+                s += k;
             aura::serve::Fiber::check_gc_safepoint();
             aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
         }
@@ -3113,16 +3090,16 @@ bool test_gc_root_unregister_source() {
     aura::serve::Scheduler sched(2);
     auto* gc = sched.gc_collector();
 
-    gc->register_root_source(0, [](aura::serve::GCRootSet& out) {
-        out.string_roots.push_back(42);
-    });
-    gc->unregister_root_source(0);  // remove it
+    gc->register_root_source(0,
+                             [](aura::serve::GCRootSet& out) { out.string_roots.push_back(42); });
+    gc->unregister_root_source(0); // remove it
 
     std::atomic<int> fc{0};
     sched.spawn([&fc]() {
         for (int j = 0; j < 10; ++j) {
             volatile int64_t s = 0;
-            for (int k = 0; k < 500; ++k) s += k;
+            for (int k = 0; k < 500; ++k)
+                s += k;
             aura::serve::Fiber::check_gc_safepoint();
             aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
         }
@@ -3169,7 +3146,8 @@ bool test_gc_root_large_set() {
     sched.spawn([&fc]() {
         for (int j = 0; j < 10; ++j) {
             volatile int64_t s = 0;
-            for (int k = 0; k < 500; ++k) s += k;
+            for (int k = 0; k < 500; ++k)
+                s += k;
             aura::serve::Fiber::check_gc_safepoint();
             aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
         }
@@ -3313,15 +3291,13 @@ bool test_gc_safepoint_running_fiber() {
     // is still computing), and wait_for_safepoint returns false.
     // Robust on fast hardware because the fiber takes ~80ms+.
     bool arrived_early = sched.wait_for_safepoint(50);
-    CHECK(!arrived_early,
-          "wait_for_safepoint must NOT return while a fiber is still running");
+    CHECK(!arrived_early, "wait_for_safepoint must NOT return while a fiber is still running");
 
     // Now wait long enough for the fiber to finish (50M
     // iterations of the compute loop should complete in
     // ~100ms on typical hardware).
     bool arrived_late = sched.wait_for_safepoint(5000);
-    CHECK(arrived_late,
-          "wait_for_safepoint returns after the running fiber finishes");
+    CHECK(arrived_late, "wait_for_safepoint returns after the running fiber finishes");
 
     // Resume so the fiber can complete its yield and the
     // worker can clean up.
@@ -3443,7 +3419,8 @@ bool test_gc_sweep_all_live() {
     aura::serve::GCRootSet roots;
 
     // Mark every entry
-    for (int i = 0; i < 100; ++i) roots.string_roots.push_back(i);
+    for (int i = 0; i < 100; ++i)
+        roots.string_roots.push_back(i);
 
     gc.mark_from_roots(roots, 100, 0, 0);
 
@@ -3474,7 +3451,8 @@ bool test_gc_mark_sweep_integration() {
     sched.spawn([&fc]() {
         for (int j = 0; j < 5; ++j) {
             volatile int64_t s = 0;
-            for (int k = 0; k < 500; ++k) s += k;
+            for (int k = 0; k < 500; ++k)
+                s += k;
             aura::serve::Fiber::check_gc_safepoint();
             aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
         }
@@ -3517,22 +3495,23 @@ bool test_gc_sweep_callback_compact() {
 
     // Simulate an evaluator heap compaction callback
     std::vector<std::string> sim_heap = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"};
-    gc.register_sweep_fn([&sim_heap](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
-        aura::serve::GCSweepResult r;
+    gc.register_sweep_fn(
+        [&sim_heap](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
+            aura::serve::GCSweepResult r;
 
-        if (bufs.string_marks) {
-            size_t write = 0;
-            for (size_t i = 0; i < sim_heap.size(); ++i) {
-                if (bufs.string_marks->test(i)) {
-                    sim_heap[write++] = sim_heap[i];
-                } else {
-                    ++r.strings_freed;
+            if (bufs.string_marks) {
+                size_t write = 0;
+                for (size_t i = 0; i < sim_heap.size(); ++i) {
+                    if (bufs.string_marks->test(i)) {
+                        sim_heap[write++] = sim_heap[i];
+                    } else {
+                        ++r.strings_freed;
+                    }
                 }
+                sim_heap.resize(write);
             }
-            sim_heap.resize(write);
-        }
-        return r;
-    });
+            return r;
+        });
 
     auto result = gc.sweep();
 
@@ -3560,18 +3539,19 @@ bool test_gc_sweep_callback_all_live() {
     gc.mark_from_roots(roots, 10, 0, 0);
 
     std::vector<std::string> sim_heap = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"};
-    gc.register_sweep_fn([&sim_heap](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
-        aura::serve::GCSweepResult r;
-        size_t write = 0;
-        for (size_t i = 0; i < sim_heap.size(); ++i) {
-            if (bufs.string_marks->test(i))
-                sim_heap[write++] = sim_heap[i];
-            else
-                ++r.strings_freed;
-        }
-        sim_heap.resize(write);
-        return r;
-    });
+    gc.register_sweep_fn(
+        [&sim_heap](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
+            aura::serve::GCSweepResult r;
+            size_t write = 0;
+            for (size_t i = 0; i < sim_heap.size(); ++i) {
+                if (bufs.string_marks->test(i))
+                    sim_heap[write++] = sim_heap[i];
+                else
+                    ++r.strings_freed;
+            }
+            sim_heap.resize(write);
+            return r;
+        });
 
     auto result = gc.sweep();
     CHECK(result.strings_freed == 0, "0 freed when all live");
@@ -3592,18 +3572,19 @@ bool test_gc_sweep_callback_all_dead() {
     aura::serve::GCRootSet roots;
     gc.mark_from_roots(roots, 3, 0, 0);
 
-    gc.register_sweep_fn([&sim_heap](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
-        aura::serve::GCSweepResult r;
-        size_t write = 0;
-        for (size_t i = 0; i < sim_heap.size(); ++i) {
-            if (bufs.string_marks->test(i))
-                sim_heap[write++] = sim_heap[i];
-            else
-                ++r.strings_freed;
-        }
-        sim_heap.resize(write);
-        return r;
-    });
+    gc.register_sweep_fn(
+        [&sim_heap](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
+            aura::serve::GCSweepResult r;
+            size_t write = 0;
+            for (size_t i = 0; i < sim_heap.size(); ++i) {
+                if (bufs.string_marks->test(i))
+                    sim_heap[write++] = sim_heap[i];
+                else
+                    ++r.strings_freed;
+            }
+            sim_heap.resize(write);
+            return r;
+        });
 
     auto result = gc.sweep();
     CHECK(result.strings_freed == 3, "3 freed when all dead");
@@ -3622,7 +3603,10 @@ bool test_gc_sweep_callback_pairs() {
     // Simulate: pairs_ vector with (car,cdr) as int indices into string_heap_.
     // Indices 0,1 are live; index 2 is dead. After compact, index 2 is gone
     // and car/cdr references should be updated.
-    struct Pair { int64_t car; int64_t cdr; };
+    struct Pair {
+        int64_t car;
+        int64_t cdr;
+    };
     std::vector<Pair> sim_pairs = {{0, 1}, {1, 2}, {2, 0}};
 
     // Mark pairs 0 and 1 as live; pair 2 dead
@@ -3630,36 +3614,38 @@ bool test_gc_sweep_callback_pairs() {
     roots.pair_roots = {0, 1};
     gc.mark_from_roots(roots, 0, 3, 0);
 
-    gc.register_sweep_fn([&sim_pairs](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
-        aura::serve::GCSweepResult r;
-        if (!bufs.pair_marks) return r;
+    gc.register_sweep_fn(
+        [&sim_pairs](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
+            aura::serve::GCSweepResult r;
+            if (!bufs.pair_marks)
+                return r;
 
-        // Compact: remove dead pairs, build index remap
-        size_t write = 0;
-        std::vector<size_t> remap(sim_pairs.size(), SIZE_MAX);
-        for (size_t i = 0; i < sim_pairs.size(); ++i) {
-            if (bufs.pair_marks->test(i)) {
-                remap[i] = write;
-                sim_pairs[write++] = sim_pairs[i];
-            } else {
-                ++r.pairs_freed;
+            // Compact: remove dead pairs, build index remap
+            size_t write = 0;
+            std::vector<size_t> remap(sim_pairs.size(), SIZE_MAX);
+            for (size_t i = 0; i < sim_pairs.size(); ++i) {
+                if (bufs.pair_marks->test(i)) {
+                    remap[i] = write;
+                    sim_pairs[write++] = sim_pairs[i];
+                } else {
+                    ++r.pairs_freed;
+                }
             }
-        }
-        sim_pairs.resize(write);
+            sim_pairs.resize(write);
 
-        // Update references (car/cdr that point to dead pairs become 0)
-        for (auto& p : sim_pairs) {
-            if (p.car >= 0 && (size_t)p.car < remap.size() && remap[p.car] != SIZE_MAX)
-                p.car = static_cast<int64_t>(remap[p.car]);
-            else
-                p.car = 0;  // default to first pair
-            if (p.cdr >= 0 && (size_t)p.cdr < remap.size() && remap[p.cdr] != SIZE_MAX)
-                p.cdr = static_cast<int64_t>(remap[p.cdr]);
-            else
-                p.cdr = 0;
-        }
-        return r;
-    });
+            // Update references (car/cdr that point to dead pairs become 0)
+            for (auto& p : sim_pairs) {
+                if (p.car >= 0 && (size_t)p.car < remap.size() && remap[p.car] != SIZE_MAX)
+                    p.car = static_cast<int64_t>(remap[p.car]);
+                else
+                    p.car = 0; // default to first pair
+                if (p.cdr >= 0 && (size_t)p.cdr < remap.size() && remap[p.cdr] != SIZE_MAX)
+                    p.cdr = static_cast<int64_t>(remap[p.cdr]);
+                else
+                    p.cdr = 0;
+            }
+            return r;
+        });
 
     auto result = gc.sweep();
     CHECK(result.pairs_freed == 1, "1 pair freed");
@@ -3685,7 +3671,7 @@ bool test_gc_sweep_no_callback() {
     aura::serve::GCCollector gc(nullptr);
     aura::serve::GCRootSet roots;
     for (int i = 0; i < 5; ++i)
-        roots.string_roots.push_back(i * 2);  // indices 0,2,4,6,8
+        roots.string_roots.push_back(i * 2); // indices 0,2,4,6,8
 
     gc.mark_from_roots(roots, 10, 0, 0);
     auto result = gc.sweep();
@@ -3694,11 +3680,6 @@ bool test_gc_sweep_no_callback() {
     CHECK(result.pairs_freed == 0, "no pairs");
     return true;
 }
-
-
-
-
-
 
 
 bool test_gc_collect_hook() {
@@ -3710,7 +3691,8 @@ bool test_gc_collect_hook() {
     auto old_hook = aura::messaging::g_gc_collect;
     aura::messaging::g_gc_collect = [&sched, &gc_ran]() -> bool {
         auto* gc = sched.gc_collector();
-        if (!gc) return false;
+        if (!gc)
+            return false;
         gc->set_alloc_threshold(1);
         gc->reset_alloc_counter();
         gc->record_alloc();
@@ -3723,7 +3705,8 @@ bool test_gc_collect_hook() {
     sched.spawn([&fc]() {
         for (int j = 0; j < 10; ++j) {
             volatile int64_t s = 0;
-            for (int k = 0; k < 500; ++k) s += k;
+            for (int k = 0; k < 500; ++k)
+                s += k;
             aura::serve::Fiber::check_gc_safepoint();
             aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
         }
@@ -3769,4 +3752,3 @@ bool test_gc_heap_mutex_hook() {
     aura::messaging::g_heap_mutex = nullptr;
     return true;
 }
-

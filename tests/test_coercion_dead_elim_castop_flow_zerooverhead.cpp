@@ -23,15 +23,15 @@ import aura.compiler.service;
 
 namespace aura_611_detail {
 
-using aura::ir::IRFunction;
-using aura::ir::IRInstruction;
-using aura::ir::IRModule;
-using aura::ir::IROpcode;
 using aura::compiler::CompilerService;
 using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::TypeSpecializationWrap;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
+using aura::ir::IRFunction;
+using aura::ir::IRInstruction;
+using aura::ir::IRModule;
+using aura::ir::IROpcode;
 
 static std::size_t count_cast_ops(const IRModule& mod) {
     std::size_t n = 0;
@@ -138,8 +138,7 @@ static void test_dirty_block_incremental_dce_aos() {
     DeadCoercionEliminationPass dce;
     dce.run_function(func, dirty_mask);
 
-    CHECK(func.blocks[0].instructions[1].opcode == IROpcode::Local,
-          "dirty block 0 CastOp elided");
+    CHECK(func.blocks[0].instructions[1].opcode == IROpcode::Local, "dirty block 0 CastOp elided");
     CHECK(func.blocks[1].instructions[1].opcode == IROpcode::CastOp,
           "clean block 1 CastOp untouched");
     CHECK(dce.eliminated_count() == 1, "only 1 elision on dirty block");
@@ -174,8 +173,7 @@ static void test_gradual_mutate_semantic_and_metrics() {
           "dead_coercion_eliminated_total monotonic");
     CHECK(snap1.coercion_zerooverhead_win_total >= win0,
           "coercion_zerooverhead_win_total monotonic");
-    CHECK(snap1.coercion_castop_emitted_total >= cast0,
-          "coercion_castop_emitted_total monotonic");
+    CHECK(snap1.coercion_castop_emitted_total >= cast0, "coercion_castop_emitted_total monotonic");
 }
 
 static void test_coercion_zerooverhead_stats_primitive() {

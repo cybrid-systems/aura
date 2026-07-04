@@ -88,11 +88,9 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = dualpath_stale_stats(cs);
     const auto desync6a = cs.evaluator().get_envframe_desync_detected();
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("((lambda (n) (+ n 1)) " +
-                      std::to_string(round) + ")");
+        (void)cs.eval("((lambda (n) (+ n 1)) " + std::to_string(round) + ")");
     }
     const auto stats6b = dualpath_stale_stats(cs);
     std::println("  dualpath stale stats: {} -> {}", stats6a, stats6b);

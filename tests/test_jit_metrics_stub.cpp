@@ -7,9 +7,10 @@
 
 #include <cstdint>
 
-extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id,
-                                                std::int64_t* args,
-                                                std::int32_t argc) {
-    (void)prim_id; (void)args; (void)argc;
+extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args,
+                                               std::int32_t argc) {
+    (void)prim_id;
+    (void)args;
+    (void)argc;
     return 0;
 }

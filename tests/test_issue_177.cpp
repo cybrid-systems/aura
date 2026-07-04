@@ -31,8 +31,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import std;
 import aura.core;
@@ -43,9 +43,8 @@ import aura.compiler.value;
 import aura.compiler.ir;
 
 
-
 namespace aura_issue_177_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 // ── Test 1: type_id_ rollback end-to-end ────────────────
 //
@@ -72,11 +71,10 @@ bool test_type_id_rollback() {
 
     // Enter + exit(false) with a type mutation → rollback
     ev.enter_mutation_boundary();
-    flat.set_type(node, 3);  // String
-    flat.add_mutation_with_rollback(
-        node, "replace-type", "#1", "#3", "Int -> String",
-        aura::ast::MutationStatus::Committed,
-        /*field_offset=*/1, /*old=*/1, /*new=*/3, true);
+    flat.set_type(node, 3); // String
+    flat.add_mutation_with_rollback(node, "replace-type", "#1", "#3", "Int -> String",
+                                    aura::ast::MutationStatus::Committed,
+                                    /*field_offset=*/1, /*old=*/1, /*new=*/3, true);
     CHECK(flat.type_id(node) == 3, "type is String mid-boundary");
     ev.exit_mutation_boundary(false);
 
@@ -105,10 +103,9 @@ bool test_int_val_rollback() {
 
     ev.enter_mutation_boundary();
     flat.set_int(node, 99);
-    flat.add_mutation_with_rollback(
-        node, "tweak", "Int", "Int", "10 -> 99",
-        aura::ast::MutationStatus::Committed,
-        /*field_offset=*/0, /*old=*/10, /*new=*/99, true);
+    flat.add_mutation_with_rollback(node, "tweak", "Int", "Int", "10 -> 99",
+                                    aura::ast::MutationStatus::Committed,
+                                    /*field_offset=*/0, /*old=*/10, /*new=*/99, true);
     CHECK(flat.int_val(node) == 99, "mid-boundary value is 99");
     ev.exit_mutation_boundary(false);
 
@@ -123,22 +120,18 @@ bool test_int_val_rollback() {
 // is used. Depth goes 0 → 1 → 2 → 1 → 0 as we enter/exit.
 bool test_mutation_stack_depth() {
     PRINTLN("\n--- Test 3: mutation stack depth ---");
-    CHECK(aura::compiler::Evaluator::mutation_boundary_depth() == 0,
-          "depth starts at 0");
+    CHECK(aura::compiler::Evaluator::mutation_boundary_depth() == 0, "depth starts at 0");
 
     aura::compiler::Evaluator ev1, ev2;
     ev1.enter_mutation_boundary();
-    CHECK(aura::compiler::Evaluator::mutation_boundary_depth() == 1,
-          "depth = 1 after ev1.enter");
+    CHECK(aura::compiler::Evaluator::mutation_boundary_depth() == 1, "depth = 1 after ev1.enter");
     ev2.enter_mutation_boundary();
     CHECK(aura::compiler::Evaluator::mutation_boundary_depth() == 2,
           "depth = 2 after ev2.enter (shared main-thread stack)");
     ev2.exit_mutation_boundary(true);
-    CHECK(aura::compiler::Evaluator::mutation_boundary_depth() == 1,
-          "depth = 1 after ev2.exit");
+    CHECK(aura::compiler::Evaluator::mutation_boundary_depth() == 1, "depth = 1 after ev2.exit");
     ev1.exit_mutation_boundary(true);
-    CHECK(aura::compiler::Evaluator::mutation_boundary_depth() == 0,
-          "depth = 0 after ev1.exit");
+    CHECK(aura::compiler::Evaluator::mutation_boundary_depth() == 0, "depth = 0 after ev1.exit");
     return true;
 }
 
@@ -159,10 +152,9 @@ bool test_nested_boundaries() {
     ev.enter_mutation_boundary();
     ev.enter_mutation_boundary();
     flat.set_int(0, 99);
-    flat.add_mutation_with_rollback(
-        0, "inner", "Int", "Int", "0 -> 99",
-        aura::ast::MutationStatus::Committed, 0, 0, 99, true);
-    ev.exit_mutation_boundary(false);  // inner fails
+    flat.add_mutation_with_rollback(0, "inner", "Int", "Int", "0 -> 99",
+                                    aura::ast::MutationStatus::Committed, 0, 0, 99, true);
+    ev.exit_mutation_boundary(false); // inner fails
     // outer commits (the inner failure only rolled back the inner)
     ev.exit_mutation_boundary(true);
 
@@ -187,7 +179,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_177_detail
+} // namespace aura_issue_177_detail
 
-int aura_issue_177_run() { return aura_issue_177_detail::run_tests(); }
-
+int aura_issue_177_run() {
+    return aura_issue_177_detail::run_tests();
+}

@@ -25,8 +25,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core;
 import aura.core.ast;
 import aura.core.type;
@@ -35,9 +35,11 @@ import aura.compiler.type_checker;
 import aura.compiler.type_concepts;
 
 
-
 namespace aura_issue_162_detail {
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 // ── Test 1: concept TypeConstraint exists, both concrete types satisfy it
 //
@@ -50,7 +52,7 @@ bool test_concept_satisfaction() {
     aura::core::TypeRegistry reg;
     aura::diag::DiagnosticCollector diag;
     aura::compiler::ConstraintSystem cs(reg);
-    (void)cs;  // silence unused warning if CHECK doesn't reference
+    (void)cs; // silence unused warning if CHECK doesn't reference
 
     aura::compiler::EqualConstraint eq{};
     aura::compiler::ConsistentConstraint cn{};
@@ -78,9 +80,9 @@ bool test_solve_equal() {
     std::vector<aura::compiler::EqualConstraint> constraints;
     constraints.emplace_back(tv1, tv2);
 
-    auto r = aura::compiler::solve_constraints(cs, std::span<const aura::compiler::EqualConstraint>(constraints));
-    CHECK(r == aura::compiler::SolveResult::SOLVED,
-          "EqualConstraint tv1=tv2 solves cleanly");
+    auto r = aura::compiler::solve_constraints(
+        cs, std::span<const aura::compiler::EqualConstraint>(constraints));
+    CHECK(r == aura::compiler::SolveResult::SOLVED, "EqualConstraint tv1=tv2 solves cleanly");
     // After unification, both vars should normalize to the same rep
     CHECK(cs.find(tv1) == cs.find(tv2),
           "EqualConstraint makes tv1 and tv2 equivalent in Union-Find");
@@ -101,10 +103,11 @@ bool test_solve_consistent() {
     auto tv2 = cs.fresh_var();
 
     std::vector<aura::compiler::ConsistentConstraint> constraints;
-    constraints.emplace_back(int_t, tv1);  // Int ~ tv1 (consistent)
-    constraints.emplace_back(tv1, tv2);    // tv1 ~ tv2 (consistent)
+    constraints.emplace_back(int_t, tv1); // Int ~ tv1 (consistent)
+    constraints.emplace_back(tv1, tv2);   // tv1 ~ tv2 (consistent)
 
-    auto r = aura::compiler::solve_constraints(cs, std::span<const aura::compiler::ConsistentConstraint>(constraints));
+    auto r = aura::compiler::solve_constraints(
+        cs, std::span<const aura::compiler::ConsistentConstraint>(constraints));
     CHECK(r == aura::compiler::SolveResult::SOLVED,
           "ConsistentConstraint Int~tv1, tv1~tv2 solves cleanly");
     return true;
@@ -119,9 +122,10 @@ bool test_solve_empty() {
     PRINTLN("\n--- Test 4: solve_constraints on empty span ---");
     aura::core::TypeRegistry reg;
     aura::compiler::ConstraintSystem cs(reg);
-    std::vector<aura::compiler::EqualConstraint> constraints;  // empty
+    std::vector<aura::compiler::EqualConstraint> constraints; // empty
 
-    auto r = aura::compiler::solve_constraints(cs, std::span<const aura::compiler::EqualConstraint>(constraints));
+    auto r = aura::compiler::solve_constraints(
+        cs, std::span<const aura::compiler::EqualConstraint>(constraints));
     CHECK(r == aura::compiler::SolveResult::SOLVED,
           "solve_constraints on empty span returns SOLVED");
     return true;
@@ -133,7 +137,7 @@ bool test_solve_empty() {
 // satisfy TypeConstraint. We use std::is_same_v to check
 // the trait — false means the type fails the concept.
 struct NotAConstraint {
-    int x;  // no kind(), no unify(), no lhs()/rhs()
+    int x; // no kind(), no unify(), no lhs()/rhs()
 };
 
 bool test_concept_rejection() {
@@ -285,7 +289,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_162_detail
+} // namespace aura_issue_162_detail
 
-int aura_issue_162_run() { return aura_issue_162_detail::run_tests(); }
-
+int aura_issue_162_run() {
+    return aura_issue_162_detail::run_tests();
+}

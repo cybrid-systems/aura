@@ -29,8 +29,8 @@ import aura.compiler.value;
 namespace aura_422_detail {
 
 using aura::compiler::CompilerService;
-using aura::compiler::types::as_int;
 using aura::compiler::types::as_bool;
+using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
@@ -42,28 +42,24 @@ static std::int64_t hygiene_violation_stats(CompilerService& cs) {
     return as_int(*r);
 }
 
-static bool stamp_macro_introduced_define(CompilerService& cs,
-                                          std::int64_t& nid_out) {
+static bool stamp_macro_introduced_define(CompilerService& cs, std::int64_t& nid_out) {
     if (!cs.eval("(set-code \"(define myvar 42)\")"))
         return false;
     auto find_r = cs.eval("(car (query:find \"myvar\"))");
     if (!find_r || !is_int(*find_r))
         return false;
     nid_out = as_int(*find_r);
-    auto set_r = cs.eval("(syntax:set-marker " +
-                         std::to_string(nid_out) + " 1)");
+    auto set_r = cs.eval("(syntax:set-marker " + std::to_string(nid_out) + " 1)");
     if (!set_r || !is_bool(*set_r) || !as_bool(*set_r))
         return false;
-    auto prot = cs.eval("(hygiene:protected? " +
-                        std::to_string(nid_out) + ")");
+    auto prot = cs.eval("(hygiene:protected? " + std::to_string(nid_out) + ")");
     return prot && is_bool(*prot) && as_bool(*prot);
 }
 
 static bool is_hygiene_protected_error(CompilerService& cs) {
-    auto r = cs.eval(
-        "(let ((r (mutate:rebind \"myvar\" \"99\"))) "
-        "(if (and (pair? r) (string? (car r)) "
-        "         (string=? (car r) \"hygiene-protected\")) 1 0))");
+    auto r = cs.eval("(let ((r (mutate:rebind \"myvar\" \"99\"))) "
+                     "(if (and (pair? r) (string? (car r)) "
+                     "         (string=? (car r) \"hygiene-protected\")) 1 0))");
     return r && is_int(*r) && as_int(*r) == 1;
 }
 
@@ -75,15 +71,13 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: stamp MacroIntroduced define ---");
     std::int64_t nid = 0;
-    CHECK(stamp_macro_introduced_define(cs, nid),
-          "syntax:set-marker stamps protected define");
+    CHECK(stamp_macro_introduced_define(cs, nid), "syntax:set-marker stamps protected define");
 
     std::println("\n--- AC3: mutate:rebind bumps violation attempts ---");
     auto& ev = cs.evaluator();
     const auto stats3a = hygiene_violation_stats(cs);
     const auto attempts3a = ev.get_hygiene_violation_attempts();
-    CHECK(is_hygiene_protected_error(cs),
-          "mutate:rebind returns hygiene-protected error");
+    CHECK(is_hygiene_protected_error(cs), "mutate:rebind returns hygiene-protected error");
     const auto stats3b = hygiene_violation_stats(cs);
     const auto attempts3b = ev.get_hygiene_violation_attempts();
     std::println("  violation stats: {} -> {}", stats3a, stats3b);
@@ -92,17 +86,14 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats3b > stats3a, "hygiene-violation-stats grow");
 
     std::println("\n--- AC4: compile:snapshot hygiene key ---");
-    auto snap = cs.eval(
-        "(hash-ref (compile:snapshot) \"hygiene-violation-attempts\")");
+    auto snap = cs.eval("(hash-ref (compile:snapshot) \"hygiene-violation-attempts\")");
     CHECK(snap && is_int(*snap), "snapshot hygiene-violation-attempts");
     std::println("  snapshot attempts = {}", as_int(*snap));
-    CHECK(as_int(*snap) >= attempts3b,
-          "snapshot attempts >= live counter");
+    CHECK(as_int(*snap) >= attempts3b, "snapshot attempts >= live counter");
 
     std::println("\n--- AC5: ensure_hygiene_violation_detection ---");
     ev.ensure_hygiene_violation_detection();
-    CHECK(ev.get_hygiene_violation_attempts() > 0,
-          "attempts recorded after blocked mutate");
+    CHECK(ev.get_hygiene_violation_attempts() > 0, "attempts recorded after blocked mutate");
 
     std::println("\n--- AC6: multi-round blocked attempts ---");
     const auto stats6a = hygiene_violation_stats(cs);

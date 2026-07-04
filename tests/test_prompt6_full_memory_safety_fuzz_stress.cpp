@@ -64,7 +64,8 @@ static int k_concurrent_iters() {
 
 static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
     auto r = cs.eval(code);
-    if (!r || !aura::compiler::types::is_int(*r)) return -1;
+    if (!r || !aura::compiler::types::is_int(*r))
+        return -1;
     return static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
 }
 
@@ -118,14 +119,10 @@ bool test_combined_prompt6_stats_bundle() {
     CHECK(setup_closure_workspace(cs), "workspace for stats bundle");
     (void)cs.eval("(mutate:rebind \"base\" \"42\")");
     const char* stats[] = {
-        "(query:prompt6-violation-count)",
-        "(query:prompt6-safety-score)",
-        "(query:closure-env-safety-stats)",
-        "(query:envframe-dualpath-stats)",
-        "(query:gc-safepoint-stats)",
-        "(query:fiber-migration-stats)",
-        "(query:mutation-coordination-stats)",
-        "(query:self-evolution-stability-stats)",
+        "(query:prompt6-violation-count)",     "(query:prompt6-safety-score)",
+        "(query:closure-env-safety-stats)",    "(query:envframe-dualpath-stats)",
+        "(query:gc-safepoint-stats)",          "(query:fiber-migration-stats)",
+        "(query:mutation-coordination-stats)", "(query:self-evolution-stability-stats)",
     };
     for (const char* prim : stats) {
         auto r = cs.eval(prim);
@@ -149,8 +146,7 @@ bool test_closure_invalidate_bridge_epoch() {
     (void)cs.eval("(mutate:replace-value (define base 10) (define base 99))");
     const auto sr = cs.get_closure_stale_refresh_count();
     const auto v = violation_count(cs);
-    std::println("  bridge_hit: {} closure_refresh: {} violations: {}",
-                 bh0, sr, v);
+    std::println("  bridge_hit: {} closure_refresh: {} violations: {}", bh0, sr, v);
     CHECK(v == 0, "zero violations after closure + invalidate path");
     CHECK(sr >= 0, "closure_stale_refresh observable");
     return true;
@@ -163,13 +159,11 @@ bool test_envframe_dualpath_under_mutate() {
     CHECK(setup_closure_workspace(cs), "workspace for EnvFrame");
     const auto d0 = eval_int(cs, "(query:envframe-dualpath-stats)");
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-            std::to_string(i) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(i) + "\")");
     }
     const auto d1 = eval_int(cs, "(query:envframe-dualpath-stats)");
     const auto desync = cs.evaluator().get_envframe_desync_detected();
-    std::println("  envframe-dualpath-stats: {} -> {} desync: {}",
-                 d0, d1, desync);
+    std::println("  envframe-dualpath-stats: {} -> {} desync: {}", d0, d1, desync);
     CHECK(desync == 0, "zero envframe desync under mutate load");
     CHECK(d1 >= d0, "envframe-dualpath-stats monotonic");
     return true;
@@ -180,16 +174,12 @@ bool test_mutate_type_matrix() {
     std::println("\n--- AC6: mutate type matrix ---");
     CompilerService cs;
     CHECK(setup_closure_workspace(cs), "workspace for mutate matrix");
-    CHECK(cs.eval("(mutate:rebind \"base\" \"100\")").has_value(),
-          "mutate:rebind succeeds");
-    CHECK(cs.eval("(mutate:replace-value (define acc 0) (define acc 7))")
-              .has_value(),
+    CHECK(cs.eval("(mutate:rebind \"base\" \"100\")").has_value(), "mutate:rebind succeeds");
+    CHECK(cs.eval("(mutate:replace-value (define acc 0) (define acc 7))").has_value(),
           "mutate:replace-value succeeds");
-    CHECK(cs.eval("(set-code \"(define base 200) (define acc 8)\")")
-              .has_value(),
+    CHECK(cs.eval("(set-code \"(define base 200) (define acc 8)\")").has_value(),
           "set-code succeeds");
-    CHECK(cs.eval("(eval-current)").has_value(),
-          "eval-current after set-code succeeds");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current after set-code succeeds");
     const auto v = violation_count(cs);
     CHECK(v == 0, "zero violations after mutate type matrix");
     return true;
@@ -211,8 +201,7 @@ bool test_gc_heap_closure_integration() {
 
 // ── AC8: Fuzz — mutate/query/eval + panic injection ───────
 bool test_fuzz_mutate_query_panic() {
-    std::println("\n--- AC8: {} iters fuzz (mutate + query + panic) ---",
-                 k_fuzz_iters());
+    std::println("\n--- AC8: {} iters fuzz (mutate + query + panic) ---", k_fuzz_iters());
     CompilerService cs;
     CHECK(setup_closure_workspace(cs), "workspace for fuzz");
     std::mt19937 rng(602u);
@@ -222,40 +211,35 @@ bool test_fuzz_mutate_query_panic() {
     const auto v0 = violation_count(cs);
     for (int i = 0; i < k_fuzz_iters(); ++i) {
         switch (op_dist(rng)) {
-        case 0:
-            (void)cs.eval("(mutate:rebind \"base\" \"" +
-                std::to_string(val_dist(rng)) + "\")");
-            break;
-        case 1:
-            (void)cs.eval("(mutate:replace-value (define acc " +
-                std::to_string(val_dist(rng)) + ") (define acc " +
-                std::to_string(val_dist(rng)) + "))");
-            break;
-        case 2:
-            (void)cs.eval("(query:pattern \"base\")");
-            break;
-        case 3:
-            (void)cs.eval("(query:epoch-delta-since-last-query)");
-            break;
-        case 4:
-            (void)cs.eval("(gc-heap)");
-            break;
-        default: {
-            (void)cs.eval("(panic-checkpoint)");
-            (void)cs.eval("(mutate:replace-value (define acc " +
-                std::to_string(val_dist(rng)) + ") (define acc " +
-                std::to_string(val_dist(rng)) + "))");
-            auto rr = cs.eval("(panic-restore)");
-            ++panics;
-            CHECK(rr.has_value(),
-                  "panic-restore succeeds under fuzz panic injection");
-            break;
-        }
+            case 0:
+                (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(val_dist(rng)) + "\")");
+                break;
+            case 1:
+                (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(val_dist(rng)) +
+                              ") (define acc " + std::to_string(val_dist(rng)) + "))");
+                break;
+            case 2:
+                (void)cs.eval("(query:pattern \"base\")");
+                break;
+            case 3:
+                (void)cs.eval("(query:epoch-delta-since-last-query)");
+                break;
+            case 4:
+                (void)cs.eval("(gc-heap)");
+                break;
+            default: {
+                (void)cs.eval("(panic-checkpoint)");
+                (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(val_dist(rng)) +
+                              ") (define acc " + std::to_string(val_dist(rng)) + "))");
+                auto rr = cs.eval("(panic-restore)");
+                ++panics;
+                CHECK(rr.has_value(), "panic-restore succeeds under fuzz panic injection");
+                break;
+            }
         }
     }
     const auto v1 = violation_count(cs);
-    std::println("  panics: {} violations: {} -> {}",
-                 panics, v0, v1);
+    std::println("  panics: {} violations: {} -> {}", panics, v0, v1);
     CHECK(v1 == 0, "zero Prompt6 violations under fuzz");
     return true;
 }
@@ -277,12 +261,11 @@ bool test_eight_thread_concurrent_mutate_gc() {
             if ((i & 3) == 0) {
                 (void)cs.eval("(gc-heap)");
             } else if ((i & 3) == 1) {
-                (void)cs.eval("(mutate:rebind \"base\" \"" +
-                    std::to_string(tid * 1000 + i) + "\")");
+                (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(tid * 1000 + i) +
+                              "\")");
             } else {
-                (void)cs.eval("(mutate:replace-value (define acc " +
-                    std::to_string(i) + ") (define acc " +
-                    std::to_string(tid + i) + "))");
+                (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(i) +
+                              ") (define acc " + std::to_string(tid + i) + "))");
             }
             if (!cs.eval("(query:prompt6-violation-count)")) {
                 errors.fetch_add(1);
@@ -292,15 +275,17 @@ bool test_eight_thread_concurrent_mutate_gc() {
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
     const auto v = violation_count(cs);
-    std::println("  completed: {}/{} errors: {} violations: {} ms: {}",
-                 completed.load(), n_threads * n_iters, errors.load(), v, ms);
-    CHECK(completed.load() == n_threads * n_iters,
-          "all concurrent ops completed (no deadlock)");
+    std::println("  completed: {}/{} errors: {} violations: {} ms: {}", completed.load(),
+                 n_threads * n_iters, errors.load(), v, ms);
+    CHECK(completed.load() == n_threads * n_iters, "all concurrent ops completed (no deadlock)");
     CHECK(errors.load() == 0, "no eval errors under concurrent load");
     CHECK(v == 0, "zero Prompt6 violations under concurrent mutate+GC");
     CHECK(ms < 120000, "completed within 120s wall-clock budget");
@@ -325,8 +310,9 @@ bool test_fiber_yield_steal_safety() {
     std::thread io_thread([&sched]() { sched.run(); });
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_fibers) {
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - t0).count() > 30000) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                  t0)
+                .count() > 30000) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -334,15 +320,13 @@ bool test_fiber_yield_steal_safety() {
     sched.stop();
     io_thread.join();
     std::println("  fibers done: {}/{}", done.load(), k_fibers);
-    CHECK(done.load() == k_fibers,
-          "all fibers completed MutationBoundary yields (no stall)");
+    CHECK(done.load() == k_fibers, "all fibers completed MutationBoundary yields (no stall)");
     return true;
 }
 
 // ── AC11: Long-running stress ─────────────────────────────
 bool test_long_running_memory_safety_stress() {
-    std::println("\n--- AC11: {} iters long-running stress ---",
-                 k_stress_iters());
+    std::println("\n--- AC11: {} iters long-running stress ---", k_stress_iters());
     CompilerService cs;
     CHECK(setup_closure_workspace(cs), "workspace for stress");
     const auto s0 = eval_int(cs, "(query:prompt6-safety-score)");
@@ -350,14 +334,13 @@ bool test_long_running_memory_safety_stress() {
     std::uniform_int_distribution<int> val_dist(0, 500);
     for (int i = 0; i < k_stress_iters(); ++i) {
         if ((i & 1) == 0) {
-            (void)cs.eval("(mutate:rebind \"base\" \"" +
-                std::to_string(val_dist(rng)) + "\")");
+            (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(val_dist(rng)) + "\")");
         } else {
-            (void)cs.eval("(mutate:replace-value (define acc " +
-                std::to_string(val_dist(rng)) + ") (define acc " +
-                std::to_string(val_dist(rng)) + "))");
+            (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(val_dist(rng)) +
+                          ") (define acc " + std::to_string(val_dist(rng)) + "))");
         }
-        if ((i & 31) == 0) (void)cs.eval("(gc-heap)");
+        if ((i & 31) == 0)
+            (void)cs.eval("(gc-heap)");
     }
     const auto s1 = eval_int(cs, "(query:prompt6-safety-score)");
     const auto v = violation_count(cs);
@@ -420,8 +403,12 @@ int run_tests() {
 
 } // namespace aura_issue_602_detail
 
-int aura_issue_602_run() { return aura_issue_602_detail::run_tests(); }
+int aura_issue_602_run() {
+    return aura_issue_602_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_602_run(); }
+int main() {
+    return aura_issue_602_run();
+}
 #endif

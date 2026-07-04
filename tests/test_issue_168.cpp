@@ -19,8 +19,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;
@@ -28,9 +28,11 @@ import aura.diag;
 import aura.compiler.type_checker;
 
 
-
 namespace aura_issue_168_detail {
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 // ── Test 1: TypeChecker accepts set_cache_epoch + exposes counter ──
 bool test_set_cache_epoch() {
@@ -111,7 +113,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_168_detail
+} // namespace aura_issue_168_detail
 
-int aura_issue_168_run() { return aura_issue_168_detail::run_tests(); }
-
+int aura_issue_168_run() {
+    return aura_issue_168_detail::run_tests();
+}

@@ -7,8 +7,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -80,8 +80,7 @@ bool test_emit_typedef() {
         return false;
     }
     auto s = run_string(cs, "(eda:emit-typedef t)");
-    CHECK(s == "typedef logic [8-1:0] byte_t;",
-          std::string("typedef emit = \"") + s + "\"");
+    CHECK(s == "typedef logic [8-1:0] byte_t;", std::string("typedef emit = \"") + s + "\"");
 
     // Single-bit typedef (no [..])
     if (!cs.eval("(define t1 (make-eda:typedef 'flag 1))")) {
@@ -89,8 +88,7 @@ bool test_emit_typedef() {
         return false;
     }
     auto s1 = run_string(cs, "(eda:emit-typedef t1)");
-    CHECK(s1 == "typedef logic flag;",
-          std::string("1-bit typedef emit = \"") + s1 + "\"");
+    CHECK(s1 == "typedef logic flag;", std::string("1-bit typedef emit = \"") + s1 + "\"");
 
     return true;
 }
@@ -164,8 +162,7 @@ bool test_struct_constructor_and_emit() {
     bool has_data = (emit_s.find("data") != std::string::npos);
     bool has_valid = (emit_s.find("valid") != std::string::npos);
     bool has_packet_t = (emit_s.find("packet_t;") != std::string::npos);
-    CHECK(has_addr && has_data && has_valid,
-          "struct emit lists all 3 field names");
+    CHECK(has_addr && has_data && has_valid, "struct emit lists all 3 field names");
     CHECK(has_packet_t, "struct emit ends with 'packet_t;'");
 
     return true;
@@ -213,8 +210,7 @@ bool test_package_and_import() {
     CHECK(is_imp == 1, "(eda:import? imp) returns #t");
 
     auto is_emitted = run_string(cs, "(eda:emit-import imp)");
-    CHECK(is_emitted == "import my_pkg::*;",
-          std::string("import emit = \"") + is_emitted + "\"");
+    CHECK(is_emitted == "import my_pkg::*;", std::string("import emit = \"") + is_emitted + "\"");
 
     return true;
 }
@@ -333,8 +329,12 @@ int run_tests() {
 
 } // namespace aura_issue_436_phase5_detail
 
-int aura_issue_436_phase5_run() { return aura_issue_436_phase5_detail::run_tests(); }
+int aura_issue_436_phase5_run() {
+    return aura_issue_436_phase5_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_436_phase5_run(); }
+int main() {
+    return aura_issue_436_phase5_run();
+}
 #endif

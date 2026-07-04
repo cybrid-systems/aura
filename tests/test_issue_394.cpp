@@ -60,8 +60,7 @@ bool test_atomic_batch_stats_hash_ref() {
     }
 
     for (const char* key :
-         {"batch-count", "ops-total", "rollback-count", "ops-per-batch",
-          "bumps-saved-total"}) {
+         {"batch-count", "ops-total", "rollback-count", "ops-per-batch", "bumps-saved-total"}) {
         std::string q = std::string("(hash-ref (atomic-batch:stats) \"") + key + "\")";
         auto v = cs.eval(q);
         if (!v || !aura::compiler::types::is_int(*v)) {
@@ -86,12 +85,11 @@ bool test_bumps_saved_after_batch() {
     const auto before = eval_int(cs, "(hash-ref (atomic-batch:stats) \"bumps-saved-total\")");
     CHECK(before >= 0, "bumps-saved-total readable before batch");
 
-    std::string batch =
-        "(mutate:atomic-batch (list "
-        "  (list \"mutate:rebind\" \"x\" \"10\" \"a\") "
-        "  (list \"mutate:rebind\" \"x\" \"20\" \"b\") "
-        "  (list \"mutate:rebind\" \"x\" \"30\" \"c\") "
-        ") \"three rebinds\")";
+    std::string batch = "(mutate:atomic-batch (list "
+                        "  (list \"mutate:rebind\" \"x\" \"10\" \"a\") "
+                        "  (list \"mutate:rebind\" \"x\" \"20\" \"b\") "
+                        "  (list \"mutate:rebind\" \"x\" \"30\" \"c\") "
+                        ") \"three rebinds\")";
     auto br = cs.eval(batch);
     CHECK(br.has_value() && aura::compiler::types::is_bool(*br) &&
               aura::compiler::types::as_bool(*br),
@@ -181,15 +179,13 @@ bool test_concurrent_generation_no_torn_reads() {
     for (auto g : gens) {
         if (g != g0 && g != g1) {
             only_pre_or_post = false;
-            std::println("  observed intermediate generation {} (expected {} or {})",
-                         g, g0, g1);
+            std::println("  observed intermediate generation {} (expected {} or {})", g, g0, g1);
             break;
         }
     }
     std::println("  sampled {} generation reads", gens.size());
     CHECK(!gens.empty(), "reader thread sampled generation during batch");
-    CHECK(only_pre_or_post,
-          "concurrent readers saw pre-batch or post-batch generation only");
+    CHECK(only_pre_or_post, "concurrent readers saw pre-batch or post-batch generation only");
     return true;
 }
 
@@ -266,8 +262,7 @@ bool test_scheduler_fibers_during_batch() {
     io_thread.join();
 
     std::println("  fibers completed: {}/{}", fiber_done.load(), k_fibers);
-    CHECK(fiber_done.load() == k_fibers,
-          "scheduler fibers completed while atomic batch ran");
+    CHECK(fiber_done.load() == k_fibers, "scheduler fibers completed while atomic batch ran");
     return true;
 }
 
@@ -282,10 +277,14 @@ int run_tests() {
     return RUN_ALL_TESTS();
 }
 
-}  // namespace aura_issue_394_detail
+} // namespace aura_issue_394_detail
 
-int aura_issue_394_run() { return aura_issue_394_detail::run_tests(); }
+int aura_issue_394_run() {
+    return aura_issue_394_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_394_run(); }
+int main() {
+    return aura_issue_394_run();
+}
 #endif

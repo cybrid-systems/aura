@@ -49,8 +49,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -60,10 +60,9 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_190_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -102,7 +101,7 @@ bool test_clone_macro_body_marker_param() {
     // get MacroIntroduced.
     aura::compiler::CompilerService cs;
     auto v = run_on(cs, "(syntax-marker-counts)");
-    if (v.val == 11) {  // void sentinel (acceptable: hash build can overflow 8-slot probing)
+    if (v.val == 11) { // void sentinel (acceptable: hash build can overflow 8-slot probing)
         std::println("  PASS: (syntax-marker-counts) is registered (void is acceptable)");
         ++g_passed;
     } else {
@@ -124,11 +123,10 @@ bool test_closure_body_marker_is_user() {
     // marked as User. We verify by checking the marker counts
     // before and after a closure-defining expression.
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs,
-        "(begin "
-        "  (define (square x) (* x x)) "
-        "  (define y (square 5)) "
-        "  (syntax-marker-counts))");
+    auto v = run_on(cs, "(begin "
+                        "  (define (square x) (* x x)) "
+                        "  (define y (square 5)) "
+                        "  (syntax-marker-counts))");
     if (v.val == 11) {
         std::println("  PASS: closure body marker is User (hash build overflow is acceptable)");
         ++g_passed;
@@ -150,10 +148,9 @@ bool test_macro_expansion_marker_set() {
     // from Aura, but we can verify the macro expansion path
     // doesn't crash and produces correct results.
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(begin "
-        "  (define-hygienic-macro (sqr x) (* x x)) "
-        "  (sqr 5))");
+    int64_t r = run_int(cs, "(begin "
+                            "  (define-hygienic-macro (sqr x) (* x x)) "
+                            "  (sqr 5))");
     CHECK(r == 25, "macro expansion produces correct result");
     return true;
 }
@@ -161,11 +158,10 @@ bool test_macro_expansion_marker_set() {
 bool test_nested_macro_expansion_marker() {
     std::println("\n--- Test 3.2: nested macro expansion works ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(begin "
-        "  (define-hygienic-macro (double x) (+ x x)) "
-        "  (define-hygienic-macro (quad x) (double (double x))) "
-        "  (quad 3))");
+    int64_t r = run_int(cs, "(begin "
+                            "  (define-hygienic-macro (double x) (+ x x)) "
+                            "  (define-hygienic-macro (quad x) (double (double x))) "
+                            "  (quad 3))");
     CHECK(r == 12, "nested macro: (quad 3) = 12");
     return true;
 }
@@ -194,7 +190,7 @@ bool test_syntax_marker_counts_primitive() {
     std::println("\n--- Test 4.3: (syntax-marker-counts) primitive ---");
     aura::compiler::CompilerService cs;
     auto v = run_on(cs, "(syntax-marker-counts)");
-    if (v.val == 11) {  // void sentinel (acceptable: hash build can overflow 8-slot probing)
+    if (v.val == 11) { // void sentinel (acceptable: hash build can overflow 8-slot probing)
         std::println("  PASS: (syntax-marker-counts) is registered (void is acceptable)");
         ++g_passed;
     } else {
@@ -216,12 +212,11 @@ bool test_macro_then_mutate() {
     // Verifies that the mutation primitive doesn't corrupt
     // macro state.
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(begin "
-        "  (define (base n) (* n 2)) "
-        "  (define-hygienic-macro (triple x) (* x 3)) "
-        "  (mutate:rebind \"base\" \"(lambda (n) (* n 4))\" \"test\") "
-        "  (triple 5))");
+    int64_t r = run_int(cs, "(begin "
+                            "  (define (base n) (* n 2)) "
+                            "  (define-hygienic-macro (triple x) (* x 3)) "
+                            "  (mutate:rebind \"base\" \"(lambda (n) (* n 4))\" \"test\") "
+                            "  (triple 5))");
     // (triple 5) = 15 — verify the macro still works after
     // the rebind of an unrelated function.
     CHECK(r == 15, "macro still works after rebind of unrelated fn: (triple 5) = 15");
@@ -235,13 +230,12 @@ bool test_macro_then_mutate() {
 bool test_marker_counts_after_macro() {
     std::println("\n--- Test 6.1: marker counts include macro-introduced ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs,
-        "(begin "
-        "  (define-hygienic-macro (incr x) (+ x 1)) "
-        "  (define a 1) "
-        "  (define b (incr a)) "
-        "  (define c (incr b)) "
-        "  (syntax-marker-counts))");
+    auto v = run_on(cs, "(begin "
+                        "  (define-hygienic-macro (incr x) (+ x 1)) "
+                        "  (define a 1) "
+                        "  (define b (incr a)) "
+                        "  (define c (incr b)) "
+                        "  (syntax-marker-counts))");
     if (v.val == 11) {
         std::println("  PASS: marker counts hash build is registered (void is acceptable)");
         ++g_passed;
@@ -261,12 +255,11 @@ bool test_fuzzer_many_macros() {
     // Use a simple single-pass macro (no nested calls) so the
     // expansion completes within the 10-pass limit.
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(begin "
-        "  (define-hygienic-macro (m1 x) (+ x 1)) "
-        "  (define-hygienic-macro (m2 x) (* x 2)) "
-        "  (define-hygienic-macro (m3 x) (* (m1 x) (m2 x))) "
-        "  (m3 5))");
+    int64_t r = run_int(cs, "(begin "
+                            "  (define-hygienic-macro (m1 x) (+ x 1)) "
+                            "  (define-hygienic-macro (m2 x) (* x 2)) "
+                            "  (define-hygienic-macro (m3 x) (* (m1 x) (m2 x))) "
+                            "  (m3 5))");
     // m3 5 = (* (m1 5) (m2 5)) = (* 6 10) = 60
     CHECK(r == 60, "fuzzer: (m3 5) = 60");
     return true;
@@ -305,7 +298,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_190_detail
+} // namespace aura_issue_190_detail
 
-int aura_issue_190_run() { return aura_issue_190_detail::run_tests(); }
-
+int aura_issue_190_run() {
+    return aura_issue_190_detail::run_tests();
+}

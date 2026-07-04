@@ -5,8 +5,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -40,8 +40,7 @@ bool test_mark_dirty_upward_until() {
     auto mid = flat.add_let(0, leaf, leaf);
     auto root = flat.add_begin({mid});
     flat.mark_dirty_upward_until(leaf, aura::ast::FlatAST::kStructDirty, mid);
-    CHECK(flat.is_dirty_for(leaf, aura::ast::FlatAST::kStructDirty),
-          "leaf marked struct-dirty");
+    CHECK(flat.is_dirty_for(leaf, aura::ast::FlatAST::kStructDirty), "leaf marked struct-dirty");
     CHECK(!flat.is_dirty_for(mid, aura::ast::FlatAST::kStructDirty),
           "stop_at node (mid) not marked");
     CHECK(!flat.is_dirty_for(root, aura::ast::FlatAST::kStructDirty),
@@ -57,8 +56,7 @@ bool test_mark_dirty_defuse_entries() {
     auto parent = flat.add_let(0, leaf, leaf);
     std::vector<aura::ast::NodeId> entries{leaf};
     flat.mark_dirty_defuse_entries(entries, aura::ast::FlatAST::kGeneralDirty);
-    CHECK(flat.is_dirty_for(leaf, aura::ast::FlatAST::kDefUseDirty),
-          "entry has kDefUseDirty");
+    CHECK(flat.is_dirty_for(leaf, aura::ast::FlatAST::kDefUseDirty), "entry has kDefUseDirty");
     CHECK(flat.is_dirty_for(parent, aura::ast::FlatAST::kDefUseDirty),
           "ancestor has kDefUseDirty propagated");
     return true;
@@ -112,10 +110,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
+} // namespace aura_issue_262_detail
+
+int aura_issue_262_run() {
+    return aura_issue_262_detail::run_tests();
 }
 
-int aura_issue_262_run() { return aura_issue_262_detail::run_tests(); }
-
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_262_run(); }
+int main() {
+    return aura_issue_262_run();
+}
 #endif

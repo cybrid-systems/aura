@@ -61,7 +61,8 @@ public:
     PrimFn() = default;
 
     template <class F>
-    PrimFn(F&& fn) : fn_(std::forward<F>(fn)) {}
+    PrimFn(F&& fn)
+        : fn_(std::forward<F>(fn)) {}
 
     EvalValue operator()(std::span<const EvalValue> args) const { return fn_(args); }
 
@@ -75,21 +76,19 @@ public:
 // Issue #480: lightweight metadata for self-describing primitives.
 // Issue #697: category + schema/contracts for AI Agent extension kit.
 export struct PrimMeta {
-    std::uint8_t arity = 255;  // 255 = variadic
+    std::uint8_t arity = 255; // 255 = variadic
     bool pure = true;
-    std::uint8_t safety_flags = 0;  // 0x01=mutates, 0x02=io, 0x04=fiber
+    std::uint8_t safety_flags = 0; // 0x01=mutates, 0x02=io, 0x04=fiber
     std::string doc;
-    std::string category;  // eda | sva | verification | general
-    std::string schema;    // e.g. "(int string) -> bool"
+    std::string category; // eda | sva | verification | general
+    std::string schema;   // e.g. "(int string) -> bool"
 };
 
 export class Primitives {
 public:
     Primitives();
     std::optional<PrimFn> lookup(const std::string& n) const pre(!n.empty());
-    void add(const std::string& name, PrimFn fn) {
-        add(name, std::move(fn), PrimMeta{});
-    }
+    void add(const std::string& name, PrimFn fn) { add(name, std::move(fn), PrimMeta{}); }
     void add(const std::string& name, PrimFn fn, PrimMeta meta) {
         table_[name] = std::move(fn);
         ordered_names_.push_back(name);
@@ -103,9 +102,7 @@ public:
     std::size_t slot_for_name(const std::string& name) const;
     std::size_t slot_count() const { return ordered_names_.size(); }
     // Issue #480: metadata accessors for primitive:describe.
-    [[nodiscard]] const PrimMeta& meta_for_slot(std::size_t slot) const {
-        return meta_[slot];
-    }
+    [[nodiscard]] const PrimMeta& meta_for_slot(std::size_t slot) const { return meta_[slot]; }
     [[nodiscard]] std::size_t documented_meta_count() const noexcept {
         std::size_t n = 0;
         for (const auto& m : meta_)
@@ -547,121 +544,131 @@ export using EvalResult = aura::diag::Result<types::EvalValue>;
 // Issue #478: unified primitive error construction for evaluator_primitives_*.
 namespace primitives_detail {
 
-export inline types::EvalValue make_primitive_error(
-    std::pmr::vector<std::string>& string_heap, std::vector<types::EvalValue>& error_values,
-    std::string_view msg, std::atomic<std::uint64_t>* error_counter = nullptr) {
-    auto sidx = string_heap.size();
-    string_heap.emplace_back(msg);
-    auto eidx = error_values.size();
-    error_values.push_back(types::make_string(sidx));
-    if (error_counter)
-        error_counter->fetch_add(1, std::memory_order_relaxed);
-    return types::make_error(eidx);
-}
+    export inline types::EvalValue
+    make_primitive_error(std::pmr::vector<std::string>& string_heap,
+                         std::vector<types::EvalValue>& error_values, std::string_view msg,
+                         std::atomic<std::uint64_t>* error_counter = nullptr) {
+        auto sidx = string_heap.size();
+        string_heap.emplace_back(msg);
+        auto eidx = error_values.size();
+        error_values.push_back(types::make_string(sidx));
+        if (error_counter)
+            error_counter->fetch_add(1, std::memory_order_relaxed);
+        return types::make_error(eidx);
+    }
 
-// P2: single forward-decl hub for all primitives_detail::register_* TU entry points.
-void register_type_and_char_primitives(std::function<void(std::string, PrimFn)> add);
-void register_pair_and_string_primitives(std::function<void(std::string, PrimFn)> add,
-                                         std::pmr::vector<Pair>& pairs,
-                                         std::pmr::vector<std::string>& string_heap,
-                                         std::vector<EvalValue>& error_values,
-                                         std::atomic<std::uint64_t>* primitive_error_counter);
-void register_json_primitives(std::function<void(std::string, PrimFn)> add,
-                              std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap);
-void register_list_primitives(std::function<void(std::string, PrimFn)> add,
-                              std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
-                              std::vector<EvalValue>& error_values, Evaluator& ev);
-void register_vector_and_hash_primitives(
-    std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
-    std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
-    std::vector<std::vector<EvalValue>>& vector_heap,
-    std::atomic<std::uint64_t>* primitive_error_counter);
-void register_math_regex_and_arithmetic_primitives(
-    std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
-    std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
-    std::atomic<std::uint64_t>* primitive_error_counter);
-void register_reflect_and_type_primitives(
-    std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
-    std::pmr::vector<std::string>& string_heap, std::vector<std::string>& keyword_table,
-    void*& type_registry);
-void register_query_primitives(std::function<void(std::string, PrimFn)> add,
-                               std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
-                               void*& type_registry,
-                               std::function<std::string(const std::string&)> resolve_module_path,
-                               Evaluator& ev);
-void register_workspace_query_primitives(
-    std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
-    aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool, void*& type_registry,
-    std::vector<std::string>& keyword_table, std::pmr::vector<Pair>& pairs,
-    std::pmr::vector<std::string>& string_heap, aura::ast::ASTArena*& temp_arena,
-    std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
-    // Issue #371: shared_mutex protecting `tag_arity_index`.
-    // query:pattern fast path takes a shared_lock around the
-    // `find` + bucket-iterate. Build/sync/invalidate helpers
-    // take unique_lock internally; readers must drop their
-    // shared_lock before triggering a build (see comment at
-    // the query:pattern fast-path site for the trade-off).
-    std::shared_mutex& tag_arity_index_mtx,
-    std::function<aura::ast::StringPool*()> canonical_pool, std::function<void()> build_tag_arity_index,
-    std::function<EvalValue(const std::string&, const std::string&)> mev, Evaluator& ev);
-void register_defuse_query_primitives(
-    std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
-    aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
-    std::pmr::vector<std::string>& string_heap, std::function<void*()> ensure_defuse,
-    std::function<EvalValue(void* idx, aura::ast::SymId sym)> def_use_for_sym,
-    std::function<EvalValue(void* idx, aura::ast::NodeId node)> reaches_for_node,
-    std::function<EvalValue(void* idx, aura::ast::SymId sym)> effects_for_sym,
-    std::function<EvalValue(void* idx)> build_index, std::function<EvalValue(void* idx)> index_stats,
-    std::function<EvalValue(const std::string&, const std::string&)> make_merr);
-void register_mutate_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-                                std::function<EvalValue(const std::string&, const std::string&)> mev,
-                                std::function<void()> destroy_defuse_index);
-void register_workspace_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-                                   std::function<void()> destroy_defuse_index);
-void register_ast_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-                             std::function<void()> destroy_defuse_index,
-                             std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t,
-                                                                     std::uint64_t>>()>
-                                 defuse_summary_stats);
-void register_compile_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_eval_observability_primitives(std::function<void(std::string, PrimFn)> add,
-                                            Evaluator& ev);
-void register_verify_tool_primitives(
-    std::function<void(std::string,
-                       std::function<aura::compiler::types::EvalValue(
-                           std::span<const aura::compiler::types::EvalValue>)>)> add,
-    Evaluator& ev,
-    std::function<aura::compiler::types::EvalValue(std::int32_t)> make_string,
-    std::function<aura::compiler::types::EvalValue(std::int64_t)> make_int,
-    std::function<aura::compiler::types::EvalValue(
-        const std::string&, const std::string&)> mev);
-void register_jit_arena_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_messaging_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_git_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_network_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_auto_evolve_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_synthesize_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+    // P2: single forward-decl hub for all primitives_detail::register_* TU entry points.
+    void register_type_and_char_primitives(std::function<void(std::string, PrimFn)> add);
+    void register_pair_and_string_primitives(std::function<void(std::string, PrimFn)> add,
+                                             std::pmr::vector<Pair>& pairs,
+                                             std::pmr::vector<std::string>& string_heap,
+                                             std::vector<EvalValue>& error_values,
+                                             std::atomic<std::uint64_t>* primitive_error_counter);
+    void register_json_primitives(std::function<void(std::string, PrimFn)> add,
+                                  std::pmr::vector<Pair>& pairs,
+                                  std::pmr::vector<std::string>& string_heap);
+    void register_list_primitives(std::function<void(std::string, PrimFn)> add,
+                                  std::pmr::vector<Pair>& pairs,
+                                  std::pmr::vector<std::string>& string_heap,
+                                  std::vector<EvalValue>& error_values, Evaluator& ev);
+    void register_vector_and_hash_primitives(std::function<void(std::string, PrimFn)> add,
+                                             std::pmr::vector<Pair>& pairs,
+                                             std::pmr::vector<std::string>& string_heap,
+                                             std::vector<EvalValue>& error_values,
+                                             std::vector<std::vector<EvalValue>>& vector_heap,
+                                             std::atomic<std::uint64_t>* primitive_error_counter);
+    void register_math_regex_and_arithmetic_primitives(
+        std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
+        std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
+        std::atomic<std::uint64_t>* primitive_error_counter);
+    void register_reflect_and_type_primitives(std::function<void(std::string, PrimFn)> add,
+                                              std::pmr::vector<Pair>& pairs,
+                                              std::pmr::vector<std::string>& string_heap,
+                                              std::vector<std::string>& keyword_table,
+                                              void*& type_registry);
+    void register_query_primitives(
+        std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
+        std::pmr::vector<std::string>& string_heap, void*& type_registry,
+        std::function<std::string(const std::string&)> resolve_module_path, Evaluator& ev);
+    void register_workspace_query_primitives(
+        std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
+        aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
+        void*& type_registry, std::vector<std::string>& keyword_table,
+        std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
+        aura::ast::ASTArena*& temp_arena,
+        std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
+        // Issue #371: shared_mutex protecting `tag_arity_index`.
+        // query:pattern fast path takes a shared_lock around the
+        // `find` + bucket-iterate. Build/sync/invalidate helpers
+        // take unique_lock internally; readers must drop their
+        // shared_lock before triggering a build (see comment at
+        // the query:pattern fast-path site for the trade-off).
+        std::shared_mutex& tag_arity_index_mtx,
+        std::function<aura::ast::StringPool*()> canonical_pool,
+        std::function<void()> build_tag_arity_index,
+        std::function<EvalValue(const std::string&, const std::string&)> mev, Evaluator& ev);
+    void register_defuse_query_primitives(
+        std::function<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
+        aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
+        std::pmr::vector<std::string>& string_heap, std::function<void*()> ensure_defuse,
+        std::function<EvalValue(void* idx, aura::ast::SymId sym)> def_use_for_sym,
+        std::function<EvalValue(void* idx, aura::ast::NodeId node)> reaches_for_node,
+        std::function<EvalValue(void* idx, aura::ast::SymId sym)> effects_for_sym,
+        std::function<EvalValue(void* idx)> build_index,
+        std::function<EvalValue(void* idx)> index_stats,
+        std::function<EvalValue(const std::string&, const std::string&)> make_merr);
+    void
+    register_mutate_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+                               std::function<EvalValue(const std::string&, const std::string&)> mev,
+                               std::function<void()> destroy_defuse_index);
+    void register_workspace_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+                                       std::function<void()> destroy_defuse_index);
+    void register_ast_primitives(
+        std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+        std::function<void()> destroy_defuse_index,
+        std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>()>
+            defuse_summary_stats);
+    void register_compile_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_eval_observability_primitives(std::function<void(std::string, PrimFn)> add,
+                                                Evaluator& ev);
+    void register_verify_tool_primitives(
+        std::function<void(std::string, std::function<aura::compiler::types::EvalValue(
+                                            std::span<const aura::compiler::types::EvalValue>)>)>
+            add,
+        Evaluator& ev, std::function<aura::compiler::types::EvalValue(std::int32_t)> make_string,
+        std::function<aura::compiler::types::EvalValue(std::int64_t)> make_int,
+        std::function<aura::compiler::types::EvalValue(const std::string&, const std::string&)>
+            mev);
+    void register_jit_arena_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_messaging_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_git_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_network_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_auto_evolve_primitives(std::function<void(std::string, PrimFn)> add,
+                                         Evaluator& ev);
+    void register_synthesize_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+                                        std::function<void()> destroy_defuse_index);
+    void register_strategy_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_memory_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
                                     std::function<void()> destroy_defuse_index);
-void register_strategy_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_memory_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-                                std::function<void()> destroy_defuse_index);
-void register_policy_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_security_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_eval_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-                              std::function<EvalValue(const std::string&, const std::string&)> mev,
-                              std::function<void()> destroy_defuse_index);
-void register_type_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_hot_swap_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_diagnostic_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_module_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_file_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_runtime_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_test_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_misc_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_control_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_char_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-void register_mutation_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-}
+    void register_policy_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_security_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void
+    register_eval_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
+                             std::function<EvalValue(const std::string&, const std::string&)> mev,
+                             std::function<void()> destroy_defuse_index);
+    void register_type_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_hot_swap_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_diagnostic_primitives(std::function<void(std::string, PrimFn)> add,
+                                        Evaluator& ev);
+    void register_module_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_file_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_runtime_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_test_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_misc_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_control_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_char_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_mutation_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+} // namespace primitives_detail
 
 void defuse_index_destroy(void** slot);
 
@@ -708,10 +715,10 @@ export struct WorkspaceTree {
 
     // Issue #276: remap a node id across workspace layers.
     [[nodiscard]] ast::NodeId remap_node_id(std::uint32_t from_layer, ast::NodeId id,
-                                          std::uint32_t to_layer) const noexcept;
-    [[nodiscard]] std::optional<ast::FlatAST::StableNodeRef> resolve_stable_ref(
-        std::uint32_t from_layer, ast::FlatAST::StableNodeRef ref,
-        std::uint32_t to_layer) const noexcept;
+                                            std::uint32_t to_layer) const noexcept;
+    [[nodiscard]] std::optional<ast::FlatAST::StableNodeRef>
+    resolve_stable_ref(std::uint32_t from_layer, ast::FlatAST::StableNodeRef ref,
+                       std::uint32_t to_layer) const noexcept;
 };
 
 export class Evaluator {
@@ -719,75 +726,97 @@ export class Evaluator {
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<EvalValue(const std::string&, const std::string&)> mev,
         std::function<void()> destroy_defuse_index);
-    friend void primitives_detail::register_workspace_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-        std::function<void()> destroy_defuse_index);
+    friend void
+    primitives_detail::register_workspace_primitives(std::function<void(std::string, PrimFn)> add,
+                                                     Evaluator& ev,
+                                                     std::function<void()> destroy_defuse_index);
     friend void primitives_detail::register_ast_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<void()> destroy_defuse_index,
         std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>()>
             defuse_summary_stats);
-    friend void primitives_detail::register_compile_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void
+    primitives_detail::register_compile_primitives(std::function<void(std::string, PrimFn)> add,
+                                                   Evaluator& ev);
     friend void primitives_detail::register_eval_observability_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_verify_tool_primitives(
-        std::function<void(std::string,
-                           std::function<aura::compiler::types::EvalValue(
-                               std::span<const aura::compiler::types::EvalValue>)>)> add,
-        Evaluator& ev,
-        std::function<aura::compiler::types::EvalValue(std::int32_t)> make_string,
+        std::function<void(std::string, std::function<aura::compiler::types::EvalValue(
+                                            std::span<const aura::compiler::types::EvalValue>)>)>
+            add,
+        Evaluator& ev, std::function<aura::compiler::types::EvalValue(std::int32_t)> make_string,
         std::function<aura::compiler::types::EvalValue(std::int64_t)> make_int,
-        std::function<aura::compiler::types::EvalValue(
-            const std::string&, const std::string&)> mev);
-    friend void primitives_detail::register_jit_arena_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_messaging_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_git_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_network_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_auto_evolve_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_synthesize_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-        std::function<void()> destroy_defuse_index);
-    friend void primitives_detail::register_strategy_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_memory_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev,
-        std::function<void()> destroy_defuse_index);
-    friend void primitives_detail::register_policy_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_security_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+        std::function<aura::compiler::types::EvalValue(const std::string&, const std::string&)>
+            mev);
+    friend void
+    primitives_detail::register_jit_arena_primitives(std::function<void(std::string, PrimFn)> add,
+                                                     Evaluator& ev);
+    friend void
+    primitives_detail::register_messaging_primitives(std::function<void(std::string, PrimFn)> add,
+                                                     Evaluator& ev);
+    friend void
+    primitives_detail::register_git_primitives(std::function<void(std::string, PrimFn)> add,
+                                               Evaluator& ev);
+    friend void
+    primitives_detail::register_network_primitives(std::function<void(std::string, PrimFn)> add,
+                                                   Evaluator& ev);
+    friend void
+    primitives_detail::register_auto_evolve_primitives(std::function<void(std::string, PrimFn)> add,
+                                                       Evaluator& ev);
+    friend void
+    primitives_detail::register_synthesize_primitives(std::function<void(std::string, PrimFn)> add,
+                                                      Evaluator& ev,
+                                                      std::function<void()> destroy_defuse_index);
+    friend void
+    primitives_detail::register_strategy_primitives(std::function<void(std::string, PrimFn)> add,
+                                                    Evaluator& ev);
+    friend void
+    primitives_detail::register_memory_primitives(std::function<void(std::string, PrimFn)> add,
+                                                  Evaluator& ev,
+                                                  std::function<void()> destroy_defuse_index);
+    friend void
+    primitives_detail::register_policy_primitives(std::function<void(std::string, PrimFn)> add,
+                                                  Evaluator& ev);
+    friend void
+    primitives_detail::register_security_primitives(std::function<void(std::string, PrimFn)> add,
+                                                    Evaluator& ev);
     friend void primitives_detail::register_eval_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<EvalValue(const std::string&, const std::string&)> mev,
         std::function<void()> destroy_defuse_index);
-    friend void primitives_detail::register_type_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_hot_swap_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_diagnostic_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_module_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_file_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_runtime_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_test_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_misc_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_control_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_char_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    friend void primitives_detail::register_mutation_primitives(
-        std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void
+    primitives_detail::register_type_primitives(std::function<void(std::string, PrimFn)> add,
+                                                Evaluator& ev);
+    friend void
+    primitives_detail::register_hot_swap_primitives(std::function<void(std::string, PrimFn)> add,
+                                                    Evaluator& ev);
+    friend void
+    primitives_detail::register_diagnostic_primitives(std::function<void(std::string, PrimFn)> add,
+                                                      Evaluator& ev);
+    friend void
+    primitives_detail::register_module_primitives(std::function<void(std::string, PrimFn)> add,
+                                                  Evaluator& ev);
+    friend void
+    primitives_detail::register_file_primitives(std::function<void(std::string, PrimFn)> add,
+                                                Evaluator& ev);
+    friend void
+    primitives_detail::register_runtime_primitives(std::function<void(std::string, PrimFn)> add,
+                                                   Evaluator& ev);
+    friend void
+    primitives_detail::register_test_primitives(std::function<void(std::string, PrimFn)> add,
+                                                Evaluator& ev);
+    friend void
+    primitives_detail::register_misc_primitives(std::function<void(std::string, PrimFn)> add,
+                                                Evaluator& ev);
+    friend void
+    primitives_detail::register_control_primitives(std::function<void(std::string, PrimFn)> add,
+                                                   Evaluator& ev);
+    friend void
+    primitives_detail::register_char_primitives(std::function<void(std::string, PrimFn)> add,
+                                                Evaluator& ev);
+    friend void
+    primitives_detail::register_mutation_primitives(std::function<void(std::string, PrimFn)> add,
+                                                    Evaluator& ev);
     friend void primitives_detail::register_list_primitives(
         std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
         std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
@@ -864,8 +893,7 @@ public:
     // Look up a closure and apply it with given args.
     // Tries closures_ first, then IR bridge.
     std::optional<EvalValue> apply_closure(ClosureId cid, std::span<const EvalValue> args);
-    std::optional<EvalValue> apply_closure(ClosureId cid,
-                                           std::initializer_list<EvalValue> args) {
+    std::optional<EvalValue> apply_closure(ClosureId cid, std::initializer_list<EvalValue> args) {
         return apply_closure(cid, std::span<const EvalValue>(args.begin(), args.size()));
     }
 
@@ -881,9 +909,7 @@ public:
     // writes to the same metrics struct (via IRContext).
     // Both paths use the same single source of truth.
     void set_compiler_metrics(void* m) { compiler_metrics_ = m; }
-    [[nodiscard]] void* compiler_metrics() const noexcept {
-        return compiler_metrics_;
-    }
+    [[nodiscard]] void* compiler_metrics() const noexcept { return compiler_metrics_; }
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
     // Issue #612: optional post-mutate ADT registry sync (wired by CompilerService).
     using WorkspaceAdtSyncFn = void (*)(void* compiler_service);
@@ -973,8 +999,7 @@ public:
     // Issue #680: post-mutate Define IR/JIT/bridge invalidation hook
     // (called from mutate:rebind / mutate:query-and-replace success).
     void finalize_define_mutate_invalidation(const aura::ast::FlatAST& flat,
-                                             const std::string& name,
-                                             aura::ast::NodeId define_id,
+                                             const std::string& name, aura::ast::NodeId define_id,
                                              bool run_full_invalidate = true);
     // Issue #262: precise def-use dirty propagation. Marks entry
     // nodes + ancestors with kDefUseDirty, records the sym for
@@ -1451,10 +1476,10 @@ public:
                                            std::uint64_t current_bridge_epoch) const;
     // Issue #683: linear ownership runtime probe at GC safepoint /
     // fiber steal / post-invalidate re-lower boundaries.
-    [[nodiscard]] static bool validate_linear_ownership_state(
-        std::uint8_t linear_state, std::uint64_t frame_version,
-        std::uint64_t current_version, std::uint64_t bridge_epoch,
-        std::uint64_t current_bridge_epoch) noexcept;
+    [[nodiscard]] static bool
+    validate_linear_ownership_state(std::uint8_t linear_state, std::uint64_t frame_version,
+                                    std::uint64_t current_version, std::uint64_t bridge_epoch,
+                                    std::uint64_t current_bridge_epoch) noexcept;
     void probe_linear_ownership_at_gc_safepoint() noexcept;
     void probe_linear_ownership_on_fiber_steal() noexcept;
     // ── GC sweep / compaction (Issue #113 Phase 3) ──────────
@@ -1750,8 +1775,8 @@ private:
     // Issue #263: build lifecycle/validation stats hash. Member function
     // (not a local lambda) so std::function-captured primitives do not
     // hold a dangling reference to a stack-local helper.
-    [[nodiscard]] types::EvalValue build_ast_lifecycle_hash(
-        std::span<const std::pair<std::string, types::EvalValue>> kv);
+    [[nodiscard]] types::EvalValue
+    build_ast_lifecycle_hash(std::span<const std::pair<std::string, types::EvalValue>> kv);
     // (apply_closure and expand_macro removed — use eval_flat directly)
     [[nodiscard]] EvalValue ast_to_data(const aura::ast::FlatAST& flat,
                                         const aura::ast::StringPool& pool, aura::ast::NodeId nid);
@@ -2396,8 +2421,8 @@ private:
     // contexts; 'disabled' for raw-NodeId paths.
     enum class StaleRefPolicy : std::uint8_t {
         Disabled = 0,
-        Warn     = 1,
-        Strict   = 2,
+        Warn = 1,
+        Strict = 2,
     };
     StaleRefPolicy stale_ref_policy_ = StaleRefPolicy::Warn;
     // Issue #448: mutation coordination observability. Bumped
@@ -2715,12 +2740,8 @@ public:
     // produced by clone_macro_body from a hygienic macro
     // expansion). Default = false (safe); AI-agent / self-mod
     // code can opt in via (hygiene:set-allow-macro-mutate!).
-    [[nodiscard]] bool get_allow_macro_mutate() const noexcept {
-        return allow_macro_mutate_;
-    }
-    void set_allow_macro_mutate(bool v) noexcept {
-        allow_macro_mutate_ = v;
-    }
+    [[nodiscard]] bool get_allow_macro_mutate() const noexcept { return allow_macro_mutate_; }
+    void set_allow_macro_mutate(bool v) noexcept { allow_macro_mutate_ = v; }
     // Issue #676: sandbox + capability model.
     [[nodiscard]] bool sandbox_mode() const noexcept { return sandbox_mode_; }
     void set_sandbox_mode(bool v) noexcept { sandbox_mode_ = v; }
@@ -2741,7 +2762,8 @@ public:
     [[nodiscard]] std::size_t granted_capability_count() const noexcept {
         return granted_capabilities_.size();
     }
-    [[nodiscard]] const MutationAuditEntry& mutation_audit_entry_at(std::uint64_t seq) const noexcept {
+    [[nodiscard]] const MutationAuditEntry&
+    mutation_audit_entry_at(std::uint64_t seq) const noexcept {
         return mutation_audit_ring_[seq % kMutationAuditRingSize];
     }
     void emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
@@ -2950,12 +2972,8 @@ public:
     // / (query:stale-ref-stats) primitives can read+write
     // them, and the core mutate primitives can check the
     // policy + bump the counters.
-    [[nodiscard]] StaleRefPolicy get_stale_ref_policy() const noexcept {
-        return stale_ref_policy_;
-    }
-    void set_stale_ref_policy(StaleRefPolicy p) noexcept {
-        stale_ref_policy_ = p;
-    }
+    [[nodiscard]] StaleRefPolicy get_stale_ref_policy() const noexcept { return stale_ref_policy_; }
+    void set_stale_ref_policy(StaleRefPolicy p) noexcept { stale_ref_policy_ = p; }
     [[nodiscard]] std::uint64_t get_stale_ref_blocked_count() const noexcept {
         return stale_ref_blocked_count_.load(std::memory_order_relaxed);
     }
@@ -3058,7 +3076,8 @@ public:
     [[nodiscard]] std::optional<std::string>
     lookup_verify_tool_cache(const std::string& cmd) const noexcept {
         auto* ws = workspace_flat();
-        if (!ws) return std::nullopt;
+        if (!ws)
+            return std::nullopt;
         const auto gen = ws->generation();
         for (const auto& entry : verify_tool_cache_) {
             if (entry.cmd == cmd && entry.gen == gen) {
@@ -3067,10 +3086,10 @@ public:
         }
         return std::nullopt;
     }
-    void insert_verify_tool_cache(const std::string& cmd,
-                                  const std::string& result) {
+    void insert_verify_tool_cache(const std::string& cmd, const std::string& result) {
         auto* ws = workspace_flat();
-        if (!ws) return;
+        if (!ws)
+            return;
         const auto gen = ws->generation();
         verify_tool_cache_.push_back({cmd, gen, result});
         while (verify_tool_cache_.size() > kVerifyToolCacheMax) {
@@ -3082,12 +3101,8 @@ public:
     // its index). The lambdas in verify_tool.cpp can't
     // access the private string_heap_ directly, so
     // they use this wrapper.
-    [[nodiscard]] std::size_t string_heap_size() const noexcept {
-        return string_heap_.size();
-    }
-    const std::string& string_heap_at(std::size_t idx) const {
-        return string_heap_[idx];
-    }
+    [[nodiscard]] std::size_t string_heap_size() const noexcept { return string_heap_.size(); }
+    const std::string& string_heap_at(std::size_t idx) const { return string_heap_[idx]; }
     std::int32_t push_string_heap(const std::string& s) {
         const auto idx = static_cast<std::int32_t>(string_heap_.size());
         string_heap_.push_back(s);
@@ -3165,7 +3180,8 @@ public:
     // captured but the AST has changed since.
     [[nodiscard]] std::pair<bool, bool>
     validate_stable_ref(aura::ast::NodeId id, std::uint16_t captured_gen) const noexcept {
-        if (!workspace_flat_) return {false, false};
+        if (!workspace_flat_)
+            return {false, false};
         const auto& flat = *workspace_flat_;
         if (id >= flat.size()) {
             // Out-of-range → invalid + stale.
@@ -3184,8 +3200,8 @@ public:
             // mutated); large delta = fiber-stale (captured
             // from a different workspace's history).
             const auto delta = (captured_gen > flat.generation())
-                ? static_cast<std::uint32_t>(captured_gen - flat.generation())
-                : static_cast<std::uint32_t>(flat.generation() - captured_gen);
+                                   ? static_cast<std::uint32_t>(captured_gen - flat.generation())
+                                   : static_cast<std::uint32_t>(flat.generation() - captured_gen);
             if (delta <= 8) {
                 bump_cross_cow_invalidations();
             } else {
@@ -3460,19 +3476,22 @@ public:
             bump_suppressed_at_entry = workspace_flat_->atomic_batch_active();
             flat_generation_at_entry = workspace_flat_->generation();
         }
-        MutationCheckpoint cp{
-            defuse_version_.load(std::memory_order_acquire), log_size,
-            bump_suppressed_at_entry, macro_introduced_count_at_entry,
-            flat_generation_at_entry, std::move(children_snapshot), fine_rollback,
-            std::move(sym_id_snapshot), std::move(param_snapshot)};
+        MutationCheckpoint cp{defuse_version_.load(std::memory_order_acquire),
+                              log_size,
+                              bump_suppressed_at_entry,
+                              macro_introduced_count_at_entry,
+                              flat_generation_at_entry,
+                              std::move(children_snapshot),
+                              fine_rollback,
+                              std::move(sym_id_snapshot),
+                              std::move(param_snapshot)};
         active_mutation_stack().push_back(std::move(cp));
         const std::size_t depth = active_mutation_stack().size();
-        std::uint64_t prev_max =
-            nested_guard_depth_max_.load(std::memory_order_relaxed);
+        std::uint64_t prev_max = nested_guard_depth_max_.load(std::memory_order_relaxed);
         while (depth > prev_max &&
                !nested_guard_depth_max_.compare_exchange_weak(
-                   prev_max, depth, std::memory_order_relaxed,
-                   std::memory_order_relaxed)) {}
+                   prev_max, depth, std::memory_order_relaxed, std::memory_order_relaxed)) {
+        }
         if (depth == 1 && workspace_flat_) {
             for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
                 if (workspace_flat_->is_macro_introduced(id))
@@ -3534,8 +3553,7 @@ public:
             // enter and exit. The log size captured at entry
             // tells us how far to undo.
             BoundaryRollbackStats stats;
-            stats.field_records_rolled =
-                workspace_flat_->rollback_to_size(cp.mutation_log_size);
+            stats.field_records_rolled = workspace_flat_->rollback_to_size(cp.mutation_log_size);
             // Issue #549: bump mutation_log_rollback_count_ so
             // (query:self-evolution-stability-stats) can report
             // the lifetime # of times the log was actually
@@ -3568,8 +3586,7 @@ public:
                     workspace_flat_->rollback_atomic_batch();
                 suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
             }
-            if (stats.children_column_restored &&
-                cp.macro_introduced_count_at_entry > 0) {
+            if (stats.children_column_restored && cp.macro_introduced_count_at_entry > 0) {
                 macro_rollback_hits_.fetch_add(1, std::memory_order_relaxed);
             }
             last_boundary_rollback_stats_ = stats;
@@ -3632,35 +3649,30 @@ public:
         // to carry a dirty_reasons byte so we can OR the
         // actual reasons in here.
         if (success && workspace_flat_) {
-            const auto post_size =
-                workspace_flat_->all_mutations().size();
+            const auto post_size = workspace_flat_->all_mutations().size();
             std::uint64_t nodes_changed = 0;
             if (post_size > cp.mutation_log_size) {
                 nodes_changed = post_size - cp.mutation_log_size;
             }
-            const std::uint64_t epoch_after =
-                defuse_version_.load(std::memory_order_acquire);
-            const std::uint64_t epoch_delta =
-                epoch_after - cp.version;
+            const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
+            const std::uint64_t epoch_delta = epoch_after - cp.version;
             // Surrogate reasons mask: bit 0 = any node was
             // touched (kGeneralDirty equivalent).
             // Higher bits reserved for follow-up
             // MutationRecord reason bytes.
-            const std::uint8_t reasons_mask =
-                nodes_changed > 0 ? 0x01 : 0x00;
+            const std::uint8_t reasons_mask = nodes_changed > 0 ? 0x01 : 0x00;
             mutation_impact_count_.fetch_add(1, std::memory_order_relaxed);
             if (nodes_changed > 0) {
-                mutation_impact_nodes_changed_total_.fetch_add(
-                    nodes_changed, std::memory_order_relaxed);
+                mutation_impact_nodes_changed_total_.fetch_add(nodes_changed,
+                                                               std::memory_order_relaxed);
             }
             // OR the new reasons into the running mask
             // (relaxed atomic CAS loop; the mask is for
             // observability only).
-            std::uint64_t cur = mutation_impact_reasons_seen_mask_.load(
-                std::memory_order_relaxed);
+            std::uint64_t cur = mutation_impact_reasons_seen_mask_.load(std::memory_order_relaxed);
             while (!mutation_impact_reasons_seen_mask_.compare_exchange_weak(
-                       cur, cur | reasons_mask,
-                       std::memory_order_relaxed)) {}
+                cur, cur | reasons_mask, std::memory_order_relaxed)) {
+            }
             // Append to the ring buffer (lockless; the
             // 8-slot ring tolerates torn writes from
             // concurrent boundaries — worst case is one
@@ -3668,10 +3680,8 @@ public:
             // for one read, which is acceptable for
             // observability). We index by ring_seq_
             // modulo the ring size.
-            const auto seq =
-                mutation_impact_ring_seq_.fetch_add(1, std::memory_order_relaxed);
-            auto& slot = mutation_impact_ring_[
-                seq % kMutationImpactRingSize];
+            const auto seq = mutation_impact_ring_seq_.fetch_add(1, std::memory_order_relaxed);
+            auto& slot = mutation_impact_ring_[seq % kMutationImpactRingSize];
             slot.epoch_after = epoch_after;
             slot.epoch_delta = epoch_delta;
             slot.nodes_changed = nodes_changed;
@@ -3775,11 +3785,9 @@ public:
     [[nodiscard]] std::uint64_t get_pattern_recursive_macro_skipped() const noexcept {
         return pattern_recursive_macro_skipped_.load(std::memory_order_relaxed);
     }
-    void verify_pattern_result_hygiene(const aura::ast::FlatAST& flat,
-                                       types::EvalValue result,
+    void verify_pattern_result_hygiene(const aura::ast::FlatAST& flat, types::EvalValue result,
                                        bool with_markers) noexcept;
-    void ensure_pattern_macro_filter_consistency(
-        const aura::ast::FlatAST& flat) const noexcept;
+    void ensure_pattern_macro_filter_consistency(const aura::ast::FlatAST& flat) const noexcept;
     [[nodiscard]] std::uint64_t get_pattern_macro_filter_violations() const noexcept {
         return pattern_macro_filter_violations_.load(std::memory_order_relaxed);
     }
@@ -3796,8 +3804,7 @@ public:
     [[nodiscard]] std::uint64_t get_pattern_structural_index_misses() const noexcept {
         return pattern_structural_index_misses_.load(std::memory_order_relaxed);
     }
-    void ensure_pattern_index_consistency(
-        const aura::ast::FlatAST& flat) const noexcept;
+    void ensure_pattern_index_consistency(const aura::ast::FlatAST& flat) const noexcept;
     [[nodiscard]] std::uint64_t get_pattern_index_consistency_violations() const noexcept {
         return pattern_index_consistency_violations_.load(std::memory_order_relaxed);
     }
@@ -3962,9 +3969,8 @@ public:
         return last_queried_epoch_.load(std::memory_order_acquire);
     }
     void record_epoch_query() noexcept {
-        last_queried_epoch_.store(
-            defuse_version_.load(std::memory_order_acquire),
-            std::memory_order_release);
+        last_queried_epoch_.store(defuse_version_.load(std::memory_order_acquire),
+                                  std::memory_order_release);
     }
     // Issue #448: mutation-coordination observability
     // accessors + bump helpers. Public so the
@@ -4031,8 +4037,7 @@ public:
     }
     // Issue #418: bindings_ vs bindings_symid_ length consistency
     // probe for EnvFrame SoA dual-path + stale policy paths.
-    void ensure_envframe_dual_path_consistency(
-        const EnvFrame& fr) const noexcept;
+    void ensure_envframe_dual_path_consistency(const EnvFrame& fr) const noexcept;
 
 
     // ── Issue #184: MutationBoundaryGuard (RAII) ─────────────
@@ -4149,8 +4154,7 @@ public:
                 // check is O(1) (atomic load) and the
                 // flag is cleared by the Guard dtor
                 // (the outermost one only).
-                ev_->mutation_boundary_held_.store(
-                    true, std::memory_order_release);
+                ev_->mutation_boundary_held_.store(true, std::memory_order_release);
             }
             if (fine_rollback_)
                 ev_->request_fine_rollback_for_next_boundary();
@@ -4199,8 +4203,7 @@ public:
                 // ordering on the flag load is
                 // synchronized with the release
                 // ordering on this store).
-                ev_->mutation_boundary_held_.store(
-                    false, std::memory_order_release);
+                ev_->mutation_boundary_held_.store(false, std::memory_order_release);
                 lock_.unlock();
                 ev_->outermost_mutation_success_flag_ = nullptr;
                 ev_->unbind_yield_hook_evaluator();
@@ -4288,30 +4291,22 @@ public:
         // whether a fiber migration should transfer the checkpoint.
         // Only the outermost guard has a meaningful value here
         // (nested guards never call save_panic_checkpoint).
-        [[nodiscard]] bool has_pending_checkpoint() const noexcept {
-            return had_panic_checkpoint_;
-        }
+        [[nodiscard]] bool has_pending_checkpoint() const noexcept { return had_panic_checkpoint_; }
         // Issue #459: per-guard atomic-batch accessors.
         // `is_atomic_batch_active()` returns true when this
         // guard was entered under a (mutate:atomic-batch)
         // — the caller can use this to detect a violation
         // (e.g. a fiber steal happening while an atomic
         // guard is held).
-        [[nodiscard]] bool is_atomic_batch_active() const noexcept {
-            return atomic_batch_active_;
-        }
+        [[nodiscard]] bool is_atomic_batch_active() const noexcept { return atomic_batch_active_; }
         // `suppress_generation_bump(true)` marks this guard
         // as a suppressed-bump guard. The ctor reads the
         // flag to decide whether to skip the defuse_version_
         // bump on enter (the (mutate:atomic-batch) primitive
         // does a single bump on commit instead, saving N-1
         // bumps for N ops in a batch).
-        void suppress_generation_bump(bool v) noexcept {
-            suppress_bump_ = v;
-        }
-        [[nodiscard]] bool is_suppress_bump_set() const noexcept {
-            return suppress_bump_;
-        }
+        void suppress_generation_bump(bool v) noexcept { suppress_bump_ = v; }
+        [[nodiscard]] bool is_suppress_bump_set() const noexcept { return suppress_bump_; }
 
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
             : had_panic_checkpoint_(o.had_panic_checkpoint_)
@@ -4735,9 +4730,9 @@ inline ast::NodeId WorkspaceTree::remap_node_id(std::uint32_t from_layer, ast::N
     return cur;
 }
 
-inline std::optional<ast::FlatAST::StableNodeRef> WorkspaceTree::resolve_stable_ref(
-    std::uint32_t from_layer, ast::FlatAST::StableNodeRef ref,
-    std::uint32_t to_layer) const noexcept {
+inline std::optional<ast::FlatAST::StableNodeRef>
+WorkspaceTree::resolve_stable_ref(std::uint32_t from_layer, ast::FlatAST::StableNodeRef ref,
+                                  std::uint32_t to_layer) const noexcept {
     if (from_layer >= nodes_.size() || to_layer >= nodes_.size())
         return std::nullopt;
     const auto* target_flat = nodes_[to_layer].flat;
@@ -4753,15 +4748,14 @@ inline std::optional<ast::FlatAST::StableNodeRef> WorkspaceTree::resolve_stable_
     const auto mapped = remap_node_id(from_layer, ref.id, to_layer);
     if (!target_flat->is_live_node(mapped))
         return std::nullopt;
-    ast::FlatAST::StableNodeRef out{
-        mapped,
-        target_flat->generation(),
-        ref.mutation_id_at_capture,
-        to_layer,
-        ref.fiber_id,
-        ref.last_validated_generation,
-        ref.wrap_epoch,
-        ref.subtree_gen_at_capture};
+    ast::FlatAST::StableNodeRef out{mapped,
+                                    target_flat->generation(),
+                                    ref.mutation_id_at_capture,
+                                    to_layer,
+                                    ref.fiber_id,
+                                    ref.last_validated_generation,
+                                    ref.wrap_epoch,
+                                    ref.subtree_gen_at_capture};
     return out;
 }
 

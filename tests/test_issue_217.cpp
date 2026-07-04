@@ -44,9 +44,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
-
+using aura::test::g_passed;
 
 
 #define PRINTLN(msg) std::println("{}", (msg))
@@ -92,15 +91,15 @@ struct OpcodeInfo {
 // src/compiler/ir.ixx:154). Used to verify the roundtrip
 // works on the real metadata table.
 constexpr OpcodeInfo kOpcodeInfo[] = {
-    {"nop", 0, false},         // 0 Nop
-    {"const-i64", 1, true},    // 1 ConstI64
-    {"const-f64", 1, true},    // 2 ConstF64
-    {"local", 2, true},        // 3 Local
-    {"arg", 2, true},          // 4 Arg
-    {"add", 3, true},          // 5 Add
-    {"sub", 3, true},          // 6 Sub
-    {"mul", 3, true},          // 7 Mul
-    {"div", 3, true},          // 8 Div
+    {"nop", 0, false},      // 0 Nop
+    {"const-i64", 1, true}, // 1 ConstI64
+    {"const-f64", 1, true}, // 2 ConstF64
+    {"local", 2, true},     // 3 Local
+    {"arg", 2, true},       // 4 Arg
+    {"add", 3, true},       // 5 Add
+    {"sub", 3, true},       // 6 Sub
+    {"mul", 3, true},       // 7 Mul
+    {"div", 3, true},       // 8 Div
 };
 
 // ── Test 8: lookup_opcode helper (Issue #217 Cycle 4) ──────
@@ -189,7 +188,10 @@ bool test_source_location_roundtrip() {
     for (auto& e : expected) {
         bool found = false;
         for (std::size_t i = 0; i < members.size(); ++i) {
-            if (members[i].name == e) { found = true; break; }
+            if (members[i].name == e) {
+                found = true;
+                break;
+            }
         }
         CHECK(found, e);
     }
@@ -197,8 +199,7 @@ bool test_source_location_roundtrip() {
     SourceLocation original{42, 7, 1};
     std::vector<char> buf;
     aura::reflect::auto_serialize(buf, original);
-    std::println("SourceLocation serialized: {} bytes (3 * 4 = 12 expected)",
-                 buf.size());
+    std::println("SourceLocation serialized: {} bytes (3 * 4 = 12 expected)", buf.size());
     CHECK(buf.size() == 12, "buf size == 12 bytes (3 uint32)");
 
     std::size_t pos = 0;
@@ -228,7 +229,10 @@ bool test_patch_roundtrip() {
     for (auto& e : expected) {
         bool found = false;
         for (std::size_t i = 0; i < members.size(); ++i) {
-            if (members[i].name == e) { found = true; break; }
+            if (members[i].name == e) {
+                found = true;
+                break;
+            }
         }
         CHECK(found, e);
     }
@@ -350,13 +354,11 @@ bool test_span_uint32_roundtrip() {
             found_children = true;
             children_kind = (int)members[i].kind;
             children_elem_size = members[i].elem_size;
-            std::println("  children kind = {}, elem_size = {}",
-                         children_kind, children_elem_size);
+            std::println("  children kind = {}, elem_size = {}", children_kind, children_elem_size);
         }
     }
     CHECK(found_children, "NodeViewLikeU32 has 'children' field");
-    CHECK(children_kind == 15,
-          "children kind is MemberKind::Span (= 15)");
+    CHECK(children_kind == 15, "children kind is MemberKind::Span (= 15)");
     CHECK(children_elem_size == sizeof(std::uint32_t),
           "children elem_size is sizeof(uint32_t) = 4");
 
@@ -374,8 +376,7 @@ bool test_span_uint32_roundtrip() {
     // Expected: 4 (id) + 4 (tag) + 8 (int_value) +
     //           4 (span byte_count) + 20 (5 * sizeof(uint32_t))
     //         = 40 bytes
-    CHECK(buf.size() == 40,
-          "buf size == 40 bytes (4+4+8+4+20)");
+    CHECK(buf.size() == 40, "buf size == 40 bytes (4+4+8+4+20)");
 
     // Cycle 8 fix: full deserialize roundtrip for non-char
     // element types. The Span case now divides byte_count
@@ -387,8 +388,7 @@ bool test_span_uint32_roundtrip() {
     CHECK(rt.tag == 7, "tag roundtrips");
     CHECK(rt.int_value == 0xDEADBEEF, "int_value roundtrips");
     // The deserialized span: byte_count / elem_size = 20 / 4 = 5 elements
-    CHECK(rt.children.size() == 5,
-          "children size == 5 (byte_count / elem_size = 20 / 4)");
+    CHECK(rt.children.size() == 5, "children size == 5 (byte_count / elem_size = 20 / 4)");
     if (rt.children.size() == 5) {
         CHECK(rt.children[0] == 100, "children[0] == 100");
         CHECK(rt.children[1] == 200, "children[1] == 200");
@@ -441,17 +441,19 @@ bool test_mutation_record_roundtrip() {
     PRINTLN("\n--- Test 13: MutationRecord-like (5 std::strings) ---");
     constexpr auto members = aura::reflect::reflect_members<MutationRecordLike>();
     std::println("MutationRecordLike has {} members", members.size());
-    // 17 fields total: 2 u64 + 4 u32 + 5 string + 2 enums + 3 bool-ish (has_rollback_data, has_subtree_rollback, ...)
+    // 17 fields total: 2 u64 + 4 u32 + 5 string + 2 enums + 3 bool-ish (has_rollback_data,
+    // has_subtree_rollback, ...)
     CHECK(members.size() == 17, "MutationRecordLike has 17 members");
     // Verify all 5 string fields are found
-    const char* expected_strings[] = {
-        "operator_name", "old_type_str", "new_type_str",
-        "summary", "old_subtree_source"
-    };
+    const char* expected_strings[] = {"operator_name", "old_type_str", "new_type_str", "summary",
+                                      "old_subtree_source"};
     for (auto& e : expected_strings) {
         bool found = false;
         for (std::size_t i = 0; i < members.size(); ++i) {
-            if (members[i].name == e) { found = true; break; }
+            if (members[i].name == e) {
+                found = true;
+                break;
+            }
         }
         CHECK(found, e);
     }
@@ -523,13 +525,14 @@ bool test_match_clause_info_roundtrip() {
     constexpr auto members = aura::reflect::reflect_members<MatchClauseInfoLike>();
     std::println("MatchClauseInfoLike has {} members", members.size());
     CHECK(members.size() == 3, "MatchClauseInfoLike has 3 members");
-    const char* expected_fields[] = {
-        "used_constructors", "candidate_constructors", "has_wildcard"
-    };
+    const char* expected_fields[] = {"used_constructors", "candidate_constructors", "has_wildcard"};
     for (auto& e : expected_fields) {
         bool found = false;
         for (std::size_t i = 0; i < members.size(); ++i) {
-            if (members[i].name == e) { found = true; break; }
+            if (members[i].name == e) {
+                found = true;
+                break;
+            }
         }
         CHECK(found, e);
     }
@@ -550,15 +553,13 @@ bool test_match_clause_info_roundtrip() {
 
     std::size_t pos = 0;
     auto rt = aura::reflect::auto_deserialize<MatchClauseInfoLike>(buf, pos);
-    CHECK(rt.used_constructors.size() == 3,
-          "used_constructors size == 3");
+    CHECK(rt.used_constructors.size() == 3, "used_constructors size == 3");
     if (rt.used_constructors.size() == 3) {
         CHECK(rt.used_constructors[0] == 101, "used[0] == 101");
         CHECK(rt.used_constructors[1] == 102, "used[1] == 102");
         CHECK(rt.used_constructors[2] == 103, "used[2] == 103");
     }
-    CHECK(rt.candidate_constructors.size() == 2,
-          "candidate_constructors size == 2");
+    CHECK(rt.candidate_constructors.size() == 2, "candidate_constructors size == 2");
     if (rt.candidate_constructors.size() == 2) {
         CHECK(rt.candidate_constructors[0] == 201, "cand[0] == 201");
         CHECK(rt.candidate_constructors[1] == 202, "cand[1] == 202");
@@ -578,12 +579,9 @@ bool test_match_clause_info_roundtrip() {
     CHECK(buf2.size() == 9, "empty buf size == 9 bytes (4+4+1)");
     std::size_t pos2 = 0;
     auto rt2 = aura::reflect::auto_deserialize<MatchClauseInfoLike>(buf2, pos2);
-    CHECK(rt2.used_constructors.size() == 0,
-          "empty used_constructors roundtrips");
-    CHECK(rt2.candidate_constructors.size() == 0,
-          "empty candidate_constructors roundtrips");
-    CHECK(rt2.has_wildcard == false,
-          "empty has_wildcard roundtrips");
+    CHECK(rt2.used_constructors.size() == 0, "empty used_constructors roundtrips");
+    CHECK(rt2.candidate_constructors.size() == 0, "empty candidate_constructors roundtrips");
+    CHECK(rt2.has_wildcard == false, "empty has_wildcard roundtrips");
     return true;
 }
 
@@ -630,10 +628,14 @@ bool test_flatast_soa_columns() {
     CHECK(members.size() == 4, "FlatASTLikeSoA has 4 members");
     bool found_int = false, found_type = false, found_tag = false, found_str = false;
     for (std::size_t i = 0; i < members.size(); ++i) {
-        if (members[i].name == "int_val_") found_int = true;
-        if (members[i].name == "type_id_") found_type = true;
-        if (members[i].name == "tag_") found_tag = true;
-        if (members[i].name == "string_val_") found_str = true;
+        if (members[i].name == "int_val_")
+            found_int = true;
+        if (members[i].name == "type_id_")
+            found_type = true;
+        if (members[i].name == "tag_")
+            found_tag = true;
+        if (members[i].name == "string_val_")
+            found_str = true;
     }
     CHECK(found_int, "field 'int_val_' found");
     CHECK(found_type, "field 'type_id_' found");
@@ -718,17 +720,17 @@ bool test_flatast_soa_columns() {
 // separate commit once the public API is confirmed.
 struct NodeViewFullLike {
     std::uint32_t id = 0;
-    std::uint32_t tag = 0;  // NodeTag enum (uint32-backed)
+    std::uint32_t tag = 0; // NodeTag enum (uint32-backed)
     std::int64_t int_value = 0;
     double float_value = 0.0;
-    std::uint32_t sym_id = 0;  // SymId (uint32)
+    std::uint32_t sym_id = 0; // SymId (uint32)
     std::uint32_t line = 0;
     std::uint32_t col = 0;
     std::uint32_t type_id = 0;
-    std::span<const std::uint32_t> children;     // span<const NodeId>
-    std::span<const std::uint32_t> params;       // span<const SymId>
-    std::span<const std::uint32_t> param_annotations;  // span<const NodeId>
-    std::uint8_t marker = 0;  // SyntaxMarker enum (uint8-backed)
+    std::span<const std::uint32_t> children;          // span<const NodeId>
+    std::span<const std::uint32_t> params;            // span<const SymId>
+    std::span<const std::uint32_t> param_annotations; // span<const NodeId>
+    std::uint8_t marker = 0;                          // SyntaxMarker enum (uint8-backed)
 };
 bool test_node_view_full() {
     PRINTLN("\n--- Test 16: NodeView full (production shape) ---");
@@ -738,14 +740,15 @@ bool test_node_view_full() {
     CHECK(members.size() == 12, "NodeViewFullLike has 12 members");
     // Verify all expected field names are found
     const char* expected[] = {
-        "id", "tag", "int_value", "float_value", "sym_id",
-        "line", "col", "type_id", "children", "params",
-        "param_annotations", "marker"
-    };
+        "id",      "tag",      "int_value", "float_value",       "sym_id", "line", "col",
+        "type_id", "children", "params",    "param_annotations", "marker"};
     for (auto& name : expected) {
         bool found = false;
         for (std::size_t i = 0; i < members.size(); ++i) {
-            if (members[i].name == name) { found = true; break; }
+            if (members[i].name == name) {
+                found = true;
+                break;
+            }
         }
         CHECK(found, name);
     }
@@ -754,10 +757,8 @@ bool test_node_view_full() {
     for (std::size_t i = 0; i < members.size(); ++i) {
         const auto& m = members[i];
         if (m.name == "children" || m.name == "params" || m.name == "param_annotations") {
-            CHECK(m.kind == aura::reflect::MemberKind::Span,
-                  "span field kind");
-            CHECK(m.elem_size == sizeof(std::uint32_t),
-                  "span field elem_size = 4");
+            CHECK(m.kind == aura::reflect::MemberKind::Span, "span field kind");
+            CHECK(m.elem_size == sizeof(std::uint32_t), "span field elem_size = 4");
         }
     }
 
@@ -768,7 +769,7 @@ bool test_node_view_full() {
 
     NodeViewFullLike original;
     original.id = 42;
-    original.tag = 0x03;  // Call
+    original.tag = 0x03; // Call
     original.int_value = 0xDEADBEEFCAFE0001LL;
     original.float_value = 3.14159;
     original.sym_id = 0xABCD;
@@ -777,8 +778,9 @@ bool test_node_view_full() {
     original.type_id = 0x12345;
     original.children = std::span<const std::uint32_t>(children_data.data(), children_data.size());
     original.params = std::span<const std::uint32_t>(params_data.data(), params_data.size());
-    original.param_annotations = std::span<const std::uint32_t>(annot_data.data(), annot_data.size());
-    original.marker = 1;  // MacroIntroduced
+    original.param_annotations =
+        std::span<const std::uint32_t>(annot_data.data(), annot_data.size());
+    original.marker = 1; // MacroIntroduced
 
     std::vector<char> buf;
     aura::reflect::auto_serialize(buf, original);
@@ -863,7 +865,7 @@ bool test_node_view_full() {
 // empty-roundtrip behavior when test_issue_178 is not run.
 bool test_node_view_empty() {
     PRINTLN("\n--- Test 17: NodeView empty (defaults) roundtrip ---");
-    NodeViewFullLike original;  // all defaults
+    NodeViewFullLike original; // all defaults
 
     std::vector<char> buf;
     aura::reflect::auto_serialize(buf, original);
@@ -894,17 +896,19 @@ bool test_reflect_opcode_info() {
     constexpr auto members = aura::reflect::reflect_members<OpcodeInfo>();
     std::println("members.size = {}", members.size());
     for (std::size_t i = 0; i < members.size(); ++i) {
-        std::println("  [{}] name={} kind={} offset={}",
-                     i, members[i].name, (int)members[i].kind, members[i].offset);
+        std::println("  [{}] name={} kind={} offset={}", i, members[i].name, (int)members[i].kind,
+                     members[i].offset);
     }
-    CHECK(members.size() == 3,
-          "OpcodeInfo has 3 non-static data members");
+    CHECK(members.size() == 3, "OpcodeInfo has 3 non-static data members");
     // Find each field by name (order may vary by GCC version)
     bool found_name = false, found_count = false, found_result = false;
     for (std::size_t i = 0; i < members.size(); ++i) {
-        if (members[i].name == "name") found_name = true;
-        if (members[i].name == "operand_count") found_count = true;
-        if (members[i].name == "has_result_slot") found_result = true;
+        if (members[i].name == "name")
+            found_name = true;
+        if (members[i].name == "operand_count")
+            found_count = true;
+        if (members[i].name == "has_result_slot")
+            found_result = true;
     }
     CHECK(found_name, "field 'name' found");
     CHECK(found_count, "field 'operand_count' found");
@@ -995,13 +999,13 @@ struct FlatASTSoALike {
     std::vector<double> float_val_;
     std::vector<std::uint32_t> sym_id_;
     // Issue #220: per-node children as 2 columns
-    std::vector<std::uint32_t> child_count_per_node_;  // u32 per node
-    std::vector<std::uint32_t> child_data_;            // NodeId (flat concat)
-    std::vector<std::uint32_t> parent_;                // NodeId
+    std::vector<std::uint32_t> child_count_per_node_; // u32 per node
+    std::vector<std::uint32_t> child_data_;           // NodeId (flat concat)
+    std::vector<std::uint32_t> parent_;               // NodeId
     std::vector<std::uint32_t> param_begin_;
     std::vector<std::uint32_t> param_count_;
     std::vector<std::uint32_t> cap_require_count_;
-    std::vector<std::uint32_t> param_data_;            // SymId
+    std::vector<std::uint32_t> param_data_; // SymId
     std::vector<std::uint32_t> param_annot_data_;
     std::vector<std::uint32_t> line_;
     std::vector<std::uint32_t> col_;
@@ -1030,8 +1034,7 @@ struct FlatASTSoALike {
 inline void flat_ast_soa_serialize(std::vector<char>& buf, const FlatASTSoALike& ast) {
     // Format version
     uint32_t version = 1;
-    buf.insert(buf.end(), reinterpret_cast<char*>(&version),
-               reinterpret_cast<char*>(&version) + 4);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&version), reinterpret_cast<char*>(&version) + 4);
     // Num nodes (informational; per-node columns derive their size from this)
     uint32_t num_nodes = static_cast<uint32_t>(ast.tag_.size());
     buf.insert(buf.end(), reinterpret_cast<char*>(&num_nodes),
@@ -1040,12 +1043,13 @@ inline void flat_ast_soa_serialize(std::vector<char>& buf, const FlatASTSoALike&
     // Helper: serialize a vector<T> as count + raw bytes
     auto write_column = [&buf](const auto& col) {
         uint32_t count = static_cast<uint32_t>(col.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
         if (!col.empty()) {
-            buf.insert(buf.end(),
-                       reinterpret_cast<const char*>(col.data()),
-                       reinterpret_cast<const char*>(col.data()) + col.size() * sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
+            buf.insert(
+                buf.end(), reinterpret_cast<const char*>(col.data()),
+                reinterpret_cast<const char*>(col.data()) +
+                    col.size() *
+                        sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
         }
     };
     // 19 per-node + list columns (same as production columns 1-19 except mutation_log_)
@@ -1085,15 +1089,18 @@ inline void flat_ast_soa_serialize(std::vector<char>& buf, const FlatASTSoALike&
 inline FlatASTSoALike flat_ast_soa_deserialize(const std::vector<char>& buf, std::size_t& pos) {
     FlatASTSoALike ast;
     uint32_t version;
-    std::memcpy(&version, &buf[pos], 4); pos += 4;
+    std::memcpy(&version, &buf[pos], 4);
+    pos += 4;
     CHECK(version == 1, "FlatAST SoA format version == 1");
     uint32_t num_nodes;
-    std::memcpy(&num_nodes, &buf[pos], 4); pos += 4;
+    std::memcpy(&num_nodes, &buf[pos], 4);
+    pos += 4;
 
     auto read_column = [&buf, &pos](auto& col) {
         using T = typename std::remove_reference<decltype(col)>::type::value_type;
         uint32_t count;
-        std::memcpy(&count, &buf[pos], 4); pos += 4;
+        std::memcpy(&count, &buf[pos], 4);
+        pos += 4;
         col.resize(count);
         if (count > 0) {
             std::memcpy(col.data(), &buf[pos], count * sizeof(T));
@@ -1122,9 +1129,11 @@ inline FlatASTSoALike flat_ast_soa_deserialize(const std::vector<char>& buf, std
     read_column(ast.value_cache_);
     read_column(ast.node_first_mutation_);
     read_column(ast.node_gen_);
-    std::memcpy(&ast.next_mutation_id_, &buf[pos], 4); pos += 4;
-    std::memcpy(&ast.generation_, &buf[pos], 2); pos += 2;
-    pos += 2;  // reserved
+    std::memcpy(&ast.next_mutation_id_, &buf[pos], 4);
+    pos += 4;
+    std::memcpy(&ast.generation_, &buf[pos], 2);
+    pos += 2;
+    pos += 2; // reserved
     return ast;
 }
 bool test_flat_ast_soa_roundtrip() {
@@ -1134,15 +1143,15 @@ bool test_flat_ast_soa_roundtrip() {
     //   node 1: Variable(0xABCD)
     //   node 2: Call(0, [1])
     FlatASTSoALike original;
-    original.tag_ = {0x01, 0x02, 0x03};  // LiteralInt, Variable, Call
+    original.tag_ = {0x01, 0x02, 0x03}; // LiteralInt, Variable, Call
     original.int_val_ = {42, 0, 0};
     original.float_val_ = {0.0, 0.0, 0.0};
     original.sym_id_ = {0xFFFFFFFF, 0xABCD, 0xFFFFFFFF};
     // Issue #220: per-node children (node 0: 0 children, node 1: 0
     // children, node 2 (Call): 1 child = Variable(1))
     original.child_count_per_node_ = {0, 0, 1};
-    original.child_data_ = {1};  // Call's child is Variable (node 1)
-    original.parent_ = {0xFFFFFFFF, 2, 0xFFFFFFFF};  // Variable's parent is Call
+    original.child_data_ = {1};                     // Call's child is Variable (node 1)
+    original.parent_ = {0xFFFFFFFF, 2, 0xFFFFFFFF}; // Variable's parent is Call
     original.param_begin_ = {0, 0, 0};
     original.param_count_ = {0, 0, 0};
     original.cap_require_count_ = {0, 0, 0};
@@ -1182,8 +1191,10 @@ bool test_flat_ast_soa_roundtrip() {
     }
     CHECK(rt.int_val_.size() == 3 && rt.int_val_[0] == 42, "int_val_[0] == 42");
     CHECK(rt.sym_id_.size() == 3 && rt.sym_id_[1] == 0xABCD, "sym_id_[1] == 0xABCD");
-    CHECK(rt.child_data_.size() == 1 && rt.child_data_[0] == 1, "child_data_[0] == 1 (Call's child)");
-    CHECK(rt.parent_.size() == 3 && rt.parent_[1] == 2, "parent_[1] == 2 (Variable's parent is Call)");
+    CHECK(rt.child_data_.size() == 1 && rt.child_data_[0] == 1,
+          "child_data_[0] == 1 (Call's child)");
+    CHECK(rt.parent_.size() == 3 && rt.parent_[1] == 2,
+          "parent_[1] == 2 (Variable's parent is Call)");
     CHECK(rt.line_.size() == 3 && rt.line_[0] == 10, "line_[0] == 10");
     CHECK(rt.col_.size() == 3 && rt.col_[2] == 5, "col_[2] == 5");
     CHECK(rt.marker_.size() == 3, "marker_ size == 3");
@@ -1213,12 +1224,9 @@ bool test_opcode_info_roundtrip() {
 
     std::size_t pos = 0;
     auto roundtrip = aura::reflect::auto_deserialize<OpcodeInfo>(buf, pos);
-    CHECK(roundtrip.name == "const-i64",
-          "string_view name roundtrips (Issue #217 Cycle 2 fix)");
-    CHECK(roundtrip.operand_count == 1,
-          "operand_count roundtrips");
-    CHECK(roundtrip.has_result_slot == true,
-          "has_result_slot roundtrips");
+    CHECK(roundtrip.name == "const-i64", "string_view name roundtrips (Issue #217 Cycle 2 fix)");
+    CHECK(roundtrip.operand_count == 1, "operand_count roundtrips");
+    CHECK(roundtrip.has_result_slot == true, "has_result_slot roundtrips");
     return true;
 }
 
@@ -1227,17 +1235,17 @@ bool test_reflect_ir_instruction() {
     PRINTLN("\n--- Test 3: reflect_members<IRInstruction>() ---");
     constexpr auto members = aura::reflect::reflect_members<IRInstruction>();
     std::println("members.size = {}", members.size());
-    CHECK(members.size() == 8,
-          "IRInstruction has 8 non-static data members");
-    const char* expected[] = {
-        "opcode", "operands", "source_ast_node_id", "type_id",
-        "shape_id", "linear_ownership_state", "adt_variant_id",
-        "narrow_evidence"
-    };
+    CHECK(members.size() == 8, "IRInstruction has 8 non-static data members");
+    const char* expected[] = {"opcode",         "operands",       "source_ast_node_id",
+                              "type_id",        "shape_id",       "linear_ownership_state",
+                              "adt_variant_id", "narrow_evidence"};
     for (auto& e : expected) {
         bool found = false;
         for (std::size_t i = 0; i < members.size(); ++i) {
-            if (members[i].name == e) { found = true; break; }
+            if (members[i].name == e) {
+                found = true;
+                break;
+            }
         }
         CHECK(found, e);
     }
@@ -1270,8 +1278,7 @@ bool test_ir_instruction_roundtrip() {
     CHECK(rt.source_ast_node_id == 42, "source_ast_node_id preserved");
     CHECK(rt.type_id == 1, "type_id preserved");
     CHECK(rt.shape_id == 7, "shape_id preserved");
-    CHECK(rt.linear_ownership_state == 2,
-          "linear_ownership_state preserved");
+    CHECK(rt.linear_ownership_state == 2, "linear_ownership_state preserved");
     CHECK(pos == buf.size(), "all bytes consumed");
     return true;
 }
@@ -1305,8 +1312,8 @@ struct FlatASTSoALikeV2 {
     std::vector<std::int64_t> int_val_;
     std::vector<double> float_val_;
     std::vector<std::uint32_t> sym_id_;
-    std::vector<std::uint32_t> child_count_per_node_;  // u32 per node
-    std::vector<std::uint32_t> child_data_;            // NodeId (flat concat)
+    std::vector<std::uint32_t> child_count_per_node_; // u32 per node
+    std::vector<std::uint32_t> child_data_;           // NodeId (flat concat)
     std::vector<std::uint32_t> parent_;
     std::vector<std::uint32_t> param_begin_;
     std::vector<std::uint32_t> param_count_;
@@ -1333,10 +1340,10 @@ struct FlatASTSoALikeV2 {
     std::uint32_t root = 0xFFFFFFFF;
 };
 // Helper: write a length-prefixed map<u32, u8> to buf
-inline void write_map_u32_u8(std::vector<char>& buf, const std::unordered_map<std::uint32_t, std::uint8_t>& m) {
+inline void write_map_u32_u8(std::vector<char>& buf,
+                             const std::unordered_map<std::uint32_t, std::uint8_t>& m) {
     uint32_t count = static_cast<uint32_t>(m.size());
-    buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-               reinterpret_cast<char*>(&count) + 4);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
     for (const auto& [k, v] : m) {
         buf.insert(buf.end(), reinterpret_cast<const char*>(&k),
                    reinterpret_cast<const char*>(&k) + 4);
@@ -1347,31 +1354,35 @@ inline void write_map_u32_u8(std::vector<char>& buf, const std::unordered_map<st
 inline void read_map_u32_u8(const std::vector<char>& buf, std::size_t& pos,
                             std::unordered_map<std::uint32_t, std::uint8_t>& m) {
     uint32_t count;
-    std::memcpy(&count, &buf[pos], 4); pos += 4;
+    std::memcpy(&count, &buf[pos], 4);
+    pos += 4;
     for (uint32_t i = 0; i < count; ++i) {
-        uint32_t k; uint8_t v;
-        std::memcpy(&k, &buf[pos], 4); pos += 4;
-        std::memcpy(&v, &buf[pos], 1); pos += 1;
+        uint32_t k;
+        uint8_t v;
+        std::memcpy(&k, &buf[pos], 4);
+        pos += 4;
+        std::memcpy(&v, &buf[pos], 1);
+        pos += 1;
         m[k] = v;
     }
 }
 inline void flat_ast_soa_v2_serialize(std::vector<char>& buf, const FlatASTSoALikeV2& ast) {
     // Header (same as v1)
     uint32_t version = 2;
-    buf.insert(buf.end(), reinterpret_cast<char*>(&version),
-               reinterpret_cast<char*>(&version) + 4);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&version), reinterpret_cast<char*>(&version) + 4);
     uint32_t num_nodes = static_cast<uint32_t>(ast.tag_.size());
     buf.insert(buf.end(), reinterpret_cast<char*>(&num_nodes),
                reinterpret_cast<char*>(&num_nodes) + 4);
     // 22 SoA columns
     auto write_column = [&buf](const auto& col) {
         uint32_t count = static_cast<uint32_t>(col.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
         if (!col.empty()) {
-            buf.insert(buf.end(),
-                       reinterpret_cast<const char*>(col.data()),
-                       reinterpret_cast<const char*>(col.data()) + col.size() * sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
+            buf.insert(
+                buf.end(), reinterpret_cast<const char*>(col.data()),
+                reinterpret_cast<const char*>(col.data()) +
+                    col.size() *
+                        sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
         }
     };
     write_column(ast.tag_);
@@ -1412,17 +1423,21 @@ inline void flat_ast_soa_v2_serialize(std::vector<char>& buf, const FlatASTSoALi
     buf.insert(buf.end(), reinterpret_cast<const char*>(&ast.root),
                reinterpret_cast<const char*>(&ast.root) + 4);
 }
-inline FlatASTSoALikeV2 flat_ast_soa_v2_deserialize(const std::vector<char>& buf, std::size_t& pos) {
+inline FlatASTSoALikeV2 flat_ast_soa_v2_deserialize(const std::vector<char>& buf,
+                                                    std::size_t& pos) {
     FlatASTSoALikeV2 ast;
     uint32_t version;
-    std::memcpy(&version, &buf[pos], 4); pos += 4;
+    std::memcpy(&version, &buf[pos], 4);
+    pos += 4;
     CHECK(version == 2, "FlatAST SoA v2 format version == 2");
     uint32_t num_nodes;
-    std::memcpy(&num_nodes, &buf[pos], 4); pos += 4;
+    std::memcpy(&num_nodes, &buf[pos], 4);
+    pos += 4;
     auto read_column = [&buf, &pos](auto& col) {
         using T = typename std::remove_reference<decltype(col)>::type::value_type;
         uint32_t count;
-        std::memcpy(&count, &buf[pos], 4); pos += 4;
+        std::memcpy(&count, &buf[pos], 4);
+        pos += 4;
         col.resize(count);
         if (count > 0) {
             std::memcpy(col.data(), &buf[pos], count * sizeof(T));
@@ -1451,15 +1466,18 @@ inline FlatASTSoALikeV2 flat_ast_soa_v2_deserialize(const std::vector<char>& buf
     read_column(ast.value_cache_);
     read_column(ast.node_first_mutation_);
     read_column(ast.node_gen_);
-    std::memcpy(&ast.next_mutation_id_, &buf[pos], 4); pos += 4;
-    std::memcpy(&ast.generation_, &buf[pos], 2); pos += 2;
-    pos += 2;  // reserved
+    std::memcpy(&ast.next_mutation_id_, &buf[pos], 4);
+    pos += 4;
+    std::memcpy(&ast.generation_, &buf[pos], 2);
+    pos += 2;
+    pos += 2; // reserved
     // v2 side-data
     ast.mutation_log_ = aura::reflect::auto_deserialize<std::vector<MutationRecordLike>>(buf, pos);
     ast.match_info_ = aura::reflect::auto_deserialize<std::vector<MatchClauseInfoLike>>(buf, pos);
     read_map_u32_u8(buf, pos, ast.region_by_sym_);
     read_map_u32_u8(buf, pos, ast.region_by_lambda_id_);
-    std::memcpy(&ast.root, &buf[pos], 4); pos += 4;
+    std::memcpy(&ast.root, &buf[pos], 4);
+    pos += 4;
     return ast;
 }
 bool test_flat_ast_soa_v2_roundtrip() {
@@ -1470,7 +1488,7 @@ bool test_flat_ast_soa_v2_roundtrip() {
     original.int_val_ = {42, 0};
     original.float_val_ = {0.0, 0.0};
     original.sym_id_ = {0xFFFFFFFF, 0xABCD};
-    original.child_count_per_node_ = {0, 0};  // Issue #220
+    original.child_count_per_node_ = {0, 0}; // Issue #220
     original.line_ = {10, 11};
     original.col_ = {1, 1};
     original.marker_ = {0, 0};
@@ -1530,8 +1548,8 @@ bool test_flat_ast_soa_v2_roundtrip() {
     mci.has_wildcard = false;
     original.match_info_.push_back(mci);
     // v2: region_by_sym_ (2 entries: key=SymId, value=region id)
-    original.region_by_sym_[0xABCD] = 1;  // hot
-    original.region_by_sym_[0xDEAD] = 2;  // cold
+    original.region_by_sym_[0xABCD] = 1; // hot
+    original.region_by_sym_[0xDEAD] = 2; // cold
     // v2: region_by_lambda_id_ (1 entry: key=NodeId, value=region id)
     original.region_by_lambda_id_[5] = 1;
     // v2: root scalar
@@ -1564,7 +1582,8 @@ bool test_flat_ast_soa_v2_roundtrip() {
     CHECK(rt.mutation_log_.size() == 2, "mutation_log_ size == 2");
     if (rt.mutation_log_.size() == 2) {
         CHECK(rt.mutation_log_[0].mutation_id == 1, "mutation_log_[0].mutation_id");
-        CHECK(rt.mutation_log_[0].operator_name == "replace-type", "mutation_log_[0].operator_name");
+        CHECK(rt.mutation_log_[0].operator_name == "replace-type",
+              "mutation_log_[0].operator_name");
         CHECK(rt.mutation_log_[0].old_type_str == "Int", "mutation_log_[0].old_type_str");
         CHECK(rt.mutation_log_[0].new_type_str == "Float", "mutation_log_[0].new_type_str");
         CHECK(rt.mutation_log_[0].timestamp_ms == 1000, "mutation_log_[0].timestamp_ms");
@@ -1583,7 +1602,8 @@ bool test_flat_ast_soa_v2_roundtrip() {
             CHECK(rt.match_info_[0].used_constructors[0] == 101, "used_constructors[0]");
             CHECK(rt.match_info_[0].used_constructors[2] == 103, "used_constructors[2]");
         }
-        CHECK(rt.match_info_[0].candidate_constructors.size() == 2, "candidate_constructors size == 2");
+        CHECK(rt.match_info_[0].candidate_constructors.size() == 2,
+              "candidate_constructors size == 2");
         if (rt.match_info_[0].candidate_constructors.size() == 2) {
             CHECK(rt.match_info_[0].candidate_constructors[1] == 202, "candidate_constructors[1]");
         }
@@ -1608,8 +1628,7 @@ bool test_kopcode_info_nop() {
     OpcodeInfo original = kOpcodeInfo[0];
     CHECK(original.name == "nop", "kOpcodeInfo[0].name == \"nop\"");
     CHECK(original.operand_count == 0, "kOpcodeInfo[0].operand_count == 0");
-    CHECK(original.has_result_slot == false,
-          "kOpcodeInfo[0].has_result_slot == false");
+    CHECK(original.has_result_slot == false, "kOpcodeInfo[0].has_result_slot == false");
 
     std::vector<char> buf;
     aura::reflect::auto_serialize(buf, original);
@@ -1618,8 +1637,7 @@ bool test_kopcode_info_nop() {
     // Cycle 2 fix: string_view name roundtrips
     CHECK(rt.name == "nop", "nop name roundtrips (string_view)");
     CHECK(rt.operand_count == 0, "nop operand_count roundtrips");
-    CHECK(rt.has_result_slot == false,
-          "nop has_result_slot roundtrips");
+    CHECK(rt.has_result_slot == false, "nop has_result_slot roundtrips");
     return true;
 }
 
@@ -1633,8 +1651,7 @@ bool test_kopcode_info_add() {
     OpcodeInfo original = kOpcodeInfo[5];
     CHECK(original.name == "add", "kOpcodeInfo[5].name == \"add\"");
     CHECK(original.operand_count == 3, "kOpcodeInfo[5].operand_count == 3");
-    CHECK(original.has_result_slot == true,
-          "kOpcodeInfo[5].has_result_slot == true");
+    CHECK(original.has_result_slot == true, "kOpcodeInfo[5].has_result_slot == true");
 
     std::vector<char> buf;
     aura::reflect::auto_serialize(buf, original);
@@ -1642,8 +1659,7 @@ bool test_kopcode_info_add() {
     auto rt = aura::reflect::auto_deserialize<OpcodeInfo>(buf, pos);
     CHECK(rt.name == "add", "add name roundtrips (string_view)");
     CHECK(rt.operand_count == 3, "add operand_count roundtrips");
-    CHECK(rt.has_result_slot == true,
-          "add has_result_slot roundtrips");
+    CHECK(rt.has_result_slot == true, "add has_result_slot roundtrips");
     return true;
 }
 

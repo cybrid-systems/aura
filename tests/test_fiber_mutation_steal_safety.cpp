@@ -104,14 +104,14 @@ static int k_iters_fuzz() {
     return k_int_env("AURA_FUZZ_ITERS", 500);
 }
 static constexpr int K_FIBERS_8 = 8;
-static constexpr int K_FIBERS_50 = 8;   // 50 deadlocked on mutex; #321 uses 8
+static constexpr int K_FIBERS_50 = 8; // 50 deadlocked on mutex; #321 uses 8
 static constexpr int K_NAME_POOL = 16;
 
 // ── Scenario 1: 8 std::threads × N iters concurrent
 //      mutate + version-stamp monotonicity — AC #1 + #4 ─
 bool test_eight_thread_mutate() {
-    std::println("\n--- Scenario 1: {} threads × {} iters concurrent mutate ---",
-                 K_FIBERS_8, k_iters_8());
+    std::println("\n--- Scenario 1: {} threads × {} iters concurrent mutate ---", K_FIBERS_8,
+                 k_iters_8());
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) "
                   "(define e 5) (define f 6) (define g 7) (define h 8)\")");
@@ -123,36 +123,35 @@ bool test_eight_thread_mutate() {
             std::lock_guard<std::mutex> lk(s.eval_mtx);
             int name_idx = (tid * 7 + i) % K_NAME_POOL;
             int v = tid * 100 + i;
-            std::string code = "(mutate:replace-value (define q" +
-                std::to_string(name_idx) + " " + std::to_string(v) +
-                ") (define q" + std::to_string(name_idx) + " " +
-                std::to_string(v) + "))";
+            std::string code = "(mutate:replace-value (define q" + std::to_string(name_idx) + " " +
+                               std::to_string(v) + ") (define q" + std::to_string(name_idx) + " " +
+                               std::to_string(v) + "))";
             (void)s.cs->eval(code);
             s.mutations_done.fetch_add(1);
             s.yields_injected.fetch_add(1);
             std::uint64_t v64 = s.cs->evaluator().get_defuse_version();
             auto cur = s.max_defuse_version.load(std::memory_order_acquire);
             while (v64 > cur &&
-                   !s.max_defuse_version.compare_exchange_weak(
-                       cur, v64,
-                       std::memory_order_acq_rel,
-                       std::memory_order_acquire)) {}
+                   !s.max_defuse_version.compare_exchange_weak(cur, v64, std::memory_order_acq_rel,
+                                                               std::memory_order_acquire)) {
+            }
             s.total_ops.fetch_add(1);
         }
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < K_FIBERS_8; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    for (int i = 0; i < K_FIBERS_8; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
     std::println("  total_ops: {} mutations: {} yields: {} max_defuse_version: {} elapsed: {}ms",
-                 s.total_ops.load(), s.mutations_done.load(),
-                 s.yields_injected.load(), s.max_defuse_version.load(), ms);
-    CHECK(s.total_ops.load() == K_FIBERS_8 * k_iters_8(),
-          "all ops completed (no thread crashes)");
-    CHECK(s.mutations_done.load() == K_FIBERS_8 * k_iters_8(),
-          "every iter triggered a mutation");
+                 s.total_ops.load(), s.mutations_done.load(), s.yields_injected.load(),
+                 s.max_defuse_version.load(), ms);
+    CHECK(s.total_ops.load() == K_FIBERS_8 * k_iters_8(), "all ops completed (no thread crashes)");
+    CHECK(s.mutations_done.load() == K_FIBERS_8 * k_iters_8(), "every iter triggered a mutation");
     CHECK(s.max_defuse_version.load() > 0,
           "defuse_version_ monotonic under 8-thread concurrent mutate");
     return true;
@@ -161,44 +160,46 @@ bool test_eight_thread_mutate() {
 // ── Scenario 2: 50 std::threads × N iters + starvation
 //      detection — AC #1 + #2 ────────────────────────────
 bool test_fifty_thread_starvation() {
-    std::println("\n--- Scenario 2: {} threads × {} iters + starvation detection ---",
-                 K_FIBERS_50, k_iters_50());
+    std::println("\n--- Scenario 2: {} threads × {} iters + starvation detection ---", K_FIBERS_50,
+                 k_iters_50());
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
-    constexpr int n_threads = 8;  // match K_FIBERS_50; 50 deadlocked
+    constexpr int n_threads = 8; // match K_FIBERS_50; 50 deadlocked
     std::mutex mtx;
     std::vector<std::atomic<int>> per_thread(n_threads);
-    for (auto& a : per_thread) a.store(0);
+    for (auto& a : per_thread)
+        a.store(0);
 
     auto worker = [&](int tid) {
         for (int i = 0; i < k_iters_50(); ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(define v" + std::to_string(tid) +
-                " " + std::to_string(i) + ")";
+            std::string code = "(define v" + std::to_string(tid) + " " + std::to_string(i) + ")";
             (void)cs.eval(code);
             per_thread[tid].fetch_add(1);
         }
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
 
     std::vector<int> ops;
     ops.reserve(n_threads);
-    for (auto& a : per_thread) ops.push_back(a.load());
+    for (auto& a : per_thread)
+        ops.push_back(a.load());
     std::sort(ops.begin(), ops.end());
     int p_min = ops.front();
     int p_max = ops.back();
-    std::println("  per_thread ops: min={} p50={} max={} elapsed={}ms",
-                 p_min, ops[n_threads / 2], p_max, ms);
-    CHECK(p_max == k_iters_50(),
-          "every thread ran all iters (no missed ops)");
-    CHECK(p_min == k_iters_50(),
-          "no thread starved below the workload (uniform distribution)");
+    std::println("  per_thread ops: min={} p50={} max={} elapsed={}ms", p_min, ops[n_threads / 2],
+                 p_max, ms);
+    CHECK(p_max == k_iters_50(), "every thread ran all iters (no missed ops)");
+    CHECK(p_min == k_iters_50(), "no thread starved below the workload (uniform distribution)");
     CHECK(ms < 60000, "completed within 60s wall-clock budget");
     return true;
 }
@@ -218,9 +219,8 @@ bool test_gc_during_mutation() {
     auto worker = [&](int tid) {
         for (int j = 0; j < k_iters && !stop_workers.load(); ++j) {
             std::lock_guard<std::mutex> lk(cs_eval_mutex());
-            std::string code = "(mutate:replace-value (define x " +
-                std::to_string(tid * 1000 + j) +
-                ") (define x " + std::to_string(tid * 1000 + j) + "))";
+            std::string code = "(mutate:replace-value (define x " + std::to_string(tid * 1000 + j) +
+                               ") (define x " + std::to_string(tid * 1000 + j) + "))";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
@@ -241,14 +241,16 @@ bool test_gc_during_mutation() {
 
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
     gc_thread.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
 
-    std::println("  completed: {}/{} elapsed: {}ms",
-                 completed.load(), n_threads * k_iters, ms);
+    std::println("  completed: {}/{} elapsed: {}ms", completed.load(), n_threads * k_iters, ms);
     CHECK(completed.load() == n_threads * k_iters,
           "all mutations completed despite concurrent (gc-heap) "
           "(no crash under GC pressure)");
@@ -257,8 +259,7 @@ bool test_gc_during_mutation() {
 
 // ── Scenario 4: Long-running fuzz — AC #1 ───────────────
 bool test_fuzz_long_running() {
-    std::println("\n--- Scenario 4: long-running fuzz ({} random mutates) ---",
-                 k_iters_fuzz());
+    std::println("\n--- Scenario 4: long-running fuzz ({} random mutates) ---", k_iters_fuzz());
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
     (void)cs.eval("(eval-current)");
@@ -271,19 +272,18 @@ bool test_fuzz_long_running() {
     for (int i = 0; i < k_iters_fuzz(); ++i) {
         std::string name = (name_dist(rng) ? "a" : "b");
         int v = val_dist(rng);
-        std::string code = std::string("(mutate:replace-value (define ") +
-            name + " " + std::to_string(v) + ") (define " + name +
-            " " + std::to_string(v) + "))";
+        std::string code = std::string("(mutate:replace-value (define ") + name + " " +
+                           std::to_string(v) + ") (define " + name + " " + std::to_string(v) + "))";
         auto r = cs.eval(code);
-        if (!r) errors.fetch_add(1);
+        if (!r)
+            errors.fetch_add(1);
     }
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
-    std::println("  fuzz iters: {} errors: {} elapsed: {}ms",
-                 k_iters_fuzz(), errors.load(), ms);
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
+    std::println("  fuzz iters: {} errors: {} elapsed: {}ms", k_iters_fuzz(), errors.load(), ms);
     CHECK(errors.load() == 0,
-          "no errors during fuzz (" + std::to_string(k_iters_fuzz()) +
-              " random mutates)");
+          "no errors during fuzz (" + std::to_string(k_iters_fuzz()) + " random mutates)");
     return true;
 }
 
@@ -320,8 +320,7 @@ bool test_scheduler_fiber_yield_metrics() {
             // Capture the per-fiber yield counter.
             if (aura::serve::g_current_fiber) {
                 std::lock_guard<std::mutex> lk(mb_mtx);
-                mb_counts.push_back(
-                    aura::serve::g_current_fiber->yield_mutation_boundary_count());
+                mb_counts.push_back(aura::serve::g_current_fiber->yield_mutation_boundary_count());
             }
             completed.fetch_add(1);
         });
@@ -331,14 +330,17 @@ bool test_scheduler_fiber_yield_metrics() {
     auto t0 = std::chrono::steady_clock::now();
     while (completed.load() < k_fibers) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        if (elapsed > 30000) break;  // 30s budget
+                           std::chrono::steady_clock::now() - t0)
+                           .count();
+        if (elapsed > 30000)
+            break; // 30s budget
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.stop();
     io_thread.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
 
     // Aggregate scheduler metrics.
     const auto& m = sched.metrics();
@@ -350,17 +352,12 @@ bool test_scheduler_fiber_yield_metrics() {
     }
     std::println("  completed: {}/{} yields_mb: {} yields_exp: {} "
                  "steal_attempts: {} steal_successes: {} elapsed: {}ms",
-                 completed.load(), k_fibers, yields_mb.load(),
-                 yields_exp.load(), total_steal_attempts,
-                 total_steal_successes, ms);
-    std::println("  per-fiber yield_mutation_boundary_count entries: {}",
-                 mb_counts.size());
-    CHECK(completed.load() == k_fibers,
-          "all 8 fibers completed (no scheduler stall)");
-    CHECK(yields_mb.load() > 0,
-          "MutationBoundary yields were recorded");
-    CHECK(yields_exp.load() > 0,
-          "Explicit yields were recorded");
+                 completed.load(), k_fibers, yields_mb.load(), yields_exp.load(),
+                 total_steal_attempts, total_steal_successes, ms);
+    std::println("  per-fiber yield_mutation_boundary_count entries: {}", mb_counts.size());
+    CHECK(completed.load() == k_fibers, "all 8 fibers completed (no scheduler stall)");
+    CHECK(yields_mb.load() > 0, "MutationBoundary yields were recorded");
+    CHECK(yields_exp.load() > 0, "Explicit yields were recorded");
     CHECK(ms < 30000, "completed within 30s wall-clock budget");
     return true;
 }
@@ -379,11 +376,9 @@ bool test_happy_path_regression() {
     }
     auto r = cs.eval("(+ reg-542-a reg-542-b)");
     CHECK(r.has_value(), "(+ reg-542-a reg-542-b) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(+ reg-542-a reg-542-b) is int");
+    CHECK(aura::compiler::types::is_int(*r), "(+ reg-542-a reg-542-b) is int");
     if (r && aura::compiler::types::is_int(*r)) {
-        CHECK(aura::compiler::types::as_int(*r) == 42,
-              "(+ 10 32) == 42 (post-stress regression)");
+        CHECK(aura::compiler::types::as_int(*r) == 42, "(+ 10 32) == 42 (post-stress regression)");
     }
     // Scheduler smoke: spawn + run + stop with no eval.
     {
@@ -399,8 +394,10 @@ bool test_happy_path_regression() {
         auto t0 = std::chrono::steady_clock::now();
         while (done.load() < 4) {
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - t0).count();
-            if (elapsed > 10000) break;
+                               std::chrono::steady_clock::now() - t0)
+                               .count();
+            if (elapsed > 10000)
+                break;
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         sched.stop();

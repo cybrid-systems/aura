@@ -9,8 +9,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -62,8 +62,7 @@ bool test_always_comb_constructor() {
     }
 
     // Predicate
-    auto is_always = run_int(cs,
-        "(if (eda:always? a) 1 0)");
+    auto is_always = run_int(cs, "(if (eda:always? a) 1 0)");
     CHECK(is_always == 1, "(eda:always? a) returns #t");
 
     // Kind accessor
@@ -200,8 +199,8 @@ bool test_emit_always_ff() {
     bool has_posedge = (s.find("posedge clk") != std::string::npos);
     CHECK(has_posedge, "emitted SV contains 'posedge clk'");
 
-    bool has_begin_end = (s.find("begin") != std::string::npos) &&
-                         (s.find("end") != std::string::npos);
+    bool has_begin_end =
+        (s.find("begin") != std::string::npos) && (s.find("end") != std::string::npos);
     CHECK(has_begin_end, "emitted SV contains 'begin' and 'end'");
 
     return true;
@@ -303,8 +302,12 @@ int run_tests() {
 
 } // namespace aura_issue_436_detail
 
-int aura_issue_436_run() { return aura_issue_436_detail::run_tests(); }
+int aura_issue_436_run() {
+    return aura_issue_436_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_436_run(); }
+int main() {
+    return aura_issue_436_run();
+}
 #endif

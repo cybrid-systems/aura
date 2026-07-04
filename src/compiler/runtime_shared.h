@@ -99,7 +99,9 @@ extern "C" void aura_set_top_cell_getter(int64_t (*fn)(void*, int64_t), void* us
 // aot_region_mismatch_, aot_hot_update_success_). Defined in
 // aura_jit_bridge.cpp; exposed as C linkage so the service layer
 // can bind it at startup.
-namespace aura::compiler { struct CompilerMetrics; }
+namespace aura::compiler {
+struct CompilerMetrics;
+}
 extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m);
 extern "C" std::int64_t aura_top_cell_get(std::int64_t cell_index);
 extern "C" std::size_t aura_jit_pool_size();

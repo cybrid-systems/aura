@@ -18,21 +18,25 @@ namespace aura_issue_694_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:sv-sva-structure-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:sv-sva-structure-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-static void seed_sva_workspace(aura::compiler::CompilerService& cs,
-                               aura::ast::NodeId& property_id,
+static void seed_sva_workspace(aura::compiler::CompilerService& cs, aura::ast::NodeId& property_id,
                                aura::ast::NodeId& coverpoint_id) {
     cs.eval("(set-code \"(define seed 1)\")");
     cs.eval("(eval-current)");
@@ -48,7 +52,7 @@ static void seed_sva_workspace(aura::compiler::CompilerService& cs,
     (void)ws->add_covergroup(pool->intern("cg_req"), cps);
 }
 
-}  // namespace aura_issue_694_detail
+} // namespace aura_issue_694_detail
 
 int main() {
     using namespace aura_issue_694_detail;
@@ -64,8 +68,7 @@ int main() {
               "query:sv-sva-structure-stats returns hash");
         CHECK(stat_int(cs, "property-count") >= 0, "property-count present");
         CHECK(stat_int(cs, "coverpoint-count") >= 0, "coverpoint-count present");
-        CHECK(stat_int(cs, "structured-mutate-hits") >= 0,
-              "structured-mutate-hits present");
+        CHECK(stat_int(cs, "structured-mutate-hits") >= 0, "structured-mutate-hits present");
     }
 
     aura::ast::NodeId property_id = aura::ast::NULL_NODE;
@@ -79,20 +82,17 @@ int main() {
         auto* pool = cs.evaluator().workspace_pool();
         CHECK(ws != nullptr && pool != nullptr, "workspace available");
         CHECK(property_id < ws->size(), "property node created");
-        CHECK(ws->get(property_id).tag == aura::ast::NodeTag::Property,
-              "node tag is Property");
+        CHECK(ws->get(property_id).tag == aura::ast::NodeTag::Property, "node tag is Property");
         auto ir = aura::compiler::sv_ir::map_property_node_to_ir(*ws, *pool, property_id);
         CHECK(ir.has_value(), "map_property_node_to_ir succeeds");
         if (ir) {
             const auto emitted = aura::compiler::sv_ir::emit_property(*ir);
             CHECK(emitted.find("property p_req") != std::string::npos,
                   "emit_property contains property name");
-            CHECK(emitted.find("req ack") != std::string::npos,
-                  "emit_property contains expr");
+            CHECK(emitted.find("req ack") != std::string::npos, "emit_property contains expr");
         }
         const auto prop_count = stat_int(cs, "property-count");
-        CHECK(prop_count >= 1,
-              std::format("property-count >= 1 (got {})", prop_count));
+        CHECK(prop_count >= 1, std::format("property-count >= 1 (got {})", prop_count));
     }
 
     const auto mutate_before = stat_int(cs, "structured-mutate-hits");
@@ -100,32 +100,28 @@ int main() {
     // AC3: eda structured mutates with Guard/StableRef
     {
         std::println("\n--- AC3: eda:weaken-property + eda:add-coverpoint-bin ---");
-        auto weaken = cs.eval(std::format(
-            "(eda:weaken-property {} \"reset\")", static_cast<int>(property_id)));
+        auto weaken = cs.eval(
+            std::format("(eda:weaken-property {} \"reset\")", static_cast<int>(property_id)));
         CHECK(weaken && aura::compiler::types::is_bool(*weaken) &&
                   aura::compiler::types::as_bool(*weaken),
               "eda:weaken-property succeeds");
-        auto add_bin = cs.eval(std::format(
-            "(eda:add-coverpoint-bin {} \"mid\")", static_cast<int>(coverpoint_id)));
+        auto add_bin = cs.eval(
+            std::format("(eda:add-coverpoint-bin {} \"mid\")", static_cast<int>(coverpoint_id)));
         CHECK(add_bin && aura::compiler::types::is_bool(*add_bin) &&
                   aura::compiler::types::as_bool(*add_bin),
               "eda:add-coverpoint-bin succeeds");
         auto* ws = cs.workspace_flat();
         auto* pool = cs.evaluator().workspace_pool();
         if (ws && pool) {
-            auto ir = aura::compiler::sv_ir::map_coverpoint_node_to_ir(
-                *ws, *pool, coverpoint_id);
+            auto ir = aura::compiler::sv_ir::map_coverpoint_node_to_ir(*ws, *pool, coverpoint_id);
             CHECK(ir && ir->bins.size() == 3,
-                  std::format("coverpoint has 3 bins (got {})",
-                              ir ? ir->bins.size() : 0));
+                  std::format("coverpoint has 3 bins (got {})", ir ? ir->bins.size() : 0));
         }
         const auto mutate_after = stat_int(cs, "structured-mutate-hits");
         CHECK(mutate_after > mutate_before,
-              std::format("structured-mutate-hits grew ({} -> {})",
-                          mutate_before, mutate_after));
+              std::format("structured-mutate-hits grew ({} -> {})", mutate_before, mutate_after));
         const auto sva_dirty = stat_int(cs, "sva-dirty-total");
-        CHECK(sva_dirty >= 1,
-              std::format("sva-dirty-total >= 1 (got {})", sva_dirty));
+        CHECK(sva_dirty >= 1, std::format("sva-dirty-total >= 1 (got {})", sva_dirty));
     }
 
     // AC4: stats:count
@@ -147,11 +143,9 @@ int main() {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
                 (void)cs.eval("(typecheck-current)");
-                auto r = cs.eval(std::format(
-                    "(eda:add-coverpoint-bin {} \"stress\")",
-                    static_cast<int>(coverpoint_id)));
-                if (r && aura::compiler::types::is_bool(*r) &&
-                    aura::compiler::types::as_bool(*r))
+                auto r = cs.eval(std::format("(eda:add-coverpoint-bin {} \"stress\")",
+                                             static_cast<int>(coverpoint_id)));
+                if (r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r))
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }
         };
@@ -160,8 +154,7 @@ int main() {
         t1.join();
         t2.join();
         CHECK(ok_count.load() > 0,
-              std::format("fiber stress produced {} successful bin adds",
-                          ok_count.load()));
+              std::format("fiber stress produced {} successful bin adds", ok_count.load()));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

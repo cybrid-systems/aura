@@ -27,8 +27,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -37,7 +37,6 @@ import aura.compiler.value;
 import aura.diag;
 import aura.core.type;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_117_detail {
@@ -60,7 +59,8 @@ TypecheckResult typecheck(const std::string& src) {
     flat->root = pr.root;
     r.flat = flat;
     r.root = pr.root;
-    if (!pr.success) return r;
+    if (!pr.success)
+        return r;
     r.treg = std::make_unique<aura::core::TypeRegistry>();
     r.tc = std::make_unique<aura::compiler::TypeChecker>(*r.treg);
     aura::diag::DiagnosticCollector diag;
@@ -68,11 +68,11 @@ TypecheckResult typecheck(const std::string& src) {
     return r;
 }
 
-int count_kind(const std::vector<aura::compiler::OwnershipNote>& notes,
-               const std::string& kind) {
+int count_kind(const std::vector<aura::compiler::OwnershipNote>& notes, const std::string& kind) {
     int n = 0;
     for (auto& note : notes) {
-        if (note.kind == kind) ++n;
+        if (note.kind == kind)
+            ++n;
     }
     return n;
 }
@@ -105,8 +105,7 @@ bool test_full_re_simulation_discovers_linear() {
     flat->root = root;
 
     std::vector<aura::compiler::OwnershipNote> notes;
-    bool pass = aura::compiler::OwnershipEnv::validate_ownership_full(
-        *flat, *pool, root, notes);
+    bool pass = aura::compiler::OwnershipEnv::validate_ownership_full(*flat, *pool, root, notes);
     int leaks = count_kind(notes, "leaked-linear");
     std::println("  full validation: pass={} leaks={}", pass, leaks);
     CHECK(leaks >= 1, "validate_ownership_full finds leaked-linear binding");
@@ -143,22 +142,20 @@ bool test_full_catches_what_dirty_misses() {
     // report any leak (skips x entirely).
     {
         std::vector<aura::compiler::OwnershipNote> notes;
-        std::unordered_set<std::string> dirty = {};  // x not dirty
-        bool pass = aura::compiler::OwnershipEnv::validate_ownership(
-            *flat, *pool, root, dirty, notes);
-        CHECK(notes.empty(),
-              "dirty-only: empty dirty set → no diagnostics (skipped)");
+        std::unordered_set<std::string> dirty = {}; // x not dirty
+        bool pass =
+            aura::compiler::OwnershipEnv::validate_ownership(*flat, *pool, root, dirty, notes);
+        CHECK(notes.empty(), "dirty-only: empty dirty set → no diagnostics (skipped)");
     }
 
     // Full re-simulation: SHOULD report the leak even though
     // x isn't in any dirty set.
     {
         std::vector<aura::compiler::OwnershipNote> notes;
-        bool pass = aura::compiler::OwnershipEnv::validate_ownership_full(
-            *flat, *pool, root, notes);
+        bool pass =
+            aura::compiler::OwnershipEnv::validate_ownership_full(*flat, *pool, root, notes);
         int leaks = count_kind(notes, "leaked-linear");
-        CHECK(leaks >= 1,
-              "full re-simulation: reports leak for non-dirty linear binding");
+        CHECK(leaks >= 1, "full re-simulation: reports leak for non-dirty linear binding");
     }
     return true;
 }
@@ -183,8 +180,7 @@ bool test_full_properly_moved_no_leak() {
     flat->root = root;
 
     std::vector<aura::compiler::OwnershipNote> notes;
-    bool pass = aura::compiler::OwnershipEnv::validate_ownership_full(
-        *flat, *pool, root, notes);
+    bool pass = aura::compiler::OwnershipEnv::validate_ownership_full(*flat, *pool, root, notes);
     int leaks = count_kind(notes, "leaked-linear");
     CHECK(leaks == 0, "properly moved linear → no leak");
     CHECK(pass, "properly moved linear → overall pass=true");
@@ -209,13 +205,14 @@ bool test_gradual_linear_boundary() {
     flat->root = pr.root;
     aura::core::TypeRegistry treg;
     aura::compiler::TypeChecker tc(treg);
-    tc.set_strict(true);  // strict BEFORE infer_flat
+    tc.set_strict(true); // strict BEFORE infer_flat
     aura::diag::DiagnosticCollector diag;
     tc.infer_flat(*flat, *pool, pr.root, diag);
 
     int type_errors = 0;
     for (auto& d : diag.diagnostics()) {
-        if (d.kind == aura::diag::ErrorKind::TypeError) ++type_errors;
+        if (d.kind == aura::diag::ErrorKind::TypeError)
+            ++type_errors;
     }
     std::println("  TypeError diagnostics: {}", type_errors);
     CHECK(type_errors >= 1,
@@ -243,10 +240,8 @@ bool test_dirty_only_still_works() {
 
     std::vector<aura::compiler::OwnershipNote> notes;
     std::unordered_set<std::string> dirty = {"x"};
-    bool pass = aura::compiler::OwnershipEnv::validate_ownership(
-        *flat, *pool, root, dirty, notes);
-    CHECK(notes.empty(),
-          "non-linear binding: dirty-only path produces no diagnostics");
+    bool pass = aura::compiler::OwnershipEnv::validate_ownership(*flat, *pool, root, dirty, notes);
+    CHECK(notes.empty(), "non-linear binding: dirty-only path produces no diagnostics");
     CHECK(pass, "non-linear binding: dirty-only path passes");
     return true;
 }
@@ -258,12 +253,12 @@ int run_tests() {
     test_full_properly_moved_no_leak();
     test_gradual_linear_boundary();
     test_dirty_only_still_works();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_117_detail
+} // namespace aura_issue_117_detail
 
-int aura_issue_117_run() { return aura_issue_117_detail::run_tests(); }
-
+int aura_issue_117_run() {
+    return aura_issue_117_detail::run_tests();
+}

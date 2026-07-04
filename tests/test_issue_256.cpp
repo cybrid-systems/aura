@@ -52,16 +52,29 @@ namespace aura_issue_256_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: ast_ops counters start at 0 on a fresh CompilerService ---");
@@ -78,21 +91,29 @@ bool test_aura_primitive_returns_hash() {
     std::println("\n--- AC2: (compile:ast-ops-stats) primitive returns a hash ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define h (compile:ast-ops-stats))\")");
-    if (!r1) { std::println("  FAIL: define h failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: define h failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     auto rh = cs.eval("(hash? h)");
-    if (!rh || !aura::compiler::types::is_bool(*rh) ||
-        !aura::compiler::types::as_bool(*rh)) {
+    if (!rh || !aura::compiler::types::is_bool(*rh) || !aura::compiler::types::as_bool(*rh)) {
         std::println("  FAIL: (hash? h) did not return #t (val={})", rh ? rh->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:ast-ops-stats) returns a hash (hash? is #t)");
     auto rp = cs.eval("(pair? h)");
-    if (!rp || !aura::compiler::types::is_bool(*rp) ||
-        aura::compiler::types::as_bool(*rp)) {
+    if (!rp || !aura::compiler::types::is_bool(*rp) || aura::compiler::types::as_bool(*rp)) {
         std::println("  FAIL: (pair? h) did not return #f (val={})", rp ? rp->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:ast-ops-stats) is not a pair (pair? is #f)");
     // Verify the 4 keys exist with value 0 (fresh service).
@@ -100,10 +121,8 @@ bool test_aura_primitive_returns_hash() {
                             "mark-dirty-upward-call-count", "mark-dirty-total-nodes"}) {
         std::string check = std::string("(hash-ref h \"") + key + "\")";
         auto rv = cs.eval(check);
-        if (!rv || !aura::compiler::types::is_int(*rv) ||
-            aura::compiler::types::as_int(*rv) != 0) {
-            std::println("  FAIL: hash-ref h {} did not return 0 (val={})",
-                         key, rv ? rv->val : -1);
+        if (!rv || !aura::compiler::types::is_int(*rv) || aura::compiler::types::as_int(*rv) != 0) {
+            std::println("  FAIL: hash-ref h {} did not return 0 (val={})", key, rv ? rv->val : -1);
             ++g_failed;
         } else {
             CHECK(true, std::string("hash-ref h \"") + key + "\" returns 0");
@@ -116,13 +135,23 @@ bool test_children_count_bumps() {
     std::println("\n--- AC3: children_call_count_ bumps on AST traversal ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define x 5)\")");
-    if (!r1) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     // Capture baseline.
     auto rg = cs.eval("(hash-ref (compile:ast-ops-stats) \"children-call-count\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
-        std::println("  FAIL: hash-ref failed"); ++g_failed; return false;
+        std::println("  FAIL: hash-ref failed");
+        ++g_failed;
+        return false;
     }
     auto baseline = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg));
     // Trigger some AST traversals. query:* primitives walk
@@ -137,11 +166,12 @@ bool test_children_count_bumps() {
     }
     auto rg2 = cs.eval("(hash-ref (compile:ast-ops-stats) \"children-call-count\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
-        std::println("  FAIL: hash-ref after failed"); ++g_failed; return false;
+        std::println("  FAIL: hash-ref after failed");
+        ++g_failed;
+        return false;
     }
     auto after = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg2));
-    CHECK(after >= baseline,
-          "children-call-count non-decreasing after 3 queries");
+    CHECK(after >= baseline, "children-call-count non-decreasing after 3 queries");
     return true;
 }
 
@@ -149,27 +179,42 @@ bool test_parent_of_count_bumps() {
     std::println("\n--- AC4: parent_of_call_count_ bumps on parent queries ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define x 5)\")");
-    if (!r1) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     auto rg = cs.eval("(hash-ref (compile:ast-ops-stats) \"parent-of-call-count\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
-        std::println("  FAIL: hash-ref failed"); ++g_failed; return false;
+        std::println("  FAIL: hash-ref failed");
+        ++g_failed;
+        return false;
     }
     auto baseline = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg));
     // Trigger some work — eval-current calls parent_of on
     // many nodes during tree walking.
     for (int i = 0; i < 3; ++i) {
         auto r = cs.eval("x");
-        if (!r) { std::println("  FAIL: eval x #{} failed", i); ++g_failed; return false; }
+        if (!r) {
+            std::println("  FAIL: eval x #{} failed", i);
+            ++g_failed;
+            return false;
+        }
     }
     auto rg2 = cs.eval("(hash-ref (compile:ast-ops-stats) \"parent-of-call-count\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
-        std::println("  FAIL: hash-ref after failed"); ++g_failed; return false;
+        std::println("  FAIL: hash-ref after failed");
+        ++g_failed;
+        return false;
     }
     auto after = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg2));
-    CHECK(after >= baseline,
-          "parent-of-call-count non-decreasing after 3 evals");
+    CHECK(after >= baseline, "parent-of-call-count non-decreasing after 3 evals");
     return true;
 }
 
@@ -177,27 +222,42 @@ bool test_mark_dirty_upward_bumps() {
     std::println("\n--- AC5: mark_dirty_upward_call_count_ bumps on mutations ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define x 5)\")");
-    if (!r1) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     auto rg = cs.eval("(hash-ref (compile:ast-ops-stats) \"mark-dirty-upward-call-count\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
-        std::println("  FAIL: hash-ref failed"); ++g_failed; return false;
+        std::println("  FAIL: hash-ref failed");
+        ++g_failed;
+        return false;
     }
     auto baseline = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg));
     // mutate:rebind triggers mark_dirty_upward internally.
     for (int i = 0; i < 3; ++i) {
         std::string code = "(mutate:rebind \"x\" \"6\")";
         auto r = cs.eval(code);
-        if (!r) { std::println("  FAIL: mutate:rebind #{} failed", i); ++g_failed; return false; }
+        if (!r) {
+            std::println("  FAIL: mutate:rebind #{} failed", i);
+            ++g_failed;
+            return false;
+        }
     }
     auto rg2 = cs.eval("(hash-ref (compile:ast-ops-stats) \"mark-dirty-upward-call-count\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
-        std::println("  FAIL: hash-ref after failed"); ++g_failed; return false;
+        std::println("  FAIL: hash-ref after failed");
+        ++g_failed;
+        return false;
     }
     auto after = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg2));
-    CHECK(after > baseline,
-          "mark-dirty-upward-call-count increased after 3 mutate:rebind calls");
+    CHECK(after > baseline, "mark-dirty-upward-call-count increased after 3 mutate:rebind calls");
     return true;
 }
 
@@ -205,9 +265,17 @@ bool test_mark_dirty_total_invariant() {
     std::println("\n--- AC6: mark_dirty_total_nodes_ >= mark_dirty_upward_call_count_ ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define x 5)\")");
-    if (!r1) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     // Apply some mutations, then read both counters.
     for (int i = 0; i < 2; ++i) {
         std::string code = "(mutate:rebind \"x\" \"6\")";
@@ -215,9 +283,11 @@ bool test_mark_dirty_total_invariant() {
     }
     auto rg_calls = cs.eval("(hash-ref (compile:ast-ops-stats) \"mark-dirty-upward-call-count\")");
     auto rg_nodes = cs.eval("(hash-ref (compile:ast-ops-stats) \"mark-dirty-total-nodes\")");
-    if (!rg_calls || !aura::compiler::types::is_int(*rg_calls) ||
-        !rg_nodes || !aura::compiler::types::is_int(*rg_nodes)) {
-        std::println("  FAIL: hash-ref failed"); ++g_failed; return false;
+    if (!rg_calls || !aura::compiler::types::is_int(*rg_calls) || !rg_nodes ||
+        !aura::compiler::types::is_int(*rg_nodes)) {
+        std::println("  FAIL: hash-ref failed");
+        ++g_failed;
+        return false;
     }
     auto calls = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg_calls));
     auto nodes = static_cast<std::uint64_t>(aura::compiler::types::as_int(*rg_nodes));
@@ -230,10 +300,13 @@ bool test_no_regression() {
     std::println("\n--- AC7: zero regression — existing eval still works ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(set-code \"(define x 42) x\")");
-    if (!r) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     r = cs.eval("(eval-current)");
-    if (!r || !aura::compiler::types::is_int(*r) ||
-        aura::compiler::types::as_int(*r) != 42) {
+    if (!r || !aura::compiler::types::is_int(*r) || aura::compiler::types::as_int(*r) != 42) {
         std::println("  FAIL: eval result != 42 (val={})", r ? r->val : -1);
         ++g_failed;
     } else {
@@ -254,12 +327,12 @@ int run_tests() {
     test_mark_dirty_upward_bumps();
     test_mark_dirty_total_invariant();
     test_no_regression();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_256_detail
+} // namespace aura_issue_256_detail
 
-int aura_issue_256_run() { return aura_issue_256_detail::run_tests(); }
-
+int aura_issue_256_run() {
+    return aura_issue_256_detail::run_tests();
+}

@@ -42,9 +42,12 @@
 #include <unistd.h>
 
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+using aura::test::g_passed;
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 namespace fs = std::filesystem;
 
@@ -67,7 +70,8 @@ std::string find_aura_binary() {
     if (n > 0) {
         fs::path p(buf);
         fs::path candidate = p.parent_path() / "aura";
-        if (fs::is_regular_file(candidate)) return candidate.string();
+        if (fs::is_regular_file(candidate))
+            return candidate.string();
     }
     return "aura";
 }
@@ -84,31 +88,39 @@ struct EmitResult {
     std::string stderr;    // captured stderr
     bool aot_error_marker; // true iff stderr contains "AOT: cannot find lib/runtime.c"
 };
-EmitResult run_emit_binary_with_env(const std::string& aura,
-                                     const std::string& src,
-                                     const std::string& out_path,
-                                     const std::string& cwd,
-                                     const std::vector<std::string>& env_overrides) {
+EmitResult run_emit_binary_with_env(const std::string& aura, const std::string& src,
+                                    const std::string& out_path, const std::string& cwd,
+                                    const std::vector<std::string>& env_overrides) {
     EmitResult res{};
     int in_pipe[2], err_pipe[2];
-    if (pipe(in_pipe) != 0) return res;
-    if (pipe(err_pipe) != 0) { close(in_pipe[0]); close(in_pipe[1]); return res; }
+    if (pipe(in_pipe) != 0)
+        return res;
+    if (pipe(err_pipe) != 0) {
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        return res;
+    }
 
     pid_t pid = fork();
     if (pid < 0) {
-        close(in_pipe[0]); close(in_pipe[1]);
-        close(err_pipe[0]); close(err_pipe[1]);
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        close(err_pipe[0]);
+        close(err_pipe[1]);
         return res;
     }
     if (pid == 0) {
         // child: change to test-controlled CWD, wire stdin/stderr, exec aura
         if (!cwd.empty()) {
-            if (chdir(cwd.c_str()) != 0) _exit(126);
+            if (chdir(cwd.c_str()) != 0)
+                _exit(126);
         }
         dup2(in_pipe[0], STDIN_FILENO);
         dup2(err_pipe[1], STDERR_FILENO);
-        close(in_pipe[0]); close(in_pipe[1]);
-        close(err_pipe[0]); close(err_pipe[1]);
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        close(err_pipe[0]);
+        close(err_pipe[1]);
         // Set the env overrides via putenv (null-terminated name=value).
         for (const auto& kv : env_overrides) {
             ::putenv(const_cast<char*>(kv.c_str()));
@@ -147,13 +159,19 @@ std::string run_capture_stdout(const std::string& exe) {
     std::array<char, 4096> buf;
     std::string out;
     int pipefd[2];
-    if (pipe(pipefd) != 0) return {};
+    if (pipe(pipefd) != 0)
+        return {};
     pid_t pid = fork();
-    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return {}; }
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return {};
+    }
     if (pid == 0) {
         dup2(pipefd[1], STDOUT_FILENO);
         dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[0]); close(pipefd[1]);
+        close(pipefd[0]);
+        close(pipefd[1]);
         execl(exe.c_str(), exe.c_str(), static_cast<char*>(nullptr));
         _exit(127);
     }
@@ -165,7 +183,8 @@ std::string run_capture_stdout(const std::string& exe) {
     close(pipefd[0]);
     int status = 0;
     waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return {};
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        return {};
     return out;
 }
 
@@ -175,7 +194,8 @@ std::string run_capture_stdout(const std::string& exe) {
 bool setup_runtime_c_dir(const std::string& dst) {
     std::error_code ec;
     fs::create_directories(dst, ec);
-    if (ec) return false;
+    if (ec)
+        return false;
     // Find lib/runtime.c — try a few common repo locations.
     const char* candidates[] = {
         "lib/runtime.c",
@@ -205,19 +225,21 @@ bool test_aura_runtime_dir_override_works() {
     fs::remove(out_path);
     if (!setup_runtime_c_dir(runtime_dir)) {
         std::println("       [skip] could not set up {}", runtime_dir);
-        return true;  // skip rather than fail
+        return true; // skip rather than fail
     }
     EmitResult res = run_emit_binary_with_env(aura, "(+ 1 2)", out_path,
-                                               "/tmp",  // CWD with no lib/
-                                               {"AURA_RUNTIME_DIR=" + runtime_dir});
+                                              "/tmp", // CWD with no lib/
+                                              {"AURA_RUNTIME_DIR=" + runtime_dir});
     if (!res.ok) {
-        std::println("       [aura failure] exit={} signal={} crashed={}",
-                     res.exit_code, res.signal, res.crashed);
-        if (!res.stderr.empty()) std::println("       [aura stderr] {}", res.stderr);
+        std::println("       [aura failure] exit={} signal={} crashed={}", res.exit_code,
+                     res.signal, res.crashed);
+        if (!res.stderr.empty())
+            std::println("       [aura stderr] {}", res.stderr);
     }
     CHECK(res.ok, "aura --emit-binary exited 0 with AURA_RUNTIME_DIR override");
     CHECK(fs::exists(out_path), "output file exists");
-    if (!fs::exists(out_path)) return false;
+    if (!fs::exists(out_path))
+        return false;
     std::string output = run_capture_stdout(out_path);
     CHECK(!output.empty(), "exec captured output");
     CHECK(output.find("3") != std::string::npos, "output contains '3'");
@@ -239,13 +261,15 @@ bool test_walkup_finds_runtime_c() {
     // No AURA_RUNTIME_DIR override. CWD is /tmp (no lib/ there).
     EmitResult res = run_emit_binary_with_env(aura, "(+ 1 2)", out_path, "/tmp", {});
     if (!res.ok) {
-        std::println("       [aura failure] exit={} signal={} crashed={}",
-                     res.exit_code, res.signal, res.crashed);
-        if (!res.stderr.empty()) std::println("       [aura stderr] {}", res.stderr);
+        std::println("       [aura failure] exit={} signal={} crashed={}", res.exit_code,
+                     res.signal, res.crashed);
+        if (!res.stderr.empty())
+            std::println("       [aura stderr] {}", res.stderr);
     }
     CHECK(res.ok, "aura --emit-binary exited 0 (walk-up path)");
     CHECK(fs::exists(out_path), "output file exists (walk-up path)");
-    if (!fs::exists(out_path)) return false;
+    if (!fs::exists(out_path))
+        return false;
     std::string output = run_capture_stdout(out_path);
     CHECK(output.find("3") != std::string::npos, "output contains '3' (walk-up path)");
     fs::remove(out_path);
@@ -264,32 +288,35 @@ bool test_bad_aura_runtime_dir_falls_through() {
     std::string aura = find_aura_binary();
     std::string out_path = "/tmp/issue_374_fallthrough_out";
     fs::remove(out_path);
-    EmitResult res = run_emit_binary_with_env(aura, "(+ 1 2)", out_path,
-                                               "/tmp",
-                                               {"AURA_RUNTIME_DIR=/tmp/issue_374_nonexistent_dir_xyz"});
+    EmitResult res = run_emit_binary_with_env(
+        aura, "(+ 1 2)", out_path, "/tmp", {"AURA_RUNTIME_DIR=/tmp/issue_374_nonexistent_dir_xyz"});
     if (!res.ok) {
-        std::println("       [aura failure] exit={} signal={} crashed={}",
-                     res.exit_code, res.signal, res.crashed);
-        if (!res.stderr.empty()) std::println("       [aura stderr] {}", res.stderr);
+        std::println("       [aura failure] exit={} signal={} crashed={}", res.exit_code,
+                     res.signal, res.crashed);
+        if (!res.stderr.empty())
+            std::println("       [aura stderr] {}", res.stderr);
     }
     CHECK(res.ok, "aura --emit-binary exits 0 even with bad AURA_RUNTIME_DIR (fall-through)");
     CHECK(!res.aot_error_marker,
           "stderr does NOT contain 'AOT: cannot find lib/runtime.c' (fall-through recovered)");
     CHECK(fs::exists(out_path), "output file exists (fall-through)");
-    if (!fs::exists(out_path)) return false;
+    if (!fs::exists(out_path))
+        return false;
     std::string output = run_capture_stdout(out_path);
     CHECK(output.find("3") != std::string::npos, "output contains '3' (fall-through)");
     fs::remove(out_path);
     return true;
 }
 
-}  // namespace aura_issue_374_detail
+} // namespace aura_issue_374_detail
 
 int aura_issue_374_run() {
     using namespace aura_issue_374_detail;
     std::fprintf(stdout, "═══ Issue #374 — AURA_RUNTIME_DIR CI lookup + install layout ═══\n");
-    std::fprintf(stdout, "  Verifies find_runtime_c() lookup strategies #1 (env var) and #2 (walk-up).\n");
-    std::fprintf(stdout, "  Install-path fallback #4 is code-present but not exercised (no cmake install rule yet).\n\n");
+    std::fprintf(stdout,
+                 "  Verifies find_runtime_c() lookup strategies #1 (env var) and #2 (walk-up).\n");
+    std::fprintf(stdout, "  Install-path fallback #4 is code-present but not exercised (no cmake "
+                         "install rule yet).\n\n");
 
     test_aura_runtime_dir_override_works();
     test_walkup_finds_runtime_c();
@@ -301,5 +328,7 @@ int aura_issue_374_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_374_run(); }
+int main() {
+    return aura_issue_374_run();
+}
 #endif

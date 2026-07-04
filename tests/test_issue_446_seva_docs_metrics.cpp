@@ -51,7 +51,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -62,22 +62,30 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (seva:run-demo-with-metrics) '{}')", key));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
 static std::string read_file(const std::filesystem::path& p) {
     std::ifstream f(p);
-    if (!f) return std::string();
-    return std::string((std::istreambuf_iterator<char>(f)),
-                       std::istreambuf_iterator<char>());
+    if (!f)
+        return std::string();
+    return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cout, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cout, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════
 // AC1: docs/demos/seva.md exists + has architecture diagram
@@ -90,11 +98,11 @@ bool test_seva_doc_exists() {
     if (exists) {
         auto content = read_file(p);
         CHECK(!content.empty(), "seva.md is non-empty");
-        CHECK(content.find("Architecture") != std::string::npos
-              || content.find("architecture") != std::string::npos,
+        CHECK(content.find("Architecture") != std::string::npos ||
+                  content.find("architecture") != std::string::npos,
               "seva.md has architecture section");
-        CHECK(content.find("self-evolving") != std::string::npos
-              || content.find("self-evolution") != std::string::npos,
+        CHECK(content.find("self-evolving") != std::string::npos ||
+                  content.find("self-evolution") != std::string::npos,
               "seva.md describes self-evolution");
         CHECK(content.find("verify:parse-coverage-feedback") != std::string::npos,
               "seva.md documents verify:parse-coverage-feedback");
@@ -130,8 +138,8 @@ bool test_readme_seva_link() {
     std::println("\n--- AC3: README.md links to SEVA ---");
     auto content = read_file("README.md");
     CHECK(content.find("SEVA") != std::string::npos, "README.md mentions SEVA");
-    CHECK(content.find("docs/demos/seva.md") != std::string::npos
-          || content.find("demos/seva/TUTORIAL.md") != std::string::npos,
+    CHECK(content.find("docs/demos/seva.md") != std::string::npos ||
+              content.find("demos/seva/TUTORIAL.md") != std::string::npos,
           "README.md links to SEVA docs");
     return true;
 }
@@ -159,19 +167,20 @@ bool test_six_fields() {
     run_on(cs, "(set-code \"(define (f x) (+ x 1))\")");
     run_on(cs, "(eval-current)");
     static const char* kFields[] = {
-        "iterations-to-closure", "coverage-improvement",
-        "human-intervention-count", "mutation-success-rate-pct",
-        "mutations-total", "active-strategy",
+        "iterations-to-closure",     "coverage-improvement", "human-intervention-count",
+        "mutation-success-rate-pct", "mutations-total",      "active-strategy",
     };
     int found = 0;
     for (auto* k : kFields) {
         // active-strategy is a string, others are ints.
         if (std::string(k) == "active-strategy") {
             auto r = run_on(cs, std::format("(hash-ref (seva:run-demo-with-metrics) '{}')", k));
-            if (aura::compiler::types::is_string(r)) ++found;
+            if (aura::compiler::types::is_string(r))
+                ++found;
         } else {
             auto v = hash_int(cs, k);
-            if (v >= 0) ++found;
+            if (v >= 0)
+                ++found;
         }
     }
     CHECK(found == 6, "all 6 fields accessible");
@@ -211,8 +220,7 @@ bool test_stats_count() {
     std::println("\n--- AC8: stats:count is up to date ---");
     aura::compiler::CompilerService cs;
     auto r = run_on(cs, "(stats:count)");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) >= 46;
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) >= 46;
     CHECK(ok, "stats:count >= 46 (was 45 in #445, now 46 in #446)");
     if (aura::compiler::types::is_int(r)) {
         std::println("    [stats:count = {}]", aura::compiler::types::as_int(r));
@@ -226,14 +234,13 @@ bool test_stats_count() {
 bool test_stats_list_includes() {
     std::println("\n--- AC9: stats:list includes the new primitive ---");
     aura::compiler::CompilerService cs;
-    auto r = run_on(cs,
-        "(letrec ((find? (lambda (needle hay) "
-        "                (if (pair? hay) "
-        "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
-        "                    #f)))) "
-        "  (if (find? \"seva:run-demo-with-metrics\" (stats:list)) 1 0))");
-    bool included = aura::compiler::types::is_int(r) &&
-                    aura::compiler::types::as_int(r) == 1;
+    auto r = run_on(
+        cs, "(letrec ((find? (lambda (needle hay) "
+            "                (if (pair? hay) "
+            "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
+            "                    #f)))) "
+            "  (if (find? \"seva:run-demo-with-metrics\" (stats:list)) 1 0))");
+    bool included = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) == 1;
     CHECK(included, "stats:list includes seva:run-demo-with-metrics");
     return true;
 }
@@ -258,13 +265,12 @@ bool test_synthetic_cycle() {
     auto success_rate = hash_int(cs, "mutation-success-rate-pct");
     auto human_int = hash_int(cs, "human-intervention-count");
     CHECK(mut_total >= 0, "mutations-total >= 0");
-    CHECK(success_rate >= 0 && success_rate <= 100,
-          "success-rate in 0..100 after synthetic cycle");
+    CHECK(success_rate >= 0 && success_rate <= 100, "success-rate in 0..100 after synthetic cycle");
     CHECK(human_int == 0, "human-intervention stays 0 (autonomous)");
     return true;
 }
 
-}  // namespace aura_issue_446_detail
+} // namespace aura_issue_446_detail
 
 int main() {
     using namespace aura_issue_446_detail;

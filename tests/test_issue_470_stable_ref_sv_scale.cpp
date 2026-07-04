@@ -61,13 +61,15 @@ import aura.compiler.service;
 
 namespace aura_issue_470_detail {
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:stable-ref-stats-hash) '{}')", key));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
@@ -81,8 +83,7 @@ bool test_primitive_returns_hash() {
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_hash(v),
-          "(query:stable-ref-stats-hash) returns a hash");
+    CHECK(aura::compiler::types::is_hash(v), "(query:stable-ref-stats-hash) returns a hash");
     return true;
 }
 
@@ -98,7 +99,10 @@ bool test_four_fields_present() {
         CHECK(false, "one or more hash-refs returned error");
         return true;
     }
-    auto v1 = *r1; auto v2 = *r2; auto v3 = *r3; auto v4 = *r4;
+    auto v1 = *r1;
+    auto v2 = *r2;
+    auto v3 = *r3;
+    auto v4 = *r4;
     CHECK(aura::compiler::types::is_int(v1), "generation-wrap-count is int");
     CHECK(aura::compiler::types::is_int(v2), "stable-ref-invalidations is int");
     CHECK(aura::compiler::types::is_int(v3), "node-gen-stale-accesses is int");
@@ -217,7 +221,8 @@ bool test_recommendation_after_wrap() {
     // directly on the FlatAST.
     aura::ast::FlatAST ast;
     CHECK(ast.generation_wrap_count() == 0, "wrap count starts at 0");
-    for (int i = 0; i < 65535; ++i) ast.bump_generation();
+    for (int i = 0; i < 65535; ++i)
+        ast.bump_generation();
     CHECK(ast.generation_wrap_count() >= 1, "wrap count >= 1 after 65535 bumps");
     // Recommendation logic: wraps > 0 -> rec_int = 1
     std::int64_t rec_int = (ast.generation_wrap_count() > 0) ? 1 : 0;
@@ -230,18 +235,16 @@ bool test_recommendation_after_wrap() {
 bool test_stable_ref_invalidations_counter() {
     std::println("\n--- AC10: stable_ref_invalidations_ exists ---");
     aura::ast::FlatAST ast;
-    CHECK(ast.stable_ref_invalidations() == 0,
-          "stable_ref_invalidations_ starts at 0");
+    CHECK(ast.stable_ref_invalidations() == 0, "stable_ref_invalidations_ starts at 0");
     // Bumping generation invalidates all outstanding
     // StableNodeRefs; we don't have a ref to invalidate
     // here, but the counter is queryable.
     ast.bump_generation();
-    CHECK(ast.stable_ref_invalidations() == 0,
-          "no invalidations without a StableNodeRef to check");
+    CHECK(ast.stable_ref_invalidations() == 0, "no invalidations without a StableNodeRef to check");
     return true;
 }
 
-}  // namespace aura_issue_470_detail
+} // namespace aura_issue_470_detail
 
 int main() {
     using namespace aura_issue_470_detail;

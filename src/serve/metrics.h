@@ -261,7 +261,7 @@ struct GlobalMetrics {
             const auto& w = workers[i];
             const std::string prefix = "aura_worker_" + std::to_string(i) + "_";
             append_counter(prefix + "fibers_executed",
-                         w->fibers_executed.load(std::memory_order_acquire));
+                           w->fibers_executed.load(std::memory_order_acquire));
             append_counter(prefix + "fibers_yielded",
                            w->fibers_yielded.load(std::memory_order_acquire));
         }

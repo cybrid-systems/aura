@@ -5,8 +5,8 @@
 //   - First member must be NodeTag (4-byte enum)
 //   - Remaining members must be ABF-serializable types
 //
-// Build: g++ -std=c++26 -freflection -I. tests/validate_node_layout.cpp -o build/validate_node_layout
-// Run:   ./build/validate_node_layout
+// Build: g++ -std=c++26 -freflection -I. tests/validate_node_layout.cpp -o
+// build/validate_node_layout Run:   ./build/validate_node_layout
 
 #include "reflect/read_auto_validate.hh"
 
@@ -14,31 +14,95 @@
 // (can't import from modules with -freflection)
 
 import std;
-struct Expr { int _; };
+struct Expr {
+    int _;
+};
 
 enum class NodeTag : std::uint32_t {
-    LiteralInt = 0x01, Variable = 0x02, Call = 0x03,
-    IfExpr = 0x04, Lambda = 0x05, Let = 0x06, LetRec = 0x07,
-    Define = 0x08, Begin = 0x09, Set = 0x0A, Quote = 0x0B,
+    LiteralInt = 0x01,
+    Variable = 0x02,
+    Call = 0x03,
+    IfExpr = 0x04,
+    Lambda = 0x05,
+    Let = 0x06,
+    LetRec = 0x07,
+    Define = 0x08,
+    Begin = 0x09,
+    Set = 0x0A,
+    Quote = 0x0B,
     TypeAnnotation = 0x0F,
     Coercion = 0x10,
 };
 
-struct LiteralIntNode { NodeTag tag; std::int64_t value; };
-struct VariableNode   { NodeTag tag; std::string name; };
-struct CallNode       { NodeTag tag; Expr* function; std::vector<Expr*> args; };
-struct IfExprNode     { NodeTag tag; Expr* condition; Expr* then_branch; Expr* else_branch; };
-struct LambdaNode     { NodeTag tag; std::vector<std::string> params; Expr* body; };
-struct LetNode        { NodeTag tag; std::string name; Expr* value; Expr* body; };
-struct LetRecNode     { NodeTag tag; std::string name; Expr* value; Expr* body; };
-struct DefineNode     { NodeTag tag; std::string name; Expr* value; };
-struct BeginNode      { NodeTag tag; std::vector<Expr*> exprs; };
-struct SetNode        { NodeTag tag; std::string name; Expr* value; };
-struct QuoteNode      { NodeTag tag; Expr* value; };
-struct TypeAnnotationNode { NodeTag tag; Expr* inner_expr; std::string type_name; };
-struct CoercionNode { NodeTag tag; Expr* inner_expr; std::string to_type_name; };
+struct LiteralIntNode {
+    NodeTag tag;
+    std::int64_t value;
+};
+struct VariableNode {
+    NodeTag tag;
+    std::string name;
+};
+struct CallNode {
+    NodeTag tag;
+    Expr* function;
+    std::vector<Expr*> args;
+};
+struct IfExprNode {
+    NodeTag tag;
+    Expr* condition;
+    Expr* then_branch;
+    Expr* else_branch;
+};
+struct LambdaNode {
+    NodeTag tag;
+    std::vector<std::string> params;
+    Expr* body;
+};
+struct LetNode {
+    NodeTag tag;
+    std::string name;
+    Expr* value;
+    Expr* body;
+};
+struct LetRecNode {
+    NodeTag tag;
+    std::string name;
+    Expr* value;
+    Expr* body;
+};
+struct DefineNode {
+    NodeTag tag;
+    std::string name;
+    Expr* value;
+};
+struct BeginNode {
+    NodeTag tag;
+    std::vector<Expr*> exprs;
+};
+struct SetNode {
+    NodeTag tag;
+    std::string name;
+    Expr* value;
+};
+struct QuoteNode {
+    NodeTag tag;
+    Expr* value;
+};
+struct TypeAnnotationNode {
+    NodeTag tag;
+    Expr* inner_expr;
+    std::string type_name;
+};
+struct CoercionNode {
+    NodeTag tag;
+    Expr* inner_expr;
+    std::string to_type_name;
+};
 
-struct BadNode        { int x; int y; };  // should fail
+struct BadNode {
+    int x;
+    int y;
+}; // should fail
 
 int main() {
     printf("=== P2996 ABF Node Struct Validation ===\n\n");

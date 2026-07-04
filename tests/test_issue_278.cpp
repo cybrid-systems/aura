@@ -7,8 +7,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -60,8 +60,8 @@ bool test_mutation_log_summary_primitive() {
     CHECK(rolled == 0, "(mutation-log:summary) rolled-back == 0 (no rollback yet)");
 
     // by-operator is a hash — should be readable.
-    auto rebind_count = run_int(cs,
-        "(hash-ref (hash-ref (mutation-log:summary) \"by-operator\") \"rebind\")");
+    auto rebind_count =
+        run_int(cs, "(hash-ref (hash-ref (mutation-log:summary) \"by-operator\") \"rebind\")");
     CHECK(rebind_count >= 1, "by-operator[\"rebind\"] >= 1");
 
     // last-mutation-id should be > 0 after a rebind.
@@ -96,26 +96,24 @@ bool test_ast_stable_refs_valid_primitive() {
     }
 
     // Both should be valid initially. ast:ref-valid? takes (id . gen) flat pair.
-    auto all_valid = run_bool(cs,
-        "(and (ast:ref-valid? (car (car refs)) (cdr (car refs)))"
-        "      (ast:ref-valid? (car (cadr refs)) (cdr (cadr refs))))");
+    auto all_valid = run_bool(cs, "(and (ast:ref-valid? (car (car refs)) (cdr (car refs)))"
+                                  "      (ast:ref-valid? (car (cadr refs)) (cdr (cadr refs))))");
     CHECK(all_valid.value_or(false) == true, "both refs valid initially");
 
     // Bulk check should return a list of (#t #t).
     // ast:stable-refs-valid? takes a list of (id . gen) pairs.
-    auto bulk_valid = run_bool(cs,
-        "(and (car (ast:stable-refs-valid? refs))"
-        "      (cadr (ast:stable-refs-valid? refs)))");
-    CHECK(bulk_valid.value_or(false) == true, "(ast:stable-refs-valid?) returns (#t #t) for two valid refs");
+    auto bulk_valid = run_bool(cs, "(and (car (ast:stable-refs-valid? refs))"
+                                   "      (cadr (ast:stable-refs-valid? refs)))");
+    CHECK(bulk_valid.value_or(false) == true,
+          "(ast:stable-refs-valid?) returns (#t #t) for two valid refs");
 
     // After a mutation, the captured refs should be stale (gen bumped).
     if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 99))\" \"bump-f\")")) {
         ++g_failed;
         return false;
     }
-    auto bulk_after = run_bool(cs,
-        "(and (car (ast:stable-refs-valid? refs))"
-        "      (cadr (ast:stable-refs-valid? refs)))");
+    auto bulk_after = run_bool(cs, "(and (car (ast:stable-refs-valid? refs))"
+                                   "      (cadr (ast:stable-refs-valid? refs)))");
     CHECK(bulk_after.value_or(true) == false, "after rebind, all captured refs stale (both #f)");
 
     // Empty list returns empty list.
@@ -125,9 +123,9 @@ bool test_ast_stable_refs_valid_primitive() {
     // Malformed entries yield #f. (ast:stable-refs-valid? '("a" "b"))
     // Each element is a string (not a pair), so the inner is_int check
     // fails → result is a list of #f.
-    auto malformed = run_bool(cs,
-        "(if (and (not (car (ast:stable-refs-valid? (quote (\"a\" \"b\")))))"
-        "         (not (cadr (ast:stable-refs-valid? (quote (\"a\" \"b\")))))) #t #f)");
+    auto malformed = run_bool(
+        cs, "(if (and (not (car (ast:stable-refs-valid? (quote (\"a\" \"b\")))))"
+            "         (not (cadr (ast:stable-refs-valid? (quote (\"a\" \"b\")))))) #t #f)");
     CHECK(malformed.value_or(false) == true, "malformed (non-pair) entries → list of #f");
 
     return true;
@@ -253,7 +251,8 @@ bool test_backward_compat() {
         return false;
     }
     auto refv = run_bool(cs, "(ast:ref-valid? (car r) (cdr r))");
-    CHECK(refv.value_or(true) == false, "(ast:ref-valid?) returns #f for stale ref (existing behavior)");
+    CHECK(refv.value_or(true) == false,
+          "(ast:ref-valid?) returns #f for stale ref (existing behavior)");
 
     // (ast:summary) still works.
     auto sum = cs.eval("(ast:summary)");
@@ -279,8 +278,12 @@ int run_tests() {
 
 } // namespace aura_issue_278_detail
 
-int aura_issue_278_run() { return aura_issue_278_detail::run_tests(); }
+int aura_issue_278_run() {
+    return aura_issue_278_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_278_run(); }
+int main() {
+    return aura_issue_278_run();
+}
 #endif

@@ -2,7 +2,7 @@
 #include "fiber.h"
 #include "scheduler.h"
 #include "../compiler/messaging_bridge.h" // Issue #285: g_flush_mutation_boundary
-#include "../compiler/shape.h"          // Issue #570: record_shape_fiber_refresh
+#include "../compiler/shape.h"            // Issue #570: record_shape_fiber_refresh
 #include "aura_platform.h"
 
 #include <sys/mman.h>
@@ -17,8 +17,7 @@ import std;
 namespace aura::serve {
 
 std::atomic<uint64_t> Fiber::next_id_{1};
-std::atomic<std::uint64_t>
-    Fiber::static_gc_pause_attributed_to_mutation_count_{0};
+std::atomic<std::uint64_t> Fiber::static_gc_pause_attributed_to_mutation_count_{0};
 
 // TLS: current running fiber (nullptr = worker loop context)
 thread_local Fiber* g_current_fiber = nullptr;
@@ -39,8 +38,7 @@ void (*g_fiber_yield_checkpoint_)(uint8_t) = nullptr;
 // the requests counter and check whether a guard is
 // held (in which case the request is deferred).
 extern "C" int aura_evaluator_request_gc_safepoint();
-extern "C" void
-aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms);
+extern "C" void aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms);
 void (*g_fiber_resume_validate_)() = nullptr;
 void (*g_fiber_yield_checkpoint_deleter_)(void*) = nullptr;
 
@@ -95,8 +93,7 @@ void Fiber::check_gc_safepoint() {
         // wait is attributable to the active
         // MutationBoundary guard.
         if (aura_evaluator_mutation_boundary_depth() > 0) {
-            static_gc_pause_attributed_to_mutation_count_
-                .fetch_add(1, std::memory_order_relaxed);
+            static_gc_pause_attributed_to_mutation_count_.fetch_add(1, std::memory_order_relaxed);
         }
     }
     if (phase == GCPhase::Requested) {
@@ -145,7 +142,8 @@ Fiber::Fiber(Func func, size_t stack_size)
     // 3. Initialize ucontext
     if (::getcontext(&ctx_) == -1) {
         ::munmap(base, alloc_size);
-        if (eventfd_ >= 0) ::close(eventfd_);
+        if (eventfd_ >= 0)
+            ::close(eventfd_);
         throw std::system_error(errno, std::generic_category(), "fiber getcontext");
     }
 
@@ -284,16 +282,14 @@ void Fiber::yield() {
     // The bridge function is nullptr when no
     // Evaluator is wired (test-binary), in which
     // case we skip the check.
-    if (aura::messaging::g_mutation_boundary_held &&
-        aura::messaging::g_mutation_boundary_held()) {
+    if (aura::messaging::g_mutation_boundary_held && aura::messaging::g_mutation_boundary_held()) {
 #ifndef NDEBUG
         assert(false && "Fiber::yield called while a "
                         "MutationBoundaryGuard is alive");
 #else
-        std::fprintf(stderr,
-            "WARNING: Fiber::yield called while a "
-            "MutationBoundaryGuard is alive "
-            "(forward-looking Issue #354 check)\n");
+        std::fprintf(stderr, "WARNING: Fiber::yield called while a "
+                             "MutationBoundaryGuard is alive "
+                             "(forward-looking Issue #354 check)\n");
 #endif
     }
 
@@ -332,14 +328,22 @@ void Fiber::yield(YieldReason reason) {
     // observability counter. The (query:orchestration-metrics)
     // primitive reads these to compute yield breakdown.
     switch (reason) {
-        case YieldReason::BlockingIO:        fb->bump_yield_blocking_io();        break;
+        case YieldReason::BlockingIO:
+            fb->bump_yield_blocking_io();
+            break;
         case YieldReason::MutationBoundary:
             fb->bump_yield_mutation_boundary();
             aura::compiler::shape::record_shape_fiber_refresh();
             break;
-        case YieldReason::Explicit:          fb->bump_yield_explicit();          break;
-        case YieldReason::SchedulerSteal:    fb->bump_yield_scheduler_steal();   break;
-        case YieldReason::OperationBoundary: fb->bump_yield_operation_boundary(); break;
+        case YieldReason::Explicit:
+            fb->bump_yield_explicit();
+            break;
+        case YieldReason::SchedulerSteal:
+            fb->bump_yield_scheduler_steal();
+            break;
+        case YieldReason::OperationBoundary:
+            fb->bump_yield_operation_boundary();
+            break;
     }
 
     // If blocking IO, set state to Waiting (IO thread will wake via epoll)
@@ -354,8 +358,7 @@ void Fiber::yield(YieldReason reason) {
     // The flush is a no-op when no boundary is active (the trampoline
     // inside evaluator_fiber_mutation.cpp checks yield_hook_evaluator
     // and returns early if nullptr).
-    if (reason == YieldReason::MutationBoundary &&
-        aura::messaging::g_flush_mutation_boundary) {
+    if (reason == YieldReason::MutationBoundary && aura::messaging::g_flush_mutation_boundary) {
         aura::messaging::g_flush_mutation_boundary();
     }
 
@@ -366,8 +369,7 @@ void Fiber::yield(YieldReason reason) {
     // thread-local read) and the bump only happens when both
     // conditions hold — a normal yield from a non-guard context
     // is a no-op.
-    if (reason == YieldReason::MutationBoundary &&
-        aura::messaging::g_pending_panic_checkpoint &&
+    if (reason == YieldReason::MutationBoundary && aura::messaging::g_pending_panic_checkpoint &&
         aura::messaging::g_pending_panic_checkpoint() &&
         aura::messaging::g_block_gc_for_pending_checkpoint) {
         aura::messaging::g_block_gc_for_pending_checkpoint();

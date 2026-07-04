@@ -47,8 +47,7 @@ Workload build_workload() {
     return w;
 }
 
-template <typename F>
-long long time_us(F&& fn) {
+template <typename F> long long time_us(F&& fn) {
     using namespace std::chrono;
     auto t0 = steady_clock::now();
     fn();
@@ -61,9 +60,8 @@ long long time_us(F&& fn) {
 int main() {
     std::println("=== Issue #398 bench: children_stable (allocating) vs "
                  "for_each_stable_child (zero-alloc) ===");
-    std::println("workload: {} defines × {} children = {} total nodes × {} rounds",
-                 kNumDefines, kChildrenPerDefine,
-                 kNumDefines * kChildrenPerDefine, kRounds);
+    std::println("workload: {} defines × {} children = {} total nodes × {} rounds", kNumDefines,
+                 kChildrenPerDefine, kNumDefines * kChildrenPerDefine, kRounds);
 
     // ── OLD path: children_stable (allocating) ───────────────
     long long old_total_us = 0;
@@ -101,11 +99,10 @@ int main() {
     // ── Report ────────────────────────────────────────────────
     const auto old_avg = old_total_us / kRounds;
     const auto new_avg = new_total_us / kRounds;
-    const auto speedup_pct = old_avg > 0
-        ? (100 * (old_avg - new_avg)) / old_avg : 0;
+    const auto speedup_pct = old_avg > 0 ? (100 * (old_avg - new_avg)) / old_avg : 0;
     const auto total_lookups = static_cast<std::size_t>(kRounds) * kNumDefines;
-    const auto expected_lookups = static_cast<std::size_t>(kRounds) *
-                                  kNumDefines * kChildrenPerDefine;
+    const auto expected_lookups =
+        static_cast<std::size_t>(kRounds) * kNumDefines * kChildrenPerDefine;
 
     std::println("");
     std::println("  OLD (children_stable, allocating): total {:>8} \u00b5s  "
@@ -121,8 +118,8 @@ int main() {
 
     // Verify the new path actually visited all the children.
     if (new_visit_count != expected_lookups) {
-        std::println("  FAIL: new path visited {} nodes, expected {}",
-                     new_visit_count, expected_lookups);
+        std::println("  FAIL: new path visited {} nodes, expected {}", new_visit_count,
+                     expected_lookups);
         return 1;
     }
     std::println("  PASS: new path visited all {} children", new_visit_count);
@@ -136,10 +133,9 @@ int main() {
     std::println("");
     std::println("AC check: new path speedup >= 20% OR new time < 50% of old : {}",
                  ac_met ? "PASS" : "FAIL");
-    std::println("  speedup_pct = {}% (>= 20%): {}",
-                 speedup_pct, speedup_pct >= 20);
-    std::println("  new/old ratio = {}/100 (< 50/100): {}",
-                 new_avg * 100 / (old_avg + 1), new_avg * 2 < old_avg);
+    std::println("  speedup_pct = {}% (>= 20%): {}", speedup_pct, speedup_pct >= 20);
+    std::println("  new/old ratio = {}/100 (< 50/100): {}", new_avg * 100 / (old_avg + 1),
+                 new_avg * 2 < old_avg);
 
     return ac_met ? 0 : 1;
 }

@@ -7,13 +7,13 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 
 namespace aura_issue_269_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 bool test_flat_ast_v2_production_roundtrip() {
     PRINTLN("\n--- Test 1: production FlatAST v2 side-data roundtrip ---");
@@ -92,12 +92,9 @@ bool test_flat_ast_v2_production_roundtrip() {
     if (rt.all_mutations().size() == 2) {
         CHECK(rt.all_mutations()[0].operator_name == "replace-type",
               "mutation_log[0].operator_name");
-        CHECK(rt.all_mutations()[0].old_type_str == "Int",
-              "mutation_log[0].old_type_str");
-        CHECK(rt.all_mutations()[1].has_rollback_data == true,
-              "mutation_log[1].has_rollback_data");
-        CHECK(rt.all_mutations()[1].old_value == 0xAAAA,
-              "mutation_log[1].old_value");
+        CHECK(rt.all_mutations()[0].old_type_str == "Int", "mutation_log[0].old_type_str");
+        CHECK(rt.all_mutations()[1].has_rollback_data == true, "mutation_log[1].has_rollback_data");
+        CHECK(rt.all_mutations()[1].old_value == 0xAAAA, "mutation_log[1].old_value");
         CHECK(rt.all_mutations()[1].invariant_status == aura::ast::InvariantStatus::Ok,
               "mutation_log[1].invariant_status");
     }
@@ -111,8 +108,7 @@ bool test_flat_ast_v2_production_roundtrip() {
     }
 
     CHECK(rt.get_function_region_for_sym(sym_fn).value_or(0) == 1, "region_by_sym");
-    CHECK(rt.get_function_region_for_lambda(var).value_or(0) == 2,
-          "region_by_lambda_id");
+    CHECK(rt.get_function_region_for_lambda(var).value_or(0) == 2, "region_by_lambda_id");
 
     return true;
 }
@@ -124,50 +120,38 @@ bool test_flat_ast_v1_forward_compat() {
     std::vector<char> buf;
     std::uint32_t version = 1;
     std::uint32_t num_nodes = 1;
-    buf.insert(buf.end(), reinterpret_cast<char*>(&version),
-               reinterpret_cast<char*>(&version) + 4);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&version), reinterpret_cast<char*>(&version) + 4);
     buf.insert(buf.end(), reinterpret_cast<char*>(&num_nodes),
                reinterpret_cast<char*>(&num_nodes) + 4);
 
     auto write_col_u32 = [&](std::uint32_t v) {
         std::uint32_t count = 1;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
-        buf.insert(buf.end(), reinterpret_cast<char*>(&v),
-                   reinterpret_cast<char*>(&v) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&v), reinterpret_cast<char*>(&v) + 4);
     };
     auto write_col_i64 = [&](std::int64_t v) {
         std::uint32_t count = 1;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
-        buf.insert(buf.end(), reinterpret_cast<char*>(&v),
-                   reinterpret_cast<char*>(&v) + 8);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&v), reinterpret_cast<char*>(&v) + 8);
     };
     auto write_col_f64 = [&](double v) {
         std::uint32_t count = 1;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
-        buf.insert(buf.end(), reinterpret_cast<char*>(&v),
-                   reinterpret_cast<char*>(&v) + 8);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&v), reinterpret_cast<char*>(&v) + 8);
     };
     auto write_col_u8 = [&](std::uint8_t v) {
         std::uint32_t count = 1;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
-        buf.insert(buf.end(), reinterpret_cast<char*>(&v),
-                   reinterpret_cast<char*>(&v) + 1);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&v), reinterpret_cast<char*>(&v) + 1);
     };
     auto write_col_u16 = [&](std::uint16_t v) {
         std::uint32_t count = 1;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
-        buf.insert(buf.end(), reinterpret_cast<char*>(&v),
-                   reinterpret_cast<char*>(&v) + 2);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&v), reinterpret_cast<char*>(&v) + 2);
     };
     auto write_empty_col = [&]() {
         std::uint32_t count = 0;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
     };
 
     std::uint32_t tag = 0x01; // LiteralInt
@@ -175,21 +159,21 @@ bool test_flat_ast_v1_forward_compat() {
     write_col_i64(99);
     write_col_f64(0.0);
     write_col_u32(aura::ast::INVALID_SYM);
-    write_col_u32(0); // child count
-    write_empty_col(); // flat children
+    write_col_u32(0);                    // child count
+    write_empty_col();                   // flat children
     write_col_u32(aura::ast::NULL_NODE); // parent
-    write_col_u32(0); // param_begin
-    write_col_u32(0); // param_count
-    write_col_u32(0); // cap_require
-    write_empty_col(); // param_data
-    write_empty_col(); // param_annot_data
-    write_col_u32(1); // line
-    write_col_u32(1); // col
-    write_col_u8(0); // marker
-    write_col_u8(0); // dirty
-    write_col_u8(0); // verify_dirty (Issue #437; absent in pre-#437 v1 fixtures)
+    write_col_u32(0);                    // param_begin
+    write_col_u32(0);                    // param_count
+    write_col_u32(0);                    // cap_require
+    write_empty_col();                   // param_data
+    write_empty_col();                   // param_annot_data
+    write_col_u32(1);                    // line
+    write_col_u32(1);                    // col
+    write_col_u8(0);                     // marker
+    write_col_u8(0);                     // dirty
+    write_col_u8(0);  // verify_dirty (Issue #437; absent in pre-#437 v1 fixtures)
     write_col_u32(0); // type_id
-    write_col_u8(0); // error_kind
+    write_col_u8(0);  // error_kind
     write_col_i64(0); // value_cache
     write_col_u32(0); // node_first_mutation
     write_col_u16(1); // node_gen
@@ -198,8 +182,7 @@ bool test_flat_ast_v1_forward_compat() {
     std::uint16_t reserved = 0;
     buf.insert(buf.end(), reinterpret_cast<char*>(&next_mut),
                reinterpret_cast<char*>(&next_mut) + 4);
-    buf.insert(buf.end(), reinterpret_cast<char*>(&gen),
-               reinterpret_cast<char*>(&gen) + 2);
+    buf.insert(buf.end(), reinterpret_cast<char*>(&gen), reinterpret_cast<char*>(&gen) + 2);
     buf.insert(buf.end(), reinterpret_cast<char*>(&reserved),
                reinterpret_cast<char*>(&reserved) + 2);
 
@@ -222,10 +205,14 @@ int run_tests() {
     return g_failed > 0 ? 1 : 0;
 }
 
-}  // namespace aura_issue_269_detail
+} // namespace aura_issue_269_detail
 
-int aura_issue_269_run() { return aura_issue_269_detail::run_tests(); }
+int aura_issue_269_run() {
+    return aura_issue_269_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_269_run(); }
+int main() {
+    return aura_issue_269_run();
+}
 #endif

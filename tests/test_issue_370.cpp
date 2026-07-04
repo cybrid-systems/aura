@@ -52,8 +52,8 @@
 #include "../src/core/persistent_child_vector.hh"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.service;
 import aura.compiler.evaluator;
@@ -81,8 +81,7 @@ bool test_safe_pcv_span_construct() {
     CHECK(!safe.empty(), "SafePCVSpan is not empty");
     CHECK(safe[0] == 1u, "SafePCVSpan[0] == 1");
     CHECK(safe[2] == 3u, "SafePCVSpan[2] == 3");
-    CHECK(safe.use_count() >= 2,
-          "SafePCVSpan.use_count() >= 2 (safe + original PCV)");
+    CHECK(safe.use_count() >= 2, "SafePCVSpan.use_count() >= 2 (safe + original PCV)");
     return true;
 }
 
@@ -123,12 +122,9 @@ bool test_lifetime_pinning_across_mutation() {
           "after mutate: raw children() shows 1 child (children_[parent] replaced)");
 
     // The safe span still reads the pre-mutation data.
-    CHECK(safe.size() == 2,
-          "after mutate: safe span STILL has 2 children (lifetime pinned)");
-    CHECK(safe[0] == c1_before,
-          "after mutate: safe[0] == pre-mutation c1");
-    CHECK(safe[1] == c2_before,
-          "after mutate: safe[1] == pre-mutation c2 (no UAF)");
+    CHECK(safe.size() == 2, "after mutate: safe span STILL has 2 children (lifetime pinned)");
+    CHECK(safe[0] == c1_before, "after mutate: safe[0] == pre-mutation c1");
+    CHECK(safe[1] == c2_before, "after mutate: safe[1] == pre-mutation c2 (no UAF)");
 
     return true;
 }
@@ -147,8 +143,7 @@ bool test_children_safe_counter() {
     auto before = flat.children_safe_view_count();
     auto safe = flat.children_safe(n0);
     auto after = flat.children_safe_view_count();
-    CHECK(after >= before + 1,
-          "children_safe_view_count incremented by >= 1");
+    CHECK(after >= before + 1, "children_safe_view_count incremented by >= 1");
     return true;
 }
 
@@ -186,6 +181,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_370_detail
+} // namespace aura_issue_370_detail
 
-int aura_issue_370_run() { return aura_issue_370_detail::run_tests(); }
+int aura_issue_370_run() {
+    return aura_issue_370_detail::run_tests();
+}

@@ -15,18 +15,66 @@ namespace aura::compiler::macro_exp {
 
 namespace detail {
 
-const std::unordered_set<std::string>& hygiene_builtins() {
-    static const std::unordered_set<std::string> builtins = {
-        "if", "cond", "let", "let*", "letrec", "lambda", "define", "begin", "set!", "quote",
-        "unquote", "quasiquote", "case", "when", "unless", "car", "cdr", "cons", "list",
-        "pair?", "null?", "eq?", "equal?", "+", "-", "*", "/", "=", "<", ">", "<=", ">=",
-        "not", "and", "or", "void", "display", "write", "newline", "number?", "integer?",
-        "float?", "boolean?", "string?", "symbol?", "string-append", "string-length",
-        "string-ref", "substring", "number->string", "string->number", "apply", "map",
-        "filter", "foldl",
-    };
-    return builtins;
-}
+    const std::unordered_set<std::string>& hygiene_builtins() {
+        static const std::unordered_set<std::string> builtins = {
+            "if",
+            "cond",
+            "let",
+            "let*",
+            "letrec",
+            "lambda",
+            "define",
+            "begin",
+            "set!",
+            "quote",
+            "unquote",
+            "quasiquote",
+            "case",
+            "when",
+            "unless",
+            "car",
+            "cdr",
+            "cons",
+            "list",
+            "pair?",
+            "null?",
+            "eq?",
+            "equal?",
+            "+",
+            "-",
+            "*",
+            "/",
+            "=",
+            "<",
+            ">",
+            "<=",
+            ">=",
+            "not",
+            "and",
+            "or",
+            "void",
+            "display",
+            "write",
+            "newline",
+            "number?",
+            "integer?",
+            "float?",
+            "boolean?",
+            "string?",
+            "symbol?",
+            "string-append",
+            "string-length",
+            "string-ref",
+            "substring",
+            "number->string",
+            "string->number",
+            "apply",
+            "map",
+            "filter",
+            "foldl",
+        };
+        return builtins;
+    }
 
 } // namespace detail
 
@@ -50,11 +98,12 @@ const std::unordered_set<std::string>& hygiene_builtins() {
 // fibers / threads on the same Evaluator).
 thread_local int s_hygiene_depth = 0;
 
-aura::ast::NodeId clone_macro_body(
-    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
-    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
-    const std::unordered_map<std::string, aura::ast::NodeId>* subst,
-    std::unordered_map<std::string, std::string>* name_map, aura::ast::SyntaxMarker cloned_marker) {
+aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
+                                   aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
+                                   aura::ast::NodeId body_id,
+                                   const std::unordered_map<std::string, aura::ast::NodeId>* subst,
+                                   std::unordered_map<std::string, std::string>* name_map,
+                                   aura::ast::SyntaxMarker cloned_marker) {
     using namespace aura::ast;
     // Issue #365: depth guard. The public API starts at
     // depth=0 (s_hygiene_depth is bumped on recursion inside
@@ -80,10 +129,10 @@ aura::ast::NodeId clone_macro_body(
         if (!s_warned_this_call) {
             s_warned_this_call = true;
             std::fprintf(stderr,
-                "[#365 warning] clone_macro_body exceeded "
-                "MAX_HYGIENE_DEPTH=%d; falling back to unhygienic "
-                "substitution (original name).\n",
-                MAX_HYGIENE_DEPTH);
+                         "[#365 warning] clone_macro_body exceeded "
+                         "MAX_HYGIENE_DEPTH=%d; falling back to unhygienic "
+                         "substitution (original name).\n",
+                         MAX_HYGIENE_DEPTH);
         }
         return NULL_NODE;
     }
@@ -213,8 +262,8 @@ aura::ast::NodeId clone_macro_body(
         // (RAII pattern via ++/-- in the for-loop body) so each
         // sibling sees the same depth level.
         ++s_hygiene_depth;
-        child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, cid,
-                                             subst, name_map, cloned_marker));
+        child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, cid, subst,
+                                             name_map, cloned_marker));
         --s_hygiene_depth;
     }
 
@@ -320,11 +369,9 @@ aura::ast::NodeId clone_macro_body(
         // (compile:schema-cache-stats) Aura
         // primitive reports the hit rate.
         if (source.schema_cache(body_id) != 0) {
-            target.set_schema_cache(new_id,
-                                     source.schema_cache(body_id));
+            target.set_schema_cache(new_id, source.schema_cache(body_id));
         } else if (source.type_id(body_id) != 0) {
-            target.set_schema_cache(new_id,
-                                     source.type_id(body_id));
+            target.set_schema_cache(new_id, source.type_id(body_id));
         }
         // Issue #290: also OR kMacroExpansion into the
         // macro_dirty_ bitmask on every node in the cloned
@@ -343,12 +390,14 @@ aura::ast::NodeId clone_macro_body(
             while (!stack.empty()) {
                 auto cur = stack.back();
                 stack.pop_back();
-                if (cur == aura::ast::NULL_NODE) continue;
+                if (cur == aura::ast::NULL_NODE)
+                    continue;
                 target.apply_macro_dirty_bits(
                     cur, static_cast<std::uint8_t>(
                              aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
                 auto cv = target.get(cur);
-                std::vector<aura::ast::NodeId> walk_children(cv.children.begin(), cv.children.end());
+                std::vector<aura::ast::NodeId> walk_children(cv.children.begin(),
+                                                             cv.children.end());
                 for (auto child : walk_children) {
                     if (child != aura::ast::NULL_NODE)
                         stack.push_back(child);
@@ -361,60 +410,60 @@ aura::ast::NodeId clone_macro_body(
 
 namespace detail {
 
-aura::ast::NodeId
-unwrap_cons_chain_to_call(aura::ast::FlatAST* flat, aura::ast::StringPool* pool,
-                          aura::ast::NodeId root,
-                          const std::unordered_map<std::string, MacroExpansionDef>& macros) {
-    using namespace aura::ast;
-    if (root == NULL_NODE)
-        return NULL_NODE;
-    auto v = flat->get(root);
-    if (v.tag != NodeTag::Call || v.children.size() != 3)
-        return NULL_NODE;
-    auto callee_v = flat->get(v.child(0));
-    if (callee_v.tag != NodeTag::Variable)
-        return NULL_NODE;
-    auto callee_name = std::string(pool->resolve(callee_v.sym_id));
-    if (callee_name != "cons")
-        return NULL_NODE;
-    // First arg must be (quote <known-macro-sym>)
-    auto arg0_v = flat->get(v.child(1));
-    if (arg0_v.tag != NodeTag::Quote || arg0_v.children.empty())
-        return NULL_NODE;
-    auto quoted_v = flat->get(arg0_v.child(0));
-    if (quoted_v.tag != NodeTag::Variable)
-        return NULL_NODE;
-    auto quoted_name = std::string(pool->resolve(quoted_v.sym_id));
-    if (macros.find(quoted_name) == macros.end())
-        return NULL_NODE;
-    // Walk the cdr chain (v.child(2)) to collect arg NodeIds.
-    // Each step: cdr is (cons <arg> <rest>) or (quote ()).
-    std::vector<NodeId> args;
-    NodeId cdr_id = v.child(2);
-    while (cdr_id != NULL_NODE) {
-        auto cdr_v = flat->get(cdr_id);
-        if (cdr_v.tag == NodeTag::Quote) {
-            // (quote ()) — end of list
-            break;
-        }
-        if (cdr_v.tag != NodeTag::Call || cdr_v.children.size() != 3) {
-            // Not a cons cell — bail
+    aura::ast::NodeId
+    unwrap_cons_chain_to_call(aura::ast::FlatAST* flat, aura::ast::StringPool* pool,
+                              aura::ast::NodeId root,
+                              const std::unordered_map<std::string, MacroExpansionDef>& macros) {
+        using namespace aura::ast;
+        if (root == NULL_NODE)
             return NULL_NODE;
-        }
-        auto c_callee = flat->get(cdr_v.child(0));
-        if (c_callee.tag != NodeTag::Variable ||
-            std::string(pool->resolve(c_callee.sym_id)) != "cons") {
+        auto v = flat->get(root);
+        if (v.tag != NodeTag::Call || v.children.size() != 3)
             return NULL_NODE;
+        auto callee_v = flat->get(v.child(0));
+        if (callee_v.tag != NodeTag::Variable)
+            return NULL_NODE;
+        auto callee_name = std::string(pool->resolve(callee_v.sym_id));
+        if (callee_name != "cons")
+            return NULL_NODE;
+        // First arg must be (quote <known-macro-sym>)
+        auto arg0_v = flat->get(v.child(1));
+        if (arg0_v.tag != NodeTag::Quote || arg0_v.children.empty())
+            return NULL_NODE;
+        auto quoted_v = flat->get(arg0_v.child(0));
+        if (quoted_v.tag != NodeTag::Variable)
+            return NULL_NODE;
+        auto quoted_name = std::string(pool->resolve(quoted_v.sym_id));
+        if (macros.find(quoted_name) == macros.end())
+            return NULL_NODE;
+        // Walk the cdr chain (v.child(2)) to collect arg NodeIds.
+        // Each step: cdr is (cons <arg> <rest>) or (quote ()).
+        std::vector<NodeId> args;
+        NodeId cdr_id = v.child(2);
+        while (cdr_id != NULL_NODE) {
+            auto cdr_v = flat->get(cdr_id);
+            if (cdr_v.tag == NodeTag::Quote) {
+                // (quote ()) — end of list
+                break;
+            }
+            if (cdr_v.tag != NodeTag::Call || cdr_v.children.size() != 3) {
+                // Not a cons cell — bail
+                return NULL_NODE;
+            }
+            auto c_callee = flat->get(cdr_v.child(0));
+            if (c_callee.tag != NodeTag::Variable ||
+                std::string(pool->resolve(c_callee.sym_id)) != "cons") {
+                return NULL_NODE;
+            }
+            // Push the arg (cdr_v.child(1))
+            args.push_back(cdr_v.child(1));
+            cdr_id = cdr_v.child(2);
         }
-        // Push the arg (cdr_v.child(1))
-        args.push_back(cdr_v.child(1));
-        cdr_id = cdr_v.child(2);
+        // Build Call(<quoted_name>, args...)
+        auto macro_var = flat->add_variable(pool->intern(quoted_name));
+        flat->set_marker(macro_var, SyntaxMarker::MacroIntroduced);
+        return flat->add_call(macro_var, args);
     }
-    // Build Call(<quoted_name>, args...)
-    auto macro_var = flat->add_variable(pool->intern(quoted_name));
-    flat->set_marker(macro_var, SyntaxMarker::MacroIntroduced);
-    return flat->add_call(macro_var, args);
-}
 
 } // namespace detail
 
@@ -454,54 +503,54 @@ expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura:
     {
         auto v = flat->get(root);
         if (v.tag == NodeTag::Call && !v.children.empty()) {
-        std::vector<aura::ast::NodeId> call_args(v.children.begin(), v.children.end());
-        auto callee_v = flat->get(call_args[0]);
-        if (callee_v.tag == NodeTag::Variable) {
-            auto cname = std::string(pool->resolve(callee_v.sym_id));
-            auto it = macros.find(cname);
-            if (it != macros.end()) {
-                // Build substitution: macro param → arg NodeId.
-                // Issue #146 follow-up: route through the pure helper
-                // so the substitution logic lives in evaluator_pure.ixx
-                // (single source of truth) and the legacy inline loop
-                // goes away. call_args is snapshotted above (Issue #483)
-                // so set_child during clone/expand cannot UAF v.children.
-                const auto& md = it->second;
-                auto subst =
-                    aura::compiler::pure::compute_macro_subst_pure(md.params, call_args, md.dotted);
-                if (md.dotted) {
-                    // Rest params on inner macros: not yet supported
-                    // (same limitation as the main hygienic path).
-                    return root;
-                }
-                // Clone the macro body into the current flat and
-                // re-intern sym_ids. Use the runtime registry's
-                // `flat` / `pool` pointers as the source.
-                std::unordered_map<std::string, std::string> rename_map;
-                auto* src_pool = md.pool ? md.pool : pool;
-                auto cloned = clone_macro_body(*flat, *pool, *md.flat, *src_pool, md.body_id,
-                                               &subst, &rename_map);
-                if (cloned == NULL_NODE)
-                    return root;
-                // Recursively expand inner macros in the cloned body
-                cloned = expand_inner_macros(flat, pool, cloned, depth + 1, max_depth, macros);
-                // Rewrite the parent's child to use the cloned body
-                auto parent_id = flat->parent_of(root);
-                if (parent_id != NULL_NODE) {
-                    auto parent_v = flat->get(parent_id);
-                    std::vector<aura::ast::NodeId> parent_children(
-                        parent_v.children.begin(), parent_v.children.end());
-                    for (std::uint32_t ci = 0; ci < parent_children.size(); ++ci) {
-                        if (parent_children[ci] == root) {
-                            flat->set_child(parent_id, ci, cloned);
-                            flat->restamp_all_node_generations();
-                            break;
+            std::vector<aura::ast::NodeId> call_args(v.children.begin(), v.children.end());
+            auto callee_v = flat->get(call_args[0]);
+            if (callee_v.tag == NodeTag::Variable) {
+                auto cname = std::string(pool->resolve(callee_v.sym_id));
+                auto it = macros.find(cname);
+                if (it != macros.end()) {
+                    // Build substitution: macro param → arg NodeId.
+                    // Issue #146 follow-up: route through the pure helper
+                    // so the substitution logic lives in evaluator_pure.ixx
+                    // (single source of truth) and the legacy inline loop
+                    // goes away. call_args is snapshotted above (Issue #483)
+                    // so set_child during clone/expand cannot UAF v.children.
+                    const auto& md = it->second;
+                    auto subst = aura::compiler::pure::compute_macro_subst_pure(
+                        md.params, call_args, md.dotted);
+                    if (md.dotted) {
+                        // Rest params on inner macros: not yet supported
+                        // (same limitation as the main hygienic path).
+                        return root;
+                    }
+                    // Clone the macro body into the current flat and
+                    // re-intern sym_ids. Use the runtime registry's
+                    // `flat` / `pool` pointers as the source.
+                    std::unordered_map<std::string, std::string> rename_map;
+                    auto* src_pool = md.pool ? md.pool : pool;
+                    auto cloned = clone_macro_body(*flat, *pool, *md.flat, *src_pool, md.body_id,
+                                                   &subst, &rename_map);
+                    if (cloned == NULL_NODE)
+                        return root;
+                    // Recursively expand inner macros in the cloned body
+                    cloned = expand_inner_macros(flat, pool, cloned, depth + 1, max_depth, macros);
+                    // Rewrite the parent's child to use the cloned body
+                    auto parent_id = flat->parent_of(root);
+                    if (parent_id != NULL_NODE) {
+                        auto parent_v = flat->get(parent_id);
+                        std::vector<aura::ast::NodeId> parent_children(parent_v.children.begin(),
+                                                                       parent_v.children.end());
+                        for (std::uint32_t ci = 0; ci < parent_children.size(); ++ci) {
+                            if (parent_children[ci] == root) {
+                                flat->set_child(parent_id, ci, cloned);
+                                flat->restamp_all_node_generations();
+                                break;
+                            }
                         }
                     }
+                    return cloned;
                 }
-                return cloned;
             }
-        }
         }
     }
     // Not a macro call — recurse into children.

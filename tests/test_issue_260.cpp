@@ -14,8 +14,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -54,8 +54,8 @@ static TcCtx typecheck_src(const std::string& src) {
 }
 
 static aura::ast::NodeId find_incomplete_match_let(const aura::ast::FlatAST& flat,
-                                                 const aura::ast::StringPool& pool,
-                                                 aura::core::TypeRegistry& reg) {
+                                                   const aura::ast::StringPool& pool,
+                                                   aura::core::TypeRegistry& reg) {
     for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
         if (!flat.has_match_info(id))
             continue;
@@ -66,9 +66,8 @@ static aura::ast::NodeId find_incomplete_match_let(const aura::ast::FlatAST& fla
     return aura::ast::NULL_NODE;
 }
 
-static const std::string k_incomplete_color =
-    "(begin (define-type (Color) (Red) (Green) (Blue)) "
-    "  (let ((x Red)) (match x ((Red) 1) ((Green) 2))))";
+static const std::string k_incomplete_color = "(begin (define-type (Color) (Red) (Green) (Blue)) "
+                                              "  (let ((x Red)) (match x ((Red) 1) ((Green) 2))))";
 
 static const std::string k_complete_color =
     "(begin (define-type (Color) (Red) (Green) (Blue)) "
@@ -81,8 +80,8 @@ bool test_analyze_match_missing_ctor() {
     CHECK(incomplete != aura::ast::NULL_NODE, "found incomplete match let");
     if (incomplete == aura::ast::NULL_NODE)
         return false;
-    auto missing = aura::compiler::analyze_match_exhaustiveness(*ctx.flat, *ctx.pool, *ctx.reg,
-                                                                incomplete);
+    auto missing =
+        aura::compiler::analyze_match_exhaustiveness(*ctx.flat, *ctx.pool, *ctx.reg, incomplete);
     CHECK(!missing.empty(), "match reports missing constructors");
     bool has_blue = false;
     for (auto& m : missing) {
@@ -113,8 +112,8 @@ bool test_post_mutation_missing_ctor_note() {
     rec.operator_name = "mutate:replace-children";
 
     std::vector<aura::compiler::OwnershipNote> notes;
-    auto st = aura::compiler::post_mutation_invariant_check(*ctx.flat, *ctx.pool, *ctx.reg, rec,
-                                                            notes);
+    auto st =
+        aura::compiler::post_mutation_invariant_check(*ctx.flat, *ctx.pool, *ctx.reg, rec, notes);
     bool found = false;
     for (auto& n : notes) {
         if (n.kind == "MissingConstructorInNestedMatch") {
@@ -148,6 +147,8 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_260_detail
+} // namespace aura_issue_260_detail
 
-int aura_issue_260_run() { return aura_issue_260_detail::run_tests(); }
+int aura_issue_260_run() {
+    return aura_issue_260_detail::run_tests();
+}

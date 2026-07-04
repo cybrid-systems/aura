@@ -40,7 +40,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -55,20 +55,34 @@ struct EvalResult {
 };
 static EvalResult try_run(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return {false, aura::compiler::types::make_void()};
+    if (!r)
+        return {false, aura::compiler::types::make_void()};
     return {true, *r};
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ_INT(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ_INT(a, b, msg)                                                                    \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 static bool set_source(aura::compiler::CompilerService& cs, const std::string& src) {
     auto r = try_run(cs, std::string("(set-code \"") + src + "\")");
@@ -83,15 +97,18 @@ static bool set_source(aura::compiler::CompilerService& cs, const std::string& s
 bool test_marker_stats_returns_list() {
     std::println("\n--- AC1: query:marker-stats returns a list ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5)")) { ++g_failed; return false; }
+    if (!set_source(cs, "(define x 5)")) {
+        ++g_failed;
+        return false;
+    }
     // (pair? ...) returns #t or #f. Test via (if ... 1 0) to get int.
     auto r = try_run(cs, "(if (pair? (query:marker-stats)) 1 0)");
     if (!r.ok || !aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
-    CHECK_EQ_INT(aura::compiler::types::as_int(r.v), 1,
-                 "query:marker-stats returns a list (pair)");
+    CHECK_EQ_INT(aura::compiler::types::as_int(r.v), 1, "query:marker-stats returns a list (pair)");
     return true;
 }
 
@@ -99,15 +116,19 @@ bool test_marker_stats_returns_list() {
 bool test_marker_stats_fresh_workspace() {
     std::println("\n--- AC2: with fresh set-code, total > 0 ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs, "(define x 5) (define y 10)")) { ++g_failed; return false; }
+    if (!set_source(cs, "(define x 5) (define y 10)")) {
+        ++g_failed;
+        return false;
+    }
     // The 4-element list: (user macro bool total)
     // Use car/cdr destructuring via Aura code
     auto r = try_run(cs,
-        "(let ((s (query:marker-stats)))"
-        "  (car (cdr (cdr (cdr s)))))");  // 4th element = total
+                     "(let ((s (query:marker-stats)))"
+                     "  (car (cdr (cdr (cdr s)))))"); // 4th element = total
     if (!r.ok || !aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     std::int64_t total = aura::compiler::types::as_int(r.v);
     std::println("    [info] total = {}", total);
@@ -119,14 +140,15 @@ bool test_marker_stats_fresh_workspace() {
 bool test_marker_stats_user_positive() {
     std::println("\n--- AC3: with macro definition, user count > 0 ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs,
-        "(define x 5) (define-hygienic-macro (d y) (* y 2))")) {
-        ++g_failed; return false;
+    if (!set_source(cs, "(define x 5) (define-hygienic-macro (d y) (* y 2))")) {
+        ++g_failed;
+        return false;
     }
-    auto r = try_run(cs, "(car (query:marker-stats))");  // user is the first element
+    auto r = try_run(cs, "(car (query:marker-stats))"); // user is the first element
     if (!r.ok || !aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     std::int64_t user = aura::compiler::types::as_int(r.v);
     std::println("    [info] user count = {}", user);
@@ -143,11 +165,13 @@ bool test_no_workspace_error() {
     auto r = try_run(cs, "(if (pair? (query:marker-stats)) 1 0)");
     if (!r.ok) {
         std::println("  FAIL: eval failed");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     if (!aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int (val={})", r.v.val);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     std::int64_t is_pair = aura::compiler::types::as_int(r.v);
     std::println("    [info] is_pair = {} (0=no-workspace, 1=got-list)", is_pair);
@@ -160,22 +184,19 @@ bool test_snapshot_marker_fields() {
     std::println("\n--- AC5: CompilerSnapshot fields populated ---");
     aura::compiler::CompilerService cs;
     if (!set_source(cs, "(define x 5) (define y 10)")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     auto snap = cs.snapshot();
     std::println("    [info] marker_total_count = {}", snap.marker_total_count);
     std::println("    [info] marker_user_count = {}", snap.marker_user_count);
     std::println("    [info] marker_macro_introduced_count = {}",
                  snap.marker_macro_introduced_count);
-    std::println("    [info] marker_bool_literal_count = {}",
-                 snap.marker_bool_literal_count);
-    CHECK(snap.marker_total_count > 0,
-          "snapshot.marker_total_count > 0 after set-code");
-    CHECK(snap.marker_user_count > 0,
-          "snapshot.marker_user_count > 0 after set-code");
-    CHECK(snap.marker_total_count ==
-          (snap.marker_user_count + snap.marker_macro_introduced_count
-           + snap.marker_bool_literal_count),
+    std::println("    [info] marker_bool_literal_count = {}", snap.marker_bool_literal_count);
+    CHECK(snap.marker_total_count > 0, "snapshot.marker_total_count > 0 after set-code");
+    CHECK(snap.marker_user_count > 0, "snapshot.marker_user_count > 0 after set-code");
+    CHECK(snap.marker_total_count == (snap.marker_user_count + snap.marker_macro_introduced_count +
+                                      snap.marker_bool_literal_count),
           "total = user + macro + bool");
     return true;
 }
@@ -186,16 +207,14 @@ bool test_snapshot_no_workspace_zero() {
     aura::compiler::CompilerService cs;
     // No set-code called. Default workspace state.
     auto snap = cs.snapshot();
-    std::println("    [info] marker_total_count = {} (expected 0)",
-                 snap.marker_total_count);
-    std::println("    [info] marker_user_count = {} (expected 0)",
-                 snap.marker_user_count);
+    std::println("    [info] marker_total_count = {} (expected 0)", snap.marker_total_count);
+    std::println("    [info] marker_user_count = {} (expected 0)", snap.marker_user_count);
     // We don't strictly assert 0 because some test environments
     // may have a default workspace, but if a default exists, the
     // counts should still be self-consistent.
     CHECK_EQ_INT(snap.marker_total_count,
-                 snap.marker_user_count + snap.marker_macro_introduced_count
-                 + snap.marker_bool_literal_count,
+                 snap.marker_user_count + snap.marker_macro_introduced_count +
+                     snap.marker_bool_literal_count,
                  "marker counts are self-consistent (total = sum of parts)");
     return true;
 }
@@ -224,12 +243,12 @@ int run_tests() {
     std::println("\nAC #5: CompilerSnapshot fields populated");
     test_snapshot_marker_fields();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_247_detail
+} // namespace aura_issue_247_detail
 
-int aura_issue_247_run() { return aura_issue_247_detail::run_tests(); }
-
+int aura_issue_247_run() {
+    return aura_issue_247_detail::run_tests();
+}

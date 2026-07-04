@@ -59,22 +59,23 @@ namespace aura::compiler::primitives_detail::verify_tool_detail {
 // (the NodeId). Lines that don't start with an integer
 // are skipped. Returns the count of nodes successfully
 // marked dirty.
-static std::uint64_t parse_and_mark(aura::compiler::Evaluator& ev,
-                                    const std::string& text,
+static std::uint64_t parse_and_mark(aura::compiler::Evaluator& ev, const std::string& text,
                                     bool is_coverage) {
     auto* ws = ev.workspace_flat();
-    if (!ws) return 0;
+    if (!ws)
+        return 0;
     std::uint64_t marked = 0;
     std::size_t i = 0;
     while (i < text.size()) {
         // Find end of line.
         std::size_t j = i;
-        while (j < text.size() && text[j] != '\n') ++j;
+        while (j < text.size() && text[j] != '\n')
+            ++j;
         const std::string_view line(text.data() + i, j - i);
         // Skip leading whitespace.
         std::size_t k = 0;
-        while (k < line.size() &&
-               (line[k] == ' ' || line[k] == '\t')) ++k;
+        while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
+            ++k;
         // Parse the first integer (NodeId).
         if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
             std::size_t val = 0;
@@ -84,9 +85,8 @@ static std::uint64_t parse_and_mark(aura::compiler::Evaluator& ev,
             }
             const auto nid = static_cast<aura::ast::NodeId>(val);
             if (nid < ws->size()) {
-                const auto reason = is_coverage
-                    ? aura::ast::FlatAST::kCoverageFeedbackDirty
-                    : aura::ast::FlatAST::kAssertFailureDirty;
+                const auto reason = is_coverage ? aura::ast::FlatAST::kCoverageFeedbackDirty
+                                                : aura::ast::FlatAST::kAssertFailureDirty;
                 ws->apply_verification_dirty_bits(nid, reason);
                 ++marked;
             } else {
@@ -110,14 +110,13 @@ static std::uint64_t parse_and_mark(aura::compiler::Evaluator& ev,
 namespace aura::compiler::primitives_detail {
 
 void register_verify_tool_primitives(
-    std::function<void(std::string,
-                       std::function<aura::compiler::types::EvalValue(
-                           std::span<const aura::compiler::types::EvalValue>)>)> add,
+    std::function<void(std::string, std::function<aura::compiler::types::EvalValue(
+                                        std::span<const aura::compiler::types::EvalValue>)>)>
+        add,
     aura::compiler::Evaluator& ev,
     std::function<aura::compiler::types::EvalValue(std::int32_t)> make_string,
     std::function<aura::compiler::types::EvalValue(std::int64_t)> make_int,
-    std::function<aura::compiler::types::EvalValue(
-        const std::string&, const std::string&)> mev) {
+    std::function<aura::compiler::types::EvalValue(const std::string&, const std::string&)> mev) {
     using namespace aura::compiler::primitives_detail::verify_tool_detail;
 
     // (verify:run-external-sim "cmd-string"
@@ -134,10 +133,10 @@ void register_verify_tool_primitives(
     // prevents repeated calls from doing the wrong
     // thing in tests.
     add("verify:run-external-sim",
-        [&ev, make_string, make_int, mev](std::span<const aura::compiler::types::EvalValue> a) -> aura::compiler::types::EvalValue {
+        [&ev, make_string, make_int, mev](std::span<const aura::compiler::types::EvalValue> a)
+            -> aura::compiler::types::EvalValue {
             if (a.empty() || !is_string(a[0]))
-                return mev("bad-arg",
-                    "usage: (verify:run-external-sim \"cmd\" [timeout-ms])");
+                return mev("bad-arg", "usage: (verify:run-external-sim \"cmd\" [timeout-ms])");
             ev.bump_verify_tool_call();
             auto cmd_idx = as_string_idx(a[0]);
             if (cmd_idx >= ev.string_heap_size())
@@ -160,8 +159,7 @@ void register_verify_tool_primitives(
             // cache hit + miss.
             if (auto cached = ev.lookup_verify_tool_cache(cmd)) {
                 ev.bump_verify_tool_cache_hit();
-                return make_string(
-                    ev.push_string_heap(*cached));
+                return make_string(ev.push_string_heap(*cached));
             }
             // Cache miss: P0 returns the cmd string as
             // a placeholder result. The follow-up
@@ -178,10 +176,10 @@ void register_verify_tool_primitives(
     // kCoverageFeedbackDirty (from #469). Returns
     // the count of nodes successfully marked.
     add("verify:parse-coverage",
-        [&ev, make_int, mev](std::span<const aura::compiler::types::EvalValue> a) -> aura::compiler::types::EvalValue {
+        [&ev, make_int, mev](std::span<const aura::compiler::types::EvalValue> a)
+            -> aura::compiler::types::EvalValue {
             if (a.empty() || !is_string(a[0]))
-                return mev("bad-arg",
-                    "usage: (verify:parse-coverage \"cov-data\")");
+                return mev("bad-arg", "usage: (verify:parse-coverage \"cov-data\")");
             auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_size())
                 return make_int(0);
@@ -193,10 +191,10 @@ void register_verify_tool_primitives(
     // (verify:parse-failures "fail-data-string") —
     // same format, marks with kAssertFailureDirty.
     add("verify:parse-failures",
-        [&ev, make_int, mev](std::span<const aura::compiler::types::EvalValue> a) -> aura::compiler::types::EvalValue {
+        [&ev, make_int, mev](std::span<const aura::compiler::types::EvalValue> a)
+            -> aura::compiler::types::EvalValue {
             if (a.empty() || !is_string(a[0]))
-                return mev("bad-arg",
-                    "usage: (verify:parse-failures \"fail-data\")");
+                return mev("bad-arg", "usage: (verify:parse-failures \"fail-data\")");
             auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_size())
                 return make_int(0);

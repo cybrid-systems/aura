@@ -101,9 +101,8 @@ void handle_contract_violation(const std::contracts::contract_violation& v) {
 
     // 1. Always log to stderr (matches the previous behavior + adds
     //    context that was previously missing).
-    std::println(std::cerr, "contract violation: {} ({}) at {}:{}{} — {}",
-                 kind_str(cv.kind), semantic_str(cv.semantic),
-                 (cv.file ? cv.file : "?"), cv.line,
+    std::println(std::cerr, "contract violation: {} ({}) at {}:{}{} — {}", kind_str(cv.kind),
+                 semantic_str(cv.semantic), (cv.file ? cv.file : "?"), cv.line,
                  (cv.function ? cv.function[0] ? std::string(" in ") + cv.function : "" : ""),
                  (cv.comment ? cv.comment : "(no comment)"));
 

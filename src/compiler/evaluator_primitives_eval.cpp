@@ -160,12 +160,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 // `define-hygienic-macro*` (preserved-params) variant.
                 bool is_preserved = (v.int_value & 4) != 0;
                 ev.macros_[macro_name] = MacroDef{std::move(param_names),
-                                               is_dotted,
-                                               is_hygienic,
-                                               is_preserved,
-                                               flat_ptr,
-                                               pool_ptr,
-                                               body_id};
+                                                  is_dotted,
+                                                  is_hygienic,
+                                                  is_preserved,
+                                                  flat_ptr,
+                                                  pool_ptr,
+                                                  body_id};
             }
         }
         return make_bool(true);
@@ -667,7 +667,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                         call_flat.root = call_pr.root;
                         auto call_expanded =
                             aura::compiler::macro_expand_all(call_flat, call_pool, call_flat.root);
-                        auto call_result = ev.eval_flat(call_flat, call_pool, call_expanded, ev.top_);
+                        auto call_result =
+                            ev.eval_flat(call_flat, call_pool, call_expanded, ev.top_);
                         if (call_result) {
                             ev.coverage_counters_[9]++;
                             return *call_result;
@@ -800,7 +801,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // nodes anywhere) AND we have a cached result, reuse it.
         // The cache is implicitly invalidated by mutations (which
         // mark the root dirty via mark_dirty_upward).
-        if (!ev.workspace_flat_->has_dirty_subtree(ev.workspace_flat_->root) && ev.last_typecheck_result_) {
+        if (!ev.workspace_flat_->has_dirty_subtree(ev.workspace_flat_->root) &&
+            ev.last_typecheck_result_) {
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(*ev.last_typecheck_result_);
             return make_string(sidx);
@@ -1250,7 +1252,6 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         return result;
     });
-
 }
 
 } // namespace aura::compiler::primitives_detail

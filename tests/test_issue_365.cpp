@@ -34,8 +34,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.macro_expansion;
 import aura.compiler.service;
@@ -123,8 +123,8 @@ bool test_depth_guard_graceful_degradation() {
     // Clone with no substitution — clone_macro_body should
     // hit the depth limit and return NULL_NODE gracefully
     // rather than crash.
-    NodeId result = aura::compiler::macro_exp::clone_macro_body(
-        target, target_pool, source, pool, cur, nullptr, nullptr);
+    NodeId result = aura::compiler::macro_exp::clone_macro_body(target, target_pool, source, pool,
+                                                                cur, nullptr, nullptr);
     // The expected behavior: depth guard returns NULL_NODE
     // somewhere in the chain (the deepest clone call returns
     // NULL_NODE, and the chain above sees NULL_NODE in its
@@ -157,6 +157,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_365_detail
+} // namespace aura_issue_365_detail
 
-int aura_issue_365_run() { return aura_issue_365_detail::run_tests(); }
+int aura_issue_365_run() {
+    return aura_issue_365_detail::run_tests();
+}

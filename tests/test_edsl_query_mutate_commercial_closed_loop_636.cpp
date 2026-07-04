@@ -66,8 +66,7 @@ static void run_matrix(CompilerService& cs) {
     (void)cs.eval("(eval-current)");
     const auto stats3b = edsl_stats(cs);
     std::println("  edsl stats: {} -> {}", stats3a, stats3b);
-    CHECK(stats3b > stats3a,
-          "mutate:rebind bumps guard/dirty commercial counters");
+    CHECK(stats3b > stats3a, "mutate:rebind bumps guard/dirty commercial counters");
 
     std::println("\n--- AC4: EDA verification feedback ---");
     const auto stats4a = edsl_stats(cs);
@@ -75,15 +74,13 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cov && is_int(*cov), "verify:parse-coverage-feedback returns int");
     const auto stats4b = edsl_stats(cs);
     std::println("  edsl stats: {} -> {}", stats4a, stats4b);
-    CHECK(stats4b > stats4a,
-          "coverage feedback bumps EDA verification counters");
+    CHECK(stats4b > stats4a, "coverage feedback bumps EDA verification counters");
 
     std::println("\n--- AC5: multi-round query→mutate→eval monotonic ---");
     const auto stats5a = edsl_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"y\")");
-        (void)cs.eval("(mutate:rebind \"y\" \"" +
-                      std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"y\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(mutate:request-gc-safepoint 10)");
     }

@@ -41,8 +41,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -53,7 +53,6 @@ import aura.diag;
 import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_138_detail {
@@ -82,7 +81,8 @@ static std::string run_str(aura::compiler::CompilerService& cs, std::string_view
     }
     auto idx = aura::compiler::types::as_string_idx(*r);
     const auto& heap = cs.evaluator().string_heap();
-    if (idx >= heap.size()) return "";
+    if (idx >= heap.size())
+        return "";
     return std::string(heap[idx]);
 }
 
@@ -96,10 +96,9 @@ bool test_set_code_workspace() {
     std::println("\n--- Test 1.1: (set-code) creates a workspace ---");
     aura::compiler::CompilerService cs;
     // After (set-code), (eval-current) executes the workspace
-    int64_t r = run_int(cs,
-        "(set-code \"(define x 1)(define y 2)\") "
-        "(eval-current) "
-        "(+ x y)");
+    int64_t r = run_int(cs, "(set-code \"(define x 1)(define y 2)\") "
+                            "(eval-current) "
+                            "(+ x y)");
     CHECK(r == 3, "(set-code) + (eval-current): 1+2=3 (got " + std::to_string(r) + ")");
     return true;
 }
@@ -109,13 +108,11 @@ bool test_set_code_workspace() {
 bool test_mutate_rebind_updates_workspace() {
     std::println("\n--- Test 1.2: mutate:rebind updates workspace value ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(set-code \"(define x 1)\") "
-        "(mutate:rebind \"x\" \"(quote 99)\" \"test\") "
-        "(eval-current) "
-        "x");
-    CHECK(r == 99, "after mutate:rebind, eval-current sees x=99 (got " +
-          std::to_string(r) + ")");
+    int64_t r = run_int(cs, "(set-code \"(define x 1)\") "
+                            "(mutate:rebind \"x\" \"(quote 99)\" \"test\") "
+                            "(eval-current) "
+                            "x");
+    CHECK(r == 99, "after mutate:rebind, eval-current sees x=99 (got " + std::to_string(r) + ")");
     return true;
 }
 
@@ -124,36 +121,34 @@ bool test_mutate_rebind_updates_workspace() {
 bool test_typecheck_after_mutation() {
     std::println("\n--- Test 1.3: typecheck-current after mutation succeeds ---");
     aura::compiler::CompilerService cs;
-    std::string s = run_str(cs,
-        "(set-code \"(define x 1)(define y 2)\") "
-        "(mutate:rebind \"x\" \"(quote 99)\" \"test\") "
-        "(typecheck-current)");
+    std::string s = run_str(cs, "(set-code \"(define x 1)(define y 2)\") "
+                                "(mutate:rebind \"x\" \"(quote 99)\" \"test\") "
+                                "(typecheck-current)");
     bool ok = s.find("no errors") != std::string::npos;
-    CHECK(ok, "typecheck after mutate:rebind returns no errors (status: " +
-          s.substr(0, 60) + ")");
+    CHECK(ok, "typecheck after mutate:rebind returns no errors (status: " + s.substr(0, 60) + ")");
     return true;
 }
 
 // ── Test 1.4: typecheck-current detects type-violating mutation ─
 
 bool test_typecheck_detects_mutation_errors() {
-    std::println("\n--- Test 1.4: typecheck-current detects errors after type-violating mutation ---");
+    std::println(
+        "\n--- Test 1.4: typecheck-current detects errors after type-violating mutation ---");
     aura::compiler::CompilerService cs;
-    std::string s1 = run_str(cs,
-        "(set-code \"(define x 1)\") "
-        "(typecheck-current)");
+    std::string s1 = run_str(cs, "(set-code \"(define x 1)\") "
+                                 "(typecheck-current)");
     bool ok1 = s1.find("no errors") != std::string::npos;
     CHECK(ok1, "typecheck passes before mutation (status: " + s1.substr(0, 50) + ")");
     // Now mutate x to a string — type check should detect the error
-    std::string s2 = run_str(cs,
-        "(set-code \"(define x 1)\") "
-        "(mutate:replace-value (query:find \"x\") \"\\\"hello\\\"\" \"test\") "
-        "(typecheck-current)");
+    std::string s2 =
+        run_str(cs, "(set-code \"(define x 1)\") "
+                    "(mutate:replace-value (query:find \"x\") \"\\\"hello\\\"\" \"test\") "
+                    "(typecheck-current)");
     bool has_error = s2.find("error") != std::string::npos ||
                      s2.find("Error") != std::string::npos ||
                      s2.find("TypeError") != std::string::npos;
-    CHECK(has_error, "typecheck detects error after type-violating mutation (status: "
-          + s2.substr(0, 80) + ")");
+    CHECK(has_error, "typecheck detects error after type-violating mutation (status: " +
+                         s2.substr(0, 80) + ")");
     return true;
 }
 
@@ -166,15 +161,13 @@ bool test_typecheck_detects_mutation_errors() {
 bool test_typecheck_idempotent() {
     std::println("\n--- Test 2.1: typecheck-current idempotent for clean code ---");
     aura::compiler::CompilerService cs;
-    std::string s1 = run_str(cs,
-        "(set-code \"(define x 1)(define y 2)(+ x y)\") "
-        "(typecheck-current)");
+    std::string s1 = run_str(cs, "(set-code \"(define x 1)(define y 2)(+ x y)\") "
+                                 "(typecheck-current)");
     bool ok1 = s1.find("no errors") != std::string::npos;
     CHECK(ok1, "first typecheck on clean code: no errors");
 
-    std::string s2 = run_str(cs,
-        "(set-code \"(define x 1)(define y 2)(+ x y)\") "
-        "(typecheck-current)");
+    std::string s2 = run_str(cs, "(set-code \"(define x 1)(define y 2)(+ x y)\") "
+                                 "(typecheck-current)");
     bool ok2 = s2.find("no errors") != std::string::npos;
     CHECK(ok2, "second typecheck on identical clean code: no errors");
     return true;
@@ -185,14 +178,11 @@ bool test_typecheck_idempotent() {
 bool test_no_stale_cache_on_clean() {
     std::println("\n--- Test 2.2: typecheck-current on clean code is consistent ---");
     aura::compiler::CompilerService cs;
-    std::string fresh = run_str(cs,
-        "(set-code \"(define f (lambda (x) (+ x 1)))\") "
-        "(typecheck-current)");
-    std::string recheck = run_str(cs,
-        "(set-code \"(define f (lambda (x) (+ x 1)))\") "
-        "(typecheck-current)");
-    CHECK(fresh == recheck,
-          "typecheck-current on identical clean code: identical output");
+    std::string fresh = run_str(cs, "(set-code \"(define f (lambda (x) (+ x 1)))\") "
+                                    "(typecheck-current)");
+    std::string recheck = run_str(cs, "(set-code \"(define f (lambda (x) (+ x 1)))\") "
+                                      "(typecheck-current)");
+    CHECK(fresh == recheck, "typecheck-current on identical clean code: identical output");
     return true;
 }
 
@@ -209,8 +199,7 @@ bool test_incremental_speedup() {
     // multiple times and verify stability + reasonable perf.
     std::string code = "(begin ";
     for (int i = 0; i < 30; ++i) {
-        code += "(define f" + std::to_string(i) + " (lambda (x) (+ x " +
-                std::to_string(i) + "))) ";
+        code += "(define f" + std::to_string(i) + " (lambda (x) (+ x " + std::to_string(i) + "))) ";
     }
     code += ")";
     std::string wrapped = std::string("(set-code \"") + code + "\") (typecheck-current)";
@@ -253,7 +242,7 @@ bool test_stress_mutate_cycles() {
     std::string status = run_str(cs, code);
     bool ok = status.find("no errors") != std::string::npos;
     CHECK(ok, "after 50 mutate cycles, typecheck-current still passes (status: " +
-          status.substr(0, 60) + ")");
+                  status.substr(0, 60) + ")");
     return true;
 }
 
@@ -284,17 +273,15 @@ bool test_set_code_isolated() {
     std::println("\n--- Test 5.1: set-code workspace is isolated per eval ---");
     aura::compiler::CompilerService cs;
     // First eval: set-code + mutate + eval
-    int64_t r1 = run_int(cs,
-        "(set-code \"(define x 1)\") "
-        "(mutate:rebind \"x\" \"(quote 99)\" \"t\") "
-        "(eval-current) "
-        "x");
+    int64_t r1 = run_int(cs, "(set-code \"(define x 1)\") "
+                             "(mutate:rebind \"x\" \"(quote 99)\" \"t\") "
+                             "(eval-current) "
+                             "x");
     CHECK(r1 == 99, "first eval: x=99 after mutate (got " + std::to_string(r1) + ")");
     // Second eval: fresh set-code, x should be 1
-    int64_t r2 = run_int(cs,
-        "(set-code \"(define x 1)\") "
-        "(eval-current) "
-        "x");
+    int64_t r2 = run_int(cs, "(set-code \"(define x 1)\") "
+                             "(eval-current) "
+                             "x");
     CHECK(r2 == 1, "second eval: fresh set-code, x=1 (got " + std::to_string(r2) + ")");
     return true;
 }
@@ -327,11 +314,11 @@ bool test_dirty_api_via_cpp() {
     // should produce the same result regardless of cache state
     // (since no caching is happening — each eval is a fresh
     // typechecker).
-    std::string s = run_str(cs,
-        "(set-code \"(define x 1)\") (typecheck-current)");
+    std::string s = run_str(cs, "(set-code \"(define x 1)\") (typecheck-current)");
     CHECK(s.find("no errors") != std::string::npos,
           "typecheck-current on clean workspace: no errors");
-    (void)before; (void)after;
+    (void)before;
+    (void)after;
     return true;
 }
 
@@ -363,12 +350,12 @@ int run_tests() {
     test_set_code_isolated();
     test_dirty_api_via_cpp();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_138_detail
+} // namespace aura_issue_138_detail
 
-int aura_issue_138_run() { return aura_issue_138_detail::run_tests(); }
-
+int aura_issue_138_run() {
+    return aura_issue_138_detail::run_tests();
+}

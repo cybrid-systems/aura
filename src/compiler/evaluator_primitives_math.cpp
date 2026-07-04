@@ -20,12 +20,12 @@ using namespace types;
 
 namespace {
 
-std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap) {
-    auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
-    if (r)
-        return *r;
-    return 0;
-}
+    std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap) {
+        auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
+        if (r)
+            return *r;
+        return 0;
+    }
 
 } // namespace
 
@@ -220,54 +220,58 @@ void register_math_regex_and_arithmetic_primitives(
     });
 
     // ── Arithmetic extensions ─────────────────────────────────────
-    add("modulo", [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(0);
-        auto divisor = coerce_to_int(a[1], string_heap);
-        if (divisor == 0) {
-            return make_primitive_error(string_heap, error_values, "modulo: division by zero",
-                                      primitive_error_counter);
-        }
-        auto n = coerce_to_int(a[0], string_heap);
-        auto r = n % divisor;
-        if (r < 0)
-            r += (divisor > 0 ? divisor : -divisor);
-        return make_int(r);
-    });
-    add("mod", [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(0);
-        auto divisor = coerce_to_int(a[1], string_heap);
-        if (divisor == 0) {
-            return make_primitive_error(string_heap, error_values, "mod: division by zero",
-                                      primitive_error_counter);
-        }
-        auto n = coerce_to_int(a[0], string_heap);
-        auto r = n % divisor;
-        if (r < 0)
-            r += (divisor > 0 ? divisor : -divisor);
-        return make_int(r);
-    });
-    add("quotient", [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(0);
-        auto divisor = coerce_to_int(a[1], string_heap);
-        if (divisor == 0) {
-            return make_primitive_error(string_heap, error_values, "quotient: division by zero",
-                                      primitive_error_counter);
-        }
-        return make_int(coerce_to_int(a[0], string_heap) / divisor);
-    });
-    add("remainder", [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(0);
-        auto divisor = coerce_to_int(a[1], string_heap);
-        if (divisor == 0) {
-            return make_primitive_error(string_heap, error_values, "remainder: division by zero",
-                                      primitive_error_counter);
-        }
-        return make_int(coerce_to_int(a[0], string_heap) % divisor);
-    });
+    add("modulo",
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_int(0);
+            auto divisor = coerce_to_int(a[1], string_heap);
+            if (divisor == 0) {
+                return make_primitive_error(string_heap, error_values, "modulo: division by zero",
+                                            primitive_error_counter);
+            }
+            auto n = coerce_to_int(a[0], string_heap);
+            auto r = n % divisor;
+            if (r < 0)
+                r += (divisor > 0 ? divisor : -divisor);
+            return make_int(r);
+        });
+    add("mod",
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_int(0);
+            auto divisor = coerce_to_int(a[1], string_heap);
+            if (divisor == 0) {
+                return make_primitive_error(string_heap, error_values, "mod: division by zero",
+                                            primitive_error_counter);
+            }
+            auto n = coerce_to_int(a[0], string_heap);
+            auto r = n % divisor;
+            if (r < 0)
+                r += (divisor > 0 ? divisor : -divisor);
+            return make_int(r);
+        });
+    add("quotient",
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_int(0);
+            auto divisor = coerce_to_int(a[1], string_heap);
+            if (divisor == 0) {
+                return make_primitive_error(string_heap, error_values, "quotient: division by zero",
+                                            primitive_error_counter);
+            }
+            return make_int(coerce_to_int(a[0], string_heap) / divisor);
+        });
+    add("remainder",
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_int(0);
+            auto divisor = coerce_to_int(a[1], string_heap);
+            if (divisor == 0) {
+                return make_primitive_error(string_heap, error_values,
+                                            "remainder: division by zero", primitive_error_counter);
+            }
+            return make_int(coerce_to_int(a[0], string_heap) % divisor);
+        });
     add("abs", [&string_heap](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);

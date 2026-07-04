@@ -22,9 +22,8 @@
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
-
+using aura::test::g_passed;
 
 
 #define PRINTLN(msg) std::println("{}", (msg))
@@ -46,16 +45,11 @@ bool test_schema_compile_time() {
     // properties. For the C++ side, the schema is the
     // JSON Schema (draft 2020-12) format.
     CHECK(!s.empty(), "schema is non-empty");
-    CHECK(s.find("MyType") != std::string::npos,
-          "schema contains \"MyType\"");
-    CHECK(s.find("\"x\"") != std::string::npos,
-          "schema contains field \"x\"");
-    CHECK(s.find("\"y\"") != std::string::npos,
-          "schema contains field \"y\"");
-    CHECK(s.find("\"flag\"") != std::string::npos,
-          "schema contains field \"flag\"");
-    CHECK(s.find("\"properties\"") != std::string::npos,
-          "schema has \"properties\" key");
+    CHECK(s.find("MyType") != std::string::npos, "schema contains \"MyType\"");
+    CHECK(s.find("\"x\"") != std::string::npos, "schema contains field \"x\"");
+    CHECK(s.find("\"y\"") != std::string::npos, "schema contains field \"y\"");
+    CHECK(s.find("\"flag\"") != std::string::npos, "schema contains field \"flag\"");
+    CHECK(s.find("\"properties\"") != std::string::npos, "schema has \"properties\" key");
     return true;
 }
 
@@ -78,8 +72,7 @@ bool test_schema_primitive() {
     CHECK(!s.empty(), "PrimitiveStruct schema is non-empty");
     CHECK(s.find("PrimitiveStruct") != std::string::npos,
           "PrimitiveStruct schema contains the type name");
-    CHECK(s.find("\"x\"") != std::string::npos,
-          "PrimitiveStruct schema contains field \"x\"");
+    CHECK(s.find("\"x\"") != std::string::npos, "PrimitiveStruct schema contains field \"x\"");
     return true;
 }
 
@@ -101,16 +94,19 @@ namespace fs = std::filesystem;
 // /__w/aura/aura/ working dir).
 static std::string find_aura_binary_path() {
     const char* env = ::getenv("AURA_BIN");
-    if (env && *env && fs::is_regular_file(env)) return env;
+    if (env && *env && fs::is_regular_file(env))
+        return env;
     char buf[4096] = {0};
     ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (n > 0) {
         fs::path p(buf);
         fs::path candidate = p.parent_path() / "aura";
-        if (fs::is_regular_file(candidate)) return candidate.string();
+        if (fs::is_regular_file(candidate))
+            return candidate.string();
     }
     // Fallback: CWD-relative
-    if (fs::is_regular_file("./build/aura")) return fs::absolute("./build/aura").string();
+    if (fs::is_regular_file("./build/aura"))
+        return fs::absolute("./build/aura").string();
     return "aura";
 }
 
@@ -119,15 +115,19 @@ static std::string exec_aura(const std::string& code) {
     // Escape single quotes in code for safe shell interpolation
     std::string escaped;
     for (char c : code) {
-        if (c == '\'') escaped += "'\\''";
-        else escaped += c;
+        if (c == '\'')
+            escaped += "'\\''";
+        else
+            escaped += c;
     }
     std::string cmd = "echo '" + escaped + "' | '" + aura_path + "' 2>/dev/null";
     FILE* p = ::popen(cmd.c_str(), "r");
-    if (!p) return "";
+    if (!p)
+        return "";
     std::string out;
     char buf[4096];
-    while (std::fgets(buf, sizeof(buf), p)) out += buf;
+    while (std::fgets(buf, sizeof(buf), p))
+        out += buf;
     ::pclose(p);
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
         out.pop_back();
@@ -139,16 +139,13 @@ bool test_query_schema_primitive() {
     std::string out_int = exec_aura("(display (query:schema \"Int\")) (newline)");
     std::println("Int schema: {}", out_int);
     CHECK(!out_int.empty(), "Int schema is non-empty");
-    CHECK(out_int.find("\"title\"") != std::string::npos,
-          "Int schema has \"title\"");
-    CHECK(out_int.find("Int") != std::string::npos,
-          "Int schema contains \"Int\"");
+    CHECK(out_int.find("\"title\"") != std::string::npos, "Int schema has \"title\"");
+    CHECK(out_int.find("Int") != std::string::npos, "Int schema contains \"Int\"");
 
     std::string out_bool = exec_aura("(display (query:schema \"Bool\")) (newline)");
     std::println("Bool schema: {}", out_bool);
     CHECK(!out_bool.empty(), "Bool schema is non-empty");
-    CHECK(out_bool.find("Bool") != std::string::npos,
-          "Bool schema contains \"Bool\"");
+    CHECK(out_bool.find("Bool") != std::string::npos, "Bool schema contains \"Bool\"");
 
     std::string out_undef = exec_aura("(display (query:schema \"undefined-type\")) (newline)");
     std::println("undefined: {}", out_undef);
@@ -188,9 +185,9 @@ bool test_mutate_rebind_conformant() {
     // Define a function, then rebind it with a valid new body
     // mutate:rebind should return #t (success) when the
     // new code is parseable and the function exists.
-    std::string out = exec_aura(
-        "(set-code \"(define (f x) (+ x 1))\") "
-        "(display (mutate:rebind \"f\" \"(lambda (x) (+ x 2))\")) (newline)");
+    std::string out =
+        exec_aura("(set-code \"(define (f x) (+ x 1))\") "
+                  "(display (mutate:rebind \"f\" \"(lambda (x) (+ x 2))\")) (newline)");
     std::println("rebind result: {}", out);
     CHECK(out == "#t", "mutate:rebind with valid body returns #t");
     return true;
@@ -205,16 +202,14 @@ bool test_mutate_rebind_invalid_body() {
     // the typecheck catches the issue post-mutation. This
     // test documents the current behavior for future
     // tightening.
-    std::string out = exec_aura(
-        "(set-code \"(define (g x) (+ x 1))\") "
-        "(display (mutate:rebind \"g\" \"(((unparseable\")) (newline)");
+    std::string out = exec_aura("(set-code \"(define (g x) (+ x 1))\") "
+                                "(display (mutate:rebind \"g\" \"(((unparseable\")) (newline)");
     std::println("result: {}", out);
     CHECK(!out.empty(), "got a response (not silent fail)");
     // Document the current behavior: returns #t. The
     // schema-violation check is a future cycle.
-    CHECK(out == "#t",
-          "current behavior: rebind returns #t for unparseable body "
-          "(post-mutation typecheck catches the issue)");
+    CHECK(out == "#t", "current behavior: rebind returns #t for unparseable body "
+                       "(post-mutation typecheck catches the issue)");
     return true;
 }
 

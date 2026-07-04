@@ -46,16 +46,14 @@ static void run_matrix(CompilerService& cs) {
     CHECK(s0 >= 0, "propagation stats non-negative");
 
     std::println("\n--- AC2: mutate bumps mark_dirty_upward propagation ---");
-    CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(),
-          "workspace setup");
+    CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(), "workspace setup");
     CHECK(cs.eval("(eval-current)").has_value(), "workspace eval");
     const auto stats2a = propagation_stats(cs);
     (void)cs.eval("(mutate:rebind \"x\" \"42\")");
     (void)cs.eval("(eval-current)");
     const auto stats2b = propagation_stats(cs);
     std::println("  propagation stats: {} -> {}", stats2a, stats2b);
-    CHECK(stats2b > stats2a,
-          "mutate:rebind bumps mark_dirty_upward propagation counters");
+    CHECK(stats2b > stats2a, "mutate:rebind bumps mark_dirty_upward propagation counters");
 
     std::println("\n--- AC3: verify:assertion-failed bumps verify counters ---");
     const auto stats3a = propagation_stats(cs);
@@ -63,28 +61,24 @@ static void run_matrix(CompilerService& cs) {
     CHECK(v1.has_value(), "verify:assertion-failed returns a value");
     const auto stats3b = propagation_stats(cs);
     std::println("  propagation stats: {} -> {}", stats3a, stats3b);
-    CHECK(stats3b > stats3a,
-          "verify:assertion-failed bumps verify-dirty counters");
+    CHECK(stats3b > stats3a, "verify:assertion-failed bumps verify-dirty counters");
 
     std::println("\n--- AC4: dirty-reason-counts + dirty-nodes regression ---");
     auto drc = cs.eval("(compile:dirty-reason-counts)");
-    CHECK(drc.has_value() && is_pair(*drc),
-          "compile:dirty-reason-counts returns 8-tuple pair");
+    CHECK(drc.has_value() && is_pair(*drc), "compile:dirty-reason-counts returns 8-tuple pair");
     auto dn = cs.eval("(query:dirty-nodes \"general\")");
     CHECK(dn.has_value(), "query:dirty-nodes returns a value");
 
     std::println("\n--- AC5: multi-round mutate matrix monotonic ---");
     const auto stats5a = propagation_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"y\" \"" +
-                      std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"y\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(verify:report-coverage 1)");
     }
     const auto stats5b = propagation_stats(cs);
     std::println("  propagation stats: {} -> {}", stats5a, stats5b);
-    CHECK(stats5b >= stats5a,
-          "propagation stats monotonic over multi-round matrix");
+    CHECK(stats5b >= stats5a, "propagation stats monotonic over multi-round matrix");
 
     std::println("\n--- AC4b: verify-dirty-stats regression ---");
     auto vds = cs.eval("(query:verify-dirty-stats)");

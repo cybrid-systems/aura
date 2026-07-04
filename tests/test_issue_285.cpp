@@ -10,8 +10,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.service;
@@ -60,8 +60,7 @@ bool test_yield_hook_evaluator_getter() {
     std::println("\n--- AC3: yield_hook_evaluator getter ---");
     // No active guard → nullptr expected.
     auto* before = aura::compiler::Evaluator::yield_hook_evaluator();
-    CHECK(before == nullptr,
-          "yield_hook_evaluator() returns nullptr when no guard active");
+    CHECK(before == nullptr, "yield_hook_evaluator() returns nullptr when no guard active");
 
     // Scope: create a guard (via Service) — after guard enters
     // the hook should be set; after it exits, cleared.
@@ -84,8 +83,7 @@ bool test_yield_hook_evaluator_getter() {
 
         // After the eval returns, the hook should be cleared.
         auto* after = aura::compiler::Evaluator::yield_hook_evaluator();
-        CHECK(after == nullptr,
-              "yield_hook_evaluator() cleared after guard exits");
+        CHECK(after == nullptr, "yield_hook_evaluator() cleared after guard exits");
         (void)success;
     }
 
@@ -121,8 +119,12 @@ int run_tests() {
 
 } // namespace aura_issue_285_detail
 
-int aura_issue_285_run() { return aura_issue_285_detail::run_tests(); }
+int aura_issue_285_run() {
+    return aura_issue_285_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_285_run(); }
+int main() {
+    return aura_issue_285_run();
+}
 #endif

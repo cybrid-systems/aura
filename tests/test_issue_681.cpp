@@ -16,20 +16,25 @@ namespace aura_issue_681_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:compiler-closure-inval-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:compiler-closure-inval-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-}  // namespace aura_issue_681_detail
+} // namespace aura_issue_681_detail
 
 int main() {
     using namespace aura_issue_681_detail;
@@ -67,12 +72,10 @@ int main() {
     // AC3: mutate:rebind triggers invalidate + bridge expiry
     {
         std::println("\n--- AC3: mutate:rebind + post-inval re-eval ---");
-        auto r = cs.eval(
-            "(mutate:rebind \"fact\" "
-            "\"(lambda (n) (if (= n 0) 1 (* n (fact (- n 1)))))\" "
-            "\"issue-681\")");
-        CHECK(r && aura::compiler::types::is_bool(*r) &&
-                  aura::compiler::types::as_bool(*r),
+        auto r = cs.eval("(mutate:rebind \"fact\" "
+                         "\"(lambda (n) (if (= n 0) 1 (* n (fact (- n 1)))))\" "
+                         "\"issue-681\")");
+        CHECK(r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
               "mutate:rebind on fact succeeds");
         cs.eval("(eval-current)");
         auto fact5 = cs.eval("(fact 5)");
@@ -81,8 +84,8 @@ int main() {
               "fact 5 == 120 after rebind + eval-current");
         const auto bridge_inval_after = cs.get_compiler_inval_bridge_epoch_total();
         CHECK(bridge_inval_after > bridge_inval_before,
-              std::format("compiler_inval_bridge_epoch grew ({} -> {})",
-                          bridge_inval_before, bridge_inval_after));
+              std::format("compiler_inval_bridge_epoch grew ({} -> {})", bridge_inval_before,
+                          bridge_inval_after));
     }
 
     // AC4: metrics observable via stats primitive
@@ -91,11 +94,10 @@ int main() {
         const auto mismatch_after = stat_int(cs, "epoch-mismatch-hits");
         const auto safe_fb = stat_int(cs, "safe-fallbacks");
         CHECK(mismatch_after >= mismatch_before,
-              std::format("epoch-mismatch-hits non-decreasing ({} -> {})",
-                          mismatch_before, mismatch_after));
+              std::format("epoch-mismatch-hits non-decreasing ({} -> {})", mismatch_before,
+                          mismatch_after));
         CHECK(safe_fb >= 0, "safe-fallbacks readable");
-        std::println("  epoch-mismatch={} safe-fallbacks={}",
-                     mismatch_after, safe_fb);
+        std::println("  epoch-mismatch={} safe-fallbacks={}", mismatch_after, safe_fb);
     }
 
     // AC5: fiber stress — closure calls stay correct post-mutate
@@ -118,17 +120,15 @@ int main() {
         t1.join();
         t2.join();
         CHECK(ok_count.load() == k_iters * 2,
-              std::format("fiber stress: {} / {} correct",
-                          ok_count.load(), k_iters * 2));
+              std::format("fiber stress: {} / {} correct", ok_count.load(), k_iters * 2));
     }
 
     // AC6: stats registry
     {
         std::println("\n--- AC6: stats:list + stats:count ---");
         auto r = cs.eval("(stats:count)");
-        const auto n = r && aura::compiler::types::is_int(*r)
-                           ? aura::compiler::types::as_int(*r)
-                           : 0;
+        const auto n =
+            r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r) : 0;
         CHECK(n >= 60, std::format("stats:count >= 60 (got {})", n));
     }
 

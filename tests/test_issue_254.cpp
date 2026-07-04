@@ -54,16 +54,29 @@ namespace aura_issue_254_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: ir_soa_* counters start at 0 on a fresh CompilerService ---");
@@ -78,22 +91,30 @@ bool test_aura_primitive_returns_hash() {
     std::println("\n--- AC2: (compile:ir-soa-stats) primitive returns a hash ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define h (compile:ir-soa-stats))\")");
-    if (!r1) { std::println("  FAIL: define h failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: define h failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     // Verify h is a hash (closure:stats pattern from #252).
     auto rh = cs.eval("(hash? h)");
-    if (!rh || !aura::compiler::types::is_bool(*rh) ||
-        !aura::compiler::types::as_bool(*rh)) {
+    if (!rh || !aura::compiler::types::is_bool(*rh) || !aura::compiler::types::as_bool(*rh)) {
         std::println("  FAIL: (hash? h) did not return #t (val={})", rh ? rh->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:ir-soa-stats) returns a hash (hash? is #t)");
     auto rp = cs.eval("(pair? h)");
-    if (!rp || !aura::compiler::types::is_bool(*rp) ||
-        aura::compiler::types::as_bool(*rp)) {
+    if (!rp || !aura::compiler::types::is_bool(*rp) || aura::compiler::types::as_bool(*rp)) {
         std::println("  FAIL: (pair? h) did not return #f (val={})", rp ? rp->val : -1);
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:ir-soa-stats) is not a pair (pair? is #f)");
     return true;
@@ -103,16 +124,13 @@ bool test_lowering_state_enable() {
     std::println("\n--- AC3: LoweringState::enable_soa_dual_emit() flips the flag ---");
     aura::ast::ASTArena arena;
     aura::compiler::LoweringState state(arena);
-    CHECK_EQ(state.dual_emit_soa, false,
-             "dual_emit_soa defaults to false (no behavior change)");
+    CHECK_EQ(state.dual_emit_soa, false, "dual_emit_soa defaults to false (no behavior change)");
     state.enable_soa_dual_emit();
     CHECK_EQ(state.dual_emit_soa, true, "enable_soa_dual_emit() sets the flag to true");
     CHECK_EQ(state.soa_instructions_emitted, std::uint64_t{0},
              "soa_instructions_emitted resets to 0");
-    CHECK_EQ(state.soa_functions_emitted, std::uint64_t{0},
-             "soa_functions_emitted resets to 0");
-    CHECK_EQ(state.module_v2.functions.size(), std::size_t{0},
-             "module_v2 starts empty");
+    CHECK_EQ(state.soa_functions_emitted, std::uint64_t{0}, "soa_functions_emitted resets to 0");
+    CHECK_EQ(state.module_v2.functions.size(), std::size_t{0}, "module_v2 starts empty");
     return true;
 }
 
@@ -169,11 +187,9 @@ bool test_emit_on_writes_to_v2() {
              "V2 function has 5 instructions (parity with AoS)");
     // Parity: opcode of first V2 instruction matches AoS
     auto v0 = state.module_v2.view_at(0, 0);
-    CHECK_EQ(static_cast<int>(v0.opcode()),
-             static_cast<int>(aura::ir::IROpcode::ConstI64),
+    CHECK_EQ(static_cast<int>(v0.opcode()), static_cast<int>(aura::ir::IROpcode::ConstI64),
              "V2[0].opcode == ConstI64 (matches AoS)");
-    CHECK_EQ(v0.operand(1), 100u,
-             "V2[0].operand(1) == 100 (matches AoS operand1)");
+    CHECK_EQ(v0.operand(1), 100u, "V2[0].operand(1) == 100 (matches AoS operand1)");
     return true;
 }
 
@@ -198,12 +214,9 @@ bool test_set_cur_function_with_dual_emit() {
     state.emit(aura::ir::IROpcode::ConstI64, 0, 99);
     CHECK_EQ(state.module_v2.functions.size(), std::size_t{2},
              "module_v2 has 2 functions (f1 + f2)");
-    CHECK_EQ(state.soa_functions_emitted, std::uint64_t{2},
-             "soa_functions_emitted == 2");
-    CHECK_EQ(state.module_v2.functions[0].size(), std::size_t{1},
-             "V2[f1] has 1 instruction");
-    CHECK_EQ(state.module_v2.functions[1].size(), std::size_t{1},
-             "V2[f2] has 1 instruction");
+    CHECK_EQ(state.soa_functions_emitted, std::uint64_t{2}, "soa_functions_emitted == 2");
+    CHECK_EQ(state.module_v2.functions[0].size(), std::size_t{1}, "V2[f1] has 1 instruction");
+    CHECK_EQ(state.module_v2.functions[1].size(), std::size_t{1}, "V2[f2] has 1 instruction");
     // f2's instruction has operand1 == 99
     auto v = state.module_v2.view_at(1, 0);
     CHECK_EQ(v.operand(1), 99u, "V2[f2][0].operand(1) == 99");
@@ -214,10 +227,13 @@ bool test_no_regression() {
     std::println("\n--- AC7: zero regression — existing eval still works ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(set-code \"(define x 42) x\")");
-    if (!r) { std::println("  FAIL: set-code failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: set-code failed");
+        ++g_failed;
+        return false;
+    }
     r = cs.eval("(eval-current)");
-    if (!r || !aura::compiler::types::is_int(*r) ||
-        aura::compiler::types::as_int(*r) != 42) {
+    if (!r || !aura::compiler::types::is_int(*r) || aura::compiler::types::as_int(*r) != 42) {
         std::println("  FAIL: eval result != 42 (val={})", r ? r->val : -1);
         ++g_failed;
     } else {
@@ -241,12 +257,12 @@ int run_tests() {
     test_emit_on_writes_to_v2();
     test_set_cur_function_with_dual_emit();
     test_no_regression();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_254_detail
+} // namespace aura_issue_254_detail
 
-int aura_issue_254_run() { return aura_issue_254_detail::run_tests(); }
-
+int aura_issue_254_run() {
+    return aura_issue_254_detail::run_tests();
+}

@@ -56,8 +56,7 @@ std::string build_workspace_src(std::size_t n_defines) {
 // Median (not mean) because the first call is always slower
 // (cold cache, macro expansion, etc.). The median of N
 // samples after a warmup call is the stable measurement.
-double bench_eval_current(aura::compiler::CompilerService& cs,
-                          int iterations) {
+double bench_eval_current(aura::compiler::CompilerService& cs, int iterations) {
     using clock = std::chrono::steady_clock;
     std::vector<double> samples;
     samples.reserve(iterations);
@@ -73,17 +72,17 @@ double bench_eval_current(aura::compiler::CompilerService& cs,
         samples.push_back(us);
     }
     std::sort(samples.begin(), samples.end());
-    return samples[samples.size() / 2];  // median
+    return samples[samples.size() / 2]; // median
 }
 
 // ── Scenarios ───────────────────────────────────────────────
 
 struct BenchResult {
     std::size_t n_defines;
-    double scenario_a_us;  // full eval (cold)
-    double scenario_b_us;  // cache hit (no mutation)
-    double scenario_c_us;  // Phase 2 reuse (mutate early)
-    double scenario_d_us;  // full re-eval (mutate last)
+    double scenario_a_us; // full eval (cold)
+    double scenario_b_us; // cache hit (no mutation)
+    double scenario_c_us; // Phase 2 reuse (mutate early)
+    double scenario_d_us; // full re-eval (mutate last)
 };
 
 BenchResult run_bench_for_n(aura::compiler::CompilerService& cs, std::size_t n) {
@@ -138,7 +137,7 @@ BenchResult run_bench_for_n(aura::compiler::CompilerService& cs, std::size_t n) 
     return r;
 }
 
-}  // namespace
+} // namespace
 
 int main() {
     using clock = std::chrono::steady_clock;
@@ -181,11 +180,13 @@ int main() {
     std::ostringstream json;
     json << "{\n";
     auto t_now = clock::now();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_now.time_since_epoch()).count();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(t_now.time_since_epoch()).count();
     json << "  \"timestamp_ms\": " << ms << ",\n";
     json << "  \"issue\": 159,\n";
     json << "  \"phase\": 4,\n";
-    json << "  \"description\": \"Incremental compilation benchmark — eval_current latency under 4 scenarios × N workspace sizes\",\n";
+    json << "  \"description\": \"Incremental compilation benchmark — eval_current latency under 4 "
+            "scenarios × N workspace sizes\",\n";
     json << "  \"scenarios\": {\n";
     json << "    \"A\": \"full eval (cold cache)\",\n";
     json << "    \"B\": \"cache hit (no mutation)\",\n";

@@ -18,8 +18,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;
@@ -29,13 +29,16 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_166_detail {
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
+    if (!r)
+        return -1;
     auto& v = *r;
     if (aura::compiler::types::is_int(v)) {
         return aura::compiler::types::as_int(v);
@@ -113,9 +116,8 @@ bool test_rapid_mutations() {
     auto setup = run_int(cs, "(set-code \"(define counter 0)\")");
     bool all_ok = true;
     for (int i = 1; i <= 10; ++i) {
-        auto m = run_int(cs,
-            "(mutate:rebind \"counter\" \"" + std::to_string(i) +
-            "\" \"iteration " + std::to_string(i) + "\")");
+        auto m = run_int(cs, "(mutate:rebind \"counter\" \"" + std::to_string(i) +
+                                 "\" \"iteration " + std::to_string(i) + "\")");
         if (m <= 0) {
             all_ok = false;
             break;
@@ -142,7 +144,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_166_detail
+} // namespace aura_issue_166_detail
 
-int aura_issue_166_run() { return aura_issue_166_detail::run_tests(); }
-
+int aura_issue_166_run() {
+    return aura_issue_166_detail::run_tests();
+}

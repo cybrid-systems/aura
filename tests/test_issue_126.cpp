@@ -20,13 +20,12 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
 import aura.compiler.ir_cache_pure;
-
 
 
 // ── Test 1: should_relower covers all combinations ─────
@@ -43,26 +42,26 @@ bool test_should_relower() {
 
     // Dirty entry → re-lower
     CHECK(aura::compiler::should_relower(/*src_hash=*/100, /*cached=*/100,
-                                          /*dirty=*/true,
-                                          /*cached_mc=*/5, /*curr_mc=*/5),
+                                         /*dirty=*/true,
+                                         /*cached_mc=*/5, /*curr_mc=*/5),
           "dirty → re-lower");
 
     // Hash mismatch → re-lower
     CHECK(aura::compiler::should_relower(/*src_hash=*/100, /*cached=*/200,
-                                          /*dirty=*/false,
-                                          /*cached_mc=*/5, /*curr_mc=*/5),
+                                         /*dirty=*/false,
+                                         /*cached_mc=*/5, /*curr_mc=*/5),
           "hash mismatch → re-lower");
 
     // Mutation drift → re-lower
     CHECK(aura::compiler::should_relower(/*src_hash=*/100, /*cached=*/100,
-                                          /*dirty=*/false,
-                                          /*cached_mc=*/3, /*curr_mc=*/5),
+                                         /*dirty=*/false,
+                                         /*cached_mc=*/3, /*curr_mc=*/5),
           "mutation drift (cached<current) → re-lower");
 
     // Mixed: dirty + hash mismatch + drift → re-lower
     CHECK(aura::compiler::should_relower(/*src_hash=*/100, /*cached=*/200,
-                                          /*dirty=*/true,
-                                          /*cached_mc=*/1, /*curr_mc=*/5),
+                                         /*dirty=*/true,
+                                         /*cached_mc=*/1, /*curr_mc=*/5),
           "dirty + hash mismatch + drift → re-lower");
 
     // Edge case: equal hashes but mutation_count back to 0
@@ -86,12 +85,9 @@ bool test_fnv1a_64() {
     auto h1 = aura::compiler::fnv1a_64("a");
     auto h_foo = aura::compiler::fnv1a_64("foobar");
 
-    CHECK(h0 == 0xcbf29ce484222325ULL,
-          "fnv1a_64(\"\") = 0xcbf29ce484222325");
-    CHECK(h1 == 0xaf63dc4c8601ec8cULL,
-          "fnv1a_64(\"a\") = 0xaf63dc4c8601ec8c");
-    CHECK(h_foo == 0x85944171f73967e8ULL,
-          "fnv1a_64(\"foobar\") = 0x85944171f73967e8");
+    CHECK(h0 == 0xcbf29ce484222325ULL, "fnv1a_64(\"\") = 0xcbf29ce484222325");
+    CHECK(h1 == 0xaf63dc4c8601ec8cULL, "fnv1a_64(\"a\") = 0xaf63dc4c8601ec8c");
+    CHECK(h_foo == 0x85944171f73967e8ULL, "fnv1a_64(\"foobar\") = 0x85944171f73967e8");
 
     // Same input → same output (purity)
     CHECK(aura::compiler::fnv1a_64("hello") == aura::compiler::fnv1a_64("hello"),
@@ -182,8 +178,7 @@ bool test_try_extract_define() {
     // The root is NOT a Define node (just a literal)
     auto lit = flat.add_literal(99);
     auto def2 = aura::compiler::try_extract_define(flat, pool, lit);
-    CHECK(!def2.has_value(),
-          "try_extract_define returns None for non-Define root");
+    CHECK(!def2.has_value(), "try_extract_define returns None for non-Define root");
 
     // NULL_NODE → nullopt
     auto def3 = aura::compiler::try_extract_define(flat, pool, aura::ast::NULL_NODE);
@@ -198,12 +193,12 @@ int run_tests() {
     test_fnv1a_64();
     test_compute_dependencies();
     test_try_extract_define();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_126_detail
+} // namespace aura_issue_126_detail
 
-int aura_issue_126_run() { return aura_issue_126_detail::run_tests(); }
-
+int aura_issue_126_run() {
+    return aura_issue_126_detail::run_tests();
+}

@@ -14,8 +14,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -33,8 +33,7 @@ bool test_query_verify_tool_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:verify-tool-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:verify-tool-stats returns an integer");
     return true;
 }
 
@@ -51,8 +50,7 @@ bool test_run_external_sim() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_string(*r),
-          "verify:run-external-sim returns a string");
+    CHECK(aura::compiler::types::is_string(*r), "verify:run-external-sim returns a string");
     return true;
 }
 
@@ -76,8 +74,7 @@ bool test_cache_hit() {
         ++g_failed;
         return false;
     }
-    const auto before =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r_stats_before));
+    const auto before = static_cast<std::int64_t>(aura::compiler::types::as_int(*r_stats_before));
     // Second call: should be a cache hit.
     auto r1 = cs.eval(R"aur((verify:run-external-sim "test_cmd"))aur");
     if (!r1) {
@@ -89,10 +86,8 @@ bool test_cache_hit() {
         ++g_failed;
         return false;
     }
-    const auto after =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r_stats_after));
-    CHECK(after > before,
-          "cache hit bumps query:verify-tool-stats counter");
+    const auto after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r_stats_after));
+    CHECK(after > before, "cache hit bumps query:verify-tool-stats counter");
     return true;
 }
 
@@ -109,10 +104,8 @@ bool test_parse_coverage() {
         ++g_failed;
         return false;
     }
-    const auto count =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
-    CHECK(count == 2,
-          "verify:parse-coverage marks 2 nodes dirty (line-based format)");
+    const auto count = static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
+    CHECK(count == 2, "verify:parse-coverage marks 2 nodes dirty (line-based format)");
     return true;
 }
 
@@ -129,10 +122,8 @@ bool test_parse_failures() {
         ++g_failed;
         return false;
     }
-    const auto count =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
-    CHECK(count == 1,
-          "verify:parse-failures marks 1 node dirty");
+    const auto count = static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
+    CHECK(count == 1, "verify:parse-failures marks 1 node dirty");
     return true;
 }
 
@@ -149,8 +140,7 @@ bool test_parse_error() {
         ++g_failed;
         return false;
     }
-    const auto before =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
+    const auto before = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
     // Empty line that doesn't start with an integer
     // → parse error.
     auto r = cs.eval("(verify:parse-coverage \"not_a_number\")");
@@ -163,10 +153,8 @@ bool test_parse_error() {
         ++g_failed;
         return false;
     }
-    const auto after =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
-    CHECK(after > before,
-          "parse error bumps query:verify-tool-stats counter");
+    const auto after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
+    CHECK(after > before, "parse error bumps query:verify-tool-stats counter");
     return true;
 }
 
@@ -204,8 +192,7 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 21 21) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 21 21) == 42 (regression)");
     return true;
 }
 
@@ -225,8 +212,12 @@ int run_tests() {
 
 } // namespace aura_issue_443_detail
 
-int aura_issue_443_run() { return aura_issue_443_detail::run_tests(); }
+int aura_issue_443_run() {
+    return aura_issue_443_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_443_run(); }
+int main() {
+    return aura_issue_443_run();
+}
 #endif

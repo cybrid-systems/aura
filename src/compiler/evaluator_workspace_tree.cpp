@@ -67,8 +67,8 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
     return make_hash(hidx);
 }
 
-EvalValue Evaluator::build_ast_lifecycle_hash(
-    std::span<const std::pair<std::string, EvalValue>> kv) {
+EvalValue
+Evaluator::build_ast_lifecycle_hash(std::span<const std::pair<std::string, EvalValue>> kv) {
     auto* ht = FlatHashTable::create(16);
     if (!ht)
         return make_void();
@@ -308,8 +308,7 @@ void Evaluator::ensure_stable_ref_workspace_consistency() const noexcept {
         return;
 
     auto bump_violation = [&]() noexcept {
-        stable_ref_workspace_tree_violations_.fetch_add(
-            1, std::memory_order_relaxed);
+        stable_ref_workspace_tree_violations_.fetch_add(1, std::memory_order_relaxed);
     };
 
     auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
@@ -327,8 +326,8 @@ void Evaluator::ensure_stable_ref_workspace_consistency() const noexcept {
 
     if (!wt->nodes_.empty()) {
         const auto& root = wt->nodes_[0];
-        if (root.is_root && root.flat != nullptr && workspace_flat_ != nullptr &&
-            active == 0 && root.flat != workspace_flat_) {
+        if (root.is_root && root.flat != nullptr && workspace_flat_ != nullptr && active == 0 &&
+            root.flat != workspace_flat_) {
             bump_violation();
         }
     }

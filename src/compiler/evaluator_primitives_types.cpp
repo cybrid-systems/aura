@@ -37,10 +37,10 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
         if (name_idx >= ev.string_heap_.size() || params_idx >= ev.string_heap_.size() ||
             ret_idx >= ev.string_heap_.size())
             return make_bool(false);
-        ev.declared_type_sigs_[ev.string_heap_[name_idx]] = {.type_str = ev.string_heap_[params_idx] + "|" +
-                                                                   ev.string_heap_[ret_idx],
-                                                       .module_file = "",
-                                                       .resolved = false};
+        ev.declared_type_sigs_[ev.string_heap_[name_idx]] = {
+            .type_str = ev.string_heap_[params_idx] + "|" + ev.string_heap_[ret_idx],
+            .module_file = "",
+            .resolved = false};
         return make_bool(true);
     });
 
@@ -56,7 +56,8 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         auto path = ev.resolve_module_path(ev.string_heap_[idx]);
         if (path.empty()) {
-            std::println(std::cerr, "generate-type-sigs: cannot resolve '{}'", ev.string_heap_[idx]);
+            std::println(std::cerr, "generate-type-sigs: cannot resolve '{}'",
+                         ev.string_heap_[idx]);
             return make_bool(false);
         }
 
@@ -365,7 +366,6 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
                      matched, mismatched, missing);
         return make_bool(matched > 0 || (mismatched == 0 && missing == 0));
     });
-
 }
 
 void register_hot_swap_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -396,7 +396,6 @@ void register_hot_swap_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_bool(ok);
     });
-
 }
 
 } // namespace aura::compiler::primitives_detail

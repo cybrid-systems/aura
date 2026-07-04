@@ -95,8 +95,8 @@ struct ImpactScope {
 };
 ImpactScope compute_impact_scope(
     const aura::ast::FlatAST& flat, aura::ast::NodeId root,
-    const std::unordered_map<aura::ast::NodeId,
-                             std::pair<std::size_t, std::uint32_t>>& source_to_ir_map,
+    const std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>>&
+        source_to_ir_map,
     const std::unordered_map<std::string, std::size_t>& ir_cache_index) {
     ImpactScope result;
     if (root == aura::ast::NULL_NODE || root >= flat.size()) {
@@ -106,7 +106,8 @@ ImpactScope compute_impact_scope(
     // (function_index, block_index) pairs. Dedupe via a set.
     std::unordered_set<std::uint64_t> seen;
     auto walk = [&](auto self, aura::ast::NodeId id) -> void {
-        if (id == aura::ast::NULL_NODE || id >= flat.size()) return;
+        if (id == aura::ast::NULL_NODE || id >= flat.size())
+            return;
         result.ast_nodes_visited++;
         auto it = source_to_ir_map.find(id);
         if (it != source_to_ir_map.end()) {
@@ -244,10 +245,11 @@ count_dirty_blocks(const std::vector<std::uint8_t>& block_dirty) noexcept {
 // P0: this is a decision function, not an actual
 // re-lower. The follow-up wires the call to the lowering
 // pipeline + JIT incremental update.
-[[nodiscard]] constexpr std::size_t
-estimate_relower_blocks(std::size_t dirty_count) noexcept {
-    if (dirty_count == 0) return 0;
-    if (dirty_count >= 8) return static_cast<std::size_t>(-1);
+[[nodiscard]] constexpr std::size_t estimate_relower_blocks(std::size_t dirty_count) noexcept {
+    if (dirty_count == 0)
+        return 0;
+    if (dirty_count >= 8)
+        return static_cast<std::size_t>(-1);
     return dirty_count;
 }
 
@@ -270,9 +272,7 @@ struct BlockDirtySummary {
 };
 
 [[nodiscard]] inline BlockDirtySummary
-summarize_block_dirty(
-    const std::vector<std::vector<std::uint8_t>>&
-        block_dirty_per_func) noexcept {
+summarize_block_dirty(const std::vector<std::vector<std::uint8_t>>& block_dirty_per_func) noexcept {
     BlockDirtySummary s;
     s.functions_total = block_dirty_per_func.size();
     for (const auto& mask : block_dirty_per_func) {

@@ -49,16 +49,29 @@ namespace aura_411fu1_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: per-symbol / ancestor counters start at 0 ---");
@@ -68,7 +81,8 @@ bool test_initial_counters_zero() {
     CHECK_EQ(snap.per_symbol_reinfer_visited_total, 0u, "per_symbol_reinfer_visited_total == 0");
     CHECK_EQ(snap.ancestor_reinfer_used_total, 0u, "ancestor_reinfer_used_total == 0");
     CHECK_EQ(snap.ancestor_reinfer_visited_total, 0u, "ancestor_reinfer_visited_total == 0");
-    CHECK_EQ(snap.per_symbol_path_share_bp, 0u, "per_symbol_path_share_bp == 0 (no re-inference yet)");
+    CHECK_EQ(snap.per_symbol_path_share_bp, 0u,
+             "per_symbol_path_share_bp == 0 (no re-inference yet)");
     return true;
 }
 
@@ -76,18 +90,22 @@ bool test_aura_primitive_returns_hash() {
     std::println("\n--- AC2: (compile:per-symbol-reinfer-stats) returns hash with 6 keys ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define h (compile:per-symbol-reinfer-stats))\")");
-    if (!r1) { std::println("  FAIL: define h failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: define h failed");
+        ++g_failed;
+        return false;
+    }
     cs.eval("(eval-current)");
     auto rh = cs.eval("(hash? h)");
-    if (!rh || !aura::compiler::types::is_bool(*rh) ||
-        !aura::compiler::types::as_bool(*rh)) {
+    if (!rh || !aura::compiler::types::is_bool(*rh) || !aura::compiler::types::as_bool(*rh)) {
         std::println("  FAIL: (hash? h) did not return #t");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:per-symbol-reinfer-stats) returns a hash");
-    for (const char* key : {"per-symbol-used-total", "per-symbol-visited-total",
-                            "ancestor-used-total", "ancestor-visited-total",
-                            "path-share-bp", "avg-per-symbol-bp"}) {
+    for (const char* key :
+         {"per-symbol-used-total", "per-symbol-visited-total", "ancestor-used-total",
+          "ancestor-visited-total", "path-share-bp", "avg-per-symbol-bp"}) {
         std::string check = std::string("(hash-ref h \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
@@ -112,13 +130,15 @@ bool test_top_level_rebind_takes_per_symbol_path() {
     // per-symbol path (target_node is the Define, has a
     // valid sym_id).
     auto r = cs.eval("(mutate:rebind \"f\" \"10\" \"bump\")");
-    if (!r) { std::println("  FAIL: mutate:rebind failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: mutate:rebind failed");
+        ++g_failed;
+        return false;
+    }
     auto snap = cs.snapshot();
-    std::println("  per_symbol_used={} per_symbol_visited={}",
-                 snap.per_symbol_reinfer_used_total,
+    std::println("  per_symbol_used={} per_symbol_visited={}", snap.per_symbol_reinfer_used_total,
                  snap.per_symbol_reinfer_visited_total);
-    std::println("  ancestor_used={} ancestor_visited={}",
-                 snap.ancestor_reinfer_used_total,
+    std::println("  ancestor_used={} ancestor_visited={}", snap.ancestor_reinfer_used_total,
                  snap.ancestor_reinfer_visited_total);
     CHECK(snap.per_symbol_reinfer_used_total >= 1,
           "per_symbol_reinfer_used_total >= 1 (top-level rebind took per-symbol path)");
@@ -136,11 +156,10 @@ bool test_path_share_bp_computes() {
     cs.eval("(mutate:rebind \"c\" \"30\" \"v3\")");
     auto snap = cs.snapshot();
     std::println("  per_symbol_visited={} ancestor_visited={} path_share_bp={}",
-                 snap.per_symbol_reinfer_visited_total,
-                 snap.ancestor_reinfer_visited_total,
+                 snap.per_symbol_reinfer_visited_total, snap.ancestor_reinfer_visited_total,
                  snap.per_symbol_path_share_bp);
-    const std::uint64_t total_visited = snap.per_symbol_reinfer_visited_total +
-                                        snap.ancestor_reinfer_visited_total;
+    const std::uint64_t total_visited =
+        snap.per_symbol_reinfer_visited_total + snap.ancestor_reinfer_visited_total;
     if (total_visited > 0) {
         const std::uint64_t expected_bp =
             (snap.per_symbol_reinfer_visited_total * 10000u) / total_visited;
@@ -162,8 +181,7 @@ bool test_avg_per_symbol_bp() {
     cs.eval("(mutate:rebind \"x\" \"100\" \"bump\")");
     auto snap = cs.snapshot();
     std::println("  per_symbol_used={} per_symbol_visited={} avg_per_symbol_bp={}",
-                 snap.per_symbol_reinfer_used_total,
-                 snap.per_symbol_reinfer_visited_total,
+                 snap.per_symbol_reinfer_used_total, snap.per_symbol_reinfer_visited_total,
                  snap.per_symbol_path_share_bp);
     // The avg is recomputed inside the Aura primitive
     // (per_symbol_visited / max(per_symbol_used, 1) * 10000).
@@ -177,8 +195,7 @@ bool test_avg_per_symbol_bp() {
             std::int64_t manual_bp =
                 (static_cast<std::int64_t>(snap.per_symbol_reinfer_visited_total) * 10000) /
                 static_cast<std::int64_t>(snap.per_symbol_reinfer_used_total);
-            CHECK_EQ(primitive_bp, manual_bp,
-                     "primitive's avg-per-symbol-bp matches manual calc");
+            CHECK_EQ(primitive_bp, manual_bp, "primitive's avg-per-symbol-bp matches manual calc");
         } else {
             std::println("  FAIL: could not fetch avg-per-symbol-bp from primitive");
             ++g_failed;
@@ -204,7 +221,8 @@ bool test_snapshot_fields() {
     std::println("\n--- AC7: snapshot has the 5 new per-symbol fields ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    std::println("  per_symbol_used={} per_symbol_visited={} ancestor_used={} ancestor_visited={} path_share_bp={}",
+    std::println("  per_symbol_used={} per_symbol_visited={} ancestor_used={} ancestor_visited={} "
+                 "path_share_bp={}",
                  snap.per_symbol_reinfer_used_total, snap.per_symbol_reinfer_visited_total,
                  snap.ancestor_reinfer_used_total, snap.ancestor_reinfer_visited_total,
                  snap.per_symbol_path_share_bp);
@@ -228,7 +246,7 @@ int main() {
     test_avg_per_symbol_bp();
     test_typecheck_regression();
     test_snapshot_fields();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

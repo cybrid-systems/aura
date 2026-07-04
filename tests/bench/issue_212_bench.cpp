@@ -78,18 +78,15 @@ aura::ir::IRFunction build_chained_add_function(std::size_t n) {
         c.opcode = aura::ir::IROpcode::ConstI64;
         std::uint32_t c_slot = static_cast<std::uint32_t>(n + 1 + i);
         std::int64_t c_val = static_cast<std::int64_t>(i + 1);
-        c.operands = {c_slot,
-                      static_cast<std::uint32_t>(c_val & 0xFFFFFFFF),
-                      static_cast<std::uint32_t>((c_val >> 32) & 0xFFFFFFFF),
-                      0};
+        c.operands = {c_slot, static_cast<std::uint32_t>(c_val & 0xFFFFFFFF),
+                      static_cast<std::uint32_t>((c_val >> 32) & 0xFFFFFFFF), 0};
         block.instructions.push_back(c);
 
         // Add(t_i, c_slot) -> t_{i+1}
         aura::ir::IRInstruction add;
         add.opcode = aura::ir::IROpcode::Add;
-        add.operands = {static_cast<std::uint32_t>(i + 1),
-                        static_cast<std::uint32_t>(i),
-                        c_slot, 0};
+        add.operands = {static_cast<std::uint32_t>(i + 1), static_cast<std::uint32_t>(i), c_slot,
+                        0};
         block.instructions.push_back(add);
     }
     return func;
@@ -100,7 +97,7 @@ aura::ir::IRFunction build_chained_add_function(std::size_t n) {
 struct BenchResult {
     double pure_us = 0.0;
     double wrap_us = 0.0;
-    double ratio = 0.0;  // wrap_us / pure_us
+    double ratio = 0.0; // wrap_us / pure_us
 };
 
 // ── Bench 1: constant folding pure vs Wrap ──
@@ -119,7 +116,7 @@ BenchResult bench_constant_folding(std::size_t n, std::size_t iters) {
 
     // Warm up + measure pure
     {
-        aura::ir::IRFunction f = func_template;  // copy
+        aura::ir::IRFunction f = func_template; // copy
         // discard first call (cold)
         (void)aura::compiler::constant_fold_function(f);
         std::vector<double> samples;
@@ -196,7 +193,8 @@ BenchResult bench_arithmetic_sum(std::size_t arg_count, std::size_t iters) {
             auto t0 = std::chrono::steady_clock::now();
             // Inline equivalent of the legacy `+` table entry.
             std::int64_t sum = 0;
-            for (const auto& v : args) sum += aura::compiler::types::as_int(v);
+            for (const auto& v : args)
+                sum += aura::compiler::types::as_int(v);
             auto result = aura::compiler::types::make_int(sum);
             auto t1 = std::chrono::steady_clock::now();
             (void)result;
@@ -209,7 +207,7 @@ BenchResult bench_arithmetic_sum(std::size_t arg_count, std::size_t iters) {
     return r;
 }
 
-}  // namespace
+} // namespace
 
 int main() {
     using clock = std::chrono::steady_clock;
@@ -226,8 +224,8 @@ int main() {
     for (auto n : sizes) {
         auto r = bench_constant_folding(n, 200);
         fold_results.push_back(r);
-        std::println("  N={:4d}  pure={:7.2f}us  wrap={:7.2f}us  ratio={:.3f}x",
-                     n, r.pure_us, r.wrap_us, r.ratio);
+        std::println("  N={:4d}  pure={:7.2f}us  wrap={:7.2f}us  ratio={:.3f}x", n, r.pure_us,
+                     r.wrap_us, r.ratio);
     }
 
     // ── Bench 2: arithmetic_sum_pure (vs inline legacy) ──
@@ -237,14 +235,16 @@ int main() {
     for (auto n : arg_counts) {
         auto r = bench_arithmetic_sum(n, 1000);
         sum_results.push_back(r);
-        std::println("  args={:4d}  pure={:7.2f}us  wrap={:7.2f}us  ratio={:.3f}x",
-                     n, r.pure_us, r.wrap_us, r.ratio);
+        std::println("  args={:4d}  pure={:7.2f}us  wrap={:7.2f}us  ratio={:.3f}x", n, r.pure_us,
+                     r.wrap_us, r.ratio);
     }
 
     // ── Summary verdict ──
     double max_ratio = 0.0;
-    for (const auto& r : fold_results) max_ratio = std::max(max_ratio, r.ratio);
-    for (const auto& r : sum_results) max_ratio = std::max(max_ratio, r.ratio);
+    for (const auto& r : fold_results)
+        max_ratio = std::max(max_ratio, r.ratio);
+    for (const auto& r : sum_results)
+        max_ratio = std::max(max_ratio, r.ratio);
 
     std::println("\n--- Verdict ---");
     if (max_ratio < 1.05) {
@@ -268,21 +268,21 @@ int main() {
     json << "  \"verdict\": \"" << (max_ratio < 1.05 ? "PASS" : "WARNING") << "\",\n";
     json << "  \"constant_folding\": [\n";
     for (std::size_t i = 0; i < fold_results.size(); ++i) {
-        json << "    {\"n\": " << sizes[i]
-             << ", \"pure_us\": " << fold_results[i].pure_us
+        json << "    {\"n\": " << sizes[i] << ", \"pure_us\": " << fold_results[i].pure_us
              << ", \"wrap_us\": " << fold_results[i].wrap_us
              << ", \"ratio\": " << fold_results[i].ratio << "}";
-        if (i + 1 < fold_results.size()) json << ",";
+        if (i + 1 < fold_results.size())
+            json << ",";
         json << "\n";
     }
     json << "  ],\n";
     json << "  \"arithmetic_sum\": [\n";
     for (std::size_t i = 0; i < sum_results.size(); ++i) {
-        json << "    {\"args\": " << arg_counts[i]
-             << ", \"pure_us\": " << sum_results[i].pure_us
+        json << "    {\"args\": " << arg_counts[i] << ", \"pure_us\": " << sum_results[i].pure_us
              << ", \"wrap_us\": " << sum_results[i].wrap_us
              << ", \"ratio\": " << sum_results[i].ratio << "}";
-        if (i + 1 < sum_results.size()) json << ",";
+        if (i + 1 < sum_results.size())
+            json << ",";
         json << "\n";
     }
     json << "  ]\n";

@@ -18,8 +18,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -37,8 +37,7 @@ bool test_query_epoch_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:epoch-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:epoch-stats returns an integer");
     return true;
 }
 
@@ -106,8 +105,7 @@ bool test_query_epoch_delta_after_mutate() {
         ++g_failed;
         return false;
     }
-    const auto epoch_before =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r_init));
+    const auto epoch_before = static_cast<std::int64_t>(aura::compiler::types::as_int(*r_init));
     // Run a noop query to stamp last_queried_epoch_.
     auto r0 = cs.eval("(query:epoch-delta-since-last-query)");
     if (!r0) {
@@ -124,10 +122,8 @@ bool test_query_epoch_delta_after_mutate() {
         ++g_failed;
         return false;
     }
-    const auto delta =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
-    CHECK(delta >= 2,
-          "epoch-delta >= 2 after a mutate:rebind (2 bumps per boundary)");
+    const auto delta = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
+    CHECK(delta >= 2, "epoch-delta >= 2 after a mutate:rebind (2 bumps per boundary)");
     return true;
 }
 
@@ -145,8 +141,7 @@ bool test_query_mutation_impact_after_mutate() {
         ++g_failed;
         return false;
     }
-    const auto count_before =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
+    const auto count_before = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
     if (!cs.eval("(mutate:rebind \"z\" \"99\")")) {
         ++g_failed;
         return false;
@@ -156,8 +151,7 @@ bool test_query_mutation_impact_after_mutate() {
         ++g_failed;
         return false;
     }
-    const auto count_after =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
+    const auto count_after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
     CHECK(count_after > count_before,
           "query:mutation-impact count increased after a successful mutate");
     return true;
@@ -178,15 +172,13 @@ bool test_query_dirty_subtree_reason_mask() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r1),
-          "query:dirty-subtree 0 255 returns an int");
+    CHECK(aura::compiler::types::is_int(*r1), "query:dirty-subtree 0 255 returns an int");
     auto r2 = cs.eval("(query:dirty-subtree 0 0)");
     if (!r2) {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r2),
-          "query:dirty-subtree 0 0 returns an int");
+    CHECK(aura::compiler::types::is_int(*r2), "query:dirty-subtree 0 0 returns an int");
     return true;
 }
 
@@ -224,8 +216,7 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 11 31) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 11 31) == 42 (regression)");
     return true;
 }
 
@@ -246,8 +237,12 @@ int run_tests() {
 
 } // namespace aura_issue_456_detail
 
-int aura_issue_456_run() { return aura_issue_456_detail::run_tests(); }
+int aura_issue_456_run() {
+    return aura_issue_456_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_456_run(); }
+int main() {
+    return aura_issue_456_run();
+}
 #endif

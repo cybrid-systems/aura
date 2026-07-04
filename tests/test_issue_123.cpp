@@ -23,8 +23,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -33,7 +33,6 @@ import aura.diag;
 import aura.core.type;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_123_detail {
@@ -69,8 +68,7 @@ bool test_pre_exec_strips_begin() {
     std::println("\n--- Test: pre_exec_requires on (begin ...) strips requires ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(begin (require std/list all:) (display (+ 1 2)))");
+    auto root = parse(e, "(begin (require std/list all:) (display (+ 1 2)))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "begin with require + body parses + typechecks");
@@ -109,10 +107,9 @@ bool test_pre_exec_mixed() {
     std::println("\n--- Test: pre_exec_strips_mixed_require_and_body ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(begin (require std/list all:) "
-        "        (require std/math all:) "
-        "        (display (+ 1 2)))");
+    auto root = parse(e, "(begin (require std/list all:) "
+                         "        (require std/math all:) "
+                         "        (display (+ 1 2)))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "two requires + body parses + typechecks");
@@ -125,8 +122,7 @@ bool test_nested_require_falls_back() {
     std::println("\n--- Test: nested require (inside if) still falls back ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(if #t (require std/list all:) 0)");
+    auto root = parse(e, "(if #t (require std/list all:) 0)");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "nested require parses + typechecks");
@@ -139,9 +135,8 @@ bool test_end_to_end() {
     std::println("\n--- Test: end-to-end smoke ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(begin (require std/list all:) "
-        "        (display (foldl + 0 (list 1 2 3))))");
+    auto root = parse(e, "(begin (require std/list all:) "
+                         "        (display (foldl + 0 (list 1 2 3))))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "end-to-end smoke parses + typechecks");
@@ -156,12 +151,12 @@ int run_tests() {
     test_pre_exec_mixed();
     test_nested_require_falls_back();
     test_end_to_end();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_123_detail
+} // namespace aura_issue_123_detail
 
-int aura_issue_123_run() { return aura_issue_123_detail::run_tests(); }
-
+int aura_issue_123_run() {
+    return aura_issue_123_detail::run_tests();
+}

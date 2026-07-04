@@ -72,8 +72,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(czs && is_int(*czs), "query:coercion-zerooverhead-stats returns int");
 
     std::println("\n--- AC6: P0 #630 verify-dirty pillar ---");
-    CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(),
-          "EDA workspace setup");
+    CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(), "EDA workspace setup");
     auto vds = cs.eval("(query:verify-dirty-stats)");
     CHECK(vds && is_int(*vds), "query:verify-dirty-stats returns int");
     (void)cs.eval("(verify:assertion-failed 0)");
@@ -81,8 +80,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: multi-round mutate cycle ---");
     const auto stats7a = commercial_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"x\" \"" +
-                      std::to_string(10 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"x\" \"" + std::to_string(10 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(mutate:request-gc-safepoint 10)");
     }

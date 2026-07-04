@@ -44,9 +44,9 @@ import aura.compiler.service;
 
 namespace aura_issue_549_detail {
 
+using aura::ast::NodeId;
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
-using aura::ast::NodeId;
 
 static int k_long_iters() {
     return k_int_env("AURA_STRESS_ITERS", 200);
@@ -63,8 +63,8 @@ bool test_self_evolution_counters_reachable() {
     const auto fs0 = cs.evaluator().get_fiber_stale_ref_count();
     const auto mr0 = cs.evaluator().get_mutation_log_rollback_count();
     const auto pm0 = cs.evaluator().get_provenance_mismatch();
-    std::println("  baseline: cross_cow={} fiber_stale={} rollback={} provenance_mismatch={}",
-                 cc0, fs0, mr0, pm0);
+    std::println("  baseline: cross_cow={} fiber_stale={} rollback={} provenance_mismatch={}", cc0,
+                 fs0, mr0, pm0);
     CHECK(cc0 == 0, "cross_cow_invalidations starts at 0");
     CHECK(fs0 == 0, "fiber_stale_ref_count starts at 0");
     CHECK(mr0 == 0, "mutation_log_rollback_count starts at 0");
@@ -81,13 +81,11 @@ bool test_query_self_evolution_stability_stats() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:self-evolution-stability-stats)");
     CHECK(r.has_value(), "(query:self-evolution-stability-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:self-evolution-stability-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:self-evolution-stability-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:self-evolution-stability-stats = {}", v);
-        CHECK(v >= 0,
-              "(query:self-evolution-stability-stats) >= 0 (4 counters sum)");
+        CHECK(v >= 0, "(query:self-evolution-stability-stats) >= 0 (4 counters sum)");
     }
     return true;
 }
@@ -100,7 +98,10 @@ bool test_validate_stable_ref_cross_cow_classification() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto current_gen = ws->generation();
     const auto cc0 = cs.evaluator().get_cross_cow_invalidations();
     // validate_stable_ref with a captured_gen that's NOT the
@@ -111,17 +112,15 @@ bool test_validate_stable_ref_cross_cow_classification() {
     CHECK(r1.second, "validate_stable_ref returns is_stale=true");
     const auto cc1 = cs.evaluator().get_cross_cow_invalidations();
     std::println("  cross_cow: {} -> {} (delta {})", cc0, cc1, cc1 - cc0);
-    CHECK(cc1 > cc0,
-          "cross_cow_invalidations bumped after gen-mismatch validation "
-          "(classification worked)");
+    CHECK(cc1 > cc0, "cross_cow_invalidations bumped after gen-mismatch validation "
+                     "(classification worked)");
     return true;
 }
 
 // ── AC4: 200+ structural mutate + COW iteration loop —
 //         cross_cow_invalidations grows ──────────────────────
 bool test_long_running_mutate_cow() {
-    std::println("\n--- AC4: {} iters structural mutate + COW iteration ---",
-                 k_long_iters());
+    std::println("\n--- AC4: {} iters structural mutate + COW iteration ---", k_long_iters());
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
     (void)cs.eval("(eval-current)");
@@ -130,9 +129,8 @@ bool test_long_running_mutate_cow() {
     std::uniform_int_distribution<int> val_dist(0, 999);
     for (int i = 0; i < k_long_iters(); ++i) {
         // Structural mutate via Aura (bump generation).
-        std::string code = std::string("(define ") +
-            (i & 1 ? "a" : "b") + " " +
-            std::to_string(val_dist(rng)) + ")";
+        std::string code = std::string("(define ") + (i & 1 ? "a" : "b") + " " +
+                           std::to_string(val_dist(rng)) + ")";
         (void)cs.eval(code);
         // Validate a stable-ref each iteration. Most will be
         // cross_cow (small delta), some fiber_stale (large
@@ -145,8 +143,7 @@ bool test_long_running_mutate_cow() {
         }
     }
     const auto cc1 = cs.evaluator().get_cross_cow_invalidations();
-    std::println("  cross_cow: {} -> {} (delta {})",
-                 cc0, cc1, cc1 - cc0);
+    std::println("  cross_cow: {} -> {} (delta {})", cc0, cc1, cc1 - cc0);
     CHECK(cc1 >= cc0 + static_cast<std::uint64_t>(k_long_iters() - 5),
           "cross_cow_invalidations grew under long-running mutate + validate "
           "(>= ~iter count)");
@@ -163,7 +160,7 @@ bool test_mutation_log_rollback_counter() {
     ev.enter_mutation_boundary();
     // Bump the defuse_version directly (simulating mutation).
     // exit_mutation_boundary(false) will rollback the log.
-    ev.defuse_version_for_test();  // read (warm cache)
+    ev.defuse_version_for_test(); // read (warm cache)
     (void)ev.defuse_version_for_test();
     // Use the test-only setter to seed a rollback.
     // Actually we just need a non-empty mutation log. Set the
@@ -185,15 +182,17 @@ bool test_generation_wrap_observable() {
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto wraps0 = ws->generation_wrap_count();
     // The actual wrap happens when generation_ overflows
     // uint16_t (65535). Forcing it would require 65k+ bumps.
     // Instead, just verify the counter is reachable and 0 in
     // a fresh workspace.
     std::println("  generation_wrap_count: {}", wraps0);
-    CHECK(wraps0 == 0,
-          "generation_wrap_count == 0 in fresh workspace (no wraps yet)");
+    CHECK(wraps0 == 0, "generation_wrap_count == 0 in fresh workspace (no wraps yet)");
     return true;
 }
 
@@ -210,8 +209,7 @@ bool test_eight_thread_concurrent_cow() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(define v" + std::to_string(tid) +
-                " " + std::to_string(i) + ")";
+            std::string code = "(define v" + std::to_string(tid) + " " + std::to_string(i) + ")";
             (void)cs.eval(code);
             // Validate a stable-ref each iteration (bumping
             // cross_cow under concurrent mutate load).
@@ -224,12 +222,14 @@ bool test_eight_thread_concurrent_cow() {
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
 
     const auto cc = cs.evaluator().get_cross_cow_invalidations();
-    std::println("  completed: {}/{} cross_cow_invalidations: {}",
-                 completed.load(), n_threads * n_iters, cc);
+    std::println("  completed: {}/{} cross_cow_invalidations: {}", completed.load(),
+                 n_threads * n_iters, cc);
     CHECK(completed.load() == n_threads * n_iters,
           "all 160 ops completed (no crash under concurrent mutate + validate)");
     CHECK(cc > 0, "cross_cow_invalidations > 0 after concurrent validate load");
@@ -302,8 +302,12 @@ int run_tests() {
 
 } // namespace aura_issue_549_detail
 
-int aura_issue_549_run() { return aura_issue_549_detail::run_tests(); }
+int aura_issue_549_run() {
+    return aura_issue_549_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_549_run(); }
+int main() {
+    return aura_issue_549_run();
+}
 #endif

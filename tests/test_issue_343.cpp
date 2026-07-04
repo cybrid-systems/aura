@@ -45,32 +45,40 @@ namespace aura_343_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: fresh CompilerService → all 5 fields == 0
 bool test_initial_fields_zero() {
     std::println("\n--- AC1: stable-ref fields start at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.current_generation, 0u,
-             "current_generation == 0 (no mutations yet)");
-    CHECK_EQ(snap.generation_wrap_count, 0u,
-             "generation_wrap_count == 0");
-    CHECK_EQ(snap.node_gen_stale_access_count, 0u,
-             "node_gen_stale_access_count == 0");
-    CHECK_EQ(snap.bump_generation_count, 0u,
-             "bump_generation_count == 0");
-    CHECK_EQ(snap.stable_ref_invalidations, 0u,
-             "stable_ref_invalidations == 0");
+    CHECK_EQ(snap.current_generation, 0u, "current_generation == 0 (no mutations yet)");
+    CHECK_EQ(snap.generation_wrap_count, 0u, "generation_wrap_count == 0");
+    CHECK_EQ(snap.node_gen_stale_access_count, 0u, "node_gen_stale_access_count == 0");
+    CHECK_EQ(snap.bump_generation_count, 0u, "bump_generation_count == 0");
+    CHECK_EQ(snap.stable_ref_invalidations, 0u, "stable_ref_invalidations == 0");
     return true;
 }
 
@@ -91,10 +99,8 @@ bool test_generation_stats_primitive() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define gss (ast:generation-stats))\")");
     cs.eval("(eval-current)");
-    for (const char* key : {"current-generation", "bump-generation-total",
-                            "generation-wrap-total",
-                            "stable-ref-invalidations-total",
-                            "node-gen-stale-access-total"}) {
+    for (const char* key : {"current-generation", "bump-generation-total", "generation-wrap-total",
+                            "stable-ref-invalidations-total", "node-gen-stale-access-total"}) {
         std::string check = std::string("(hash-ref gss \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
@@ -111,17 +117,18 @@ bool test_generation_stats_primitive() {
 bool test_mutation_bumps_generation() {
     std::println("\n--- AC4: mutation bumps generation counter ---");
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Eager);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Eager);
     cs.eval("(set-code \"(define gsr 1)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(mutate:rebind \"gsr\" \"2\" \"gen-test\")");
-    if (!r) { std::println("  FAIL: mutate:rebind failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: mutate:rebind failed");
+        ++g_failed;
+        return false;
+    }
     auto snap = cs.snapshot();
-    std::println("  bump_generation_count: {}",
-                 snap.bump_generation_count);
-    std::println("  current_generation: {}",
-                 snap.current_generation);
+    std::println("  bump_generation_count: {}", snap.bump_generation_count);
+    std::println("  current_generation: {}", snap.current_generation);
     CHECK(snap.bump_generation_count > 0u,
           "bump_generation_count > 0 (post-mutation generation bumped)");
     return true;
@@ -134,13 +141,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define gse 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define gse 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_343_detail
+} // namespace aura_343_detail
 
 int main() {
     using namespace aura_343_detail;
@@ -150,7 +156,7 @@ int main() {
     test_generation_stats_primitive();
     test_mutation_bumps_generation();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

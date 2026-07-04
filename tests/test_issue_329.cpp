@@ -72,24 +72,22 @@ struct DanglingStats {
 // aura.core.ast (same constraint as #330). We use `auto`
 // to deduce the type and rely on .is_valid_in() which is
 // available through the FlatAST's public API.
-static DanglingStats capture_and_validate(
-    CompilerService& cs,
-    int sample_size,
-    const std::string& mutate_code) {
+static DanglingStats capture_and_validate(CompilerService& cs, int sample_size,
+                                          const std::string& mutate_code) {
     DanglingStats stats;
     aura::ast::FlatAST* flat = nullptr;
     {
         std::lock_guard<std::mutex> lk(call_mtx());
         flat = cs.evaluator().workspace_flat();
     }
-    if (!flat) return stats;
+    if (!flat)
+        return stats;
     // Sample NodeIds by scanning the flat's live range.
     // We capture make_ref(NodeId{i}) for i in [0, sample_size).
     std::vector<decltype(flat->make_ref(aura::ast::NodeId{0}))> refs;
     refs.reserve(sample_size);
     for (int i = 0; i < sample_size; ++i) {
-        refs.push_back(flat->make_ref(aura::ast::NodeId{
-            static_cast<std::uint32_t>(i)}));
+        refs.push_back(flat->make_ref(aura::ast::NodeId{static_cast<std::uint32_t>(i)}));
     }
     stats.captured = refs.size();
     // Mutate.
@@ -109,14 +107,13 @@ bool test_single_mutate_dangling() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3)\")");
     (void)cs.eval("(eval-current)");
-    auto stats = capture_and_validate(cs, 16,
-        "(mutate:replace-value (define a 999) (define a 999))");
+    auto stats =
+        capture_and_validate(cs, 16, "(mutate:replace-value (define a 999) (define a 999))");
     std::println("  captured: {} still_valid_after: {}", stats.captured, stats.still_valid);
     CHECK(stats.captured == 16, "16 refs captured");
     // After mutation, refs to most NodeIds should be invalidated
     // (gen bumped). Some root nodes may remain valid if preserved.
-    CHECK(stats.still_valid <= stats.captured,
-          "still_valid never exceeds captured");
+    CHECK(stats.still_valid <= stats.captured, "still_valid never exceeds captured");
     return true;
 }
 
@@ -130,28 +127,24 @@ bool test_cycles_dangling_rate() {
     int valid_observed = 0;
     for (int i = 0; i < 100; ++i) {
         auto stats = capture_and_validate(cs, 8,
-            std::string("(mutate:replace-value (define a ") +
-            std::to_string(100 + i) +
-            ") (define a " +
-            std::to_string(100 + i) + "))");
+                                          std::string("(mutate:replace-value (define a ") +
+                                              std::to_string(100 + i) + ") (define a " +
+                                              std::to_string(100 + i) + "))");
         dangling_observed += static_cast<int>(stats.captured - stats.still_valid);
         valid_observed += stats.still_valid;
     }
     std::println("  100 cycles × 8 refs = 800 captures");
     std::println("  dangling: {} valid: {}", dangling_observed, valid_observed);
-    CHECK(dangling_observed + valid_observed == 800,
-          "all 800 captures accounted for");
+    CHECK(dangling_observed + valid_observed == 800, "all 800 captures accounted for");
     // Dangling rate should be > 0 (at least some refs invalidated)
     // but <= 100% (some may survive root preservation).
-    CHECK(dangling_observed > 0,
-          "at least one ref invalidated (proves mutation affects gen)");
+    CHECK(dangling_observed > 0, "at least one ref invalidated (proves mutation affects gen)");
     // Note: in this scenario every iterate mutates, so every
     // captured ref should be invalidated. The valid_observed
     // count may be 0 (root preservation only applies when
     // mutation leaves the node layout intact — replace-value
     // bumps gen regardless).
-    CHECK(valid_observed >= 0,
-          "valid_observed count is non-negative (no count overflow)");
+    CHECK(valid_observed >= 0, "valid_observed count is non-negative (no count overflow)");
     return true;
 }
 
@@ -159,15 +152,15 @@ bool test_cycles_dangling_rate() {
 bool test_query_children_sampling() {
     std::println("\n--- Scenario 3: query:children-based sampling ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
+    (void)cs.eval(
+        "(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:children 0)");
     CHECK(r.has_value(), "query:children returns a value");
     // After this query, capture ref + mutate + validate.
-    auto stats = capture_and_validate(cs, 16,
-        "(mutate:replace-value (define a 999) (define a 999))");
-    std::println("  16 captures after query:children: {} valid",
-                 stats.still_valid);
+    auto stats =
+        capture_and_validate(cs, 16, "(mutate:replace-value (define a 999) (define a 999))");
+    std::println("  16 captures after query:children: {} valid", stats.still_valid);
     return true;
 }
 
@@ -175,18 +168,18 @@ bool test_query_children_sampling() {
 bool test_long_iteration_dangling_threshold() {
     std::println("\n--- Scenario 4: 1000 iter stress + dangling rate check ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
+    (void)cs.eval(
+        "(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
     (void)cs.eval("(eval-current)");
     constexpr int N = 1000;
-    constexpr int SAMPLE = 4;  // sample size per iter
+    constexpr int SAMPLE = 4; // sample size per iter
     int total_captured = 0, total_valid = 0;
     auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < N; ++i) {
-        auto stats = capture_and_validate(cs, SAMPLE,
-            std::string("(mutate:replace-value (define b ") +
-            std::to_string(i) +
-            ") (define b " +
-            std::to_string(i) + "))");
+        auto stats =
+            capture_and_validate(cs, SAMPLE,
+                                 std::string("(mutate:replace-value (define b ") +
+                                     std::to_string(i) + ") (define b " + std::to_string(i) + "))");
         total_captured += static_cast<int>(stats.captured);
         total_valid += stats.still_valid;
     }
@@ -194,15 +187,14 @@ bool test_long_iteration_dangling_threshold() {
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     int total_dangling = total_captured - total_valid;
     double dangling_pct = 100.0 * total_dangling / total_captured;
-    std::println("  N={} × sample={}: {} captures, {} dangling ({:.1f}%), {}µs",
-                 N, SAMPLE, total_captured, total_dangling, dangling_pct, us);
+    std::println("  N={} × sample={}: {} captures, {} dangling ({:.1f}%), {}µs", N, SAMPLE,
+                 total_captured, total_dangling, dangling_pct, us);
     std::println("  per-iter avg: {:.2f}µs", static_cast<double>(us) / N);
     CHECK(total_captured == N * SAMPLE, "captured = N × sample");
     CHECK(total_dangling > 0, "at least some dangling observed");
     // Threshold gate: dangling rate should be > 10% (otherwise
     // mutation isn't really invalidating refs).
-    CHECK(dangling_pct > 10.0,
-          "dangling rate > 10% (proves mutation invalidates refs)");
+    CHECK(dangling_pct > 10.0, "dangling rate > 10% (proves mutation invalidates refs)");
     return true;
 }
 
@@ -221,10 +213,8 @@ bool test_concurrent_capture_mutate() {
         for (int i = 0; i < K_ITERS; ++i) {
             std::lock_guard<std::mutex> lk(scenario_mtx);
             if (is_mutator) {
-                (void)cs.eval(std::string("(mutate:replace-value (define a ") +
-                    std::to_string(i) +
-                    ") (define a " +
-                    std::to_string(i) + "))");
+                (void)cs.eval(std::string("(mutate:replace-value (define a ") + std::to_string(i) +
+                              ") (define a " + std::to_string(i) + "))");
             } else {
                 auto* flat = cs.evaluator().workspace_flat();
                 if (flat) {
@@ -241,7 +231,10 @@ bool test_concurrent_capture_mutate() {
     std::thread t_q2(worker, false);
     std::thread t_m1(worker, true);
     std::thread t_m2(worker, true);
-    t_q1.join(); t_q2.join(); t_m1.join(); t_m2.join();
+    t_q1.join();
+    t_q2.join();
+    t_m1.join();
+    t_m2.join();
     std::println("  captures: {} valid: {}", total_captured.load(), total_valid.load());
     CHECK(total_captured.load() == 2 * K_ITERS, "all reader captures accounted for");
     return true;

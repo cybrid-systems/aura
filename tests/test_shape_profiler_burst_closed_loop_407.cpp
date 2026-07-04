@@ -67,8 +67,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats3a = burst_stats(cs);
     auto jit = cs.eval("(eval-current :jit)");
     const auto stats3b = burst_stats(cs);
-    std::println("  jit ok={} burst stats: {} -> {}",
-                 jit.has_value(), stats3a, stats3b);
+    std::println("  jit ok={} burst stats: {} -> {}", jit.has_value(), stats3a, stats3b);
     CHECK(jit.has_value(), "eval-current :jit succeeds");
     CHECK(stats3b >= stats3a, "JIT path monotonic");
 
@@ -84,10 +83,8 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round bursty mutate matrix ---");
     const auto stats5a = burst_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
-        (void)cs.eval("(mutate:rebind \"base\" \"" +
-                      std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(eval-current :jit)");
     }

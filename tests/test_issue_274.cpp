@@ -6,8 +6,8 @@
 
 #include "test_harness.hpp"
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 
@@ -31,10 +31,9 @@ bool test_pure_fn_wrap() {
           "MutationFnWrap satisfies MutationVisitor");
     aura::ast::FlatAST flat;
     auto id = flat.add_literal(1);
-    flat.add_mutation_with_rollback(id, "replace-value", "", "", "lit=2",
-                                    aura::ast::MutationStatus::Committed,
-                                    static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal),
-                                    1, 2, true);
+    flat.add_mutation_with_rollback(
+        id, "replace-value", "", "", "lit=2", aura::ast::MutationStatus::Committed,
+        static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal), 1, 2, true);
     wrap.visit_mutation(flat, flat.all_mutations().back());
     CHECK(seen == 1, "pure fn wrap invoked once");
     return true;
@@ -45,14 +44,12 @@ bool test_run_mutation_pipeline() {
     aura::ast::FlatAST flat;
     auto a = flat.add_literal(1);
     auto b = flat.add_literal(2);
-    flat.add_mutation_with_rollback(a, "replace-value", "", "", "a=10",
-                                    aura::ast::MutationStatus::Committed,
-                                    static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal),
-                                    1, 10, true);
-    flat.add_mutation_with_rollback(b, "replace-value", "", "", "b=20",
-                                    aura::ast::MutationStatus::Committed,
-                                    static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal),
-                                    2, 20, true);
+    flat.add_mutation_with_rollback(
+        a, "replace-value", "", "", "a=10", aura::ast::MutationStatus::Committed,
+        static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal), 1, 10, true);
+    flat.add_mutation_with_rollback(
+        b, "replace-value", "", "", "b=20", aura::ast::MutationStatus::Committed,
+        static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal), 2, 20, true);
 
     aura::ast::MutationCountVisitor counter;
     aura::ast::MutationTargetValidityVisitor validity;
@@ -87,10 +84,9 @@ bool test_pipeline_short_circuit() {
     std::println("\n--- AC5: pipeline short-circuits on visitor error ---");
     aura::ast::FlatAST flat;
     auto id = flat.add_literal(3);
-    flat.add_mutation_with_rollback(id, "replace-value", "", "", "lit=9",
-                                    aura::ast::MutationStatus::Committed,
-                                    static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal),
-                                    3, 9, true);
+    flat.add_mutation_with_rollback(
+        id, "replace-value", "", "", "lit=9", aura::ast::MutationStatus::Committed,
+        static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal), 3, 9, true);
     flat.bump_generation(); // target_node in log is now stale
 
     aura::ast::MutationTargetValidityVisitor validity;
@@ -114,8 +110,12 @@ int run_tests() {
 
 } // namespace aura_issue_274_detail
 
-int aura_issue_274_run() { return aura_issue_274_detail::run_tests(); }
+int aura_issue_274_run() {
+    return aura_issue_274_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_274_run(); }
+int main() {
+    return aura_issue_274_run();
+}
 #endif

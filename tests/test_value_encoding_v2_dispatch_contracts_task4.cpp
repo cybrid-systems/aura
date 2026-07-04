@@ -43,12 +43,12 @@ using aura::compiler::shape::SHAPE_FLOAT;
 using aura::compiler::shape::SHAPE_INT;
 using aura::compiler::shape::SHAPE_STRING;
 using aura::compiler::shape::SHAPE_VOID;
-using aura::compiler::types::EvalValue;
-using aura::compiler::types::EvalValueTag;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::classify_eval_value_tag;
 using aura::compiler::types::eval_value_tag_low2_table;
+using aura::compiler::types::EvalValue;
+using aura::compiler::types::EvalValueTag;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_ref;
 using aura::compiler::types::is_string;
@@ -76,7 +76,8 @@ static int k_concurrent_iters() {
 
 static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
     auto r = cs.eval(code);
-    if (!r || !is_int(*r)) return -1;
+    if (!r || !is_int(*r))
+        return -1;
     return static_cast<std::int64_t>(as_int(*r));
 }
 
@@ -99,14 +100,10 @@ static bool setup_value_workspace(CompilerService& cs) {
 // ── AC1: consteval dispatch table ─────────────────────────
 bool test_consteval_low2_dispatch_table() {
     std::println("\n--- AC1: consteval low-2-bit dispatch table ---");
-    CHECK(eval_value_tag_low2_table(0) == EvalValueTag::Fixnum,
-          "low2=0 → Fixnum");
-    CHECK(eval_value_tag_low2_table(1) == EvalValueTag::Ref,
-          "low2=1 → Ref");
-    CHECK(eval_value_tag_low2_table(2) == EvalValueTag::StringV2,
-          "low2=2 → StringV2");
-    CHECK(eval_value_tag_low2_table(3) == EvalValueTag::Special,
-          "low2=3 → Special");
+    CHECK(eval_value_tag_low2_table(0) == EvalValueTag::Fixnum, "low2=0 → Fixnum");
+    CHECK(eval_value_tag_low2_table(1) == EvalValueTag::Ref, "low2=1 → Ref");
+    CHECK(eval_value_tag_low2_table(2) == EvalValueTag::StringV2, "low2=2 → StringV2");
+    CHECK(eval_value_tag_low2_table(3) == EvalValueTag::Special, "low2=3 → Special");
     return true;
 }
 
@@ -114,13 +111,11 @@ bool test_consteval_low2_dispatch_table() {
 bool test_classify_core_tags() {
     std::println("\n--- AC2: classify_eval_value_tag core tags ---");
     const auto iv = make_int(42);
-    CHECK(classify_eval_value_tag(iv.val) == EvalValueTag::Fixnum,
-          "make_int → Fixnum");
+    CHECK(classify_eval_value_tag(iv.val) == EvalValueTag::Fixnum, "make_int → Fixnum");
     CHECK(is_int(iv), "is_int agrees with classify");
 
     const auto sv = make_string(7);
-    CHECK(classify_eval_value_tag(sv.val) == EvalValueTag::StringV2,
-          "make_string → StringV2");
+    CHECK(classify_eval_value_tag(sv.val) == EvalValueTag::StringV2, "make_string → StringV2");
     CHECK(is_string(sv), "is_string agrees with classify");
     CHECK(as_string_idx(sv) == 7, "as_string_idx roundtrip");
 
@@ -138,11 +133,9 @@ bool test_collision_indices_dispatch_string() {
         CHECK(classify_eval_value_tag(raw) == EvalValueTag::StringV2,
               "v2 string idx classified as StringV2");
         CHECK(!is_ref(raw), "v2 string never classified as Ref");
-        CHECK(inline_shape_of(raw) == SHAPE_STRING,
-              "shape_profiler maps v2 string → SHAPE_STRING");
+        CHECK(inline_shape_of(raw) == SHAPE_STRING, "shape_profiler maps v2 string → SHAPE_STRING");
     }
-    CHECK(v2_string_collision_attempts.load() == 0,
-          "zero collision attempts for valid v2 strings");
+    CHECK(v2_string_collision_attempts.load() == 0, "zero collision attempts for valid v2 strings");
     return true;
 }
 
@@ -171,8 +164,7 @@ bool test_dispatch_stats_grow_under_eval() {
     }
     const auto s1 = eval_int(cs, "(query:value-dispatch-stats)");
     const auto h1 = value_dispatch_hit_count.load();
-    std::println("  dispatch stats: {} -> {} hits: {} -> {}",
-                 s0, s1, h0, h1);
+    std::println("  dispatch stats: {} -> {} hits: {} -> {}", s0, s1, h0, h1);
     CHECK(s1 >= s0, "value-dispatch-stats monotonic under eval");
     CHECK(h1 > h0, "dispatch hit count grew under eval");
     return true;
@@ -188,12 +180,10 @@ bool test_shape_classify_under_mutate() {
     CHECK(inline_shape_of(7) == SHAPE_BOOL, "bool shape");
     CHECK(inline_shape_of(11) == SHAPE_VOID, "void shape");
     for (int i = 0; i < 10; ++i) {
-        (void)cs.eval("(mutate:rebind \"base\" \"" +
-            std::to_string(50 + i) + "\")");
+        (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(50 + i) + "\")");
         (void)cs.eval("(eval-current)");
     }
-    CHECK(v2_string_collision_attempts.load() == 0,
-          "zero collisions after mutate batch");
+    CHECK(v2_string_collision_attempts.load() == 0, "zero collisions after mutate batch");
     return true;
 }
 
@@ -210,15 +200,14 @@ bool test_fuzz_value_dispatch_sequences() {
         (void)inline_shape_of(make_int(v).val);
         (void)inline_shape_of(make_string(static_cast<std::uint64_t>(v & 127)).val);
         if ((i & 3) == 0) {
-            (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                std::to_string(v) + "\")");
+            (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
         }
-        if ((i & 7) == 0) (void)cs.eval("(eval-current)");
+        if ((i & 7) == 0)
+            (void)cs.eval("(eval-current)");
     }
     const auto hits1 = value_dispatch_hit_count.load();
     CHECK(hits1 > hits0, "dispatch hits grew during fuzz");
-    CHECK(v2_string_collision_attempts.load() == 0,
-          "zero v2 collision attempts during fuzz");
+    CHECK(v2_string_collision_attempts.load() == 0, "zero v2 collision attempts during fuzz");
     return true;
 }
 
@@ -231,29 +220,28 @@ bool test_eight_thread_concurrent_dispatch() {
     std::mutex eval_mu;
     const int iters = k_concurrent_iters();
     auto worker = [&]() {
-        std::mt19937 rng(static_cast<unsigned>(
-            std::hash<std::thread::id>{}(std::this_thread::get_id())));
+        std::mt19937 rng(
+            static_cast<unsigned>(std::hash<std::thread::id>{}(std::this_thread::get_id())));
         std::uniform_int_distribution<int> val_dist(0, 100);
         for (int i = 0; i < iters; ++i) {
             const int v = val_dist(rng);
             (void)inline_shape_of(make_string(static_cast<std::uint64_t>(v)).val);
             {
                 std::lock_guard lock(eval_mu);
-                (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                    std::to_string(v) + "\")");
+                (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
             }
         }
         done.fetch_add(1, std::memory_order_relaxed);
     };
     std::vector<std::thread> threads;
     threads.reserve(8);
-    for (int t = 0; t < 8; ++t) threads.emplace_back(worker);
-    for (auto& th : threads) th.join();
+    for (int t = 0; t < 8; ++t)
+        threads.emplace_back(worker);
+    for (auto& th : threads)
+        th.join();
     CHECK(done.load() == 8, "all 8 threads completed");
-    CHECK(v2_string_collision_attempts.load() == 0,
-          "zero collisions under 8-thread load");
-    CHECK(prompt6_violations(cs) == 0,
-          "zero Prompt6 violations under concurrent dispatch");
+    CHECK(v2_string_collision_attempts.load() == 0, "zero collisions under 8-thread load");
+    CHECK(prompt6_violations(cs) == 0, "zero Prompt6 violations under concurrent dispatch");
     return true;
 }
 
@@ -273,8 +261,7 @@ bool test_fiber_yield_value_dispatch() {
                 (void)inline_shape_of(make_int(f + i).val);
                 {
                     std::lock_guard lock(eval_mu);
-                    (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                        std::to_string(f * 10 + i) + "\")");
+                    (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(f * 10 + i) + "\")");
                 }
                 Fiber::yield(YieldReason::MutationBoundary);
             }
@@ -282,10 +269,8 @@ bool test_fiber_yield_value_dispatch() {
         });
     }
     std::thread io_thread([&sched]() { sched.run(); });
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::seconds(30);
-    while (done.load() < k_fibers &&
-           std::chrono::steady_clock::now() < deadline) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (done.load() < k_fibers && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     sched.stop();
@@ -306,21 +291,20 @@ bool test_long_running_dispatch_stress() {
         const int v = val_dist(rng);
         (void)inline_shape_of(make_string(static_cast<std::uint64_t>(v & 255)).val);
         if ((i & 1) == 0) {
-            (void)cs.eval("(mutate:rebind \"base\" \"" +
-                std::to_string(v) + "\")");
+            (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(v) + "\")");
         } else {
-            (void)cs.eval("(mutate:replace-value (define acc " +
-                std::to_string(v) + ") (define acc " +
-                std::to_string(v) + "))");
+            (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(v) +
+                          ") (define acc " + std::to_string(v) + "))");
         }
-        if ((i & 15) == 0) (void)cs.eval("(eval-current)");
+        if ((i & 15) == 0)
+            (void)cs.eval("(eval-current)");
     }
     const auto s1 = eval_int(cs, "(query:value-dispatch-stats)");
     const auto collisions = v2_string_collision_attempts.load();
     const auto misses = value_dispatch_miss_count.load();
     const auto v = prompt6_violations(cs);
-    std::println("  dispatch: {} -> {} collisions={} misses={} violations={}",
-                 s0, s1, collisions, misses, v);
+    std::println("  dispatch: {} -> {} collisions={} misses={} violations={}", s0, s1, collisions,
+                 misses, v);
     CHECK(s1 >= s0, "dispatch stats monotonic under stress");
     CHECK(collisions == 0, "v2_string_collision_attempts stays 0");
     CHECK(v == 0, "zero Prompt6 violations under stress");
@@ -347,14 +331,11 @@ bool test_regression_related_primitives() {
     std::println("\n--- AC12: regression primitives ---");
     CompilerService cs;
     auto r1 = cs.eval("(query:prompt6-violation-count)");
-    CHECK(r1.has_value() && is_int(*r1),
-          "(query:prompt6-violation-count) regression");
+    CHECK(r1.has_value() && is_int(*r1), "(query:prompt6-violation-count) regression");
     auto r2 = cs.eval("(query:task4-hotpath-safety-score)");
-    CHECK(r2.has_value() && is_int(*r2),
-          "(query:task4-hotpath-safety-score) regression");
+    CHECK(r2.has_value() && is_int(*r2), "(query:task4-hotpath-safety-score) regression");
     auto r3 = cs.eval("(query:macro-reflect-self-evo-stats)");
-    CHECK(r3.has_value() && is_int(*r3),
-          "(query:macro-reflect-self-evo-stats) regression");
+    CHECK(r3.has_value() && is_int(*r3), "(query:macro-reflect-self-evo-stats) regression");
     if (!cs.eval("(define reg-571-a 11)")) {
         CHECK(false, "define regression");
         return false;
@@ -388,8 +369,12 @@ int run_tests() {
 
 } // namespace aura_issue_571_detail
 
-int aura_issue_571_run() { return aura_issue_571_detail::run_tests(); }
+int aura_issue_571_run() {
+    return aura_issue_571_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_571_run(); }
+int main() {
+    return aura_issue_571_run();
+}
 #endif

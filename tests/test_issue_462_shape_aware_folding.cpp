@@ -58,16 +58,15 @@ import aura.compiler.service;
 
 namespace aura_issue_462_detail {
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // ── AC1: pass has the expected name() ─────────────────────────
 bool test_pass_name() {
     std::println("\n--- AC1: ShapeAwareFoldingPass name() ---");
     aura::compiler::ShapeAwareFoldingPass saf;
     auto n = std::string(saf.name());
-    CHECK(n == "shape-aware-folding",
-          std::format("name == 'shape-aware-folding' (got '{}')", n));
+    CHECK(n == "shape-aware-folding", std::format("name == 'shape-aware-folding' (got '{}')", n));
     return true;
 }
 
@@ -138,8 +137,7 @@ bool test_linear_elide_non_escaping() {
     saf.run(mod);
     CHECK(saf.linear_elide_count() == 1,
           std::format("linear_elide_count == 1 (got {})", saf.linear_elide_count()));
-    CHECK(saf.fold_count() == 1,
-          std::format("fold_count == 1 (got {})", saf.fold_count()));
+    CHECK(saf.fold_count() == 1, std::format("fold_count == 1 (got {})", saf.fold_count()));
     // The MoveOp at slot 1 should be Nop'd; the MoveOp at slot 3 preserved.
     auto& blk = mod.functions[0].blocks[0].instructions;
     bool slot1_is_nop = (blk[1].opcode == aura::ir::IROpcode::Nop);
@@ -178,13 +176,12 @@ bool test_linear_no_elide_escaping() {
     mod.functions.push_back(func);
 
     aura::compiler::ShapeAwareFoldingPass saf;
-    saf.set_escape_map("test_escape", {1, 1});  // slot 0 is escaping
+    saf.set_escape_map("test_escape", {1, 1}); // slot 0 is escaping
     saf.run(mod);
     CHECK(saf.linear_elide_count() == 0, "linear_elide_count == 0 (all escaping)");
     CHECK(saf.fold_count() == 0, "fold_count == 0");
     auto& blk = mod.functions[0].blocks[0].instructions;
-    CHECK(blk[1].opcode == aura::ir::IROpcode::MoveOp,
-          "MoveOp preserved on escaping slot");
+    CHECK(blk[1].opcode == aura::ir::IROpcode::MoveOp, "MoveOp preserved on escaping slot");
     return true;
 }
 
@@ -200,7 +197,7 @@ bool test_guard_shape_hits() {
     func.blocks.push_back({0});
     func.blocks[0].instructions.push_back(aura::ir::IRInstruction{
         .opcode = aura::ir::IROpcode::GuardShape,
-        .operands = {0u, 0u, 1u, 0u},  // result=0, arg=0, expected_shape=1, generic=0
+        .operands = {0u, 0u, 1u, 0u}, // result=0, arg=0, expected_shape=1, generic=0
     });
     func.blocks[0].instructions.push_back(aura::ir::IRInstruction{
         .opcode = aura::ir::IROpcode::Return,
@@ -232,7 +229,7 @@ bool test_narrow_evidence_count() {
     // CastOp with narrow_evidence = 1 (number? predicate applied)
     func.blocks[0].instructions.push_back(aura::ir::IRInstruction{
         .opcode = aura::ir::IROpcode::CastOp,
-        .operands = {1u, 0u, 0u, 0u},  // result=1, value=0, type_tag=0
+        .operands = {1u, 0u, 0u, 0u}, // result=1, value=0, type_tag=0
         .narrow_evidence = 1,
     });
     func.blocks[0].instructions.push_back(aura::ir::IRInstruction{
@@ -259,19 +256,16 @@ bool test_edsl_stats_returns_hash() {
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_hash(v),
-          "(query:shape-folding-stats) returns a hash");
+    CHECK(aura::compiler::types::is_hash(v), "(query:shape-folding-stats) returns a hash");
     // Check each of the 4 fields exists
-    for (auto key : {"shape-fold-count", "shape-linear-elide-count",
-                     "shape-narrow-check-count", "guard-shape-hits"}) {
-        auto rr = cs.eval(std::format(
-            "(hash-ref (query:shape-folding-stats) '{}')", key));
+    for (auto key : {"shape-fold-count", "shape-linear-elide-count", "shape-narrow-check-count",
+                     "guard-shape-hits"}) {
+        auto rr = cs.eval(std::format("(hash-ref (query:shape-folding-stats) '{}')", key));
         if (!rr) {
             CHECK(false, std::format("hash-ref for '{}' failed", key));
             continue;
         }
-        CHECK(aura::compiler::types::is_int(*rr),
-              std::format("hash-ref '{}' returns int", key));
+        CHECK(aura::compiler::types::is_int(*rr), std::format("hash-ref '{}' returns int", key));
     }
     return true;
 }
@@ -315,7 +309,7 @@ bool test_pass_concept_satisfied() {
     return true;
 }
 
-}  // namespace aura_issue_462_detail
+} // namespace aura_issue_462_detail
 
 int main() {
     using namespace aura_issue_462_detail;

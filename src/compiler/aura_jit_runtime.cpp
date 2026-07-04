@@ -454,7 +454,7 @@ int64_t aura_alloc_closure_arena(int64_t func_id) {
     g_closure_func_ids.push_back(func_id);
     g_closure_envs.emplace_back();           // still push heap env as fallback
     g_arena_closure_envs.push_back(nullptr); // arena ptr, set by later captures
-    g_closure_names.emplace_back();           // Issue #660: parallel name array
+    g_closure_names.emplace_back();          // Issue #660: parallel name array
     aura_unlock_workspace_write();
     return id;
 }
@@ -464,7 +464,8 @@ int64_t aura_alloc_closure_arena(int64_t func_id) {
 // cache_define). When aura_closure_call's func_id lookup fails, the
 // runtime falls back to looking up by name.
 void aura_closure_set_name(int64_t closure_id, const char* name) {
-    if (closure_id < 0) return;
+    if (closure_id < 0)
+        return;
     aura_lock_workspace_write();
     if (static_cast<size_t>(closure_id) < g_closure_names.size()) {
         g_closure_names[static_cast<size_t>(closure_id)] = name ? std::string(name) : std::string();
@@ -566,7 +567,8 @@ void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int
 // registered.
 int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64_t* out_arg_count,
                                int64_t* out_env_count) {
-    if (!name || !*name) return 0;
+    if (!name || !*name)
+        return 0;
     aura_lock_workspace_read();
     auto it = g_jit_fns_by_name.find(std::string(name));
     if (it == g_jit_fns_by_name.end()) {
@@ -574,9 +576,12 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
         return 0;
     }
     int64_t fn = reinterpret_cast<int64_t>(it->second.fn);
-    if (out_local_count) *out_local_count = it->second.local_count;
-    if (out_arg_count) *out_arg_count = it->second.arg_count;
-    if (out_env_count) *out_env_count = it->second.env_count;
+    if (out_local_count)
+        *out_local_count = it->second.local_count;
+    if (out_arg_count)
+        *out_arg_count = it->second.arg_count;
+    if (out_env_count)
+        *out_env_count = it->second.env_count;
     aura_unlock_workspace_read();
     return fn;
 }
@@ -1105,10 +1110,10 @@ const char* aura_string_ref(int64_t val);
 // Must match the IR interpreter's CastOp cases exactly.
 // Operates on EvalValue-compatible tagged values.
 int64_t aura_cast_op(int64_t val, int64_t type_tag) {
-    using aura::compiler::types::is_string_raw_v2;
-    using aura::compiler::types::is_float_raw_v2;
-    using aura::compiler::types::float_idx_raw_v2;
     using aura::compiler::types::FLOAT_BIAS_VAL;
+    using aura::compiler::types::float_idx_raw_v2;
+    using aura::compiler::types::is_float_raw_v2;
+    using aura::compiler::types::is_string_raw_v2;
     using aura::compiler::types::STRING_BIAS_VAL_2;
     auto is_bool = [](int64_t v) { return v == 3 || v == 7; };
     // Issue #181 Cycle 2: v2 string encoding. (v & 3) == 2 is
@@ -1133,8 +1138,8 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
             }
             if (is_float(val)) {
                 std::uint64_t idx = float_idx_raw_v2(val);
-                double d = aura_float_ref(static_cast<std::int64_t>(
-                    aura::compiler::types::make_float_raw_v2(idx)));
+                double d = aura_float_ref(
+                    static_cast<std::int64_t>(aura::compiler::types::make_float_raw_v2(idx)));
                 return static_cast<int64_t>(d) << 1;
             }
             return 0;
@@ -1149,8 +1154,8 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
                 s = (val == 7) ? "#t" : "#f";
             else if (is_float(val)) {
                 std::uint64_t idx = float_idx_raw_v2(val);
-                double d = aura_float_ref(static_cast<std::int64_t>(
-                    aura::compiler::types::make_float_raw_v2(idx)));
+                double d = aura_float_ref(
+                    static_cast<std::int64_t>(aura::compiler::types::make_float_raw_v2(idx)));
                 s = std::to_string(d);
             } else
                 return val;

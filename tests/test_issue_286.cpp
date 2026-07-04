@@ -11,8 +11,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -24,12 +24,10 @@ namespace aura_issue_286_detail {
 bool test_env_version_accessor() {
     std::println("\n--- AC1: Env::env_version() accessor ---");
     aura::compiler::Env e;
-    CHECK(e.env_version() == 0,
-          "fresh Env has env_version() == 0 (never stamped)");
+    CHECK(e.env_version() == 0, "fresh Env has env_version() == 0 (never stamped)");
 
     e.set_env_version(42);
-    CHECK(e.env_version() == 42,
-          "set_env_version(42) → env_version() == 42");
+    CHECK(e.env_version() == 42, "set_env_version(42) → env_version() == 42");
 
     return true;
 }
@@ -79,12 +77,11 @@ bool test_lookup_cell_ptr_smoke() {
     aura::compiler::CompilerService cs;
     // Establish a deep nested let chain that exercises the
     // SoA walk (each let pushes a new EnvFrame).
-    if (!cs.eval(
-        "(define x "
-        "  (let ((a 1)) "
-        "    (let ((b 2)) "
-        "      (let ((c 3)) "
-        "        (+ a b c)))))")) {
+    if (!cs.eval("(define x "
+                 "  (let ((a 1)) "
+                 "    (let ((b 2)) "
+                 "      (let ((c 3)) "
+                 "        (+ a b c)))))")) {
         ++g_failed;
         return false;
     }
@@ -93,8 +90,7 @@ bool test_lookup_cell_ptr_smoke() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 6,
-          "deep let chain evaluates to 6 (1+2+3)");
+    CHECK(aura::compiler::types::as_int(*r) == 6, "deep let chain evaluates to 6 (1+2+3)");
 
     return true;
 }
@@ -109,13 +105,11 @@ bool test_env_version_round_trip() {
     aura::compiler::Env e;
 
     // Initial state: never stamped.
-    CHECK(e.env_version() == 0,
-          "fresh Env has env_version() == 0");
+    CHECK(e.env_version() == 0, "fresh Env has env_version() == 0");
 
     // Simulate materialize_call_env: stamp with current version.
     e.set_env_version(7);
-    CHECK(e.env_version() == 7,
-          "env_version() reflects the stamp we just set");
+    CHECK(e.env_version() == 7, "env_version() reflects the stamp we just set");
 
     // The Env's env_version_ is independent of the Evaluator's
     // defuse_version_ (it's a captured snapshot); setting it
@@ -123,8 +117,7 @@ bool test_env_version_round_trip() {
     // Evaluator's getter on a fresh evaluator (defuse_version_
     // is per-Evaluator, not per-Env).
     e.set_env_version(99);
-    CHECK(e.env_version() == 99,
-          "env_version() can be re-stamped to a new snapshot");
+    CHECK(e.env_version() == 99, "env_version() can be re-stamped to a new snapshot");
 
     return true;
 }
@@ -141,8 +134,12 @@ int run_tests() {
 
 } // namespace aura_issue_286_detail
 
-int aura_issue_286_run() { return aura_issue_286_detail::run_tests(); }
+int aura_issue_286_run() {
+    return aura_issue_286_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_286_run(); }
+int main() {
+    return aura_issue_286_run();
+}
 #endif

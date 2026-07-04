@@ -54,12 +54,12 @@ import aura.compiler.service;
 
 // C-linkage shims from aura_jit_bridge.cpp
 extern "C" {
-    void aura_set_aot_defuse_version(std::uint64_t v);
-    std::uint64_t aura_get_aot_defuse_version(void);
-    void aura_set_module_version(std::uint64_t v);
-    std::uint64_t aura_get_module_version(void);
-    bool aura_reload_aot_module(const char* path, std::uint64_t version);
-    std::uint64_t aura_jit_fallback_count_v_read(void);
+void aura_set_aot_defuse_version(std::uint64_t v);
+std::uint64_t aura_get_aot_defuse_version(void);
+void aura_set_module_version(std::uint64_t v);
+std::uint64_t aura_get_module_version(void);
+bool aura_reload_aot_module(const char* path, std::uint64_t version);
+std::uint64_t aura_jit_fallback_count_v_read(void);
 }
 
 namespace aura_issue_544_detail {
@@ -72,17 +72,13 @@ bool test_version_round_trip() {
     std::println("\n--- AC1: aot_defuse_version + module_version round-trip ---");
     aura_set_aot_defuse_version(0);
     aura_set_module_version(0);
-    CHECK(aura_get_aot_defuse_version() == 0,
-          "aot_defuse_version set/get round-trip (0)");
+    CHECK(aura_get_aot_defuse_version() == 0, "aot_defuse_version set/get round-trip (0)");
     aura_set_aot_defuse_version(42);
-    CHECK(aura_get_aot_defuse_version() == 42,
-          "aot_defuse_version set/get round-trip (42)");
+    CHECK(aura_get_aot_defuse_version() == 42, "aot_defuse_version set/get round-trip (42)");
     aura_set_module_version(7);
-    CHECK(aura_get_module_version() == 7,
-          "module_version set/get round-trip (7)");
+    CHECK(aura_get_module_version() == 7, "module_version set/get round-trip (7)");
     aura_set_module_version(100000);
-    CHECK(aura_get_module_version() == 100000,
-          "module_version set/get round-trip (100000)");
+    CHECK(aura_get_module_version() == 100000, "module_version set/get round-trip (100000)");
     // Reset to 0 so other tests start clean.
     aura_set_aot_defuse_version(0);
     aura_set_module_version(0);
@@ -118,15 +114,14 @@ bool test_mangle_matrix_uniqueness() {
             for (int v = 0; v < k_versions; ++v) {
                 std::string name = "f" + std::to_string(n);
                 std::string m = mangle_aot_name(name, d, v);
-                if (!seen.insert(m).second) ++collisions;
+                if (!seen.insert(m).second)
+                    ++collisions;
             }
         }
     }
     const std::size_t total = static_cast<std::size_t>(k_names) * k_disamb * k_versions;
-    std::println("  {} (name, disamb, version) triples, collisions: {}",
-                 total, collisions);
-    CHECK(collisions == 0,
-          "10000 (name, disamb, version) triples produce 0 collisions");
+    std::println("  {} (name, disamb, version) triples, collisions: {}", total, collisions);
+    CHECK(collisions == 0, "10000 (name, disamb, version) triples produce 0 collisions");
     return true;
 }
 
@@ -140,14 +135,12 @@ bool test_hot_swap_counter_monotonic() {
     std::uint64_t jc0 = s0.jit_compilations;
     // Trigger some compiles via mutation.
     for (int i = 0; i < 10; ++i) {
-        (void)cs.eval("(mutate:replace-value (define a " +
-            std::to_string(i + 100) + ") (define a " +
-            std::to_string(i + 100) + "))");
+        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i + 100) +
+                      ") (define a " + std::to_string(i + 100) + "))");
     }
     auto s1 = cs.snapshot();
     std::uint64_t jc1 = s1.jit_compilations;
-    std::println("  jit_compilations: {} -> {} (delta: {})",
-                 jc0, jc1, jc1 - jc0);
+    std::println("  jit_compilations: {} -> {} (delta: {})", jc0, jc1, jc1 - jc0);
     CHECK(jc1 >= jc0, "jit_compilations is monotonic non-decreasing");
     return true;
 }
@@ -162,15 +155,15 @@ bool test_multi_agent_isolation() {
     // (a separate follow-up); this test documents the
     // current behavior — toggling the global works without
     // crash, the value round-trips correctly.
-    aura_set_module_version(100);  // agent A
+    aura_set_module_version(100); // agent A
     CHECK(aura_get_module_version() == 100, "module_version=100 (agent A)");
     // ... agent A's eval
-    aura_set_module_version(200);  // agent B
+    aura_set_module_version(200); // agent B
     CHECK(aura_get_module_version() == 200, "module_version=200 (agent B)");
     // ... agent B's eval
-    aura_set_module_version(100);  // back to agent A
+    aura_set_module_version(100); // back to agent A
     CHECK(aura_get_module_version() == 100, "module_version back to 100 (agent A restored)");
-    aura_set_module_version(0);    // reset
+    aura_set_module_version(0); // reset
     return true;
 }
 
@@ -198,18 +191,19 @@ bool test_eight_thread_hot_swap_stress() {
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < K_THREADS; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    for (int i = 0; i < K_THREADS; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
     int total = K_THREADS * K_ITERS;
     auto snap = cs.snapshot();
-    std::println("  {} cycles in {}ms, final jit_compilations: {}",
-                 total, ms, snap.jit_compilations);
-    CHECK(cycles_done.load() == total,
-          "all 800 cycles completed (no crash under load)");
-    CHECK(snap.jit_compilations >= 0,
-          "jit_compilations non-negative after stress");
+    std::println("  {} cycles in {}ms, final jit_compilations: {}", total, ms,
+                 snap.jit_compilations);
+    CHECK(cycles_done.load() == total, "all 800 cycles completed (no crash under load)");
+    CHECK(snap.jit_compilations >= 0, "jit_compilations non-negative after stress");
     CHECK(ms < 60000, "completed within 60s wall-clock budget");
     return true;
 }
@@ -227,15 +221,13 @@ bool test_fallback_counter_observable() {
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
     for (int i = 0; i < 50; ++i) {
-        (void)cs.eval("(mutate:replace-value (define a " +
-            std::to_string(i) + ") (define a " +
-            std::to_string(i) + "))");
+        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
+                      std::to_string(i) + "))");
     }
     std::uint64_t after = aura_jit_fallback_count_v_read();
-    std::println("  aura_jit_fallback_count_v_: {} -> {} (delta: {})",
-                 before, after, after - before);
-    CHECK(after >= before,
-          "aura_jit_fallback_count_v_ is monotonic non-decreasing");
+    std::println("  aura_jit_fallback_count_v_: {} -> {} (delta: {})", before, after,
+                 after - before);
+    CHECK(after >= before, "aura_jit_fallback_count_v_ is monotonic non-decreasing");
     return true;
 }
 
@@ -243,8 +235,7 @@ bool test_fallback_counter_observable() {
 bool test_regression_mangle_basics() {
     std::println("\n--- AC9: regression — basic mangle patterns (#323) ---");
     std::string top = mangle_aot_name("__top__", 0, 0);
-    CHECK(top.substr(0, 7) == "__top__",
-          "__top__ leading/trailing underscores preserved");
+    CHECK(top.substr(0, 7) == "__top__", "__top__ leading/trailing underscores preserved");
     // Special char escaping.
     std::string special = mangle_aot_name("foo@bar.baz", 0, 0);
     bool has_special = false;
@@ -281,8 +272,12 @@ int run_tests() {
 
 } // namespace aura_issue_544_detail
 
-int aura_issue_544_run() { return aura_issue_544_detail::run_tests(); }
+int aura_issue_544_run() {
+    return aura_issue_544_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_544_run(); }
+int main() {
+    return aura_issue_544_run();
+}
 #endif

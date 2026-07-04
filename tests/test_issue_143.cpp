@@ -37,8 +37,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.compiler.ir;
@@ -46,13 +46,12 @@ import aura.compiler.service;
 import aura.compiler.pass_manager;
 
 
-
 namespace aura_issue_143_detail {
-using aura::ir::IROpcode;
-using aura::ir::IRFunction;
-using aura::ir::IRModule;
 using aura::ir::BasicBlock;
+using aura::ir::IRFunction;
 using aura::ir::IRInstruction;
+using aura::ir::IRModule;
+using aura::ir::IROpcode;
 
 static IRFunction make_fn_with_block(std::uint32_t local_count = 8) {
     IRFunction fn;
@@ -67,8 +66,8 @@ static IRFunction make_fn_with_block(std::uint32_t local_count = 8) {
 }
 
 // Helper: add an instruction to the entry block
-static void add_instr(IRFunction& fn, IROpcode op, std::uint32_t a = 0,
-                       std::uint32_t b = 0, std::uint32_t c = 0, std::uint32_t d = 0) {
+static void add_instr(IRFunction& fn, IROpcode op, std::uint32_t a = 0, std::uint32_t b = 0,
+                      std::uint32_t c = 0, std::uint32_t d = 0) {
     IRInstruction instr;
     instr.opcode = op;
     instr.operands = {a, b, c, d};
@@ -78,7 +77,8 @@ static void add_instr(IRFunction& fn, IROpcode op, std::uint32_t a = 0,
 // Read a slot's escape status from a function's map. Returns
 // -1 if the map is unavailable.
 static int escape_at(const std::vector<std::uint8_t>& map, std::uint32_t slot) {
-    if (slot >= map.size()) return -1;
+    if (slot >= map.size())
+        return -1;
     return map[slot] != 0 ? 1 : 0;
 }
 
@@ -286,12 +286,12 @@ int run_tests() {
     std::println("\n── AC #8: Multi-iteration fixpoint ──");
     test_fixpoint_propagation();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_143_detail
+} // namespace aura_issue_143_detail
 
-int aura_issue_143_run() { return aura_issue_143_detail::run_tests(); }
-
+int aura_issue_143_run() {
+    return aura_issue_143_detail::run_tests();
+}

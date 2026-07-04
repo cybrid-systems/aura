@@ -23,24 +23,25 @@ import aura.core.error;
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: NodeHandle accepts integrals ─────────────────────
 bool test_node_handle_integrals() {
     std::println("\n--- AC1: NodeHandle accepts integrals ---");
-    static_assert(aura::core::NodeHandle<std::uint32_t>,
-                  "uint32_t satisfies NodeHandle");
-    static_assert(aura::core::NodeHandle<std::uint64_t>,
-                  "uint64_t satisfies NodeHandle");
-    static_assert(aura::core::NodeHandle<int>,
-                  "int satisfies NodeHandle");
-    static_assert(!aura::core::NodeHandle<std::string>,
-                  "std::string does NOT satisfy NodeHandle");
-    static_assert(!aura::core::NodeHandle<float>,
-                  "float does NOT satisfy NodeHandle");
+    static_assert(aura::core::NodeHandle<std::uint32_t>, "uint32_t satisfies NodeHandle");
+    static_assert(aura::core::NodeHandle<std::uint64_t>, "uint64_t satisfies NodeHandle");
+    static_assert(aura::core::NodeHandle<int>, "int satisfies NodeHandle");
+    static_assert(!aura::core::NodeHandle<std::string>, "std::string does NOT satisfy NodeHandle");
+    static_assert(!aura::core::NodeHandle<float>, "float does NOT satisfy NodeHandle");
     CHECK(true, "static_asserts for NodeHandle (integral types)");
     return true;
 }
@@ -73,10 +74,8 @@ bool test_arena_allocator() {
         void* allocate(std::size_t bytes) { return ::operator new(bytes); }
         void deallocate(void* p, std::size_t) noexcept { ::operator delete(p); }
     };
-    static_assert(aura::core::ArenaAllocator<MyArena>,
-                  "MyArena satisfies ArenaAllocator");
-    static_assert(!aura::core::ArenaAllocator<int>,
-                  "int does NOT satisfy ArenaAllocator");
+    static_assert(aura::core::ArenaAllocator<MyArena>, "MyArena satisfies ArenaAllocator");
+    static_assert(!aura::core::ArenaAllocator<int>, "int does NOT satisfy ArenaAllocator");
     CHECK(true, "static_asserts for ArenaAllocator");
     return true;
 }
@@ -90,10 +89,7 @@ struct FakeAST {
 };
 
 struct GoodMutator {
-    aura::core::AuraResult<std::uint32_t>
-    apply(FakeAST& ast, std::uint32_t id) {
-        return id;
-    }
+    aura::core::AuraResult<std::uint32_t> apply(FakeAST& ast, std::uint32_t id) { return id; }
 };
 
 struct BadMutatorReturnsInt {
@@ -154,8 +150,7 @@ bool test_ast_container_concept() {
 
 // ── AC6: Queryable requires AuraResult return ────────────
 struct GoodQuery {
-    aura::core::AuraResult<std::vector<std::uint32_t>>
-    find_calls(FakeAST& ast, std::string_view) {
+    aura::core::AuraResult<std::vector<std::uint32_t>> find_calls(FakeAST& ast, std::string_view) {
         return std::vector<std::uint32_t>{};
     }
 };
@@ -189,8 +184,7 @@ bool test_concept_composition() {
                   "GoodMutator<FakeAST, uint32_t> is a Mutator");
     static_assert(aura::core::ASTContainer<GoodAST, std::uint32_t>,
                   "GoodAST<uint32_t> is an ASTContainer");
-    static_assert(aura::core::NodeHandle<std::uint32_t>,
-                  "uint32_t is a NodeHandle");
+    static_assert(aura::core::NodeHandle<std::uint32_t>, "uint32_t is a NodeHandle");
     CHECK(true, "concept composition verified via static_asserts");
     return true;
 }

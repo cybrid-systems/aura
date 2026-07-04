@@ -57,14 +57,12 @@ static void test_mutate_marks_narrowing_stale() {
     CHECK(ws != nullptr, "workspace flat present");
     const auto inv0 = ws ? ws->narrow_invalidation_post_mutate_count() : 0u;
 
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (string? x) x 0))\" "
-        "\"issue-639-pred\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (string? x) x 0))\" "
+                  "\"issue-639-pred\")");
     const auto inv1 = ws->narrow_invalidation_post_mutate_count();
     const auto stale_count = ws->stale_narrowing_record_count();
     std::println("  invalidation: {} -> {}, stale_records={}", inv0, inv1, stale_count);
-    CHECK(inv1 > inv0 || stale_count > 0,
-          "narrowing invalidation fired after predicate mutate");
+    CHECK(inv1 > inv0 || stale_count > 0, "narrowing invalidation fired after predicate mutate");
 }
 
 static void test_stale_detected_with_blame_stats() {
@@ -73,11 +71,9 @@ static void test_stale_detected_with_blame_stats() {
     CHECK(load_if_workspace(cs), "load if workspace");
     const auto stats0 = narrow_blame_stats(cs);
 
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Lazy);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
-        "\"issue-639-stale\")");
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
+                  "\"issue-639-stale\")");
     (void)cs.eval("(typecheck-current)");
 
     const auto stats1 = narrow_blame_stats(cs);
@@ -88,8 +84,7 @@ static void test_stale_detected_with_blame_stats() {
                  snap.narrow_safe_fallback_total, snap.narrow_invalidation_post_mutate_total);
     CHECK(stats1 >= stats0, "query:narrow-blame-stats monotonic");
     CHECK(snap.narrow_stale_caught_total > 0 || snap.narrow_blame_attached_total > 0 ||
-              snap.narrow_safe_fallback_total > 0 ||
-              snap.narrow_invalidation_post_mutate_total > 0,
+              snap.narrow_safe_fallback_total > 0 || snap.narrow_invalidation_post_mutate_total > 0,
           "stale path bumped at least one #639 counter");
 }
 
@@ -97,9 +92,8 @@ static void test_provenance_includes_stale_field() {
     std::println("\n--- AC4: query:provenance-of includes :stale ---");
     CompilerService cs;
     CHECK(load_if_workspace(cs), "load if workspace");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (pair? x) (car x) 0))\" "
-        "\"issue-639-prov\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (pair? x) (car x) 0))\" "
+                  "\"issue-639-prov\")");
     (void)cs.eval("(typecheck-current)");
     auto prov = cs.eval("(query:provenance-of \"x\")");
     CHECK(prov.has_value(), "provenance-of returns value");
@@ -109,11 +103,9 @@ static void test_re_narrow_clears_stale_and_eval_ok() {
     std::println("\n--- AC5: re-narrow clears stale + eval preserved ---");
     CompilerService cs;
     CHECK(load_if_workspace(cs), "load if workspace");
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Lazy);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
-        "\"issue-639-renarrow\")");
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
+                  "\"issue-639-renarrow\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     const auto stale_before = ws->occurrence_stale_count();
@@ -129,9 +121,8 @@ static void test_no_wrong_narrow_after_cond_mutate() {
     std::println("\n--- AC6: no wrong narrow after cond mutate ---");
     CompilerService cs;
     CHECK(load_if_workspace(cs), "load if workspace");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
-        "\"issue-639-sem\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
+                  "\"issue-639-sem\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     (void)cs.incremental_infer(ws->all_mutations().back());

@@ -13,8 +13,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -46,16 +46,14 @@ bool test_atomic_batch_metrics_bump() {
     auto s_before = ev.get_atomic_batch_steal_violation();
     ev.bump_atomic_batch_steal_violation();
     auto s_after = ev.get_atomic_batch_steal_violation();
-    CHECK(s_after == s_before + 1,
-          "bump_atomic_batch_steal_violation: " + std::to_string(s_before) +
-              " -> " + std::to_string(s_after));
+    CHECK(s_after == s_before + 1, "bump_atomic_batch_steal_violation: " +
+                                       std::to_string(s_before) + " -> " + std::to_string(s_after));
 
     auto g_before = ev.get_suppressed_bump_lost_on_gc();
     ev.bump_suppressed_bump_lost_on_gc();
     auto g_after = ev.get_suppressed_bump_lost_on_gc();
-    CHECK(g_after == g_before + 1,
-          "bump_suppressed_bump_lost_on_gc: " + std::to_string(g_before) +
-              " -> " + std::to_string(g_after));
+    CHECK(g_after == g_before + 1, "bump_suppressed_bump_lost_on_gc: " + std::to_string(g_before) +
+                                       " -> " + std::to_string(g_after));
     return true;
 }
 
@@ -68,8 +66,7 @@ bool test_query_atomic_batch_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:atomic-batch-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:atomic-batch-stats returns an integer");
     return true;
 }
 
@@ -90,9 +87,8 @@ bool test_query_atomic_batch_stats_after_bump() {
     CHECK(static_cast<std::uint64_t>(primitive_val) == after,
           "query:atomic-batch-stats == atomic_batch_steal_violation: " +
               std::to_string(primitive_val) + " == " + std::to_string(after));
-    CHECK(after == before + 1,
-          "atomic_batch_steal_violation bumped: " + std::to_string(before) +
-              " -> " + std::to_string(after));
+    CHECK(after == before + 1, "atomic_batch_steal_violation bumped: " + std::to_string(before) +
+                                   " -> " + std::to_string(after));
     return true;
 }
 
@@ -114,8 +110,7 @@ bool test_mutate_atomic_batch_regression() {
         R"aur((mutate:atomic-batch
                  (list (list "mutate:rebind" "f" "42" "test"))
                  "smoke"))aur");
-    CHECK(r.has_value(),
-          "mutate:atomic-batch returns a value (has_value)");
+    CHECK(r.has_value(), "mutate:atomic-batch returns a value (has_value)");
     return true;
 }
 
@@ -136,8 +131,7 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 30,
-          "smoke: (+ 10 20) == 30 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 30, "smoke: (+ 10 20) == 30 (regression)");
     return true;
 }
 
@@ -170,8 +164,12 @@ int run_tests() {
 
 } // namespace aura_issue_459_detail
 
-int aura_issue_459_run() { return aura_issue_459_detail::run_tests(); }
+int aura_issue_459_run() {
+    return aura_issue_459_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_459_run(); }
+int main() {
+    return aura_issue_459_run();
+}
 #endif

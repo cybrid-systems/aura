@@ -40,8 +40,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // Forward declare FlatFunction to avoid pulling in aura_jit.h's
 // heavy <functional> include (which conflicts with `import std`).
@@ -69,7 +69,8 @@ namespace aura_issue_358_detail {
 // Trivial dirty callback: returns true iff name is in the
 // provided set. userdata points to a const std::set<std::string>*.
 static bool is_dirty_in_set(void* userdata, const char* name) {
-    if (!userdata || !name) return false;
+    if (!userdata || !name)
+        return false;
     const auto* dirty = static_cast<const std::set<std::string>*>(userdata);
     return dirty->count(name) > 0;
 }
@@ -86,7 +87,8 @@ bool test_set_callback_registers_global() {
     unsigned int out[1];
     int count = aura_filter_dirty_flat_functions(&fn, 1, out, 1);
     CHECK(count == 1, "callback is wired: filter returns count=1 for 'foo' (in dirty set)");
-    if (count == 1) CHECK(out[0] == 0, "dirty index is 0");
+    if (count == 1)
+        CHECK(out[0] == 0, "dirty index is 0");
     // Reset to nullptr so subsequent tests start clean.
     aura_set_is_define_dirty_fn(nullptr, nullptr);
     return true;
@@ -106,8 +108,7 @@ bool test_filter_returns_neg1_without_callback() {
     fns[2].name = "z";
     unsigned int out[N];
     int rc = aura_filter_dirty_flat_functions(fns, N, out, N);
-    CHECK(rc == -1,
-          "filter returns -1 when no callback is registered (host fallback signal)");
+    CHECK(rc == -1, "filter returns -1 when no callback is registered (host fallback signal)");
     return true;
 }
 
@@ -193,7 +194,8 @@ struct EndToEndCtx {
 };
 
 static bool is_dirty_end_to_end(void* userdata, const char* name) {
-    if (!userdata || !name) return false;
+    if (!userdata || !name)
+        return false;
     auto* ctx = static_cast<EndToEndCtx*>(userdata);
     return ctx->dirty_names.count(name) > 0;
 }
@@ -261,6 +263,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_358_detail
+} // namespace aura_issue_358_detail
 
-int aura_issue_358_run() { return aura_issue_358_detail::run_tests(); }
+int aura_issue_358_run() {
+    return aura_issue_358_detail::run_tests();
+}

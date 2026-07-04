@@ -58,13 +58,15 @@ import aura.compiler.service;
 
 namespace aura_issue_471_detail {
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 static std::int64_t primitive_int(aura::compiler::CompilerService& cs, std::string_view prim) {
     auto r = cs.eval(std::format("({})", prim));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
@@ -78,8 +80,7 @@ bool test_primitive_returns_int() {
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_int(v),
-          "(query:dirty-propagation-stats) returns an int");
+    CHECK(aura::compiler::types::is_int(v), "(query:dirty-propagation-stats) returns an int");
     return true;
 }
 
@@ -88,13 +89,14 @@ bool test_mark_dirty_bumps_calls() {
     std::println("\n--- AC2: mark_dirty_upward bumps counter ---");
     aura::ast::FlatAST ast;
     auto root = ast.add_define(aura::ast::INVALID_SYM, 0);
-    auto leaf = ast.add_node(aura::ast::NodeTag::LiteralInt); ast.set_int(leaf, 42); ast.set_child(root, 0, leaf);
+    auto leaf = ast.add_node(aura::ast::NodeTag::LiteralInt);
+    ast.set_int(leaf, 42);
+    ast.set_child(root, 0, leaf);
     auto before = ast.mark_dirty_upward_call_count();
     ast.mark_dirty_upward(root);
     auto after = ast.mark_dirty_upward_call_count();
     CHECK(after == before + 1,
-          std::format("mark_dirty_upward bumps by 1 (before={}, after={})",
-                      before, after));
+          std::format("mark_dirty_upward bumps by 1 (before={}, after={})", before, after));
     return true;
 }
 
@@ -118,8 +120,8 @@ bool test_mark_dirty_fast_early_exit() {
     ast.mark_dirty_upward_fast(child, 0xFF);
     auto after = ast.mark_dirty_early_exit_count();
     CHECK(after > before,
-          std::format("mark_dirty_upward_fast bumps early-exit (before={}, after={})",
-                      before, after));
+          std::format("mark_dirty_upward_fast bumps early-exit (before={}, after={})", before,
+                      after));
     return true;
 }
 
@@ -128,11 +130,12 @@ bool test_max_depth_after_first_mutate() {
     std::println("\n--- AC4: max_depth_observed >= 1 ---");
     aura::ast::FlatAST ast;
     auto root = ast.add_define(aura::ast::INVALID_SYM, 0);
-    auto leaf = ast.add_node(aura::ast::NodeTag::LiteralInt); ast.set_int(leaf, 42); ast.set_child(root, 0, leaf);
+    auto leaf = ast.add_node(aura::ast::NodeTag::LiteralInt);
+    ast.set_int(leaf, 42);
+    ast.set_child(root, 0, leaf);
     ast.mark_dirty_upward(root);
     auto max_depth = ast.mark_dirty_max_depth_observed();
-    CHECK(max_depth >= 1,
-          std::format("max_depth >= 1 (got {})", max_depth));
+    CHECK(max_depth >= 1, std::format("max_depth >= 1 (got {})", max_depth));
     return true;
 }
 
@@ -191,8 +194,7 @@ bool test_100_mark_dirty_calls() {
         ast.mark_dirty_upward(child, static_cast<std::uint8_t>(0x01u << (i & 7)));
     }
     auto calls = ast.mark_dirty_upward_call_count();
-    CHECK(calls >= 10,
-          std::format("10 calls bump upward_calls (got {})", calls));
+    CHECK(calls >= 10, std::format("10 calls bump upward_calls (got {})", calls));
     return true;
 }
 
@@ -229,8 +231,7 @@ bool test_deep_hierarchy_early_exit() {
     // The deep hierarchy confirms the early-exit fires
     // even when there are 5 ancestors above the leaf.
     CHECK(after >= before + 1,
-          std::format("deep hierarchy: >= 1 early-exit (before={}, after={})",
-                      before, after));
+          std::format("deep hierarchy: >= 1 early-exit (before={}, after={})", before, after));
     return true;
 }
 
@@ -251,13 +252,13 @@ bool test_atomic_max_depth() {
     ast.mark_dirty_upward(a);
     auto after_second = ast.mark_dirty_max_depth_observed();
     // after_second >= after_first (max is preserved)
-    CHECK(after_second >= after_first,
-          std::format("max preserved (after_first={}, after_second={})",
-                      after_first, after_second));
+    CHECK(
+        after_second >= after_first,
+        std::format("max preserved (after_first={}, after_second={})", after_first, after_second));
     return true;
 }
 
-}  // namespace aura_issue_471_detail
+} // namespace aura_issue_471_detail
 
 int main() {
     using namespace aura_issue_471_detail;

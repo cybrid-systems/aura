@@ -106,7 +106,7 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (get-memory-policy) — Return the current policy as a hash.
     add("get-memory-policy",
-                    [&ev](const auto&) -> EvalValue { return ev.build_policy_hash(ev.memory_policy_); });
+        [&ev](const auto&) -> EvalValue { return ev.build_policy_hash(ev.memory_policy_); });
 
     // ── Capability primitives (with-capability / capability? / check-capability) ──
 
@@ -154,9 +154,9 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
             auto cid = types::as_closure_id(body);
             auto it = ev.closures_.find(cid);
             if (it != ev.closures_.end() && it->second.body_id != ast::NULL_NODE)
-                result =
-                    ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, it->second.body_id, ev.top_env())
-                        .value_or(make_void());
+                result = ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, it->second.body_id,
+                                      ev.top_env())
+                             .value_or(make_void());
         } else {
             result = body;
         }
@@ -225,7 +225,6 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return result;
     });
-
 }
 
 } // namespace aura::compiler::primitives_detail

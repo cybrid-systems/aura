@@ -11,8 +11,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -155,7 +155,8 @@ bool test_compile_module_disk_cache_hit() {
     const std::string src = "(define (disk-fn x) (+ x 100))";
     {
         aura::compiler::CompilerService cs;
-        CHECK(static_cast<bool>(cs.compile_module(mod, src)), "first compile_module writes disk cache");
+        CHECK(static_cast<bool>(cs.compile_module(mod, src)),
+              "first compile_module writes disk cache");
         CHECK(run_int(cs, "(disk-fn 5)") == 105, "(disk-fn 5) => 105 after first compile");
     }
     {
@@ -217,10 +218,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_272_detail
+} // namespace aura_issue_272_detail
 
-int aura_issue_272_run() { return aura_issue_272_detail::run_tests(); }
+int aura_issue_272_run() {
+    return aura_issue_272_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_272_run(); }
+int main() {
+    return aura_issue_272_run();
+}
 #endif

@@ -38,8 +38,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.type;
@@ -51,18 +51,19 @@ import aura.compiler.type_checker;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_148_detail {
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (!(_a == _b)) { \
-        std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (!(_a == _b)) {                                                                         \
+            std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__);        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════════
 // AC #1: incremental_infer + infer_flat_partial are exported
@@ -101,8 +102,7 @@ void test_partial_api_callable() {
     empty_rec.target_node = aura::ast::NULL_NODE;
     empty_rec.parent_id = aura::ast::NULL_NODE;
     auto n = cs.incremental_infer(empty_rec);
-    CHECK_EQ(n, std::size_t{0},
-             "incremental_infer on null-target rec returns 0 (no work to do)");
+    CHECK_EQ(n, std::size_t{0}, "incremental_infer on null-target rec returns 0 (no work to do)");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -122,7 +122,7 @@ void test_simple_mutation_returns_count() {
     auto* ws = cs.workspace_flat();
     if (!ws) {
         std::println("  SKIP: no workspace_flat (test setup issue)");
-        ++g_passed;  // not a failure
+        ++g_passed; // not a failure
         return;
     }
     auto& log = ws->all_mutations();
@@ -134,8 +134,7 @@ void test_simple_mutation_returns_count() {
     // Take the last record (most recent mutation).
     auto rec = log.back();
     auto n = cs.incremental_infer(rec);
-    CHECK(n > 0,
-          "incremental_infer on a real mutation returns >0 (re-inferred something)");
+    CHECK(n > 0, "incremental_infer on a real mutation returns >0 (re-inferred something)");
     std::println("  (debug: re_inferred={})", n);
 }
 
@@ -265,8 +264,7 @@ void test_speedup_scope_qualitative() {
     // node mutation). The total AST has many more nodes.
     std::size_t total_nodes = ws->size();
     std::size_t affected_count = affected.size();
-    std::println("  (debug: affected={} total={} ratio={:.1f}%)",
-                 affected_count, total_nodes,
+    std::println("  (debug: affected={} total={} ratio={:.1f}%)", affected_count, total_nodes,
                  100.0 * affected_count / std::max(std::size_t{1}, total_nodes));
     // For a single-node rebind, the affected scope should be
     // < 50% of the total AST. The qualitative check: the
@@ -305,12 +303,11 @@ void test_null_ast_returns_zero() {
     compiler::CompilerService cs;
     // Don't set_code — no current_ast_/current_pool_.
     aura::ast::MutationRecord rec{};
-    rec.target_node = aura::ast::NULL_NODE;  // sentinel, not a real node
+    rec.target_node = aura::ast::NULL_NODE; // sentinel, not a real node
     rec.parent_id = aura::ast::NULL_NODE;
     rec.mutation_id = 1;
     auto n = cs.incremental_infer(rec);
-    CHECK_EQ(n, std::size_t{0},
-             "incremental_infer on null AST returns 0 (graceful no-op)");
+    CHECK_EQ(n, std::size_t{0}, "incremental_infer on null AST returns 0 (graceful no-op)");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -344,12 +341,12 @@ int run_tests() {
     std::println("\n── AC #8: incremental_infer on null AST returns 0 ──");
     test_null_ast_returns_zero();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_148_detail
+} // namespace aura_issue_148_detail
 
-int aura_issue_148_run() { return aura_issue_148_detail::run_tests(); }
-
+int aura_issue_148_run() {
+    return aura_issue_148_detail::run_tests();
+}

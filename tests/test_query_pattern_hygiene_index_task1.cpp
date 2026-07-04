@@ -61,7 +61,10 @@ bool test_rebuild_timing_delta_counters_reachable() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto rt0 = ws->tag_arity_index_rebuild_time_us();
     const auto dh0 = ws->tag_arity_index_delta_hits();
     std::println("  baseline: rebuild_time_us={} delta_hits={}", rt0, dh0);
@@ -83,13 +86,11 @@ bool test_query_pattern_index_stats_6_counters() {
     }
     auto r = cs.eval("(query:pattern-index-stats)");
     CHECK(r.has_value(), "(query:pattern-index-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:pattern-index-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:pattern-index-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:pattern-index-stats = {}", v);
-        CHECK(v > 0,
-              "(query:pattern-index-stats) > 0 after 5 queries (4 + 2 new counters)");
+        CHECK(v > 0, "(query:pattern-index-stats) > 0 after 5 queries (4 + 2 new counters)");
     }
     return true;
 }
@@ -101,14 +102,16 @@ bool test_rebuild_records_time() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto rt0 = ws->tag_arity_index_rebuild_time_us();
     const auto rb0 = ws->tag_arity_index_rebuilds();
     ws->rebuild_tag_arity_index();
     const auto rt1 = ws->tag_arity_index_rebuild_time_us();
     const auto rb1 = ws->tag_arity_index_rebuilds();
-    std::println("  rebuild_time_us: {} -> {} rebuilds: {} -> {}",
-                 rt0, rt1, rb0, rb1);
+    std::println("  rebuild_time_us: {} -> {} rebuilds: {} -> {}", rt0, rt1, rb0, rb1);
     CHECK(rt1 >= rt0, "rebuild_time_us non-decreasing after rebuild");
     CHECK(rb1 > rb0, "rebuilds count bumped after rebuild");
     return true;
@@ -122,15 +125,17 @@ bool test_dirty_marks_under_mutate() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto dm0 = ws->tag_arity_index_dirty_marks();
     // Call mark_dirty_upward directly (the C++ primitive
     // path; Aura mutate:replace-value paths can skip this
     // depending on the lockless helper bypass path).
     if (ws->size() > 0) {
         for (int i = 0; i < 5; ++i) {
-            ws->mark_dirty_upward(
-                static_cast<aura::ast::NodeId>(i % ws->size()));
+            ws->mark_dirty_upward(static_cast<aura::ast::NodeId>(i % ws->size()));
         }
     }
     const auto dm1 = ws->tag_arity_index_dirty_marks();
@@ -147,11 +152,9 @@ bool test_respect_hygiene_keyword_regression() {
     (void)cs.eval("(set-code \"(define x 1)\")");
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:pattern \"x\" :respect-hygiene #f)");
-    CHECK(r.has_value(),
-          "(query:pattern :respect-hygiene #f) returns (regression for #547)");
+    CHECK(r.has_value(), "(query:pattern :respect-hygiene #f) returns (regression for #547)");
     auto r2 = cs.eval("(query:pattern \"x\")");
-    CHECK(r2.has_value(),
-          "(query:pattern) without :respect-hygiene returns (default = skip)");
+    CHECK(r2.has_value(), "(query:pattern) without :respect-hygiene returns (default = skip)");
     return true;
 }
 
@@ -164,13 +167,15 @@ bool test_large_ast_macro_query_flow() {
     // expansion on a large codebase).
     std::string large_code = "(define a 1)";
     for (int i = 0; i < 50; ++i) {
-        large_code += " (define v" + std::to_string(i) +
-            " " + std::to_string(i) + ")";
+        large_code += " (define v" + std::to_string(i) + " " + std::to_string(i) + ")";
     }
     (void)cs.eval("(set-code \"" + large_code + "\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     // Rebuild + pattern query.
     ws->rebuild_tag_arity_index();
     auto r1 = cs.eval("(query:pattern \"v\" :respect-hygiene #t)");
@@ -184,13 +189,15 @@ bool test_large_ast_macro_query_flow() {
 // ── AC7: 200-iter mutate + pattern query cycle —
 //         rebuild_time_us + dirty_marks grow ────────────────
 bool test_long_running_pattern_cycle() {
-    std::println("\n--- AC7: {} iters mutate + pattern query cycle ---",
-                 k_long_iters());
+    std::println("\n--- AC7: {} iters mutate + pattern query cycle ---", k_long_iters());
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
     (void)cs.eval("(eval-current)");
     auto* ws = cs.evaluator().workspace_flat();
-    if (!ws) { ++aura::test::g_failed; return false; }
+    if (!ws) {
+        ++aura::test::g_failed;
+        return false;
+    }
     const auto rt0 = ws->tag_arity_index_rebuild_time_us();
     const auto dm0 = ws->tag_arity_index_dirty_marks();
     for (int i = 0; i < k_long_iters(); ++i) {
@@ -198,8 +205,7 @@ bool test_long_running_pattern_cycle() {
         // path that bypasses mark_dirty_upward for
         // define / certain mutate variants).
         if (ws->size() > 0) {
-            ws->mark_dirty_upward(
-                static_cast<aura::ast::NodeId>(i % ws->size()));
+            ws->mark_dirty_upward(static_cast<aura::ast::NodeId>(i % ws->size()));
         }
         // Periodic pattern query.
         if ((i & 31) == 0) {
@@ -208,8 +214,7 @@ bool test_long_running_pattern_cycle() {
     }
     const auto rt1 = ws->tag_arity_index_rebuild_time_us();
     const auto dm1 = ws->tag_arity_index_dirty_marks();
-    std::println("  rebuild_time_us: {} -> {} dirty_marks: {} -> {}",
-                 rt0, rt1, dm0, dm1);
+    std::println("  rebuild_time_us: {} -> {} dirty_marks: {} -> {}", rt0, rt1, dm0, dm1);
     CHECK(dm1 >= dm0 + static_cast<std::uint64_t>(k_long_iters() - 5),
           "dirty_marks grew under cycle (>= ~iter count)");
     CHECK(rt1 >= rt0, "rebuild_time_us non-decreasing");
@@ -229,8 +234,8 @@ bool test_eight_thread_concurrent_pattern_query() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = std::string("(define v") +
-                std::to_string(tid) + " " + std::to_string(i) + ")";
+            std::string code =
+                std::string("(define v") + std::to_string(tid) + " " + std::to_string(i) + ")";
             (void)cs.eval(code);
             // Periodic pattern query.
             if ((i & 7) == 0) {
@@ -239,21 +244,22 @@ bool test_eight_thread_concurrent_pattern_query() {
             // Bump dirty_marks directly per iter.
             auto* ws = cs.evaluator().workspace_flat();
             if (ws && ws->size() > 0) {
-                ws->mark_dirty_upward(
-                    static_cast<aura::ast::NodeId>(i % ws->size()));
+                ws->mark_dirty_upward(static_cast<aura::ast::NodeId>(i % ws->size()));
             }
             completed.fetch_add(1);
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
 
     auto* ws = cs.evaluator().workspace_flat();
     const auto rt = ws ? ws->tag_arity_index_rebuild_time_us() : 0;
     const auto dm = ws ? ws->tag_arity_index_dirty_marks() : 0;
-    std::println("  completed: {}/{} rebuild_time_us: {} dirty_marks: {}",
-                 completed.load(), n_threads * n_iters, rt, dm);
+    std::println("  completed: {}/{} rebuild_time_us: {} dirty_marks: {}", completed.load(),
+                 n_threads * n_iters, rt, dm);
     CHECK(completed.load() == n_threads * n_iters,
           "all 160 ops completed (no crash under concurrent pattern query)");
     CHECK(dm > 0, "dirty_marks > 0 after concurrent mark_dirty_upward");
@@ -309,8 +315,12 @@ int run_tests() {
 
 } // namespace aura_issue_554_detail
 
-int aura_issue_554_run() { return aura_issue_554_detail::run_tests(); }
+int aura_issue_554_run() {
+    return aura_issue_554_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_554_run(); }
+int main() {
+    return aura_issue_554_run();
+}
 #endif

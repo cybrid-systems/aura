@@ -61,8 +61,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(ok.has_value(), "mutate:atomic-batch happy path returns");
     const auto commits1 = cs.evaluator().atomic_batch_count();
     const auto stats2b = rollback_stats(cs);
-    std::println("  batch_commits: {} -> {} stats: {} -> {}",
-                 commits0, commits1, stats2a, stats2b);
+    std::println("  batch_commits: {} -> {} stats: {} -> {}", commits0, commits1, stats2a, stats2b);
     CHECK(commits1 > commits0, "happy batch bumps atomic_batch_count");
     CHECK(stats2b > stats2a, "rollback stats bumped after happy batch");
 
@@ -74,8 +73,7 @@ static void run_matrix(CompilerService& cs) {
                   "\"529-fail\")");
     const auto roll1 = cs.evaluator().atomic_batch_rollbacks();
     const auto stats3b = rollback_stats(cs);
-    std::println("  rollbacks: {} -> {} stats: {} -> {}",
-                 roll0, roll1, stats3a, stats3b);
+    std::println("  rollbacks: {} -> {} stats: {} -> {}", roll0, roll1, stats3a, stats3b);
     CHECK(roll1 >= roll0, "batch rollbacks monotonic on fail path");
     CHECK(stats3b >= stats3a, "rollback stats monotonic on fail path");
 
@@ -89,8 +87,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round batch matrix monotonic ---");
     const auto stats5a = rollback_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:atomic-batch (list) \"529-round-" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:atomic-batch (list) \"529-round-" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats5b = rollback_stats(cs);

@@ -406,7 +406,6 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
         return parse_value();
     });
-
 }
 
-}  // namespace aura::compiler::primitives_detail
+} // namespace aura::compiler::primitives_detail

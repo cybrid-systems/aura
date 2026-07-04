@@ -39,23 +39,35 @@ namespace aura_433_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counter_zero() {
     std::println("\n--- AC1: dead_coercion_eliminated_total starts at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.dead_coercion_eliminated_total, 0u,
-             "dead_coercion_eliminated_total == 0");
+    CHECK_EQ(snap.dead_coercion_eliminated_total, 0u, "dead_coercion_eliminated_total == 0");
     return true;
 }
 
@@ -71,12 +83,10 @@ bool test_dead_coercion_stats_primitive() {
     std::println("\n--- AC3: (compile:dead-coercion-stats) returns int ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(compile:dead-coercion-stats)");
-    CHECK(r && aura::compiler::types::is_int(*r),
-          "(compile:dead-coercion-stats) returns int");
+    CHECK(r && aura::compiler::types::is_int(*r), "(compile:dead-coercion-stats) returns int");
     if (r && aura::compiler::types::is_int(*r)) {
         std::println("  initial value: {}", aura::compiler::types::as_int(*r));
-        CHECK_EQ(aura::compiler::types::as_int(*r), 0,
-                 "initial dead-coercion-stats is 0");
+        CHECK_EQ(aura::compiler::types::as_int(*r), 0, "initial dead-coercion-stats is 0");
     }
     return true;
 }
@@ -96,8 +106,7 @@ bool test_dce_wired_into_pipeline() {
     CHECK(r && aura::compiler::types::is_int(*r),
           "(compile:dead-coercion-stats) returns int after eval");
     auto snap = cs.snapshot();
-    std::println("  dead_coercion_eliminated_total: {}",
-                 snap.dead_coercion_eliminated_total);
+    std::println("  dead_coercion_eliminated_total: {}", snap.dead_coercion_eliminated_total);
     CHECK(snap.dead_coercion_eliminated_total == 0u,
           "dead_coercion_eliminated_total still 0 (no identity casts in this IR)");
     return true;
@@ -109,13 +118,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define t 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define t 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_433_detail
+} // namespace aura_433_detail
 
 int main() {
     using namespace aura_433_detail;
@@ -125,7 +133,7 @@ int main() {
     test_dead_coercion_stats_primitive();
     test_dce_wired_into_pipeline();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

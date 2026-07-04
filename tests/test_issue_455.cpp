@@ -14,8 +14,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -42,8 +42,7 @@ namespace aura_issue_455_detail {
 // ── AC1: SyntaxMarker enum values stable ──
 bool test_syntax_marker_enum() {
     std::println("\n--- AC1: SyntaxMarker enum values ---");
-    CHECK(static_cast<int>(aura::ast::SyntaxMarker::User) == 0,
-          "SyntaxMarker::User == 0");
+    CHECK(static_cast<int>(aura::ast::SyntaxMarker::User) == 0, "SyntaxMarker::User == 0");
     CHECK(static_cast<int>(aura::ast::SyntaxMarker::MacroIntroduced) == 1,
           "SyntaxMarker::MacroIntroduced == 1");
     CHECK(static_cast<int>(aura::ast::SyntaxMarker::BoolLiteral) == 2,
@@ -69,8 +68,7 @@ bool test_query_ir_marker_stats() {
     // or a pair (follow-up).
     bool is_int = aura::compiler::types::is_int(*r);
     bool is_pair = aura::compiler::types::is_pair(*r);
-    CHECK(is_int || is_pair,
-          "query:ir-marker-stats returns int (P0) or pair (follow-up)");
+    CHECK(is_int || is_pair, "query:ir-marker-stats returns int (P0) or pair (follow-up)");
     return true;
 }
 
@@ -118,11 +116,9 @@ bool test_source_marker_field() {
     std::println("\n--- AC4: IRInstruction::source_marker field exists (mirror) ---");
     IRInstructionMirror inst;
     inst.source_marker = 1; // MacroIntroduced
-    CHECK(inst.source_marker == 1,
-          "IRInstructionMirror::source_marker is set + read correctly");
+    CHECK(inst.source_marker == 1, "IRInstructionMirror::source_marker is set + read correctly");
     inst.source_marker = 2; // BoolLiteral
-    CHECK(inst.source_marker == 2,
-          "source_marker accepts all 3 marker values (0/1/2)");
+    CHECK(inst.source_marker == 2, "source_marker accepts all 3 marker values (0/1/2)");
     return true;
 }
 
@@ -182,8 +178,12 @@ int run_tests() {
 
 } // namespace aura_issue_455_detail
 
-int aura_issue_455_run() { return aura_issue_455_detail::run_tests(); }
+int aura_issue_455_run() {
+    return aura_issue_455_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_455_run(); }
+int main() {
+    return aura_issue_455_run();
+}
 #endif

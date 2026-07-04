@@ -39,35 +39,47 @@ import aura.compiler.query;
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} == {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} == {})", msg, _a, _b);                                   \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: NodeHandle accepts integrals, rejects non-integral ───
 bool test_node_handle() {
     std::println("\n--- AC1: NodeHandle ---");
-    static_assert(aura::core::NodeHandle<std::uint32_t>,
-                  "uint32_t satisfies NodeHandle");
-    static_assert(aura::core::NodeHandle<std::uint64_t>,
-                  "uint64_t satisfies NodeHandle");
+    static_assert(aura::core::NodeHandle<std::uint32_t>, "uint32_t satisfies NodeHandle");
+    static_assert(aura::core::NodeHandle<std::uint64_t>, "uint64_t satisfies NodeHandle");
     static_assert(aura::core::NodeHandle<int>, "int satisfies NodeHandle");
 
     // Strong typedef (has .value())
-    struct Strong { std::uint32_t v; std::uint32_t value() const { return v; } };
+    struct Strong {
+        std::uint32_t v;
+        std::uint32_t value() const { return v; }
+    };
     static_assert(aura::core::NodeHandle<Strong>,
                   "Strong typedef satisfies NodeHandle via .value()");
 
-    static_assert(!aura::core::NodeHandle<std::string>,
-                  "std::string does NOT satisfy NodeHandle");
-    static_assert(!aura::core::NodeHandle<float>,
-                  "float does NOT satisfy NodeHandle");
+    static_assert(!aura::core::NodeHandle<std::string>, "std::string does NOT satisfy NodeHandle");
+    static_assert(!aura::core::NodeHandle<float>, "float does NOT satisfy NodeHandle");
     CHECK(true, "static_asserts: NodeHandle accepts integrals, rejects others");
     return true;
 }
@@ -87,23 +99,19 @@ struct BadArenaDeallocThrows {
 
 bool test_arena_allocator() {
     std::println("\n--- AC2: ArenaAllocator ---");
-    static_assert(aura::core::ArenaAllocator<GoodArena>,
-                  "GoodArena satisfies ArenaAllocator");
+    static_assert(aura::core::ArenaAllocator<GoodArena>, "GoodArena satisfies ArenaAllocator");
     static_assert(!aura::core::ArenaAllocator<BadArenaNoAllocate>,
                   "BadArenaNoAllocate does NOT satisfy");
     static_assert(!aura::core::ArenaAllocator<BadArenaDeallocThrows>,
                   "BadArenaDeallocThrows (non-noexcept dealloc) does NOT satisfy");
-    static_assert(!aura::core::ArenaAllocator<int>,
-                  "int does NOT satisfy");
+    static_assert(!aura::core::ArenaAllocator<int>, "int does NOT satisfy");
     CHECK(true, "static_asserts: ArenaAllocator accepts GoodArena, rejects bad shapes");
     return true;
 }
 
 // ── AC3: AuraInvocable accepts visitors, rejects non-invocables
 struct GoodVisitor {
-    bool operator()(int x, const std::string& s) const {
-        return !s.empty() && x > 0;
-    }
+    bool operator()(int x, const std::string& s) const { return !s.empty() && x > 0; }
 };
 struct BadVisitorNoCall {
     int x = 0;
@@ -112,10 +120,12 @@ struct BadVisitorReturnsInt {
     int operator()(int, const std::string&) const { return 0; }
 };
 struct BadVisitorNoArgs {
-    bool operator()() const { return true; }  // wrong signature
+    bool operator()() const { return true; } // wrong signature
 };
 struct BadVisitorReturnsStruct {
-    struct NotBool { int x; };
+    struct NotBool {
+        int x;
+    };
     NotBool operator()(int, const std::string&) const { return {0}; }
 };
 
@@ -147,14 +157,12 @@ bool test_range_of() {
     static_assert(aura::core::RangeOf<int, std::span<const int>>,
                   "span<const int> is RangeOf<int>");
     // AnyRange: any range, no element type constraint.
-    static_assert(aura::core::AnyRange<std::vector<std::string>>,
-                  "vector<string> is AnyRange");
+    static_assert(aura::core::AnyRange<std::vector<std::string>>, "vector<string> is AnyRange");
     // Mismatched element type.
     static_assert(!aura::core::RangeOf<int, std::vector<std::string>>,
                   "vector<string> is NOT RangeOf<int> (element type mismatch)");
     // Non-range type.
-    static_assert(!aura::core::AnyRange<int>,
-                  "int is NOT a range");
+    static_assert(!aura::core::AnyRange<int>, "int is NOT a range");
     CHECK(true, "static_asserts: RangeOf/AnyRange correct accept/reject");
     return true;
 }
@@ -211,12 +219,12 @@ bool test_stable_node_ref_like() {
 bool test_composition() {
     std::println("\n--- AC7: concept composition ---");
     // AuraInvocable composes with std::invocable.
-    static_assert(aura::core::AuraInvocable<GoodVisitor, int, const std::string&>
-                  && std::invocable<GoodVisitor, int, const std::string&>,
+    static_assert(aura::core::AuraInvocable<GoodVisitor, int, const std::string&> &&
+                      std::invocable<GoodVisitor, int, const std::string&>,
                   "AuraInvocable implies std::invocable");
     // RangeOf<T, R> implies AnyRange<R>.
-    static_assert(aura::core::RangeOf<int, std::vector<int>>
-                  && aura::core::AnyRange<std::vector<int>>,
+    static_assert(aura::core::RangeOf<int, std::vector<int>> &&
+                      aura::core::AnyRange<std::vector<int>>,
                   "RangeOf implies AnyRange");
     CHECK(true, "static_asserts: concept composition correct");
     return true;
@@ -238,10 +246,8 @@ struct GoodDtor {
 
 bool test_arena_constraint_predicates() {
     std::println("\n--- AC8: arena constraint predicates ---");
-    static_assert(std::constructible_from<GoodDtor>,
-                  "GoodDtor is constructible_from (default)");
-    static_assert(std::is_nothrow_destructible_v<GoodDtor>,
-                  "GoodDtor is nothrow-destructible");
+    static_assert(std::constructible_from<GoodDtor>, "GoodDtor is constructible_from (default)");
+    static_assert(std::is_nothrow_destructible_v<GoodDtor>, "GoodDtor is nothrow-destructible");
     static_assert(!std::is_nothrow_destructible_v<ThrowingDtor>,
                   "ThrowingDtor is NOT nothrow-destructible");
     CHECK(true, "static_asserts: arena constraint predicates correct");
@@ -252,8 +258,7 @@ bool test_arena_constraint_predicates() {
 //
 // Runtime test: build a small nested AST, verify the helper
 // counts correctly for various predicates.
-static aura::ast::NodeId add_let_chain(aura::ast::FlatAST& flat,
-                                       aura::ast::StringPool& pool,
+static aura::ast::NodeId add_let_chain(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                        int depth) {
     // Build (let (a_0 1) (let (a_1 2) ... (let (a_n n) body)))
     // The root of the outermost let is returned.
@@ -348,20 +353,18 @@ struct TestPred {
 
 bool test_phase_d_concept_constraints() {
     std::println("\n--- AC11: Phase D helper concept constraints ---");
-    using aura::ast::NodeId;
     using aura::ast::FlatAST;
+    using aura::ast::NodeId;
 
     // Positive: helpers accept FlatAST.
     static_assert(
         requires(FlatAST& f, NodeId id, TestPred pred) {
-            aura::compiler::count_nodes_with_predicate<std::uint32_t>(
-                f, id, pred);
+            aura::compiler::count_nodes_with_predicate<std::uint32_t>(f, id, pred);
         }, "count_nodes_with_predicate accepts FlatAST + invocable pred");
 
     static_assert(
         requires(FlatAST& f, NodeId id, TestPred pred) {
-            aura::compiler::find_first_node_with<std::uint32_t>(
-                f, id, pred);
+            aura::compiler::find_first_node_with<std::uint32_t>(f, id, pred);
         }, "find_first_node_with accepts FlatAST + invocable pred");
 
     // (ASTContainer rejection for non-AST types is covered
@@ -392,7 +395,7 @@ bool test_walk_ancestors() {
     auto root = add_let_chain(flat, pool, /*depth*/ 3);
     // root is the outermost let. Its chain up is itself, then
     // parent (NULL_NODE — root of flat).
-    auto innermost_body = flat.children(root)[1];  // body of outermost let
+    auto innermost_body = flat.children(root)[1]; // body of outermost let
 
     // Walk from innermost body up — should hit itself, then root,
     // then NULL_NODE (which terminates via self-loop).
@@ -401,10 +404,8 @@ bool test_walk_ancestors() {
         seen.push_back(id);
         return true;
     };
-    auto count = aura::compiler::walk_ancestors<std::uint32_t>(
-        flat, innermost_body, vis);
-    CHECK_EQ(seen.size(), 2u,
-             "walk_ancestors visited 2 nodes (innermost body + root)");
+    auto count = aura::compiler::walk_ancestors<std::uint32_t>(flat, innermost_body, vis);
+    CHECK_EQ(seen.size(), 2u, "walk_ancestors visited 2 nodes (innermost body + root)");
     CHECK_EQ(count, 2u, "walk_ancestors returned count = 2");
     CHECK_EQ(seen[0], innermost_body, "first visited is innermost body");
     CHECK_EQ(seen[1], root, "second visited is outermost root");
@@ -412,20 +413,21 @@ bool test_walk_ancestors() {
     // Early-stop when visitor returns false.
     seen.clear();
     auto stop_at_first = [&](NodeId) -> bool {
-        seen.push_back(innermost_body);  // any sentinel, just record
-        return false;  // stop immediately
+        seen.push_back(innermost_body); // any sentinel, just record
+        return false;                   // stop immediately
     };
-    auto early_count = aura::compiler::walk_ancestors<std::uint32_t>(
-        flat, root, stop_at_first);
-    CHECK_EQ(early_count, 0u,
-             "early-stop returns 0 (visitor returned false before ++count)");
+    auto early_count = aura::compiler::walk_ancestors<std::uint32_t>(flat, root, stop_at_first);
+    CHECK_EQ(early_count, 0u, "early-stop returns 0 (visitor returned false before ++count)");
     CHECK_EQ(seen.size(), 1u, "early-stop visitor called exactly once");
 
     // Walk from the root node itself — should visit just root,
     // then terminate (parent_of(root) = NULL_NODE = self-loop).
     seen.clear();
-    auto root_count = aura::compiler::walk_ancestors<std::uint32_t>(
-        flat, root, [&](NodeId id) -> bool { seen.push_back(id); return true; });
+    auto root_count =
+        aura::compiler::walk_ancestors<std::uint32_t>(flat, root, [&](NodeId id) -> bool {
+            seen.push_back(id);
+            return true;
+        });
     CHECK_EQ(root_count, 1u, "walk_ancestors from root visits 1 node");
     CHECK_EQ(seen.size(), 1u, "1 entry in seen");
     CHECK_EQ(seen[0], root, "seen[0] is the root");
@@ -439,8 +441,8 @@ bool test_walk_ancestors() {
 // has all three). Negative cases covered by AC5 + AC11.
 bool test_walk_ancestors_concept_constraint() {
     std::println("\n--- AC13: walk_ancestors concept constraint ---");
-    using aura::ast::NodeId;
     using aura::ast::FlatAST;
+    using aura::ast::NodeId;
 
     struct TestPred {
         bool operator()(NodeId) const { return true; }
@@ -448,8 +450,7 @@ bool test_walk_ancestors_concept_constraint() {
 
     static_assert(
         requires(FlatAST& f, NodeId id, TestPred pred) {
-            aura::compiler::walk_ancestors<std::uint32_t>(
-                f, id, pred);
+            aura::compiler::walk_ancestors<std::uint32_t>(f, id, pred);
         }, "walk_ancestors accepts FlatAST + invocable + parent_of");
 
     CHECK(true, "static_assert: walk_ancestors accepts FlatAST + invocable");
@@ -468,17 +469,15 @@ bool test_count_nodes_with_tag() {
     auto root = add_let_chain(flat, pool, /*depth*/ 3);
 
     // Depth-3 chain: 3 Let nodes + 4 LiteralInt nodes = 7 total.
-    auto lets = aura::compiler::count_nodes_with_tag<std::uint32_t>(
-        flat, root, NodeTag::Let);
+    auto lets = aura::compiler::count_nodes_with_tag<std::uint32_t>(flat, root, NodeTag::Let);
     CHECK_EQ(lets, 3u, "Let count = 3");
 
-    auto lits = aura::compiler::count_nodes_with_tag<std::uint32_t>(
-        flat, root, NodeTag::LiteralInt);
+    auto lits =
+        aura::compiler::count_nodes_with_tag<std::uint32_t>(flat, root, NodeTag::LiteralInt);
     CHECK_EQ(lits, 4u, "LiteralInt count = 4");
 
     // No Variable nodes in a let chain.
-    auto vars = aura::compiler::count_nodes_with_tag<std::uint32_t>(
-        flat, root, NodeTag::Variable);
+    auto vars = aura::compiler::count_nodes_with_tag<std::uint32_t>(flat, root, NodeTag::Variable);
     CHECK_EQ(vars, 0u, "Variable count = 0 (none in chain)");
 
     // Total = 7 = 3 + 4.

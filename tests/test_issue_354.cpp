@@ -31,8 +31,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -51,8 +51,7 @@ bool test_flag_false_outside_guard() {
     using namespace aura;
     compiler::CompilerService cs;
     // No Guard alive — the flag should be false.
-    CHECK(!cs.mutation_boundary_held(),
-          "no-Guard: mutation_boundary_held() = false");
+    CHECK(!cs.mutation_boundary_held(), "no-Guard: mutation_boundary_held() = false");
     return true;
 }
 
@@ -66,20 +65,19 @@ bool test_flag_cleared_after_mutate() {
     using namespace aura;
     compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(begin (define g 42))\")").has_value()) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     if (!cs.eval("(eval-current)").has_value()) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Run a mutate:rebind; the Guard is opened +
     // closed by the primitive. After the call,
     // the flag should be false again.
-    auto r = cs.eval(
-        "(mutate:rebind \"g\" \"99\" \"test-rebind-for-354\")");
-    CHECK(r.has_value(),
-          "mutate:rebind runs");
-    CHECK(!cs.mutation_boundary_held(),
-          "post-mutate: mutation_boundary_held() = false");
+    auto r = cs.eval("(mutate:rebind \"g\" \"99\" \"test-rebind-for-354\")");
+    CHECK(r.has_value(), "mutate:rebind runs");
+    CHECK(!cs.mutation_boundary_held(), "post-mutate: mutation_boundary_held() = false");
     return true;
 }
 
@@ -93,23 +91,22 @@ bool test_flag_observable_across_multiple_mutates() {
     using namespace aura;
     compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(begin (define g 42) (define h 99))\")").has_value()) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     if (!cs.eval("(eval-current)").has_value()) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Pre-mutate: flag false.
-    CHECK(!cs.mutation_boundary_held(),
-          "pre-mutate: flag false");
+    CHECK(!cs.mutation_boundary_held(), "pre-mutate: flag false");
     // First mutate: Guard opens + closes inside
     // the primitive. Post: flag false again.
     cs.eval("(mutate:rebind \"g\" \"1\" \"first\")");
-    CHECK(!cs.mutation_boundary_held(),
-          "post-1st-mutate: flag false");
+    CHECK(!cs.mutation_boundary_held(), "post-1st-mutate: flag false");
     // Second mutate: same pattern.
     cs.eval("(mutate:rebind \"h\" \"2\" \"second\")");
-    CHECK(!cs.mutation_boundary_held(),
-          "post-2nd-mutate: flag false");
+    CHECK(!cs.mutation_boundary_held(), "post-2nd-mutate: flag false");
     return true;
 }
 
@@ -123,10 +120,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_354_detail
+} // namespace aura_issue_354_detail
 
-int aura_issue_354_run() { return aura_issue_354_detail::run_tests(); }
+int aura_issue_354_run() {
+    return aura_issue_354_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_354_run(); }
+int main() {
+    return aura_issue_354_run();
+}
 #endif

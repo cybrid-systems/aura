@@ -18,14 +18,19 @@ namespace aura_eda_sv_stress_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:eda-sv-closedloop-stress-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:eda-sv-closedloop-stress-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -49,22 +54,19 @@ static void build_soc_hierarchy(aura::ast::FlatAST& flat, aura::ast::StringPool&
         for (int clk = 0; clk < 10 && flat.size() < 5000; ++clk) {
             std::vector<aura::ast::NodeId> body;
             for (int mp = 0; mp < 4; ++mp) {
-                const std::vector<aura::ast::SymId> ports{
-                    pool.intern("sig_a"), pool.intern("sig_b")};
-                body.push_back(flat.add_modport(
-                    pool.intern(std::format("mp_{}_{}", batch, mp)), ports));
+                const std::vector<aura::ast::SymId> ports{pool.intern("sig_a"),
+                                                          pool.intern("sig_b")};
+                body.push_back(
+                    flat.add_modport(pool.intern(std::format("mp_{}_{}", batch, mp)), ports));
             }
-            (void)flat.add_interface(
-                pool.intern(std::format("iface_{}_{}", batch, clk)), body);
-            const auto prop = flat.add_property(
-                pool.intern(std::format("p_{}_{}", batch, clk)),
-                pool.intern("req ##1 ack"));
-            const std::vector<aura::ast::SymId> bins{pool.intern("b0"),
-                                                     pool.intern("b1")};
-            const auto cp = flat.add_coverpoint(
-                pool.intern(std::format("v_{}_{}", batch, clk)), bins);
+            (void)flat.add_interface(pool.intern(std::format("iface_{}_{}", batch, clk)), body);
+            const auto prop = flat.add_property(pool.intern(std::format("p_{}_{}", batch, clk)),
+                                                pool.intern("req ##1 ack"));
+            const std::vector<aura::ast::SymId> bins{pool.intern("b0"), pool.intern("b1")};
+            const auto cp =
+                flat.add_coverpoint(pool.intern(std::format("v_{}_{}", batch, clk)), bins);
             (void)flat.add_covergroup(pool.intern(std::format("cg_{}_{}", batch, clk)),
-                                     std::span<const aura::ast::NodeId>(&cp, 1));
+                                      std::span<const aura::ast::NodeId>(&cp, 1));
             (void)flat.add_assert(pool.intern(std::format("a_{}_{}", batch, clk)), prop);
         }
         ++batch;
@@ -80,7 +82,7 @@ static void seed_workspace(aura::compiler::CompilerService& cs) {
         build_soc_hierarchy(*ws, *pool);
 }
 
-}  // namespace aura_eda_sv_stress_detail
+} // namespace aura_eda_sv_stress_detail
 
 int main() {
     using namespace aura_eda_sv_stress_detail;
@@ -115,18 +117,15 @@ int main() {
     // AC2: long-run demo closed-loop
     {
         std::println("\n--- AC2: eda:demo-sv-self-evolution {} cycles ---", k_cycles);
-        auto r = cs.eval(std::format(
-            "(eda:demo-sv-self-evolution \"interface\" {})", k_cycles));
-        CHECK(r && aura::compiler::types::is_int(*r) &&
-                  aura::compiler::types::as_int(*r) > 0,
-              std::format("demo successes > 0 (got {})",
-                          r ? aura::compiler::types::as_int(*r) : -1));
+        auto r = cs.eval(std::format("(eda:demo-sv-self-evolution \"interface\" {})", k_cycles));
+        CHECK(
+            r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) > 0,
+            std::format("demo successes > 0 (got {})", r ? aura::compiler::types::as_int(*r) : -1));
         const auto cycles_after = stat_int(cs, "evolution-cycles");
         CHECK(cycles_after >= cycles_before + k_cycles,
-              std::format("evolution-cycles grew by >= {} ({} -> {})",
-                          k_cycles, cycles_before, cycles_after));
-        CHECK(stat_int(cs, "corruption-detected") == 0,
-              "no corruption during long-run demo");
+              std::format("evolution-cycles grew by >= {} ({} -> {})", k_cycles, cycles_before,
+                          cycles_after));
+        CHECK(stat_int(cs, "corruption-detected") == 0, "no corruption during long-run demo");
     }
 
     // AC3: query:sv-sva-structure-stats during stress
@@ -155,10 +154,8 @@ int main() {
                 (void)cs.eval("(typecheck-current)");
                 if ((i & 3) == 0)
                     (void)cs.eval("(mutate:request-gc-safepoint)");
-                auto r = cs.eval(
-                    "(eda:run-verification-feedback \"coverage.log\" \"0 chaos\")");
-                if (r && aura::compiler::types::is_bool(*r) &&
-                    aura::compiler::types::as_bool(*r))
+                auto r = cs.eval("(eda:run-verification-feedback \"coverage.log\" \"0 chaos\")");
+                if (r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r))
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }
         };
@@ -168,8 +165,7 @@ int main() {
         t2.join();
         CHECK(ok_count.load() > 0,
               std::format("fiber stress: {} successful loops", ok_count.load()));
-        CHECK(stat_int(cs, "corruption-detected") == 0,
-              "no corruption after chaos stress");
+        CHECK(stat_int(cs, "corruption-detected") == 0, "no corruption after chaos stress");
     }
 
     // AC5: orchestration-metrics reflects post-stress evolution cycles
@@ -187,8 +183,7 @@ int main() {
             }
         }
         const auto rate = stat_int(cs, "verification-convergence-rate");
-        CHECK(rate >= 90,
-              std::format("verification-convergence-rate >= 90% (got {}%)", rate));
+        CHECK(rate >= 90, std::format("verification-convergence-rate >= 90% (got {}%)", rate));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

@@ -26,8 +26,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.compiler.evaluator;
@@ -37,9 +37,9 @@ import aura.compiler.service;
 namespace aura_issue_543_detail {
 
 using aura::compiler::CompilerService;
-using aura::compiler::Evaluator;
-using aura::compiler::EnvId;
 using aura::compiler::EnvFrame;
+using aura::compiler::EnvId;
+using aura::compiler::Evaluator;
 using aura::compiler::NULL_ENV_ID;
 
 // ── AC1: query:envframe-dualpath-stats returns an integer ─
@@ -48,12 +48,10 @@ bool test_query_envframe_dualpath_stats() {
     CompilerService cs;
     auto r = cs.eval("(query:envframe-dualpath-stats)");
     CHECK(r.has_value(), "(query:envframe-dualpath-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:envframe-dualpath-stats) is an integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:envframe-dualpath-stats) is an integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
-        CHECK(v >= 0,
-              "(query:envframe-dualpath-stats) >= 0 (4 counters sum, all start at 0)");
+        CHECK(v >= 0, "(query:envframe-dualpath-stats) >= 0 (4 counters sum, all start at 0)");
     }
     return true;
 }
@@ -63,23 +61,25 @@ bool test_accessor_baselines() {
     std::println("\n--- AC2: 4 accessor baselines + monotonic ---");
     CompilerService cs;
     auto r0 = cs.eval("(query:envframe-dualpath-stats)");
-    if (!r0) { ++g_failed; return false; }
-    const auto baseline =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
+    if (!r0) {
+        ++g_failed;
+        return false;
+    }
+    const auto baseline = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
     auto r1 = cs.eval("(query:envframe-dualpath-stats)");
-    if (!r1) { ++g_failed; return false; }
-    const auto after =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
-    CHECK(after >= baseline,
-          "(query:envframe-dualpath-stats) monotonic (>= baseline)");
+    if (!r1) {
+        ++g_failed;
+        return false;
+    }
+    const auto after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
+    CHECK(after >= baseline, "(query:envframe-dualpath-stats) monotonic (>= baseline)");
     // Direct accessor reachability (sanity — the
     // primitive reads from these via get_*_accessors).
     const auto d = cs.evaluator().get_envframe_desync_detected();
     const auto sr = cs.evaluator().get_envframe_stale_refresh_count();
     const auto vm = cs.evaluator().get_envframe_version_mismatch_in_walk();
     const auto gs = cs.evaluator().get_envframe_gc_walk_safe_skips();
-    CHECK(d + sr + vm + gs >= 0,
-          "4 accessors reachable (desync+stale+version+gc-skips >= 0)");
+    CHECK(d + sr + vm + gs >= 0, "4 accessors reachable (desync+stale+version+gc-skips >= 0)");
     return true;
 }
 
@@ -91,10 +91,8 @@ bool test_alloc_stamps_version() {
     const EnvId id = ev.alloc_env_frame();
     CHECK(id != NULL_ENV_ID, "alloc_env_frame returns valid id");
     CHECK(ev.is_valid_env_id(id), "is_valid_env_id(id) returns true");
-    CHECK(ev.env_frame(id).version_ == v0,
-          "frame.version_ == defuse_version_ at alloc time");
-    CHECK(!ev.is_env_frame_stale(id),
-          "freshly-allocated frame is not stale");
+    CHECK(ev.env_frame(id).version_ == v0, "frame.version_ == defuse_version_ at alloc time");
+    CHECK(!ev.is_env_frame_stale(id), "freshly-allocated frame is not stale");
     return true;
 }
 
@@ -107,13 +105,10 @@ bool test_stale_detection() {
     CHECK(!ev.is_env_frame_stale(id), "fresh frame not stale");
     // After artificial bump: stale.
     ev.bump_defuse_version_for_test();
-    CHECK(ev.is_env_frame_stale(id),
-          "frame is stale after defuse_version_ bump");
+    CHECK(ev.is_env_frame_stale(id), "frame is stale after defuse_version_ bump");
     // Invalid id: treated as stale (defensive).
-    CHECK(ev.is_env_frame_stale(NULL_ENV_ID),
-          "NULL_ENV_ID is stale (defensive)");
-    CHECK(ev.is_env_frame_stale(999999),
-          "out-of-range id is stale (defensive)");
+    CHECK(ev.is_env_frame_stale(NULL_ENV_ID), "NULL_ENV_ID is stale (defensive)");
+    CHECK(ev.is_env_frame_stale(999999), "out-of-range id is stale (defensive)");
     return true;
 }
 
@@ -125,18 +120,15 @@ bool test_materialize_bumps_stale_refresh() {
     EnvId id = ev.alloc_env_frame();
     aura::compiler::Closure cl;
     cl.env_id = id;
-    const auto baseline =
-        ev.get_envframe_stale_refresh_count();
+    const auto baseline = ev.get_envframe_stale_refresh_count();
     // Bump to mark the frame stale.
     ev.bump_defuse_version_for_test();
-    CHECK(ev.is_env_frame_stale(id),
-          "frame stale before materialize_call_env");
+    CHECK(ev.is_env_frame_stale(id), "frame stale before materialize_call_env");
     // materialize_call_env should refresh + bump counter.
     auto ne = ev.materialize_call_env(cl);
     (void)ne;
     const auto after = ev.get_envframe_stale_refresh_count();
-    CHECK(after > baseline,
-          "stale_refresh_count_ bumped by materialize_call_env");
+    CHECK(after > baseline, "stale_refresh_count_ bumped by materialize_call_env");
     // The frame's version_ should now equal current
     // defuse_version_ (post-refresh).
     CHECK(ev.env_frame(id).version_ == ev.defuse_version_for_test(),
@@ -159,10 +151,9 @@ bool test_walk_version_mismatch_counter() {
 
     // Walk visits all (using lookup_by_symid_chain which
     // goes through walk_env_frames internally).
-    aura::ast::SymId some_sym = 0;  // not in any frame; lookup miss is fine
+    aura::ast::SymId some_sym = 0; // not in any frame; lookup miss is fine
     auto r1 = ev.lookup_by_symid_chain(grand, some_sym);
-    CHECK(!r1.has_value(),
-          "lookup miss for absent sym (walk visits but finds nothing)");
+    CHECK(!r1.has_value(), "lookup miss for absent sym (walk visits but finds nothing)");
 
     // Now bump to mark all frames stale, walk again —
     // should bump version_mismatch_in_walk_ 3 times
@@ -172,8 +163,7 @@ bool test_walk_version_mismatch_counter() {
     auto r2 = ev.lookup_by_symid_chain(grand, some_sym);
     (void)r2;
     const auto after = ev.get_envframe_version_mismatch_in_walk();
-    CHECK(after >= baseline + 3,
-          "version_mismatch_in_walk_ bumped >= 3 (root + child + grand)");
+    CHECK(after >= baseline + 3, "version_mismatch_in_walk_ bumped >= 3 (root + child + grand)");
     return true;
 }
 
@@ -192,8 +182,7 @@ bool test_gc_walk_safe_skips() {
     ev.walk_env_frame_roots(pair_roots, closure_roots);
     // Empty bindings → no roots collected (we don't care
     // about the exact counts here).
-    CHECK(true,
-          "walk_env_frame_roots runs to completion (no crash on empty bindings)");
+    CHECK(true, "walk_env_frame_roots runs to completion (no crash on empty bindings)");
 
     // Now bump + walk again — every frame should be
     // skipped, bumping gc_walk_safe_skips_ by 5.
@@ -203,8 +192,7 @@ bool test_gc_walk_safe_skips() {
     closure_roots.clear();
     ev.walk_env_frame_roots(pair_roots, closure_roots);
     const auto after = ev.get_envframe_gc_walk_safe_skips();
-    CHECK(after >= baseline + 5,
-          "gc_walk_safe_skips_ bumped >= 5 (5 stale frames skipped)");
+    CHECK(after >= baseline + 5, "gc_walk_safe_skips_ bumped >= 5 (5 stale frames skipped)");
     return true;
 }
 
@@ -223,8 +211,7 @@ bool test_dual_path_length_consistency() {
     std::vector<std::int64_t> pr, cr;
     ev.walk_env_frame_roots(pr, cr);
     const auto after_walk = ev.get_envframe_desync_detected();
-    CHECK(after_walk == baseline,
-          "no desync on empty frame walk (baseline preserved)");
+    CHECK(after_walk == baseline, "no desync on empty frame walk (baseline preserved)");
     (void)id;
     return true;
 }
@@ -243,23 +230,23 @@ bool test_multi_thread_rebind_no_desync() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(define v" + std::to_string(tid) +
-                " " + std::to_string(i) + ")";
+            std::string code = "(define v" + std::to_string(tid) + " " + std::to_string(i) + ")";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
 
     const auto desync = cs.evaluator().get_envframe_desync_detected();
-    std::println("  completed: {}/{} desync_detected: {}",
-                 completed.load(), n_threads * n_iters, desync);
+    std::println("  completed: {}/{} desync_detected: {}", completed.load(), n_threads * n_iters,
+                 desync);
     CHECK(completed.load() == n_threads * n_iters,
           "all threads completed (no crash under concurrent mutate)");
-    CHECK(desync == 0,
-          "no desync detected under 8-thread concurrent rebind");
+    CHECK(desync == 0, "no desync detected under 8-thread concurrent rebind");
     return true;
 }
 
@@ -276,10 +263,8 @@ bool test_gc_heap_walk_metrics() {
     const auto after = cs.evaluator().get_envframe_gc_walk_safe_skips();
     // No stale bump → no extra skips; or a few skips if
     // the GC walk internally bumped defuse_version_.
-    std::println("  gc_walk_safe_skips: before={} after={}",
-                 before, after);
-    CHECK(after >= before,
-          "gc_walk_safe_skips monotonic (no decrements)");
+    std::println("  gc_walk_safe_skips: before={} after={}", before, after);
+    CHECK(after >= before, "gc_walk_safe_skips monotonic (no decrements)");
     return true;
 }
 
@@ -324,8 +309,12 @@ int run_tests() {
 
 } // namespace aura_issue_543_detail
 
-int aura_issue_543_run() { return aura_issue_543_detail::run_tests(); }
+int aura_issue_543_run() {
+    return aura_issue_543_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_543_run(); }
+int main() {
+    return aura_issue_543_run();
+}
 #endif

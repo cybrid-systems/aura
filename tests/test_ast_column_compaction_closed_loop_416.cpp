@@ -87,17 +87,14 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round recycle/compact matrix ---");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "workspace flat available for compaction counters");
-    const auto cum6a =
-        ws->node_recycle_total() + ws->node_compact_total();
+    const auto cum6a = ws->node_recycle_total() + ws->node_compact_total();
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(ast:recycle-nodes)");
         (void)cs.eval("(ast:compact-nodes)");
     }
-    const auto cum6b =
-        ws->node_recycle_total() + ws->node_compact_total();
+    const auto cum6b = ws->node_recycle_total() + ws->node_compact_total();
     std::println("  recycle+compact cumulative: {} -> {}", cum6a, cum6b);
     CHECK(cum6b >= cum6a, "cumulative compaction counters monotonic");
     auto vpr = cs.eval("(ast:validate-post-restore)");

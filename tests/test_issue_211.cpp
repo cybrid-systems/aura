@@ -38,8 +38,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.service;
@@ -47,9 +47,8 @@ import aura.core;
 import aura.compiler.value;
 
 
-
 namespace aura_issue_211_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 // ── Test 1: index is empty before any build ──
 // The index is lazy-built. Without a workspace, no
@@ -59,14 +58,11 @@ bool test_index_empty_without_workspace() {
     aura::compiler::CompilerService cs;
     auto& ev = cs.evaluator();
     // No set-code called, no workspace loaded.
-    CHECK(ev.workspace_flat() == nullptr,
-          "no workspace loaded");
+    CHECK(ev.workspace_flat() == nullptr, "no workspace loaded");
     // Force-build the index (no-op since no workspace).
     ev.force_build_tag_arity_index();
-    CHECK(ev.tag_arity_index_size() == 0,
-          "index is empty (no workspace to index)");
-    CHECK(ev.tag_arity_index_workspace() == nullptr,
-          "index workspace ptr is null");
+    CHECK(ev.tag_arity_index_size() == 0, "index is empty (no workspace to index)");
+    CHECK(ev.tag_arity_index_workspace() == nullptr, "index workspace ptr is null");
     return true;
 }
 
@@ -91,8 +87,7 @@ bool test_index_populated_after_build() {
     ev.force_build_tag_arity_index();
     // The index should have entries (one per unique
     // (tag, arity) pair).
-    CHECK(ev.tag_arity_index_size() >= 1,
-          "index is populated after force_build");
+    CHECK(ev.tag_arity_index_size() >= 1, "index is populated after force_build");
     CHECK(ev.tag_arity_index_workspace() == flat,
           "index workspace ptr matches the loaded workspace");
     return true;
@@ -143,10 +138,8 @@ bool test_invalidate_clears_index() {
     CHECK(ev.tag_arity_index_size() >= 1, "index built");
     // Invalidate
     ev.invalidate_tag_arity_index_for_test();
-    CHECK(ev.tag_arity_index_size() == 0,
-          "index empty after invalidate");
-    CHECK(ev.tag_arity_index_workspace() == nullptr,
-          "workspace ptr null after invalidate");
+    CHECK(ev.tag_arity_index_size() == 0, "index empty after invalidate");
+    CHECK(ev.tag_arity_index_workspace() == nullptr, "workspace ptr null after invalidate");
     return true;
 }
 
@@ -167,8 +160,7 @@ bool test_rebuild_after_invalidate_uses_current_workspace() {
     flat1->add_variable(x1);
     ev.set_workspace_flat_for_test(flat1);
     ev.force_build_tag_arity_index();
-    CHECK(ev.tag_arity_index_workspace() == flat1,
-          "first build: workspace ptr is flat1");
+    CHECK(ev.tag_arity_index_workspace() == flat1, "first build: workspace ptr is flat1");
     // Invalidate and switch to a new workspace
     ev.invalidate_tag_arity_index_for_test();
     auto* pool2 = ev.test_arena().create<aura::ast::StringPool>(alloc);
@@ -198,7 +190,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_211_detail
+} // namespace aura_issue_211_detail
 
-int aura_issue_211_run() { return aura_issue_211_detail::run_tests(); }
-
+int aura_issue_211_run() {
+    return aura_issue_211_detail::run_tests();
+}

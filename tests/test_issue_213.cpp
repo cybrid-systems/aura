@@ -27,8 +27,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import std;
 import aura.compiler.evaluator;
@@ -38,19 +38,14 @@ import aura.diag;
 import aura.compiler.value;
 
 
-
 namespace aura_issue_213_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 // Helper: build a workspace FlatAST with N Int literal nodes
 // and return it. The literals are initialized with
 // `set_int` to known values so we can verify rollback.
-static void build_workspace_with_n_literals(
-    aura::ast::FlatAST& flat,
-    aura::ast::StringPool& pool,
-    std::int64_t initial_value,
-    std::size_t n)
-{
+static void build_workspace_with_n_literals(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                            std::int64_t initial_value, std::size_t n) {
     for (std::size_t i = 0; i < n; ++i) {
         auto lit = flat.add_literal(initial_value);
         (void)lit;
@@ -61,14 +56,16 @@ static void build_workspace_with_n_literals(
 static std::size_t count_committed(aura::ast::FlatAST& flat) {
     std::size_t n = 0;
     for (const auto& r : flat.all_mutations()) {
-        if (r.status == aura::ast::MutationStatus::Committed) ++n;
+        if (r.status == aura::ast::MutationStatus::Committed)
+            ++n;
     }
     return n;
 }
 static std::size_t count_rolled_back(aura::ast::FlatAST& flat) {
     std::size_t n = 0;
     for (const auto& r : flat.all_mutations()) {
-        if (r.status == aura::ast::MutationStatus::RolledBack) ++n;
+        if (r.status == aura::ast::MutationStatus::RolledBack)
+            ++n;
     }
     return n;
 }
@@ -103,7 +100,8 @@ bool test_exit_success_keeps_mutation() {
     CHECK(flat.int_val(0) == 42, "node 0 stays at 42 after exit(true)");
     CHECK(count_committed(flat) == 1, "1 committed mutation in log");
     CHECK(count_rolled_back(flat) == 0, "0 rolled-back mutations in log");
-    CHECK(ev.defuse_version_snapshot() == v0 + 2, "version bumped by 2 (enter + exit, success path)");
+    CHECK(ev.defuse_version_snapshot() == v0 + 2,
+          "version bumped by 2 (enter + exit, success path)");
     return true;
 }
 
@@ -115,12 +113,12 @@ bool test_exit_failure_rolls_back_single() {
     auto alloc = arena.allocator();
     aura::ast::StringPool pool(alloc);
     aura::ast::FlatAST flat(alloc);
-    build_workspace_with_n_literals(flat, pool, 10, 1);  // node 0 starts at 10
+    build_workspace_with_n_literals(flat, pool, 10, 1); // node 0 starts at 10
     ev.set_workspace_flat(&flat);
     ev.set_workspace_pool(&pool);
 
     ev.enter_mutation_boundary();
-    flat.set_int(0, 99);  // change node 0 from 10 to 99
+    flat.set_int(0, 99); // change node 0 from 10 to 99
     flat.add_mutation_with_rollback(0, "test:set", "Int", "Int", "10 → 99",
                                     aura::ast::MutationStatus::Committed,
                                     /*field_offset=*/0, /*old=*/10, /*new=*/99,
@@ -142,7 +140,7 @@ bool test_exit_failure_rolls_back_multiple() {
     auto alloc = arena.allocator();
     aura::ast::StringPool pool(alloc);
     aura::ast::FlatAST flat(alloc);
-    build_workspace_with_n_literals(flat, pool, 100, 4);  // 4 nodes at 100
+    build_workspace_with_n_literals(flat, pool, 100, 4); // 4 nodes at 100
     ev.set_workspace_flat(&flat);
     ev.set_workspace_pool(&pool);
 
@@ -252,7 +250,7 @@ bool test_nested_boundaries_outer_rollback() {
     flat.set_int(0, 20);
     flat.add_mutation_with_rollback(0, "inner:1", "Int", "Int", "10 → 20",
                                     aura::ast::MutationStatus::Committed, 0, 10, 20, true);
-    ev.exit_mutation_boundary(true);  // inner commits
+    ev.exit_mutation_boundary(true); // inner commits
     CHECK(flat.int_val(0) == 20, "after inner commit: node 0 is 20");
 
     // Outer fails → both outer:1 and inner:1 are rolled back.
@@ -307,7 +305,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_213_detail
+} // namespace aura_issue_213_detail
 
-int aura_issue_213_run() { return aura_issue_213_detail::run_tests(); }
-
+int aura_issue_213_run() {
+    return aura_issue_213_detail::run_tests();
+}

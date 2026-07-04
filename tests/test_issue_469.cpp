@@ -22,8 +22,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -41,8 +41,7 @@ bool test_query_verification_loop_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:verification-loop-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:verification-loop-stats returns an integer");
     return true;
 }
 
@@ -61,10 +60,8 @@ bool test_parse_coverage_feedback() {
         ++g_failed;
         return false;
     }
-    const auto count =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
-    CHECK(count == 2,
-          "verify:parse-coverage-feedback marks 2 nodes dirty");
+    const auto count = static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
+    CHECK(count == 2, "verify:parse-coverage-feedback marks 2 nodes dirty");
     return true;
 }
 
@@ -81,10 +78,8 @@ bool test_parse_assert_failure() {
         ++g_failed;
         return false;
     }
-    const auto count =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
-    CHECK(count == 1,
-          "verify:parse-assert-failure marks 1 node dirty");
+    const auto count = static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
+    CHECK(count == 1, "verify:parse-assert-failure marks 1 node dirty");
     return true;
 }
 
@@ -109,15 +104,12 @@ bool test_sv_add_coverpoint() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r) &&
-              aura::compiler::types::as_bool(*r),
+    CHECK(aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
           "mutate:sv-add-coverpoint returns #t");
     const auto att_after = ws->sv_mutate_attempts_total();
     const auto suc_after = ws->sv_mutate_success_total();
-    CHECK(att_after > att_before,
-          "mutate:sv-add-coverpoint bumps sv_mutate_attempts_total_");
-    CHECK(suc_after > suc_before,
-          "mutate:sv-add-coverpoint bumps sv_mutate_success_total_");
+    CHECK(att_after > att_before, "mutate:sv-add-coverpoint bumps sv_mutate_attempts_total_");
+    CHECK(suc_after > suc_before, "mutate:sv-add-coverpoint bumps sv_mutate_success_total_");
     return true;
 }
 
@@ -141,12 +133,10 @@ bool test_sv_weaken_property() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_bool(*r) &&
-              aura::compiler::types::as_bool(*r),
+    CHECK(aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
           "mutate:sv-weaken-property returns #t");
     const auto att_after = ws->sv_mutate_attempts_total();
-    CHECK(att_after > att_before,
-          "mutate:sv-weaken-property bumps sv_mutate_attempts_total_");
+    CHECK(att_after > att_before, "mutate:sv-weaken-property bumps sv_mutate_attempts_total_");
     return true;
 }
 
@@ -164,8 +154,7 @@ bool test_query_verification_loop_stats_bumps() {
         ++g_failed;
         return false;
     }
-    const auto count_before =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
+    const auto count_before = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
     // Do a parse + a mutate.
     if (!cs.eval("(verify:parse-coverage-feedback \"0 hole\n\")")) {
         ++g_failed;
@@ -180,8 +169,7 @@ bool test_query_verification_loop_stats_bumps() {
         ++g_failed;
         return false;
     }
-    const auto count_after =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
+    const auto count_after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
     CHECK(count_after > count_before,
           "query:verification-loop-stats count increased after parse + mutate");
     return true;
@@ -202,7 +190,8 @@ bool test_public_accessors() {
     (void)ws->sv_mutate_attempts_total();
     (void)ws->sv_mutate_success_total();
     (void)ws->verify_loop_cycles_total();
-    CHECK(true, "all 6 public accessors (verification_dirty, cov_total, ass_total, attempts, success, cycles) callable");
+    CHECK(true, "all 6 public accessors (verification_dirty, cov_total, ass_total, attempts, "
+                "success, cycles) callable");
     return true;
 }
 
@@ -240,13 +229,13 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 17 25) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 17 25) == 42 (regression)");
     return true;
 }
 
 int run_tests() {
-    std::println("Issue #469 (Verification closed-loop: parse feedback \u2192 mark dirty \u2192 structured SV mutate \u2192 re-emit)\n");
+    std::println("Issue #469 (Verification closed-loop: parse feedback \u2192 mark dirty \u2192 "
+                 "structured SV mutate \u2192 re-emit)\n");
     test_query_verification_loop_stats();
     test_parse_coverage_feedback();
     test_parse_assert_failure();
@@ -262,8 +251,12 @@ int run_tests() {
 
 } // namespace aura_issue_469_detail
 
-int aura_issue_469_run() { return aura_issue_469_detail::run_tests(); }
+int aura_issue_469_run() {
+    return aura_issue_469_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_469_run(); }
+int main() {
+    return aura_issue_469_run();
+}
 #endif

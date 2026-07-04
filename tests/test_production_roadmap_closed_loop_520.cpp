@@ -59,8 +59,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cov && is_int(*cov), "verify:parse-coverage-feedback returns int");
     const auto stats2b = roadmap_stats(cs);
     std::println("  roadmap stats: {} -> {}", stats2a, stats2b);
-    CHECK(stats2b > stats2a,
-          "coverage feedback bumps EDA verification counters");
+    CHECK(stats2b > stats2a, "coverage feedback bumps EDA verification counters");
 
     std::println("\n--- AC3: P2 Persistence checkpoint lifecycle ---");
     auto pcs = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
@@ -68,8 +67,7 @@ static void run_matrix(CompilerService& cs) {
     auto pcs2 = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
     CHECK(pcs && is_int(*pcs), "panic-checkpoint-lifecycle-stats returns int");
     CHECK(pcs2 && is_int(*pcs2), "panic-checkpoint-lifecycle after save");
-    CHECK(as_int(*pcs2) >= as_int(*pcs),
-          "checkpoint save bumps persistence counters");
+    CHECK(as_int(*pcs2) >= as_int(*pcs), "checkpoint save bumps persistence counters");
 
     std::println("\n--- AC4: P3 Memory safety regression ---");
     auto ces = cs.eval("(query:closure-env-safety-stats)");
@@ -90,8 +88,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: multi-round matrix monotonic ---");
     const auto stats7a = roadmap_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"y\" \"" +
-                      std::to_string(10 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"y\" \"" + std::to_string(10 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(mutate:request-gc-safepoint 10)");
     }

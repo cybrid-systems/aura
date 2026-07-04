@@ -23,30 +23,32 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // Forward-declare the type aliases to verify they're
 // at the expected types. The actual definitions are in
 // aura_jit_runtime.cpp (which is linked into the test).
 namespace aura_issue_173_detail {
 namespace aura {
-namespace runtime {
-// Mirror the aliases — this is a compile-time check that
-// the types are what we expect. If the production aliases
-// change, this test breaks.
-using PairId   = unsigned int;
-using CellId   = unsigned int;
-using StringId = unsigned int;
-inline constexpr PairId   NULL_PAIR_ID   = static_cast<PairId>(~0ULL);
-inline constexpr CellId   NULL_CELL_ID   = static_cast<CellId>(~0ULL);
-inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
-}  // namespace runtime
-}  // namespace aura
+    namespace runtime {
+        // Mirror the aliases — this is a compile-time check that
+        // the types are what we expect. If the production aliases
+        // change, this test breaks.
+        using PairId = unsigned int;
+        using CellId = unsigned int;
+        using StringId = unsigned int;
+        inline constexpr PairId NULL_PAIR_ID = static_cast<PairId>(~0ULL);
+        inline constexpr CellId NULL_CELL_ID = static_cast<CellId>(~0ULL);
+        inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
+    } // namespace runtime
+} // namespace aura
 
 
-
-#define PRINTLN(msg) do { std::print( "%s\n", (msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("%s\n", (msg));                                                                 \
+    } while (0)
 
 // ── Test 1: type aliases are correct sizes ──
 bool test_type_aliases() {
@@ -54,20 +56,16 @@ bool test_type_aliases() {
     CHECK(sizeof(aura::runtime::PairId) == 4, "PairId is 4 bytes");
     CHECK(sizeof(aura::runtime::CellId) == 4, "CellId is 4 bytes");
     CHECK(sizeof(aura::runtime::StringId) == 4, "StringId is 4 bytes");
-    CHECK(aura::runtime::PairId(42) < aura::runtime::NULL_PAIR_ID,
-          "PairId(42) < NULL_PAIR_ID");
+    CHECK(aura::runtime::PairId(42) < aura::runtime::NULL_PAIR_ID, "PairId(42) < NULL_PAIR_ID");
     return true;
 }
 
 // ── Test 2: NULL_X_ID sentinels are correct ──
 bool test_null_sentinels() {
     PRINTLN("\n--- Test 2: NULL_X_ID sentinels ---");
-    CHECK(aura::runtime::NULL_PAIR_ID == 0xFFFFFFFFu,
-          "NULL_PAIR_ID == 0xFFFFFFFFu (all bits set)");
-    CHECK(aura::runtime::NULL_CELL_ID == 0xFFFFFFFFu,
-          "NULL_CELL_ID == 0xFFFFFFFFu");
-    CHECK(aura::runtime::NULL_STRING_ID == 0xFFFFFFFFu,
-          "NULL_STRING_ID == 0xFFFFFFFFu");
+    CHECK(aura::runtime::NULL_PAIR_ID == 0xFFFFFFFFu, "NULL_PAIR_ID == 0xFFFFFFFFu (all bits set)");
+    CHECK(aura::runtime::NULL_CELL_ID == 0xFFFFFFFFu, "NULL_CELL_ID == 0xFFFFFFFFu");
+    CHECK(aura::runtime::NULL_STRING_ID == 0xFFFFFFFFu, "NULL_STRING_ID == 0xFFFFFFFFu");
     return true;
 }
 
@@ -101,7 +99,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_173_detail
+} // namespace aura_issue_173_detail
 
-int aura_issue_173_run() { return aura_issue_173_detail::run_tests(); }
-
+int aura_issue_173_run() {
+    return aura_issue_173_detail::run_tests();
+}

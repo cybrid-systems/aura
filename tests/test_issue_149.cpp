@@ -44,8 +44,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.type;
@@ -57,18 +57,19 @@ import aura.compiler.pass_manager;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_149_detail {
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (!(_a == _b)) { \
-        std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (!(_a == _b)) {                                                                         \
+            std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__);        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════════
 // AC #1: IRInstruction has the 3 new fields with defaults
@@ -80,15 +81,12 @@ void test_irinstruction_new_fields_defaults() {
     ir::IRInstruction instr{};
     CHECK_EQ(instr.linear_ownership_state, std::uint8_t{0},
              "linear_ownership_state defaults to 0 (untracked)");
-    CHECK_EQ(instr.adt_variant_id, std::uint32_t{0},
-             "adt_variant_id defaults to 0 (not ADT)");
+    CHECK_EQ(instr.adt_variant_id, std::uint32_t{0}, "adt_variant_id defaults to 0 (not ADT)");
     CHECK_EQ(instr.narrow_evidence, std::uint32_t{0},
              "narrow_evidence defaults to 0 (no narrowing)");
     // Existing fields still default correctly.
-    CHECK_EQ(instr.type_id, std::uint32_t{0},
-             "type_id defaults to 0 (unknown / Dynamic)");
-    CHECK_EQ(instr.shape_id, std::uint32_t{0},
-             "shape_id defaults to 0 (unknown / Dynamic)");
+    CHECK_EQ(instr.type_id, std::uint32_t{0}, "type_id defaults to 0 (unknown / Dynamic)");
+    CHECK_EQ(instr.shape_id, std::uint32_t{0}, "shape_id defaults to 0 (unknown / Dynamic)");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -109,8 +107,7 @@ void test_emit_with_metadata_exists() {
     // emit/emit_with_type still work alongside the new
     // emit_with_metadata helper.
     auto r = cs.typecheck("(f 5)");
-    CHECK(!r.empty(),
-          "typecheck end-to-end works (emit_with_metadata doesn't break lowering)");
+    CHECK(!r.empty(), "typecheck end-to-end works (emit_with_metadata doesn't break lowering)");
     // Verify the IR fields are queryable on a synthesized
     // instruction by going through the IR interpreter. The
     // new fields default to 0 since the existing builders
@@ -148,8 +145,7 @@ void test_pass_respects_narrow_evidence() {
     compiler::CompilerService cs;
     cs.set_code(R"((let ((x 1)) (if (number? x) (+ x 1) 0)))");
     auto r = cs.typecheck("x");
-    CHECK(!r.empty(),
-          "typecheck on narrowing-context x returns non-empty");
+    CHECK(!r.empty(), "typecheck on narrowing-context x returns non-empty");
     CHECK(true,
           "narrow_evidence guard in pass skips per-branch CastOp when set (compile-time check)");
 }
@@ -233,15 +229,13 @@ void test_type_observability() {
     // Compile-time check: the struct member access compiles.
     ir::IRInstruction instr{};
     // The fields can be set and read.
-    instr.linear_ownership_state = 1;  // Owned
+    instr.linear_ownership_state = 1; // Owned
     instr.adt_variant_id = 42;
-    instr.narrow_evidence = 1;  // number? predicate applied
+    instr.narrow_evidence = 1; // number? predicate applied
     CHECK_EQ(instr.linear_ownership_state, std::uint8_t{1},
              "linear_ownership_state settable for observability");
-    CHECK_EQ(instr.adt_variant_id, std::uint32_t{42},
-             "adt_variant_id settable for observability");
-    CHECK_EQ(instr.narrow_evidence, std::uint32_t{1},
-             "narrow_evidence settable for observability");
+    CHECK_EQ(instr.adt_variant_id, std::uint32_t{42}, "adt_variant_id settable for observability");
+    CHECK_EQ(instr.narrow_evidence, std::uint32_t{1}, "narrow_evidence settable for observability");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -275,12 +269,12 @@ int run_tests() {
     std::println("\n── AC #8: type observability ──");
     test_type_observability();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_149_detail
+} // namespace aura_issue_149_detail
 
-int aura_issue_149_run() { return aura_issue_149_detail::run_tests(); }
-
+int aura_issue_149_run() {
+    return aura_issue_149_detail::run_tests();
+}

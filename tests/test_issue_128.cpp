@@ -21,8 +21,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -30,8 +30,6 @@ import aura.diag;
 import aura.compiler.value;
 import aura.compiler.ir;
 import aura.compiler.compute_kind;
-
-
 
 
 // ── Test 1: cells() const return type is std::span ──────
@@ -110,18 +108,16 @@ bool test_compute_kind_instructions() {
     auto kinds = aura::compiler::compute_kind_instructions(s);
     CHECK(kinds.size() == 3, "compute_kind_instructions returns 3 kinds");
     if (kinds.size() == 3) {
-        CHECK(kinds[0] == aura::compiler::ComputeKind::Known,
-              "Nop → Known");
-        CHECK(kinds[1] == aura::compiler::ComputeKind::Known,
-              "ConstI64 → Known");
+        CHECK(kinds[0] == aura::compiler::ComputeKind::Known, "Nop → Known");
+        CHECK(kinds[1] == aura::compiler::ComputeKind::Known, "ConstI64 → Known");
         CHECK(kinds[2] == aura::compiler::ComputeKind::Unknown,
               "Call → Unknown (needs operand resolution)");
     }
 
     // Empty span → empty result
     std::vector<IRInstruction> empty;
-    auto empty_kinds = aura::compiler::compute_kind_instructions(
-        std::span<const IRInstruction>(empty));
+    auto empty_kinds =
+        aura::compiler::compute_kind_instructions(std::span<const IRInstruction>(empty));
     CHECK(empty_kinds.empty(), "empty span → empty result");
     return true;
 }
@@ -148,12 +144,12 @@ int run_tests() {
     test_span_vector_conversion();
     test_compute_kind_instructions();
     test_span_size();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_128_detail
+} // namespace aura_issue_128_detail
 
-int aura_issue_128_run() { return aura_issue_128_detail::run_tests(); }
-
+int aura_issue_128_run() {
+    return aura_issue_128_detail::run_tests();
+}

@@ -7,8 +7,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -19,8 +19,7 @@ import aura.compiler.sv_ir;
 
 namespace aura_issue_435_phase3_detail {
 
-static std::string run_string(aura::compiler::CompilerService& cs,
-                              const std::string& src) {
+static std::string run_string(aura::compiler::CompilerService& cs, const std::string& src) {
     auto r = cs.eval(src);
     if (!r)
         return "";
@@ -37,8 +36,8 @@ static std::string run_string(aura::compiler::CompilerService& cs,
 // ── AC1: C++ SequenceIR direct construction + accessors ──
 bool test_cpp_sequence_ir_direct() {
     std::println("\n--- AC1: C++ SequenceIR direct construction ---");
-    using aura::compiler::sv_ir::SequenceIR;
     using aura::compiler::sv_ir::make_sequence;
+    using aura::compiler::sv_ir::SequenceIR;
 
     SequenceIR s = make_sequence("req_seq", "req ##1 ack");
     CHECK(s.name == "req_seq", "SequenceIR.name == 'req_seq'");
@@ -60,18 +59,13 @@ bool test_cpp_emit_sequence() {
     std::string s;
 
     s = emit_sequence(make_sequence("req_seq", "req ##1 ack"));
-    CHECK(s.find("sequence req_seq") != std::string::npos,
-          "starts with 'sequence req_seq'");
-    CHECK(s.find("req ##1 ack") != std::string::npos,
-          "contains expr 'req ##1 ack'");
-    CHECK(s.find("endsequence") != std::string::npos,
-          "ends with 'endsequence'");
+    CHECK(s.find("sequence req_seq") != std::string::npos, "starts with 'sequence req_seq'");
+    CHECK(s.find("req ##1 ack") != std::string::npos, "contains expr 'req ##1 ack'");
+    CHECK(s.find("endsequence") != std::string::npos, "ends with 'endsequence'");
 
     s = emit_sequence(make_sequence("empty", ""));
-    CHECK(s.find("sequence empty") != std::string::npos,
-          "empty: starts with 'sequence empty'");
-    CHECK(s.find("endsequence") != std::string::npos,
-          "empty: ends with 'endsequence'");
+    CHECK(s.find("sequence empty") != std::string::npos, "empty: starts with 'sequence empty'");
+    CHECK(s.find("endsequence") != std::string::npos, "empty: ends with 'endsequence'");
 
     return true;
 }
@@ -79,8 +73,8 @@ bool test_cpp_emit_sequence() {
 // ── AC3: C++ PropertyIR direct construction + accessors ──
 bool test_cpp_property_ir_direct() {
     std::println("\n--- AC3: C++ PropertyIR direct construction ---");
-    using aura::compiler::sv_ir::PropertyIR;
     using aura::compiler::sv_ir::make_property;
+    using aura::compiler::sv_ir::PropertyIR;
 
     PropertyIR p = make_property("ack_prop", "req |-> ack");
     CHECK(p.name == "ack_prop", "PropertyIR.name == 'ack_prop'");
@@ -101,18 +95,13 @@ bool test_cpp_emit_property() {
     std::string s;
 
     s = emit_property(make_property("ack_prop", "req |-> ack"));
-    CHECK(s.find("property ack_prop") != std::string::npos,
-          "starts with 'property ack_prop'");
-    CHECK(s.find("req |-> ack") != std::string::npos,
-          "contains expr 'req |-> ack'");
-    CHECK(s.find("endproperty") != std::string::npos,
-          "ends with 'endproperty'");
+    CHECK(s.find("property ack_prop") != std::string::npos, "starts with 'property ack_prop'");
+    CHECK(s.find("req |-> ack") != std::string::npos, "contains expr 'req |-> ack'");
+    CHECK(s.find("endproperty") != std::string::npos, "ends with 'endproperty'");
 
     s = emit_property(make_property("empty", ""));
-    CHECK(s.find("property empty") != std::string::npos,
-          "empty: starts with 'property empty'");
-    CHECK(s.find("endproperty") != std::string::npos,
-          "empty: ends with 'endproperty'");
+    CHECK(s.find("property empty") != std::string::npos, "empty: starts with 'property empty'");
+    CHECK(s.find("endproperty") != std::string::npos, "empty: ends with 'endproperty'");
 
     return true;
 }
@@ -132,14 +121,12 @@ bool test_list_ir_still_works() {
     // umbrella; here we just verify the list IR is reachable
     // and a structured property built in C++ can co-exist
     // with a list-based assertion.
-    auto s = run_string(cs,
-        "(eda:emit-assertion "
-        "  (make-eda:assert 'ready_ok "
-        "    (make-eda:expr 'symbol "
-        "      (list (make-eda:expr 'symbol (list 'ack)))))))");
+    auto s = run_string(cs, "(eda:emit-assertion "
+                            "  (make-eda:assert 'ready_ok "
+                            "    (make-eda:expr 'symbol "
+                            "      (list (make-eda:expr 'symbol (list 'ack)))))))");
     CHECK(!s.empty(), "list-based eda:emit-assertion returns non-empty");
-    CHECK(s.find("assert") != std::string::npos,
-          "list-based assertion contains 'assert'");
+    CHECK(s.find("assert") != std::string::npos, "list-based assertion contains 'assert'");
     CHECK(s.find("ready_ok") != std::string::npos,
           "list-based assertion contains label 'ready_ok'");
 
@@ -159,8 +146,12 @@ int run_tests() {
 
 } // namespace aura_issue_435_phase3_detail
 
-int aura_issue_435_phase3_run() { return aura_issue_435_phase3_detail::run_tests(); }
+int aura_issue_435_phase3_run() {
+    return aura_issue_435_phase3_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_435_phase3_run(); }
+int main() {
+    return aura_issue_435_phase3_run();
+}
 #endif

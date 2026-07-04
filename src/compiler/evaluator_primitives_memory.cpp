@@ -214,9 +214,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         }
         auto result =
             std::format("string:{}/pairs:{}/cells:{}/err:{}/hash:{}/vec:{}/opq:{}/cls:{}/root:{}",
-                        ev.string_heap_.size(), ev.pairs_.size(), ev.cells_.size(), ev.error_values_.size(),
-                        g_hash_tables.size(), ev.vector_heap_.size(), ev.opaque_heap_.size(),
-                        ev.closures_.size(), root_count);
+                        ev.string_heap_.size(), ev.pairs_.size(), ev.cells_.size(),
+                        ev.error_values_.size(), g_hash_tables.size(), ev.vector_heap_.size(),
+                        ev.opaque_heap_.size(), ev.closures_.size(), root_count);
         auto sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(result);
         return types::make_string(sidx);
@@ -391,11 +391,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             if (idx >= ev.string_heap_.size())
                 return make_int(0);
             const auto& name = ev.string_heap_[idx];
-            return make_int(static_cast<std::int64_t>(
-                ev.arena_group_->adaptive_compact(name)));
+            return make_int(static_cast<std::int64_t>(ev.arena_group_->adaptive_compact(name)));
         }
-        return make_int(static_cast<std::int64_t>(
-            ev.arena_group_->adaptive_compact_all()));
+        return make_int(static_cast<std::int64_t>(ev.arena_group_->adaptive_compact_all()));
     });
     // (arena:compact-with-policy name policy) — Issue #430:
     // manual policy override. policy is one of:
@@ -430,8 +428,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             p = aura::ast::ArenaGroup::CompactPolicy::Skip;
         else
             return make_void(); // unknown policy → no-op (no arena state change)
-        return make_int(static_cast<std::int64_t>(
-            ev.arena_group_->compact_with_policy(name, p)));
+        return make_int(static_cast<std::int64_t>(ev.arena_group_->compact_with_policy(name, p)));
     });
     // (arena:should-auto-compact? name) — Issue #335: cheap
     // O(1) probe that returns #t when the per-module
@@ -453,7 +450,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // (trigger-count . skip-count). Stats-only.
     add("arena:adaptive-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_group_)
-            return make_pair(ev.pairs_.size());  // empty pair
+            return make_pair(ev.pairs_.size()); // empty pair
         const auto trig = ev.arena_group_->auto_compact_trigger_count();
         const auto skip = ev.arena_group_->auto_compact_skip_count();
         // Pair (trigger-count . skip-count)
@@ -463,9 +460,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         ev.string_heap_.push_back(std::to_string(skip));
         // Build (a . b) = pair(make_int(t), make_int(s))
         auto car_idx = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(trig)),
-                              make_int(static_cast<std::int64_t>(skip))});
-        (void)idx_t; (void)idx_s;
+        ev.pairs_.push_back(
+            {make_int(static_cast<std::int64_t>(trig)), make_int(static_cast<std::int64_t>(skip))});
+        (void)idx_t;
+        (void)idx_s;
         return make_pair(car_idx);
     });
     add("arena:shrink-to-fit", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
@@ -537,9 +535,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 compact_est += ev.arena_group_->module_arena(name).compact_estimate();
             }
         }
-        std::int64_t frag_bp = (cap > 0)
-            ? static_cast<std::int64_t>(((cap - used) * 10000) / cap)
-            : 0;
+        std::int64_t frag_bp =
+            (cap > 0) ? static_cast<std::int64_t>(((cap - used) * 10000) / cap) : 0;
         // Build 5-tuple via (e1 . (e2 . (e3 . (e4 . e5)))) pattern,
         // matching the issue body contract. Cell order:
         //   e1=compaction-count, e2=defrag-attempted-count,
@@ -553,8 +550,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         auto p2 = ev.pairs_.size();
         ev.pairs_.push_back({make_int(defrag_count), make_pair(p3)});
         auto p1 = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(compact_count)),
-                             make_pair(p2)});
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(compact_count)), make_pair(p2)});
         return make_pair(p1);
     });
     // (arena:stats-json) — Issue #187: JSON snapshot of all managed
@@ -567,16 +563,16 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         } else if (ev.arena_) {
             // Single-arena fallback: emit a one-entry JSON manually.
             auto s = ev.arena_->stats();
-            out = std::format("{{\"arenas\":[{{\"name\":\"main\",\"used\":{},\"capacity\":{},"
-                              "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
-                              "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
-                              "\"fragmentation_ratio\":{:.3f},"
-                              "\"defrag_attempted_count\":{},\"last_defrag_saved\":{}}}],"
-                              "\"compact_threshold\":0.5}}",
-                              s.used, s.capacity, s.peak_used, s.allocation_count,
-                              s.compaction_count, s.last_compaction_saved, s.total_compaction_saved,
-                              s.fragmentation_ratio(),
-                              s.defrag_attempted_count, s.last_defrag_saved);
+            out =
+                std::format("{{\"arenas\":[{{\"name\":\"main\",\"used\":{},\"capacity\":{},"
+                            "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
+                            "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
+                            "\"fragmentation_ratio\":{:.3f},"
+                            "\"defrag_attempted_count\":{},\"last_defrag_saved\":{}}}],"
+                            "\"compact_threshold\":0.5}}",
+                            s.used, s.capacity, s.peak_used, s.allocation_count, s.compaction_count,
+                            s.last_compaction_saved, s.total_compaction_saved,
+                            s.fragmentation_ratio(), s.defrag_attempted_count, s.last_defrag_saved);
         } else {
             out = "{\"arenas\":[]}";
         }
@@ -811,12 +807,14 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // iterate all dirty nodes. Pass 0 to get all reasons
     // (default).
     add("dirty:summary", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
-        if (!ev.workspace_flat_) return make_void();
+        if (!ev.workspace_flat_)
+            return make_void();
         std::uint32_t mask = 0;
         if (a.size() >= 1 && is_int(a[0])) {
             mask = static_cast<std::uint32_t>(as_int(a[0]));
         }
-        if (mask == 0) mask = 0xFFFF;  // default: all reasons
+        if (mask == 0)
+            mask = 0xFFFF; // default: all reasons
         // Accumulate the unique reason bits present in the
         // workspace, plus a count of nodes per reason. This
         // gives a compact per-reason summary without the full
@@ -831,20 +829,46 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         for (std::size_t i = 0; i < n; ++i) {
             auto b = i < dirty.size() ? dirty[i] : 0;
             auto pb = i < ppa_dirty.size() ? ppa_dirty[i] : 0;
-            if (b == 0 && pb == 0) continue;
+            if (b == 0 && pb == 0)
+                continue;
             ++total;
-            if (b & 0x01) { present_bits |= 0x01; ++gen; }
-            if (b & 0x02) { present_bits |= 0x02; ++con; }
-            if (b & 0x04) { present_bits |= 0x04; ++occ; }
-            if (b & 0x08) { present_bits |= 0x08; ++own; }
-            if (b & 0x10) { present_bits |= 0x10; ++coe; }
-            if (b & 0x20) { present_bits |= 0x20; ++str; }
-            if (b & 0x40) { present_bits |= 0x40; ++def; }
-            if (b & 0x80) { present_bits |= 0x80; ++ppa; }
+            if (b & 0x01) {
+                present_bits |= 0x01;
+                ++gen;
+            }
+            if (b & 0x02) {
+                present_bits |= 0x02;
+                ++con;
+            }
+            if (b & 0x04) {
+                present_bits |= 0x04;
+                ++occ;
+            }
+            if (b & 0x08) {
+                present_bits |= 0x08;
+                ++own;
+            }
+            if (b & 0x10) {
+                present_bits |= 0x10;
+                ++coe;
+            }
+            if (b & 0x20) {
+                present_bits |= 0x20;
+                ++str;
+            }
+            if (b & 0x40) {
+                present_bits |= 0x40;
+                ++def;
+            }
+            if (b & 0x80) {
+                present_bits |= 0x80;
+                ++ppa;
+            }
         }
         // Build the result hash.
         auto* ht = FlatHashTable::create(8);
-        if (!ht) return make_void();
+        if (!ht)
+            return make_void();
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"present-bits", make_int(static_cast<std::int64_t>(present_bits))},
             {"requested-mask", make_int(static_cast<std::int64_t>(mask))},
@@ -877,7 +901,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             for (char c : k)
                 h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
             auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF) fp = 0xFE;
+            if (fp == 0xFF)
+                fp = 0xFE;
             auto kidx = ev.string_heap_.size();
             ev.string_heap_.push_back(k);
             EvalValue key_ev = make_string(kidx);
@@ -992,7 +1017,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 suggestions.push_back(make_string(sidx));
             }
         }
-        if (ev.eval_depth_ - ev.last_gc_temp_eval_depth_ > ev.memory_policy_.recent_gc_temp_window) {
+        if (ev.eval_depth_ - ev.last_gc_temp_eval_depth_ >
+            ev.memory_policy_.recent_gc_temp_window) {
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back("gc-temp");
             suggestions.push_back(make_string(sidx));
@@ -1058,7 +1084,6 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
     });
-
 }
 
 } // namespace aura::compiler::primitives_detail

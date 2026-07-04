@@ -9,8 +9,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
@@ -20,7 +20,8 @@ namespace test_290_detail {
 static bool set_source(aura::compiler::CompilerService& cs, std::string_view src) {
     std::string cmd = "(set-code \"";
     for (char c : src) {
-        if (c == '\\' || c == '"') cmd += '\\';
+        if (c == '\\' || c == '"')
+            cmd += '\\';
         cmd += c;
     }
     cmd += "\")";
@@ -30,9 +31,11 @@ static bool set_source(aura::compiler::CompilerService& cs, std::string_view src
 
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
+    if (!r)
+        return -1;
     auto& v = *r;
-    if (!aura::compiler::types::is_int(v)) return -1;
+    if (!aura::compiler::types::is_int(v))
+        return -1;
     return aura::compiler::types::as_int(v);
 }
 
@@ -43,8 +46,7 @@ bool test_column_exists() {
     // A fresh primitive eval has no current_flat (no macros run).
     // (compile:macro-dirty-count) should return 0 (not error).
     auto count0 = run_int(cs, "(compile:macro-dirty-count)");
-    CHECK(count0 == 0, "fresh eval: macro-dirty-count = 0 (got " +
-          std::to_string(count0) + ")");
+    CHECK(count0 == 0, "fresh eval: macro-dirty-count = 0 (got " + std::to_string(count0) + ")");
     return true;
 }
 
@@ -55,9 +57,9 @@ bool test_column_exists() {
 bool test_macro_expansion_marks_subtree() {
     std::println("\n--- AC #2: macro expansion marks cloned subtree ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs,
-        "(define-hygienic-macro (my-add x y) (+ x y))")) {
-        ++g_failed; return false;
+    if (!set_source(cs, "(define-hygienic-macro (my-add x y) (+ x y))")) {
+        ++g_failed;
+        return false;
     }
     // CRITICAL: combine macro expansion + count query in a
     // SINGLE (begin ...). Each cs.eval creates a fresh flat
@@ -69,9 +71,8 @@ bool test_macro_expansion_marks_subtree() {
     // the same current_flat_.
     auto count = run_int(cs, "(begin (my-add 1 2) (compile:macro-dirty-count))");
     std::println(std::cerr, "macro-dirty-count after expansion: {}", count);
-    CHECK(count > 0,
-          "macro expansion should mark at least the cloned root (got " +
-          std::to_string(count) + ")");
+    CHECK(count > 0, "macro expansion should mark at least the cloned root (got " +
+                         std::to_string(count) + ")");
     return true;
 }
 
@@ -80,7 +81,8 @@ bool test_macro_dirty_predicate() {
     std::println("\n--- AC #3: (compile:macro-dirty? id) returns bitmask ---");
     aura::compiler::CompilerService cs;
     if (!set_source(cs, "(define-hygienic-macro (m) (+ 1 1))")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Invoke macro to expand and mark.
     run_int(cs, "(m)");
@@ -88,7 +90,9 @@ bool test_macro_dirty_predicate() {
     // Just verify the primitive works without crashing.
     auto r = cs.eval("(compile:macro-dirty? 0)");
     if (!r) {
-        ++g_failed; std::println(std::cerr, "macro-dirty? 0 returned null");return false;
+        ++g_failed;
+        std::println(std::cerr, "macro-dirty? 0 returned null");
+        return false;
     }
     int64_t b0 = aura::compiler::types::as_int(*r);
     std::println(std::cerr, "macro-dirty? 0 = {}", b0);
@@ -106,21 +110,20 @@ bool test_clear_macro_dirty() {
     std::println("\n--- AC #4: (compile:clear-macro-dirty!) resets column ---");
     aura::compiler::CompilerService cs;
     if (!set_source(cs, "(define-hygienic-macro (m) (+ 1 1))")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Expand + read count in one eval so they share the flat.
     auto before = run_int(cs, "(begin (m) (compile:macro-dirty-count))");
     std::println(std::cerr, "before clear: {}", before);
-    CHECK(before > 0, "before clear: count > 0 (got " +
-          std::to_string(before) + ")");
+    CHECK(before > 0, "before clear: count > 0 (got " + std::to_string(before) + ")");
 
     // clear! in a fresh eval. count then in another fresh
     // eval (the new eval's flat starts at 0 dirty bits).
     cs.eval("(compile:clear-macro-dirty!)");
     auto after = run_int(cs, "(compile:macro-dirty-count)");
     std::println(std::cerr, "after clear: {}", after);
-    CHECK(after == 0, "after clear: count == 0 (got " +
-          std::to_string(after) + ")");
+    CHECK(after == 0, "after clear: count == 0 (got " + std::to_string(after) + ")");
     return true;
 }
 
@@ -129,17 +132,16 @@ bool test_clear_macro_dirty() {
 bool test_nested_macro_marks_all_levels() {
     std::println("\n--- AC #5: nested macro expansion marks all levels ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs,
-        "(define-hygienic-macro (inc x) (+ x 1)) "
-        "(define-hygienic-macro (inc2 x) (inc (inc x)))")) {
-        ++g_failed; return false;
+    if (!set_source(cs, "(define-hygienic-macro (inc x) (+ x 1)) "
+                        "(define-hygienic-macro (inc2 x) (inc (inc x)))")) {
+        ++g_failed;
+        return false;
     }
     // Combine inc2 expansion + count in one eval.
     auto count = run_int(cs, "(begin (inc2 5) (compile:macro-dirty-count))");
     std::println(std::cerr, "nested macro-dirty-count: {}", count);
     CHECK(count >= 2,
-          "nested expansion marks at least 2 subtree roots (got " +
-          std::to_string(count) + ")");
+          "nested expansion marks at least 2 subtree roots (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -148,7 +150,8 @@ bool test_stats_cumulative() {
     std::println("\n--- AC #6: stats counters are positive after expansion ---");
     aura::compiler::CompilerService cs;
     if (!set_source(cs, "(define-hygienic-macro (m) (+ 1 1))")) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Each cs.eval creates a fresh flat with its own stats
     // counters. After expanding (m) in one eval, stats should
@@ -158,10 +161,8 @@ bool test_stats_cumulative() {
     auto stats1 = run_int(cs, "(begin (m) (compile:macro-dirty-stats))");
     auto stats2 = run_int(cs, "(begin (m) (compile:macro-dirty-stats))");
     std::println(std::cerr, "stats after 1st expand: {}, after 2nd expand: {}\n", stats1, stats2);
-    CHECK(stats1 > 0, "stats > 0 after 1st expansion (got " +
-          std::to_string(stats1) + ")");
-    CHECK(stats2 > 0, "stats > 0 after 2nd expansion (got " +
-          std::to_string(stats2) + ")");
+    CHECK(stats1 > 0, "stats > 0 after 1st expansion (got " + std::to_string(stats1) + ")");
+    CHECK(stats2 > 0, "stats > 0 after 2nd expansion (got " + std::to_string(stats2) + ")");
     return true;
 }
 
@@ -180,8 +181,7 @@ bool test_user_code_not_marked() {
     auto count = run_int(cs, "(compile:macro-dirty-count)");
     std::println(std::cerr, "user-only macro-dirty-count: {}", count);
     CHECK(count == 0,
-          "user-written code without macros: count == 0 (got " +
-          std::to_string(count) + ")");
+          "user-written code without macros: count == 0 (got " + std::to_string(count) + ")");
     return true;
 }
 
@@ -194,15 +194,19 @@ int run_tests() {
     test_nested_macro_marks_all_levels();
     test_stats_cumulative();
     test_user_code_not_marked();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 
+} // namespace test_290_detail
+
+int aura_issue_290_run() {
+    return test_290_detail::run_tests();
 }
 
-int aura_issue_290_run() { return test_290_detail::run_tests(); }
-
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_290_run(); }
+int main() {
+    return aura_issue_290_run();
+}
 #endif

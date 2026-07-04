@@ -102,11 +102,10 @@ static void query_worker(SharedState* s) {
         // Observe defuse_version_.
         std::uint64_t v = s->cs->evaluator().get_defuse_version();
         auto cur_max = s->max_defuse_version.load(std::memory_order_acquire);
-        while (v > cur_max
-               && !s->max_defuse_version.compare_exchange_weak(
-                   cur_max, v,
-                   std::memory_order_acq_rel,
-                   std::memory_order_acquire)) {}
+        while (v > cur_max &&
+               !s->max_defuse_version.compare_exchange_weak(cur_max, v, std::memory_order_acq_rel,
+                                                            std::memory_order_acquire)) {
+        }
         s->defuse_version_observed.fetch_add(1, std::memory_order_relaxed);
         s->query_iters.fetch_add(1, std::memory_order_relaxed);
         // Exercise the YieldReason::MutationBoundary yield
@@ -171,8 +170,7 @@ int main() {
     s.cs = &cs;
 
     std::println("Spawning 4 worker threads (2 query + 2 mutate)");
-    std::println("Each runs {} iterations with MutationBoundary yields.",
-                 K_ITERS);
+    std::println("Each runs {} iterations with MutationBoundary yields.", K_ITERS);
 
     // Launch 4 threads. std::thread is the simplest portable
     // concurrency primitive; TSan will surface any data races
@@ -193,8 +191,13 @@ int main() {
     // ── Acceptance checks (Issue #332 AC #2) ──────────────
     int passed = 0, failed = 0;
     auto check = [&](bool cond, const std::string& msg) {
-        if (cond) { ++passed; std::println("  PASS: {}", msg); }
-        else      { ++failed; std::println(std::cerr, "  FAIL: {}", msg); }
+        if (cond) {
+            ++passed;
+            std::println("  PASS: {}", msg);
+        } else {
+            ++failed;
+            std::println(std::cerr, "  FAIL: {}", msg);
+        }
     };
 
     int q = s.query_iters.load();
@@ -205,10 +208,9 @@ int main() {
 
     int valid = s.stable_valid_count.load();
     int invalid = s.stable_invalid_count.load();
-    std::println("StableNodeRef observed: {} valid + {} invalid = {}",
-                 valid, invalid, valid + invalid);
-    check(valid + invalid == q,
-          "StableNodeRef captured on every query iter");
+    std::println("StableNodeRef observed: {} valid + {} invalid = {}", valid, invalid,
+                 valid + invalid);
+    check(valid + invalid == q, "StableNodeRef captured on every query iter");
     // StableNodeRef.is_valid_in() tracks whether the
     // captured NodeId's generation matches the current
     // AST generation. Under mutation, gen bumps, but
@@ -218,17 +220,14 @@ int main() {
     // generation monotonicity via defuse_version_
     // (already checked below) + the per-iteration
     // StableNodeRef capture succeeded.
-    check(valid > 0,
-          "At least one StableNodeRef validated (gen tracking live)");
+    check(valid > 0, "At least one StableNodeRef validated (gen tracking live)");
 
-    std::println("defuse_version_ max observed: {}",
-                 s.max_defuse_version.load());
-    check(s.defuse_version_observed.load() == q,
-          "defuse_version_ observed on every query iter");
+    std::println("defuse_version_ max observed: {}", s.max_defuse_version.load());
+    check(s.defuse_version_observed.load() == q, "defuse_version_ observed on every query iter");
 
     check(s.deadlocks.load() == 0, "no deadlocks");
 
-    std::println("\n=== Results: {}/{} passed, {}/{} failed ===",
-                 passed, passed + failed, failed, passed + failed);
+    std::println("\n=== Results: {}/{} passed, {}/{} failed ===", passed, passed + failed, failed,
+                 passed + failed);
     return failed == 0 ? 0 : 1;
 }

@@ -69,15 +69,16 @@ static int g_passed = 0;
 static int g_failed = 0;
 static const char* g_test_name = "";
 
-#define CHECK(cond, msg) do { \
-    if (cond) { \
-        ++g_passed; \
-        std::println("  PASS: {}", msg); \
-    } else { \
-        ++g_failed; \
-        std::println("  FAIL: {}  [{}: {}]", msg, g_test_name, #cond); \
-    } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  [{}: {}]", msg, g_test_name, #cond);                         \
+        }                                                                                          \
+    } while (0)
 
 // ═════════════════════════════════════════════════════════════
 // Tests
@@ -96,10 +97,8 @@ bool test_mangle_default_version() {
     // 2-arg call (old behavior) — must still work, no _v suffix.
     auto r_2arg = aura::compiler::mangle_aot_name("foo", 3);
     auto r_3arg_v0 = aura::compiler::mangle_aot_name("foo", 3, 0);
-    CHECK(r_2arg == r_3arg_v0,
-          "2-arg call == 3-arg call with version=0 (back-compat)");
-    CHECK(r_2arg == "foo_3",
-          "result has no _v suffix when version=0");
+    CHECK(r_2arg == r_3arg_v0, "2-arg call == 3-arg call with version=0 (back-compat)");
+    CHECK(r_2arg == "foo_3", "result has no _v suffix when version=0");
     return true;
 }
 
@@ -115,10 +114,8 @@ bool test_mangle_version_0_explicit() {
 
     auto r_2arg = aura::compiler::mangle_aot_name("bar_baz", 7);
     auto r_v0 = aura::compiler::mangle_aot_name("bar_baz", 7, 0);
-    CHECK(r_2arg == r_v0,
-          "2-arg call == 3-arg call with explicit version=0");
-    CHECK(r_v0 == "bar_baz_7",
-          "expected result 'bar_baz_7'");
+    CHECK(r_2arg == r_v0, "2-arg call == 3-arg call with explicit version=0");
+    CHECK(r_v0 == "bar_baz_7", "expected result 'bar_baz_7'");
     return true;
 }
 
@@ -132,17 +129,14 @@ bool test_mangle_version_nonzero() {
     g_test_name = "AC3";
 
     auto r = aura::compiler::mangle_aot_name("my_fn", 0, 7);
-    CHECK(r == "my_fn_0_v7",
-          "my_fn + disambig=0 + version=7 → 'my_fn_0_v7'");
+    CHECK(r == "my_fn_0_v7", "my_fn + disambig=0 + version=7 → 'my_fn_0_v7'");
 
     auto r2 = aura::compiler::mangle_aot_name("compute", 2, 13);
-    CHECK(r2 == "compute_2_v13",
-          "compute + disambig=2 + version=13 → 'compute_2_v13'");
+    CHECK(r2 == "compute_2_v13", "compute + disambig=2 + version=13 → 'compute_2_v13'");
 
     // Special chars still get cleaned before the version suffix.
     auto r3 = aura::compiler::mangle_aot_name("my-fn", 1, 5);
-    CHECK(r3 == "my_fn_1_v5",
-          "special-char name still gets cleaned, then version appended");
+    CHECK(r3 == "my_fn_1_v5", "special-char name still gets cleaned, then version appended");
     return true;
 }
 
@@ -195,12 +189,10 @@ bool test_set_get_defuse_version() {
     g_test_name = "AC6";
 
     aura_set_aot_defuse_version(0);
-    CHECK(aura_get_aot_defuse_version() == 0,
-          "set 0 → get 0 (reset baseline)");
+    CHECK(aura_get_aot_defuse_version() == 0, "set 0 → get 0 (reset baseline)");
 
     aura_set_aot_defuse_version(42);
-    CHECK(aura_get_aot_defuse_version() == 42,
-          "set 42 → get 42");
+    CHECK(aura_get_aot_defuse_version() == 42, "set 42 → get 42");
 
     aura_set_aot_defuse_version(999999);
     CHECK(aura_get_aot_defuse_version() == 999999,
@@ -208,8 +200,7 @@ bool test_set_get_defuse_version() {
 
     // Reset to 0 so we don't pollute subsequent test runs.
     aura_set_aot_defuse_version(0);
-    CHECK(aura_get_aot_defuse_version() == 0,
-          "set 0 (cleanup) → get 0");
+    CHECK(aura_get_aot_defuse_version() == 0, "set 0 (cleanup) → get 0");
     return true;
 }
 
@@ -238,12 +229,12 @@ int run_tests() {
     std::println("\nAC #6: aura_set_aot_defuse_version round-trip");
     test_set_get_defuse_version();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_243_detail
+} // namespace aura_issue_243_detail
 
-int aura_issue_243_run() { return aura_issue_243_detail::run_tests(); }
-
+int aura_issue_243_run() {
+    return aura_issue_243_detail::run_tests();
+}

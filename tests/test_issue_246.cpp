@@ -37,8 +37,8 @@
 
 // Unified test harness (Issue #226)
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.ir;
 import aura.compiler.pass_manager;
@@ -59,7 +59,7 @@ static ir::IRFunction make_trivial_func(const std::string& name, std::uint8_t ma
     ir::BasicBlock block;
     ir::IRInstruction const_instr;
     const_instr.opcode = ir::IROpcode::ConstI64;
-    const_instr.operands = {0, 42, 0};  // slot 0 = value 42
+    const_instr.operands = {0, 42, 0}; // slot 0 = value 42
     block.instructions.push_back(const_instr);
 
     ir::IRInstruction ret_instr;
@@ -92,7 +92,7 @@ static ir::IRFunction make_caller_with_call(std::uint32_t callee_fid) {
     // Call(closure_slot=1, result_slot=0, argc=0)
     ir::IRInstruction call;
     call.opcode = ir::IROpcode::Call;
-    call.operands = {1, 0, 0, 0};  // closure, ?, ?, result
+    call.operands = {1, 0, 0, 0}; // closure, ?, ?, result
     block.instructions.push_back(call);
 
     // Return
@@ -111,7 +111,7 @@ static ir::IRFunction make_caller_with_call(std::uint32_t callee_fid) {
 // ═══════════════════════════════════════════════════════════════
 bool test_default_skips_macro_introduced() {
     std::println("\n--- AC1: default policy skips MacroIntroduced callees ---");
-    aura::compiler::InlinePass::set_respect_macro_hygiene(true);  // default
+    aura::compiler::InlinePass::set_respect_macro_hygiene(true); // default
 
     // Build module with a macro-introduced trivial callee
     ir::IRModule module;
@@ -125,8 +125,7 @@ bool test_default_skips_macro_introduced() {
 
     std::size_t inlined = pass.inlined_count();
     std::println("    [info] inlined_count = {} (expected 0: macro skipped)", inlined);
-    CHECK(inlined == 0,
-          "AC1: default policy skips inlining macro-introduced callees");
+    CHECK(inlined == 0, "AC1: default policy skips inlining macro-introduced callees");
     return true;
 }
 
@@ -148,8 +147,7 @@ bool test_optin_reenables_inlining() {
 
     std::size_t inlined = pass.inlined_count();
     std::println("    [info] inlined_count = {} (expected 1: opt-in)", inlined);
-    CHECK(inlined == 1,
-          "AC2: opt-in re-enables inlining of macro-introduced callees");
+    CHECK(inlined == 1, "AC2: opt-in re-enables inlining of macro-introduced callees");
 
     // Reset to default for subsequent tests
     aura::compiler::InlinePass::set_respect_macro_hygiene(true);
@@ -174,8 +172,7 @@ bool test_user_callee_inlined() {
 
     std::size_t inlined = pass.inlined_count();
     std::println("    [info] inlined_count = {} (expected 1: user inlined)", inlined);
-    CHECK(inlined == 1,
-          "AC3: User-marked callees are inlined (no over-blocking)");
+    CHECK(inlined == 1, "AC3: User-marked callees are inlined (no over-blocking)");
     return true;
 }
 
@@ -210,8 +207,7 @@ bool test_bool_literal_callee_inlined() {
 bool test_default_marker_is_user() {
     std::println("\n--- AC5: default IRFunction.marker is 0 (User) ---");
     ir::IRFunction f;
-    CHECK(f.marker == 0,
-          "AC5: default IRFunction.marker is 0 (SyntaxMarker::User) — back-compat");
+    CHECK(f.marker == 0, "AC5: default IRFunction.marker is 0 (SyntaxMarker::User) — back-compat");
     return true;
 }
 
@@ -221,15 +217,13 @@ bool test_default_marker_is_user() {
 bool test_setter_round_trip() {
     std::println("\n--- AC6: respect_macro_hygiene_ setter round-trip ---");
     aura::compiler::InlinePass::set_respect_macro_hygiene(true);
-    CHECK(aura::compiler::InlinePass::get_respect_macro_hygiene() == true,
-          "set true → get true");
+    CHECK(aura::compiler::InlinePass::get_respect_macro_hygiene() == true, "set true → get true");
     aura::compiler::InlinePass::set_respect_macro_hygiene(false);
     CHECK(aura::compiler::InlinePass::get_respect_macro_hygiene() == false,
           "set false → get false");
     // Reset to default for the rest of the suite
     aura::compiler::InlinePass::set_respect_macro_hygiene(true);
-    CHECK(aura::compiler::InlinePass::get_respect_macro_hygiene() == true,
-          "reset to true");
+    CHECK(aura::compiler::InlinePass::get_respect_macro_hygiene() == true, "reset to true");
     return true;
 }
 
@@ -257,12 +251,12 @@ int run_tests() {
     std::println("\nAC #4: BoolLiteral-marked callees are inlined");
     test_bool_literal_callee_inlined();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_246_detail
+} // namespace aura_issue_246_detail
 
-int aura_issue_246_run() { return aura_issue_246_detail::run_tests(); }
-
+int aura_issue_246_run() {
+    return aura_issue_246_detail::run_tests();
+}

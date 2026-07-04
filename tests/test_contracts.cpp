@@ -25,32 +25,24 @@
 static int violation_count = 0;
 static void handle_contract_violation(const std::contracts::contract_violation& v) {
     violation_count++;
-    std::println(std::cerr,
-                  "test_handler: contract violation (count={} kind={} semantic={})",
-                  violation_count, (int)v.kind(), (int)v.semantic());
+    std::println(std::cerr, "test_handler: contract violation (count={} kind={} semantic={})",
+                 violation_count, (int)v.kind(), (int)v.semantic());
     _Exit(42);
 }
 
 // C++26 trailing pre-condition (the user-requested syntax)
-static int positive_only(const int x)
-    pre (x > 0)
-{
+static int positive_only(const int x) pre(x > 0) {
     return x * 2;
 }
 
 // C++26 trailing pre + post
-static int divide_ok(const int a, const int b)
-    pre (b != 0)
-    post (r: r == a / b)
-{
+static int divide_ok(const int a, const int b) pre(b != 0) post(r : r == a / b) {
     return a / b;
 }
 
 // Function with internal contract_assert
-static int internal_check(const int x)
-    pre (x > 0)
-{
-    contract_assert(x < 1000);  // additional runtime invariant
+static int internal_check(const int x) pre(x > 0) {
+    contract_assert(x < 1000); // additional runtime invariant
     return x;
 }
 
@@ -77,7 +69,7 @@ static int run_fires() {
     std::printf("fires: calling positive_only(-1) — pre should fire\n");
     int r2 = positive_only(-1);
     std::printf("fires FAIL: should not reach r2=%d\n", r2);
-    return 1;  // should not reach (handler _Exits 42)
+    return 1; // should not reach (handler _Exits 42)
 }
 
 int main(int argc, char** argv) {
@@ -86,8 +78,10 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::string mode = argv[1];
-    if (mode == "holds") return run_holds();
-    if (mode == "fires") return run_fires();
+    if (mode == "holds")
+        return run_holds();
+    if (mode == "fires")
+        return run_fires();
     std::println(std::cerr, "unknown mode: {}", argv[1]);
     return 2;
 }

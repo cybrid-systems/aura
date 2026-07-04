@@ -58,7 +58,7 @@ bool test_audit_call_site_counts() {
 struct StableNodeRefMirror {
     std::uint32_t id;
     std::uint16_t gen;
-    std::uint16_t reserved;  // padding to 8-byte align for some paths
+    std::uint16_t reserved; // padding to 8-byte align for some paths
 };
 static_assert(sizeof(StableNodeRefMirror) == 8, "StableNodeRefMirror size");
 static_assert(std::is_trivially_copyable_v<StableNodeRefMirror>,
@@ -67,8 +67,7 @@ static_assert(std::is_trivially_copyable_v<StableNodeRefMirror>,
 bool test_stable_node_ref_layout() {
     std::println("\n--- Scenario 2: StableNodeRef layout validation ---");
     std::println("  sizeof(StableNodeRefMirror) = {} bytes", sizeof(StableNodeRefMirror));
-    std::println("  is_trivially_copyable = {}",
-                 std::is_trivially_copyable_v<StableNodeRefMirror>);
+    std::println("  is_trivially_copyable = {}", std::is_trivially_copyable_v<StableNodeRefMirror>);
     CHECK(sizeof(StableNodeRefMirror) == 8, "StableNodeRef layout is 8 bytes");
     CHECK(std::is_trivially_copyable_v<StableNodeRefMirror>,
           "StableNodeRef is trivially copyable (ready for std::meta byte-write codegen)");
@@ -88,20 +87,16 @@ bool test_serialize_perf_baseline() {
     std::size_t total_bytes = 0;
     for (int i = 0; i < N; ++i) {
         std::vector<char> buf;
-        std::uint32_t count = 3;  // number of fields
-        buf.insert(buf.end(),
-                   reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
-        buf.insert(buf.end(),
-                   reinterpret_cast<const char*>(&obj),
+        std::uint32_t count = 3; // number of fields
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&obj),
                    reinterpret_cast<const char*>(&obj) + sizeof(obj));
         total_bytes += buf.size();
     }
     auto t1 = std::chrono::steady_clock::now();
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-    std::println("  N={} manual serialize: {}µs ({:.1f}ns/op, {} bytes/op)",
-                 N, us, static_cast<double>(us) * 1000 / N,
-                 total_bytes / N);
+    std::println("  N={} manual serialize: {}µs ({:.1f}ns/op, {} bytes/op)", N, us,
+                 static_cast<double>(us) * 1000 / N, total_bytes / N);
     // 12 bytes per StableNodeRefMirror (4-byte count + 8-byte struct)
     CHECK(total_bytes / N == 12, "manual serialize produces 12 bytes/op");
     CHECK(us < 50000, "baseline completes within 50s budget");

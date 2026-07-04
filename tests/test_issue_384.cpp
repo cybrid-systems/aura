@@ -33,20 +33,33 @@ namespace {
 int g_passed = 0;
 int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println(std::cerr, "  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}  ({} != {})", msg, _a, _b);                        \
+        }                                                                                          \
+    } while (0)
 
+using aura::compiler::TypeChecker;
 using aura::core::TypeId;
 using aura::core::TypeRegistry;
-using aura::compiler::TypeChecker;
 
 struct InferResult {
     std::unique_ptr<aura::ast::ASTArena> arena;
@@ -120,10 +133,9 @@ void test_lambda_call_returns_int() {
     auto r = infer_source("((lambda (x) x) 42)");
     CHECK(r.root_type.valid(), "root type is valid");
     auto int_t = r.treg->int_type();
-    std::println("  (debug: call result idx={}, formatted={})",
-                 r.root_type.index, r.treg->format_type(r.root_type));
-    CHECK_EQ(r.root_type.index, int_t.index,
-             "((lambda (x) x) 42) infers as Int");
+    std::println("  (debug: call result idx={}, formatted={})", r.root_type.index,
+                 r.treg->format_type(r.root_type));
+    CHECK_EQ(r.root_type.index, int_t.index, "((lambda (x) x) 42) infers as Int");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -141,10 +153,9 @@ void test_arith_lambda_call_returns_int() {
     auto r = infer_source("((lambda (x) (* x 2)) 21)");
     CHECK(r.root_type.valid(), "root type is valid");
     auto int_t = r.treg->int_type();
-    std::println("  (debug: call result idx={}, formatted={})",
-                 r.root_type.index, r.treg->format_type(r.root_type));
-    CHECK_EQ(r.root_type.index, int_t.index,
-             "((lambda (x) (* x 2)) 21) infers as Int");
+    std::println("  (debug: call result idx={}, formatted={})", r.root_type.index,
+                 r.treg->format_type(r.root_type));
+    CHECK_EQ(r.root_type.index, int_t.index, "((lambda (x) (* x 2)) 21) infers as Int");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -159,10 +170,9 @@ void test_let_bound_identity_returns_int() {
     auto r = infer_source("(let ((id (lambda (x) x))) (id 42))");
     CHECK(r.root_type.valid(), "root type is valid");
     auto int_t = r.treg->int_type();
-    std::println("  (debug: call result idx={}, formatted={})",
-                 r.root_type.index, r.treg->format_type(r.root_type));
-    CHECK_EQ(r.root_type.index, int_t.index,
-             "let-bound identity applied to 42 infers as Int");
+    std::println("  (debug: call result idx={}, formatted={})", r.root_type.index,
+                 r.treg->format_type(r.root_type));
+    CHECK_EQ(r.root_type.index, int_t.index, "let-bound identity applied to 42 infers as Int");
 }
 
 // ═══════════════════════════════════════════════════════════════

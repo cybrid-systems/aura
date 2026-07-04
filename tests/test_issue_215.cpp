@@ -32,9 +32,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
-
+using aura::test::g_passed;
 
 
 #define PRINTLN(msg) std::println("{}", (msg))
@@ -49,8 +48,8 @@ bool test_vector_int() {
 
     std::size_t pos = 0;
     auto roundtrip = aura::reflect::auto_deserialize<std::vector<int>>(buf, pos);
-    std::println("roundtrip size: {}, [0]={}, [1]={}, [2]={}",
-                 roundtrip.size(), roundtrip[0], roundtrip[1], roundtrip[2]);
+    std::println("roundtrip size: {}, [0]={}, [1]={}, [2]={}", roundtrip.size(), roundtrip[0],
+                 roundtrip[1], roundtrip[2]);
     CHECK(roundtrip.size() == 3, "size == 3");
     CHECK(roundtrip[0] == 1, "roundtrip[0] == 1");
     CHECK(roundtrip[1] == 2, "roundtrip[1] == 2");
@@ -178,7 +177,8 @@ bool test_nested_struct() {
     std::vector<char> inner_buf;
     aura::reflect::auto_serialize(inner_buf, original.data);
     std::size_t pos = 0;
-    auto roundtrip = aura::reflect::auto_deserialize<std::vector<std::optional<int>>>(inner_buf, pos);
+    auto roundtrip =
+        aura::reflect::auto_deserialize<std::vector<std::optional<int>>>(inner_buf, pos);
     CHECK(roundtrip.size() == 5, "inner vector size == 5");
     CHECK(roundtrip[0].has_value() && roundtrip[0].value() == 1, "[0] == 1");
     CHECK(!roundtrip[1].has_value(), "[1] is empty");

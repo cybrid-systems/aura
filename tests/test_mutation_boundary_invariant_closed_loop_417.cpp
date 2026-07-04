@@ -74,8 +74,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: ensure_mutation_invariants happy path ---");
     ev.ensure_mutation_invariants();
-    CHECK(ev.get_total_invariant_violations() == 0,
-          "explicit probe: zero invariant violations");
+    CHECK(ev.get_total_invariant_violations() == 0, "explicit probe: zero invariant violations");
 
     std::println("\n--- AC5: eval-current materialize_call_env probe ---");
     const auto stats5a = boundary_invariant_stats(cs);
@@ -87,15 +86,13 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round mutate matrix ---");
     const auto stats6a = boundary_invariant_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats6b = boundary_invariant_stats(cs);
     std::println("  boundary invariant stats: {} -> {}", stats6a, stats6b);
     CHECK(stats6b > stats6a, "boundary invariant stats grow over matrix");
-    CHECK(ev.get_total_invariant_violations() == 0,
-          "matrix end: zero invariant violations");
+    CHECK(ev.get_total_invariant_violations() == 0, "matrix end: zero invariant violations");
 
     std::println("\n--- AC7: query regression ---");
     auto mcs = cs.eval("(query:mutation-coordination-stats)");

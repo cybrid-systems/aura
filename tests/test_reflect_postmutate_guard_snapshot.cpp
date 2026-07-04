@@ -62,8 +62,8 @@ bool test_reflect_snapshot_counters_reachable() {
     const auto p0 = cs.evaluator().get_schema_validation_pass_count();
     const auto f0 = cs.evaluator().get_schema_validation_fail_count();
     const auto d0 = cs.evaluator().get_dirty_nodes_in_snapshot();
-    std::println("  baseline: impact_snapshots={} schema_pass={} schema_fail={} dirty_nodes={}",
-                 s0, p0, f0, d0);
+    std::println("  baseline: impact_snapshots={} schema_pass={} schema_fail={} dirty_nodes={}", s0,
+                 p0, f0, d0);
     CHECK(s0 == 0, "impact_snapshot_count starts at 0");
     CHECK(p0 == 0, "schema_validation_pass_count starts at 0");
     CHECK(f0 == 0, "schema_validation_fail_count starts at 0");
@@ -79,13 +79,11 @@ bool test_query_reflect_postmutate_stats() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:reflect-postmutate-stats)");
     CHECK(r.has_value(), "(query:reflect-postmutate-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:reflect-postmutate-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:reflect-postmutate-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:reflect-postmutate-stats = {}", v);
-        CHECK(v >= 0,
-              "(query:reflect-postmutate-stats) >= 0 (4 counters sum)");
+        CHECK(v >= 0, "(query:reflect-postmutate-stats) >= 0 (4 counters sum)");
     }
     return true;
 }
@@ -100,16 +98,13 @@ bool test_impact_snapshot_count_under_mutate() {
     // mutate:replace-value goes through Guard + bumps
     // impact_snapshot_count_ on successful dtor.
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:replace-value (define a " +
-            std::to_string(i) + ") (define a " +
-            std::to_string(i) + "))");
+        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
+                      std::to_string(i) + "))");
     }
     const auto s1 = cs.evaluator().get_impact_snapshot_count();
-    std::println("  impact_snapshot: {} -> {} (delta {})",
-                 s0, s1, s1 - s0);
-    CHECK(s1 > s0,
-          "impact_snapshot_count bumped after Aura mutate "
-          "(Guard dtor success path)");
+    std::println("  impact_snapshot: {} -> {} (delta {})", s0, s1, s1 - s0);
+    CHECK(s1 > s0, "impact_snapshot_count bumped after Aura mutate "
+                   "(Guard dtor success path)");
     return true;
 }
 
@@ -123,16 +118,13 @@ bool test_long_running_reflect_cycle() {
     std::mt19937 rng(551u);
     std::uniform_int_distribution<int> val_dist(0, 999);
     for (int i = 0; i < k_long_iters(); ++i) {
-        std::string code = std::string("(mutate:replace-value (define ") +
-            (i & 1 ? "a" : "b") + " " +
-            std::to_string(val_dist(rng)) +
-            ") (define " + (i & 1 ? "a" : "b") + " " +
-            std::to_string(val_dist(rng)) + "))";
+        std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
+                           " " + std::to_string(val_dist(rng)) + ") (define " +
+                           (i & 1 ? "a" : "b") + " " + std::to_string(val_dist(rng)) + "))";
         (void)cs.eval(code);
     }
     const auto s1 = cs.evaluator().get_impact_snapshot_count();
-    std::println("  impact_snapshot: {} -> {} (delta {})",
-                 s0, s1, s1 - s0);
+    std::println("  impact_snapshot: {} -> {} (delta {})", s0, s1, s1 - s0);
     CHECK(s1 >= s0 + static_cast<std::uint64_t>(k_long_iters() - 5),
           "impact_snapshot_count grew under mutate cycle");
     return true;
@@ -152,16 +144,14 @@ bool test_schema_validation_setters() {
     ev.bump_schema_validation_fail_count();
     const auto p1 = ev.get_schema_validation_pass_count();
     const auto f1 = ev.get_schema_validation_fail_count();
-    std::println("  schema_pass: {} -> {} schema_fail: {} -> {}",
-                 p0, p1, f0, f1);
+    std::println("  schema_pass: {} -> {} schema_fail: {} -> {}", p0, p1, f0, f1);
     CHECK(p1 == p0 + 2, "schema_pass bumped by 2");
     CHECK(f1 == f0 + 1, "schema_fail bumped by 1");
     // Verify the snapshot count tracks pass/fail deltas
     // (production-readiness invariant: pass + fail ==
     // snapshot count, modulo rollbacks).
     const auto s = ev.get_impact_snapshot_count();
-    std::println("  impact_snapshot_count: {} (= pass + fail invariant check)",
-                 s);
+    std::println("  impact_snapshot_count: {} (= pass + fail invariant check)", s);
     CHECK(s >= 0, "impact_snapshot_count observable");
     return true;
 }
@@ -176,8 +166,7 @@ bool test_dirty_nodes_in_snapshot_roundtrip() {
     CHECK(ev.get_dirty_nodes_in_snapshot() == 100,
           "dirty_nodes_in_snapshot set/get round-trip (100)");
     ev.set_dirty_nodes_in_snapshot(0);
-    CHECK(ev.get_dirty_nodes_in_snapshot() == 0,
-          "dirty_nodes_in_snapshot reset to 0");
+    CHECK(ev.get_dirty_nodes_in_snapshot() == 0, "dirty_nodes_in_snapshot reset to 0");
     return true;
 }
 
@@ -195,21 +184,22 @@ bool test_eight_thread_concurrent_reflect_mutate() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(mutate:replace-value (define v" +
-                std::to_string(tid) + " " + std::to_string(i) +
-                ") (define v" + std::to_string(tid) + " " +
-                std::to_string(i) + "))";
+            std::string code = "(mutate:replace-value (define v" + std::to_string(tid) + " " +
+                               std::to_string(i) + ") (define v" + std::to_string(tid) + " " +
+                               std::to_string(i) + "))";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
 
     const auto s = cs.evaluator().get_impact_snapshot_count();
-    std::println("  completed: {}/{} impact_snapshot: {}",
-                 completed.load(), n_threads * n_iters, s);
+    std::println("  completed: {}/{} impact_snapshot: {}", completed.load(), n_threads * n_iters,
+                 s);
     CHECK(completed.load() == n_threads * n_iters,
           "all 160 ops completed (no crash under concurrent reflect mutate)");
     CHECK(s >= static_cast<std::uint64_t>(n_threads * n_iters),
@@ -281,8 +271,12 @@ int run_tests() {
 
 } // namespace aura_issue_551_detail
 
-int aura_issue_551_run() { return aura_issue_551_detail::run_tests(); }
+int aura_issue_551_run() {
+    return aura_issue_551_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_551_run(); }
+int main() {
+    return aura_issue_551_run();
+}
 #endif

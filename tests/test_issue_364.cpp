@@ -30,10 +30,16 @@ namespace aura_364_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 using aura::compiler::CompilerService;
 
@@ -117,11 +123,9 @@ bool test_100_cycle_stress() {
         code += std::to_string(i * 7);
         code += ")\")";
         auto r = cs.eval(code);
-        CHECK(r.has_value(),
-              std::string("cycle #") + std::to_string(i) + " set-code ok");
+        CHECK(r.has_value(), std::string("cycle #") + std::to_string(i) + " set-code ok");
         auto e = cs.eval("(eval-current)");
-        CHECK(e.has_value(),
-              std::string("cycle #") + std::to_string(i) + " eval ok");
+        CHECK(e.has_value(), std::string("cycle #") + std::to_string(i) + " eval ok");
     }
     std::println("  {} cycles completed", N);
     return true;
@@ -180,10 +184,8 @@ int aura_issue_364_run() {
 int main() {
     int rc = aura_issue_364_run();
     std::println("Nested hygienic macros + mutation (#364): {}/{} passed, {}/{} failed",
-                 aura_364_detail::g_passed,
-                 aura_364_detail::g_passed + aura_364_detail::g_failed,
-                 aura_364_detail::g_failed,
-                 aura_364_detail::g_passed + aura_364_detail::g_failed);
+                 aura_364_detail::g_passed, aura_364_detail::g_passed + aura_364_detail::g_failed,
+                 aura_364_detail::g_failed, aura_364_detail::g_passed + aura_364_detail::g_failed);
     return rc;
 }
 #endif

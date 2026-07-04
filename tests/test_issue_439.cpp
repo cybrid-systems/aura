@@ -20,12 +20,11 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 extern "C" int aura_evaluator_request_gc_safepoint();
-extern "C" void
-aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms);
+extern "C" void aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms);
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -43,8 +42,7 @@ bool test_query_gc_safepoint_stats() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "query:gc-safepoint-stats returns an integer");
+    CHECK(aura::compiler::types::is_int(*r), "query:gc-safepoint-stats returns an integer");
     return true;
 }
 
@@ -58,10 +56,8 @@ bool test_request_gc_safepoint_no_guard() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_int(*r),
-          "mutate:request-gc-safepoint returns an integer");
-    const auto code =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
+    CHECK(aura::compiler::types::is_int(*r), "mutate:request-gc-safepoint returns an integer");
+    const auto code = static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
     CHECK(code == 0 || code == 1,
           "mutate:request-gc-safepoint returns 0 (immediate) or 1 (deferred)");
     return true;
@@ -77,8 +73,7 @@ bool test_request_gc_safepoint_with_timeout() {
         ++g_failed;
         return false;
     }
-    const auto before =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r_before));
+    const auto before = static_cast<std::int64_t>(aura::compiler::types::as_int(*r_before));
     auto r = cs.eval("(mutate:request-gc-safepoint 100)");
     if (!r || !aura::compiler::types::is_int(*r)) {
         ++g_failed;
@@ -89,10 +84,8 @@ bool test_request_gc_safepoint_with_timeout() {
         ++g_failed;
         return false;
     }
-    const auto after =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r_after));
-    CHECK(after > before,
-          "query:gc-safepoint-stats count bumped after request + wait");
+    const auto after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r_after));
+    CHECK(after > before, "query:gc-safepoint-stats count bumped after request + wait");
     return true;
 }
 
@@ -105,8 +98,7 @@ bool test_counter_monotonicity() {
         ++g_failed;
         return false;
     }
-    const auto before =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
+    const auto before = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
     if (!cs.eval("(mutate:request-gc-safepoint 50)")) {
         ++g_failed;
         return false;
@@ -116,10 +108,8 @@ bool test_counter_monotonicity() {
         ++g_failed;
         return false;
     }
-    const auto after =
-        static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
-    CHECK(after >= before + 1,
-          "query:gc-safepoint-stats count >= before + 1 (monotonic)");
+    const auto after = static_cast<std::int64_t>(aura::compiler::types::as_int(*r1));
+    CHECK(after >= before + 1, "query:gc-safepoint-stats count >= before + 1 (monotonic)");
     return true;
 }
 
@@ -127,8 +117,7 @@ bool test_counter_monotonicity() {
 bool test_c_linkage_shim() {
     std::println("\n--- AC5: C-linkage shim aura_evaluator_request_gc_safepoint ---");
     const int code = aura_evaluator_request_gc_safepoint();
-    CHECK(code == 0 || code == 1,
-          "C-linkage shim returns 0 or 1 (no guard held in test context)");
+    CHECK(code == 0 || code == 1, "C-linkage shim returns 0 or 1 (no guard held in test context)");
     aura_evaluator_wait_for_safepoint(0);
     CHECK(true, "C-linkage wait shim callable");
     return true;
@@ -168,8 +157,7 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 18 24) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 18 24) == 42 (regression)");
     return true;
 }
 
@@ -188,8 +176,12 @@ int run_tests() {
 
 } // namespace aura_issue_439_detail
 
-int aura_issue_439_run() { return aura_issue_439_detail::run_tests(); }
+int aura_issue_439_run() {
+    return aura_issue_439_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_439_run(); }
+int main() {
+    return aura_issue_439_run();
+}
 #endif

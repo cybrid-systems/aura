@@ -64,13 +64,15 @@ import aura.compiler.service;
 
 namespace aura_issue_465_detail {
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:cxx26-hotpath-invariants) '{}')", key));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
@@ -84,8 +86,7 @@ bool test_primitive_returns_hash() {
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_hash(v),
-          "(query:cxx26-hotpath-invariants) returns a hash");
+    CHECK(aura::compiler::types::is_hash(v), "(query:cxx26-hotpath-invariants) returns a hash");
     return true;
 }
 
@@ -102,8 +103,11 @@ bool test_five_fields_present() {
         CHECK(false, "one or more hash-refs returned error");
         return true;
     }
-    auto v1 = *r1; auto v2 = *r2; auto v3 = *r3;
-    auto v4 = *r4; auto v5 = *r5;
+    auto v1 = *r1;
+    auto v2 = *r2;
+    auto v3 = *r3;
+    auto v4 = *r4;
+    auto v5 = *r5;
     CHECK(aura::compiler::types::is_int(v1), "fixnum is int");
     CHECK(aura::compiler::types::is_int(v2), "ref is int");
     CHECK(aura::compiler::types::is_int(v3), "string-v2 is int");
@@ -214,8 +218,7 @@ bool test_ir_instruction_view_contracts() {
     std::println("\n--- AC11: IRInstructionView contracts (in-bounds) ---");
     aura::compiler::IRModuleV2 m;
     m.add_function("f", 2);
-    m.add_instruction(0, aura::ir::IROpcode::Add,
-                      {0u, 1u, 2u, 0u});
+    m.add_instruction(0, aura::ir::IROpcode::Add, {0u, 1u, 2u, 0u});
     auto v = m.view_at(0, 0);
     // opcode() should pass the contract_assert
     auto op = v.opcode();
@@ -261,7 +264,7 @@ bool test_contracts_header_compiles() {
     return true;
 }
 
-}  // namespace aura_issue_465_detail
+} // namespace aura_issue_465_detail
 
 int main() {
     using namespace aura_issue_465_detail;

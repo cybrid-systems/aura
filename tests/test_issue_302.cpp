@@ -52,14 +52,14 @@ bool test_normal_usage_passes() {
     auto n1 = ast.add_raw_node(NodeTag::LiteralInt);
     ast.set_child(n0, 0, n1);
     ast.bump_generation();
-    ast.mark_dirty(n0);  // pre contract: id < tag_.size()
+    ast.mark_dirty(n0); // pre contract: id < tag_.size()
     ast.mark_subtree_dirty(n0);
     ast.mark_dirty_upward(n1);
     auto ref = ast.make_ref(n0);
     bool valid = ref.is_valid_in(ast);
     (void)valid;
     // rollback contract: mutation_id != 0
-    auto rolled = ast.rollback(12345);  // non-existent mutation_id
+    auto rolled = ast.rollback(12345); // non-existent mutation_id
     (void)rolled;
     std::println("  5 normal operations + 1 rollback lookup: all clean");
     CHECK(true, "normal usage doesn't trigger any Contracts");
@@ -100,35 +100,41 @@ bool test_contract_coverage_audit() {
         // build/).
         auto try_open = [](const std::string& p) -> FILE* {
             FILE* f = fopen(p.c_str(), "r");
-            if (f) return f;
+            if (f)
+                return f;
             const char* env = std::getenv("AURA_SRC_ROOT");
             if (env) {
                 std::string candidate = std::string(env) + "/" + p;
                 f = fopen(candidate.c_str(), "r");
-                if (f) return f;
+                if (f)
+                    return f;
             }
             std::string candidate = std::string("../") + p;
             return fopen(candidate.c_str(), "r");
         };
         FILE* f = try_open(path);
-        if (!f) return false;
+        if (!f)
+            return false;
         std::vector<std::string> lines;
         char buf[4096];
         while (fgets(buf, sizeof(buf), f)) {
             std::string line(buf);
             // Strip trailing newline
-            if (!line.empty() && line.back() == '\n') line.pop_back();
+            if (!line.empty() && line.back() == '\n')
+                line.pop_back();
             // Strip trailing // comment (keep any // in string
             // literals as-is — good enough for header search).
             auto cpos = line.find("//");
-            if (cpos != std::string::npos) line = line.substr(0, cpos);
+            if (cpos != std::string::npos)
+                line = line.substr(0, cpos);
             lines.push_back(line);
         }
         fclose(f);
         const std::string needle = fn + "(";
         for (std::size_t i = 0; i < lines.size(); ++i) {
             // Look for `fn + "("` in this line.
-            if (lines[i].find(needle) == std::string::npos) continue;
+            if (lines[i].find(needle) == std::string::npos)
+                continue;
             // Definition heuristic: a real function definition
             // (not a call site) typically has the function
             // name NOT preceded by `.` or `->` (member access)
@@ -146,15 +152,14 @@ bool test_contract_coverage_audit() {
             bool preceded_by_identifier = false;
             if (pos > 0) {
                 char prev = lines[i][pos - 1];
-                if (std::isalnum(static_cast<unsigned char>(prev)) ||
-                    prev == '_') {
+                if (std::isalnum(static_cast<unsigned char>(prev)) || prev == '_') {
                     preceded_by_identifier = true;
                 }
             }
-            if (preceded_by_identifier) continue;
+            if (preceded_by_identifier)
+                continue;
             // Look at next 60 lines for `pre(` or `post(`.
-            const std::size_t end =
-                std::min(lines.size(), i + 60);
+            const std::size_t end = std::min(lines.size(), i + 60);
             for (std::size_t j = i; j < end; ++j) {
                 if (lines[j].find("pre(") != std::string::npos ||
                     lines[j].find("post(") != std::string::npos) {
@@ -172,22 +177,25 @@ bool test_contract_coverage_audit() {
     std::vector<Check> checks = {
         {"src/core/ast.ixx", "is_valid", "AC #1: StableNodeRef::is_valid has post(r: ...)"},
         {"src/core/ast.ixx", "get_safe", "AC #1: get_safe has post(r: ...)"},
-        {"src/core/ast.ixx", "bump_generation", "AC #1: bump_generation has post(generation_ != 0)"},
-        {"src/core/ast.ixx", "mark_dirty_upward", "AC #1: mark_dirty_upward has pre(id < tag_.size())"},
+        {"src/core/ast.ixx", "bump_generation",
+         "AC #1: bump_generation has post(generation_ != 0)"},
+        {"src/core/ast.ixx", "mark_dirty_upward",
+         "AC #1: mark_dirty_upward has pre(id < tag_.size())"},
         {"src/core/ast.ixx", "rollback", "AC #1: rollback has pre(mutation_id != 0)"},
-        {"src/core/ast.ixx", "mark_dirty", "AC #1: mark_dirty has pre(id < tag_.size()) (added by #302)"},
-        {"src/core/persistent_child_vector.hh", "operator[]", "AC #1: PCV::operator[] has pre(i < size_)"},
+        {"src/core/ast.ixx", "mark_dirty",
+         "AC #1: mark_dirty has pre(id < tag_.size()) (added by #302)"},
+        {"src/core/persistent_child_vector.hh", "operator[]",
+         "AC #1: PCV::operator[] has pre(i < size_)"},
     };
     int contracts_found = 0;
     for (const auto& c : checks) {
         bool ok = find_contract(c.file, c.fn);
-        std::println("  {}: {} {}", c.ac,
-                     ok ? "✓" : "✗", ok ? "Contract present" : "MISSING");
-        if (ok) ++contracts_found;
+        std::println("  {}: {} {}", c.ac, ok ? "✓" : "✗", ok ? "Contract present" : "MISSING");
+        if (ok)
+            ++contracts_found;
     }
     std::println("  {}/{} target functions have Contracts", contracts_found, checks.size());
-    CHECK(contracts_found == (int)checks.size(),
-          "all target functions have at least one Contract");
+    CHECK(contracts_found == (int)checks.size(), "all target functions have at least one Contract");
     return true;
 }
 

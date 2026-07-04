@@ -41,22 +41,15 @@ bool test_stdlib_ast_file_present() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/ast.aura";
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/ast.aura exists on disk");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     const bool has_export = content.find("(export") != std::string::npos;
-    const bool has_summary_f =
-        content.find("(ast:summary-formatted") != std::string::npos;
-    const bool has_diff_f =
-        content.find("(ast:diff-formatted") != std::string::npos;
-    const bool has_validate =
-        content.find("(ast:validate-summary") != std::string::npos;
-    const bool has_version =
-        content.find("(ast:version-summary") != std::string::npos;
-    const bool has_ref_stats =
-        content.find("(ast:ref-stats") != std::string::npos;
-    const bool has_mem_pressure =
-        content.find("(ast:memory-pressure") != std::string::npos;
+    const bool has_summary_f = content.find("(ast:summary-formatted") != std::string::npos;
+    const bool has_diff_f = content.find("(ast:diff-formatted") != std::string::npos;
+    const bool has_validate = content.find("(ast:validate-summary") != std::string::npos;
+    const bool has_version = content.find("(ast:version-summary") != std::string::npos;
+    const bool has_ref_stats = content.find("(ast:ref-stats") != std::string::npos;
+    const bool has_mem_pressure = content.find("(ast:memory-pressure") != std::string::npos;
     std::println("  lib/ast.aura: present + 6 funcs defined + export");
     CHECK(has_export, "stdlib/ast.aura has (export ...) line");
     CHECK(has_summary_f, "stdlib/ast.aura exports (ast:summary-formatted)");
@@ -76,8 +69,7 @@ bool test_stdlib_workspace_enhanced() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/workspace.aura";
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/workspace.aura exists on disk");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     // Existing 2 functions (ws:merge-symbols + ws:diff) +
     // 5 new functions in #563 (snapshot-current, list-snapshots,
@@ -86,19 +78,15 @@ bool test_stdlib_workspace_enhanced() {
     const bool has_snapshot = content.find("(ws:snapshot-current") != std::string::npos;
     const bool has_list = content.find("(ws:list-snapshots") != std::string::npos;
     const bool has_rollback = content.find("(ws:rollback-latest") != std::string::npos;
-    const bool has_mem_pressure =
-        content.find("(ws:memory-pressure") != std::string::npos;
-    const bool has_current_stats =
-        content.find("(ws:current-stats") != std::string::npos;
+    const bool has_mem_pressure = content.find("(ws:memory-pressure") != std::string::npos;
+    const bool has_current_stats = content.find("(ws:current-stats") != std::string::npos;
     std::println("  lib/workspace.aura: present + 5 new funcs + export");
     CHECK(has_export, "stdlib/workspace.aura has (export ...) line");
     CHECK(has_snapshot, "stdlib/workspace.aura exports (ws:snapshot-current)");
     CHECK(has_list, "stdlib/workspace.aura exports (ws:list-snapshots)");
     CHECK(has_rollback, "stdlib/workspace.aura exports (ws:rollback-latest)");
-    CHECK(has_mem_pressure,
-          "stdlib/workspace.aura exports (ws:memory-pressure)");
-    CHECK(has_current_stats,
-          "stdlib/workspace.aura exports (ws:current-stats)");
+    CHECK(has_mem_pressure, "stdlib/workspace.aura exports (ws:memory-pressure)");
+    CHECK(has_current_stats, "stdlib/workspace.aura exports (ws:current-stats)");
     return true;
 }
 
@@ -111,10 +99,8 @@ bool test_12_primitives_wrapped() {
     std::ifstream f2(ws_path);
     CHECK(f1.good(), "lib/std/ast.aura exists");
     CHECK(f2.good(), "lib/std/workspace.aura exists");
-    std::string c1((std::istreambuf_iterator<char>(f1)),
-                   std::istreambuf_iterator<char>());
-    std::string c2((std::istreambuf_iterator<char>(f2)),
-                   std::istreambuf_iterator<char>());
+    std::string c1((std::istreambuf_iterator<char>(f1)), std::istreambuf_iterator<char>());
+    std::string c2((std::istreambuf_iterator<char>(f2)), std::istreambuf_iterator<char>());
     f1.close();
     f2.close();
     // Count occurrences of "ast:" + "workspace:" in stdlib
@@ -136,29 +122,23 @@ bool test_12_primitives_wrapped() {
     // The stdlib wrappers call at least 1 engine primitive
     // each (the wrapped primitive) + sometimes helpers. We
     // accept >= 12 (matches the 12 wrappers' minimum).
-    CHECK(total >= 12,
-          "stdlib wrappers invoke >= 12 engine primitives "
-          "(≥5 acceptance criterion exceeded)");
+    CHECK(total >= 12, "stdlib wrappers invoke >= 12 engine primitives "
+                       "(≥5 acceptance criterion exceeded)");
     return true;
 }
 
 // ── AC4: docs/design/ast-workspace-decision.md present
 bool test_decision_doc_exists() {
     std::println("\n--- AC4: docs/design/ast-workspace-decision.md ---");
-    const std::string doc_path =
-        "/home/dev/code/aura/docs/design/ast-workspace-decision.md";
+    const std::string doc_path = "/home/dev/code/aura/docs/design/ast-workspace-decision.md";
     std::ifstream f(doc_path);
     CHECK(f.good(), "decision doc exists");
     if (f.good()) {
-        std::string content((std::istreambuf_iterator<char>(f)),
-                            std::istreambuf_iterator<char>());
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         f.close();
-        const bool has_ast_section =
-            content.find("ast: namespace") != std::string::npos;
-        const bool has_ws_section =
-            content.find("workspace: namespace") != std::string::npos;
-        const bool has_acceptance =
-            content.find("Acceptance criteria check") != std::string::npos;
+        const bool has_ast_section = content.find("ast: namespace") != std::string::npos;
+        const bool has_ws_section = content.find("workspace: namespace") != std::string::npos;
+        const bool has_acceptance = content.find("Acceptance criteria check") != std::string::npos;
         std::println("  decision doc: present + ast+workspace sections + acceptance");
         CHECK(has_ast_section, "doc has ast: section");
         CHECK(has_ws_section, "doc has workspace: section");
@@ -220,8 +200,12 @@ int run_tests() {
 
 } // namespace aura_issue_563_detail
 
-int aura_issue_563_run() { return aura_issue_563_detail::run_tests(); }
+int aura_issue_563_run() {
+    return aura_issue_563_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_563_run(); }
+int main() {
+    return aura_issue_563_run();
+}
 #endif

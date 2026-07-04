@@ -127,18 +127,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         auto to_layer = wt->active_idx();
         if (a.size() >= 4 && is_int(a[3]))
             to_layer = static_cast<std::uint32_t>(as_int(a[3]));
-        aura::ast::FlatAST::StableNodeRef src_ref{
-            node_id,
-            gen,
-            0,
-            from_layer,
-            0,
-            0,
-            0,
-            0};
+        aura::ast::FlatAST::StableNodeRef src_ref{node_id, gen, 0, from_layer, 0, 0, 0, 0};
         if (a.size() >= 5 && is_int(a[4])) {
-            src_ref.workspace_id =
-                static_cast<std::uint32_t>(as_int(a[4]));
+            src_ref.workspace_id = static_cast<std::uint32_t>(as_int(a[4]));
             if (src_ref.workspace_id != from_layer)
                 ev.bump_provenance_mismatch();
         }
@@ -152,8 +143,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         // pair shape as (query:stable-ref) so (query:ref-valid?)
         // accepts cross-layer resolved refs.
         auto gen_pid = ev.pairs_.size();
-        ev.pairs_.push_back(
-            {make_int(static_cast<std::int64_t>(resolved->gen)), make_void()});
+        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(resolved->gen)), make_void()});
         auto pair_pid = ev.pairs_.size();
         ev.pairs_.push_back(
             {make_int(static_cast<std::int64_t>(resolved->id)), make_pair(gen_pid)});
@@ -186,8 +176,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // has been called yet) — useful for ad-hoc lookups in tests
     // and for callers that haven't adopted the workspace_tree.
     add("workspace:find-define", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]) || !ev.workspace_flat_
-            || !ev.workspace_pool_)
+        if (a.empty() || !is_string(a[0]) || !ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
         auto name_idx = as_string_idx(a[0]);
         if (name_idx >= ev.string_heap_.size())
@@ -209,8 +198,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_int(static_cast<std::int64_t>(*found));
             }
         }
-        auto found = ev.workspace_flat_->find_define_by_name(
-            *ev.workspace_pool_, name);
+        auto found = ev.workspace_flat_->find_define_by_name(*ev.workspace_pool_, name);
         if (!found)
             return make_void();
         return make_int(static_cast<std::int64_t>(*found));
@@ -298,20 +286,19 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // (workspace:set-memory-limit bytes) → #t/#f. 0 = unlimited.
-    add("workspace:set-memory-limit",
-                    [&ev](std::span<const EvalValue> a) -> EvalValue {
-                        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-                            return make_bool(false);
-                        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-                        auto* n = wt->active();
-                        if (!n)
-                            return make_bool(false);
-                        auto bytes = as_int(a[0]);
-                        if (bytes < 0)
-                            return make_bool(false);
-                        n->memory_budget = static_cast<std::size_t>(bytes);
-                        return make_bool(true);
-                    });
+    add("workspace:set-memory-limit", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+            return make_bool(false);
+        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+        auto* n = wt->active();
+        if (!n)
+            return make_bool(false);
+        auto bytes = as_int(a[0]);
+        if (bytes < 0)
+            return make_bool(false);
+        n->memory_budget = static_cast<std::size_t>(bytes);
+        return make_bool(true);
+    });
 
     // (workspace:cow-refused-count) → COW refusals for this workspace
     add("workspace:cow-refused-count", [&ev](const auto&) -> EvalValue {
@@ -548,38 +535,39 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // (workspace:discard id)
     //   → #t on success
     //   Discards a child workspace's local changes, resetting to parent state.
-    add("workspace:discard", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-            return make_bool(false);
-        auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
-        if (idx == 0 || idx >= tree->size())
-            return make_bool(false);
-        auto& ws = tree->nodes_[idx];
-        if (!ws.has_own_flat)
-            return make_bool(true); // already in parent state
+    add("workspace:discard",
+        [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+                return make_bool(false);
+            auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+            auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+            if (idx == 0 || idx >= tree->size())
+                return make_bool(false);
+            auto& ws = tree->nodes_[idx];
+            if (!ws.has_own_flat)
+                return make_bool(true); // already in parent state
 
-        if (ws.parent_flat_) {
-            delete ws.flat;
-            delete ws.pool;
-            ws.flat = ws.parent_flat_;
-            ws.pool = ws.parent_pool_;
-            ws.has_own_flat = false;
-            ws.generation = 0;
-            ws.cow_epoch = 0;
-            ws.remap = aura::ast::mutation::NodeIdRemapTable{};
-            ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-            ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
-            // If we just discarded the active workspace, sync pointers
-            if (idx == tree->active_idx()) {
-                ev.workspace_flat_ = ws.flat;
-                ev.workspace_pool_ = ws.pool;
-                // (ASAN fix #107 leak) delete the old index.
-                destroy_defuse_index();
+            if (ws.parent_flat_) {
+                delete ws.flat;
+                delete ws.pool;
+                ws.flat = ws.parent_flat_;
+                ws.pool = ws.parent_pool_;
+                ws.has_own_flat = false;
+                ws.generation = 0;
+                ws.cow_epoch = 0;
+                ws.remap = aura::ast::mutation::NodeIdRemapTable{};
+                ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
+                ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+                // If we just discarded the active workspace, sync pointers
+                if (idx == tree->active_idx()) {
+                    ev.workspace_flat_ = ws.flat;
+                    ev.workspace_pool_ = ws.pool;
+                    // (ASAN fix #107 leak) delete the old index.
+                    destroy_defuse_index();
+                }
             }
-        }
-        return make_bool(true);
-    });
+            return make_bool(true);
+        });
 
     // (workspace:merge child-id)
     //   → result string: alist of ("name" . "updated"|"added")
@@ -724,54 +712,54 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     //   Returns an unordered list of strings, or () if no conflicts.
     //   Dry run - does NOT modify either workspace.
     add("workspace:conflicts-with",
-                    [&ev, get_ws_source, extract_defines](const auto& a) -> EvalValue {
-                        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-                            return make_void();
-                        auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-                        auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
-                        if (child_idx == 0 || child_idx >= tree->size())
-                            return make_void();
-                        auto child_source = get_ws_source(child_idx);
-                        if (child_source.empty())
-                            return make_void();
-                        auto& parent = tree->nodes_[0];
-                        if (parent.read_only)
-                            return make_void();
-                        ev.workspace_flat_ = parent.flat;
-                        ev.workspace_pool_ = parent.pool;
-                        tree->set_active(0);
-                        auto src_fn = ev.primitives_.lookup("current-source");
-                        std::string parent_source;
-                        if (src_fn) {
-                            // Issue #135: pass :workspace so we read the parent
-                            // workspace's saved flat, not the per-eval current flat.
-                            std::uint64_t ws_kw = ev.keyword_table_.size();
-                            ev.keyword_table_.push_back(":workspace");
-                            auto src = (*src_fn)({types::make_keyword(ws_kw)});
-                            if (is_string(src)) {
-                                auto sidx = as_string_idx(src);
-                                if (sidx < ev.string_heap_.size())
-                                    parent_source = ev.string_heap_[sidx];
-                            }
-                        }
-                        auto parent_names = extract_defines(parent_source);
-                        auto child_names = extract_defines(child_source);
-                        std::vector<std::string> conflicts;
-                        for (auto& n : child_names) {
-                            if (parent_names.count(n))
-                                conflicts.push_back(n);
-                        }
-                        std::sort(conflicts.begin(), conflicts.end());
-                        EvalValue result = make_void();
-                        for (auto it = conflicts.rbegin(); it != conflicts.rend(); ++it) {
-                            auto sidx = ev.string_heap_.size();
-                            ev.string_heap_.push_back(*it);
-                            auto pidx = ev.pairs_.size();
-                            ev.pairs_.push_back({make_string(sidx), result});
-                            result = make_pair(pidx);
-                        }
-                        return result;
-                    });
+        [&ev, get_ws_source, extract_defines](const auto& a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+                return make_void();
+            auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+            auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
+            if (child_idx == 0 || child_idx >= tree->size())
+                return make_void();
+            auto child_source = get_ws_source(child_idx);
+            if (child_source.empty())
+                return make_void();
+            auto& parent = tree->nodes_[0];
+            if (parent.read_only)
+                return make_void();
+            ev.workspace_flat_ = parent.flat;
+            ev.workspace_pool_ = parent.pool;
+            tree->set_active(0);
+            auto src_fn = ev.primitives_.lookup("current-source");
+            std::string parent_source;
+            if (src_fn) {
+                // Issue #135: pass :workspace so we read the parent
+                // workspace's saved flat, not the per-eval current flat.
+                std::uint64_t ws_kw = ev.keyword_table_.size();
+                ev.keyword_table_.push_back(":workspace");
+                auto src = (*src_fn)({types::make_keyword(ws_kw)});
+                if (is_string(src)) {
+                    auto sidx = as_string_idx(src);
+                    if (sidx < ev.string_heap_.size())
+                        parent_source = ev.string_heap_[sidx];
+                }
+            }
+            auto parent_names = extract_defines(parent_source);
+            auto child_names = extract_defines(child_source);
+            std::vector<std::string> conflicts;
+            for (auto& n : child_names) {
+                if (parent_names.count(n))
+                    conflicts.push_back(n);
+            }
+            std::sort(conflicts.begin(), conflicts.end());
+            EvalValue result = make_void();
+            for (auto it = conflicts.rbegin(); it != conflicts.rend(); ++it) {
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(*it);
+                auto pidx = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(sidx), result});
+                result = make_pair(pidx);
+            }
+            return result;
+        });
 
     // (workspace:merge-3way base-id ours-id theirs-id [strategy: ...]) -> #t
     //   Source-level 3-way merge. The merged source combines all 3.

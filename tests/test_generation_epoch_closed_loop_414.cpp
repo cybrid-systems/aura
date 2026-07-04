@@ -77,8 +77,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round mutate matrix ---");
     const auto stats5a = generation_epoch_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats5b = generation_epoch_stats(cs);

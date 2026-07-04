@@ -21,8 +21,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -31,7 +31,6 @@ import aura.diag;
 import aura.core.type;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_121_detail {
@@ -79,9 +78,8 @@ bool test_gensym_with_prefix() {
     std::println("\n--- Test: (gensym \"prefix\") uses the prefix ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(define a (gensym \"tmp\")) "
-        "(define b (gensym \"loop\"))");
+    auto root = parse(e, "(define a (gensym \"tmp\")) "
+                         "(define b (gensym \"loop\"))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "(gensym \"prefix\") parses + typechecks");
@@ -94,9 +92,8 @@ bool test_symbol_append_basic() {
     std::println("\n--- Test: (symbol-append 'a 'b) ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(define s (symbol-append 'make- 'point)) "
-        "(define s2 (symbol-append 'x 1))");
+    auto root = parse(e, "(define s (symbol-append 'make- 'point)) "
+                         "(define s2 (symbol-append 'x 1))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "symbol-append parses + typechecks");
@@ -111,10 +108,9 @@ bool test_qq_with_gensym() {
     // The macro intros a let binding via gensym. This is
     // the canonical "macro-introduced local" pattern.
     auto e = make_env();
-    auto root = parse(e,
-        "(define-hygienic-macro (my-let val) "
-        "  (let ((tmp (gensym))) "
-        "    (list 'let (list (list tmp val)) tmp)))");
+    auto root = parse(e, "(define-hygienic-macro (my-let val) "
+                         "  (let ((tmp (gensym))) "
+                         "    (list 'let (list (list tmp val)) tmp)))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "quasiquote+gensym parses + typechecks");
@@ -132,10 +128,9 @@ bool test_nested_hygienic_macros() {
     // quasiquote, because the quasiquote expansion treats
     // inner macro calls as data (a separate issue from #121).
     auto e = make_env();
-    auto root = parse(e,
-        "(define-hygienic-macro (m1 x) (list '+ x 1)) "
-        "(define-hygienic-macro (m2 x) (list 'm1 (list '* x 2))) "
-        "(define-hygienic-macro (m3 x) (list 'm2 x))");
+    auto root = parse(e, "(define-hygienic-macro (m1 x) (list '+ x 1)) "
+                         "(define-hygienic-macro (m2 x) (list 'm1 (list '* x 2))) "
+                         "(define-hygienic-macro (m3 x) (list 'm2 x))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "nested hygienic macros parse + typecheck");
@@ -148,9 +143,8 @@ bool test_legacy_defmacro_backward_compat() {
     std::println("\n--- Test: legacy `defmacro` still works ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(defmacro (my-double x) `(+ ,x ,x)) "
-        "(my-double 5)");
+    auto root = parse(e, "(defmacro (my-double x) `(+ ,x ,x)) "
+                         "(my-double 5)");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "legacy defmacro parses + typechecks");
@@ -167,9 +161,8 @@ bool test_macro_expand_bounded() {
     // This recurses forever. macro_expand_all should hit its
     // pass limit and emit a warning, not hang.
     auto e = make_env();
-    auto root = parse(e,
-        "(defmacro (count-down n) "
-        "  (if (= n 0) 0 `(count-down ,(- n 1))))");
+    auto root = parse(e, "(defmacro (count-down n) "
+                         "  (if (= n 0) 0 `(count-down ,(- n 1))))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "recursive macro parses + typechecks");
@@ -183,10 +176,9 @@ bool test_hygienic_gensym_in_macro() {
     std::println("\n--- Test: hygienic macro intros fresh binding via gensym ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(define-hygienic-macro (mk-var init) "
-        "  (let ((v (gensym))) "
-        "    (list 'define (list v init) v)))");
+    auto root = parse(e, "(define-hygienic-macro (mk-var init) "
+                         "  (let ((v (gensym))) "
+                         "    (list 'define (list v init) v)))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "hygienic macro + gensym parses + typechecks");
@@ -203,12 +195,12 @@ int run_tests() {
     test_legacy_defmacro_backward_compat();
     test_macro_expand_bounded();
     test_hygienic_gensym_in_macro();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_121_detail
+} // namespace aura_issue_121_detail
 
-int aura_issue_121_run() { return aura_issue_121_detail::run_tests(); }
-
+int aura_issue_121_run() {
+    return aura_issue_121_detail::run_tests();
+}

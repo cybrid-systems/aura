@@ -16,14 +16,20 @@ namespace aura_issue_692_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:adt-exhaustiveness-typed-mutate-stats) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (query:adt-exhaustiveness-typed-mutate-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -38,15 +44,14 @@ static constexpr const char* k_prog = R"(
         0))))
 )";
 
-}  // namespace aura_issue_692_detail
+} // namespace aura_issue_692_detail
 
 int main() {
     using namespace aura_issue_692_detail;
     std::println("=== Issue #692: ADT exhaustiveness typed-mutation ===");
 
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Lazy);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
 
     // AC1: stats hash fields
     {
@@ -56,10 +61,8 @@ int main() {
               "query:adt-exhaustiveness-typed-mutate-stats returns hash");
         CHECK(stat_int(cs, "post-mutate-rechecks") >= 0, "post-mutate-rechecks present");
         CHECK(stat_int(cs, "non-exhaustive-caught") >= 0, "non-exhaustive-caught present");
-        CHECK(stat_int(cs, "pattern-narrow-refreshes") >= 0,
-              "pattern-narrow-refreshes present");
-        CHECK(stat_int(cs, "provenance-completeness") >= 0,
-              "provenance-completeness present");
+        CHECK(stat_int(cs, "pattern-narrow-refreshes") >= 0, "pattern-narrow-refreshes present");
+        CHECK(stat_int(cs, "provenance-completeness") >= 0, "provenance-completeness present");
     }
 
     const auto recheck_before = stat_int(cs, "post-mutate-rechecks");
@@ -72,13 +75,11 @@ int main() {
         cs.eval(std::format("(set-code \"{}\")", k_prog));
         cs.eval("(eval-current)");
         (void)cs.eval("(typecheck-current)");
-        auto r = cs.eval(
-            "(mutate:rebind \"pick\" "
-            "\"(lambda (c) (if (pair? c) "
-            "(match (car c) ((Red) 10) ((Green) 20) ((Blue) 30)) 0))\" "
-            "\"issue-692\")");
-        CHECK(r && aura::compiler::types::is_bool(*r) &&
-                  aura::compiler::types::as_bool(*r),
+        auto r = cs.eval("(mutate:rebind \"pick\" "
+                         "\"(lambda (c) (if (pair? c) "
+                         "(match (car c) ((Red) 10) ((Green) 20) ((Blue) 30)) 0))\" "
+                         "\"issue-692\")");
+        CHECK(r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
               "mutate:rebind on pick succeeds");
         cs.eval("(eval-current)");
         (void)cs.eval("(typecheck-current)");
@@ -86,14 +87,13 @@ int main() {
         const auto pattern_after = stat_int(cs, "pattern-narrow-refreshes");
         const auto nonex_after = stat_int(cs, "non-exhaustive-caught");
         CHECK(recheck_after > recheck_before,
-              std::format("post-mutate-rechecks grew ({} -> {})",
-                          recheck_before, recheck_after));
-        CHECK(pattern_after > pattern_before,
-              std::format("pattern-narrow-refreshes grew ({} -> {})",
-                          pattern_before, pattern_after));
+              std::format("post-mutate-rechecks grew ({} -> {})", recheck_before, recheck_after));
+        CHECK(
+            pattern_after > pattern_before,
+            std::format("pattern-narrow-refreshes grew ({} -> {})", pattern_before, pattern_after));
         CHECK(nonex_after >= nonex_before,
-              std::format("non-exhaustive-caught non-decreasing ({} -> {})",
-                          nonex_before, nonex_after));
+              std::format("non-exhaustive-caught non-decreasing ({} -> {})", nonex_before,
+                          nonex_after));
         auto pick_r = cs.eval("(pick (cons Red 0))");
         CHECK(pick_r && aura::compiler::types::is_int(*pick_r) &&
                   aura::compiler::types::as_int(*pick_r) == 10,
@@ -142,8 +142,7 @@ int main() {
         t1.join();
         t2.join();
         CHECK(ok_count.load() > 0,
-              std::format("fiber stress produced {} successful pick evals",
-                          ok_count.load()));
+              std::format("fiber stress produced {} successful pick evals", ok_count.load()));
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

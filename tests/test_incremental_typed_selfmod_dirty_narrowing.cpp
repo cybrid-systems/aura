@@ -61,8 +61,8 @@ bool test_dirty_narrowing_counters_reachable() {
     const auto cc0 = cs.evaluator().get_cross_delta_conflicts_caught();
     const auto ps0 = cs.evaluator().get_passes_skipped_type_dirty();
     const auto tr0 = cs.evaluator().get_touched_roots_size();
-    std::println("  baseline: narrowing={} cross_delta={} passes_skipped={} touched_roots={}",
-                 n0, cc0, ps0, tr0);
+    std::println("  baseline: narrowing={} cross_delta={} passes_skipped={} touched_roots={}", n0,
+                 cc0, ps0, tr0);
     CHECK(n0 == 0, "narrowing_refresh_count starts at 0");
     CHECK(cc0 == 0, "cross_delta_conflicts_caught starts at 0");
     CHECK(ps0 == 0, "passes_skipped_type_dirty starts at 0");
@@ -78,13 +78,11 @@ bool test_query_typed_mutation_stats() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:typed-mutation-stats)");
     CHECK(r.has_value(), "(query:typed-mutation-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:typed-mutation-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:typed-mutation-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:typed-mutation-stats = {}", v);
-        CHECK(v >= 0,
-              "(query:typed-mutation-stats) >= 0 (4 counters sum)");
+        CHECK(v >= 0, "(query:typed-mutation-stats) >= 0 (4 counters sum)");
     }
     return true;
 }
@@ -97,8 +95,7 @@ bool test_query_dirty_impact() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:dirty-impact)");
     CHECK(r.has_value(), "(query:dirty-impact) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:dirty-impact) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:dirty-impact) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:dirty-impact = {}", v);
@@ -119,16 +116,13 @@ bool test_narrowing_refresh_under_mutate() {
     // which calls exit_mutation_boundary(success=true) which
     // bumps narrowing_refresh_count_.
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:replace-value (define a " +
-            std::to_string(i) + ") (define a " +
-            std::to_string(i) + "))");
+        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
+                      std::to_string(i) + "))");
     }
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
-    std::println("  narrowing_refresh: {} -> {} (delta {})",
-                 n0, n1, n1 - n0);
-    CHECK(n1 > n0,
-          "narrowing_refresh_count bumped after Aura mutate load "
-          "(exit_mutation_boundary success path)");
+    std::println("  narrowing_refresh: {} -> {} (delta {})", n0, n1, n1 - n0);
+    CHECK(n1 > n0, "narrowing_refresh_count bumped after Aura mutate load "
+                   "(exit_mutation_boundary success path)");
     return true;
 }
 
@@ -147,17 +141,14 @@ bool test_long_running_typed_mutate_cycle() {
     // narrowing on success); (define ...) is a workspace-
     // load operation that doesn't go through a Guard.
     for (int i = 0; i < k_long_iters(); ++i) {
-        std::string code = std::string("(mutate:replace-value (define ") +
-            (i & 1 ? "a" : "b") + " " +
-            std::to_string(val_dist(rng)) +
-            ") (define " + (i & 1 ? "a" : "b") + " " +
-            std::to_string(val_dist(rng)) + "))";
+        std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
+                           " " + std::to_string(val_dist(rng)) + ") (define " +
+                           (i & 1 ? "a" : "b") + " " + std::to_string(val_dist(rng)) + "))";
         (void)cs.eval(code);
     }
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
     const auto ps1 = cs.evaluator().get_passes_skipped_type_dirty();
-    std::println("  narrowing: {} -> {} passes_skipped: {} -> {}",
-                 n0, n1, ps0, ps1);
+    std::println("  narrowing: {} -> {} passes_skipped: {} -> {}", n0, n1, ps0, ps1);
     CHECK(n1 >= n0 + static_cast<std::uint64_t>(k_long_iters() - 5),
           "narrowing_refresh grew under typed mutate cycle");
     CHECK(ps1 >= ps0, "passes_skipped monotonic non-decreasing");
@@ -171,11 +162,9 @@ bool test_touched_roots_size_observable() {
     const auto s0 = ev.get_touched_roots_size();
     CHECK(s0 == 0, "touched_roots_size starts at 0");
     ev.set_touched_roots_size(42);
-    CHECK(ev.get_touched_roots_size() == 42,
-          "touched_roots_size set/get round-trip (42)");
+    CHECK(ev.get_touched_roots_size() == 42, "touched_roots_size set/get round-trip (42)");
     ev.set_touched_roots_size(0);
-    CHECK(ev.get_touched_roots_size() == 0,
-          "touched_roots_size reset to 0");
+    CHECK(ev.get_touched_roots_size() == 0, "touched_roots_size reset to 0");
     return true;
 }
 
@@ -195,25 +184,25 @@ bool test_eight_thread_concurrent_typed_mutate() {
             std::lock_guard<std::mutex> lk(mtx);
             // mutate:replace-value goes through Guard and
             // bumps narrowing_refresh_count_ on success.
-            std::string code = "(mutate:replace-value (define v" +
-                std::to_string(tid) + " " + std::to_string(i) +
-                ") (define v" + std::to_string(tid) + " " +
-                std::to_string(i) + "))";
+            std::string code = "(mutate:replace-value (define v" + std::to_string(tid) + " " +
+                               std::to_string(i) + ") (define v" + std::to_string(tid) + " " +
+                               std::to_string(i) + "))";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
 
     const auto n = cs.evaluator().get_narrowing_refresh_count();
-    std::println("  completed: {}/{} narrowing_refresh: {}",
-                 completed.load(), n_threads * n_iters, n);
+    std::println("  completed: {}/{} narrowing_refresh: {}", completed.load(), n_threads * n_iters,
+                 n);
     CHECK(completed.load() == n_threads * n_iters,
           "all 160 ops completed (no crash under concurrent typed mutate)");
-    CHECK(n > 0,
-          "narrowing_refresh > 0 after concurrent typed mutate load");
+    CHECK(n > 0, "narrowing_refresh > 0 after concurrent typed mutate load");
     return true;
 }
 
@@ -281,8 +270,12 @@ int run_tests() {
 
 } // namespace aura_issue_550_detail
 
-int aura_issue_550_run() { return aura_issue_550_detail::run_tests(); }
+int aura_issue_550_run() {
+    return aura_issue_550_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_550_run(); }
+int main() {
+    return aura_issue_550_run();
+}
 #endif

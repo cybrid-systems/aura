@@ -21,8 +21,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -35,12 +35,11 @@ import aura.compiler.type_checker;
 import aura.parser.parser;
 
 
-
 // Helper: run a snippet on a fresh CompilerService and return the
 // raw EvalValue. Used by tests that need a clean slate per assertion.
 namespace aura_issue_135_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -68,30 +67,31 @@ static bool run_bool(aura::compiler::CompilerService& cs, std::string_view src) 
 }
 
 // Helper: access the car of a pair-valued result
-static aura::compiler::types::EvalValue pair_car(
-    aura::compiler::CompilerService& cs,
-    aura::compiler::types::EvalValue pair_v) {
-    if (!aura::compiler::types::is_pair(pair_v)) return aura::compiler::types::make_void();
+static aura::compiler::types::EvalValue pair_car(aura::compiler::CompilerService& cs,
+                                                 aura::compiler::types::EvalValue pair_v) {
+    if (!aura::compiler::types::is_pair(pair_v))
+        return aura::compiler::types::make_void();
     auto pidx = aura::compiler::types::as_pair_idx(pair_v);
     const auto& pairs = cs.evaluator().pairs();
-    if (pidx >= pairs.size()) return aura::compiler::types::make_void();
+    if (pidx >= pairs.size())
+        return aura::compiler::types::make_void();
     return pairs[pidx].car;
 }
 
 // Helper: access the cdr of a pair-valued result
-static aura::compiler::types::EvalValue pair_cdr(
-    aura::compiler::CompilerService& cs,
-    aura::compiler::types::EvalValue pair_v) {
-    if (!aura::compiler::types::is_pair(pair_v)) return aura::compiler::types::make_void();
+static aura::compiler::types::EvalValue pair_cdr(aura::compiler::CompilerService& cs,
+                                                 aura::compiler::types::EvalValue pair_v) {
+    if (!aura::compiler::types::is_pair(pair_v))
+        return aura::compiler::types::make_void();
     auto pidx = aura::compiler::types::as_pair_idx(pair_v);
     const auto& pairs = cs.evaluator().pairs();
-    if (pidx >= pairs.size()) return aura::compiler::types::make_void();
+    if (pidx >= pairs.size())
+        return aura::compiler::types::make_void();
     return pairs[pidx].cdr;
 }
 
 // Helper: list length via cdr chain
-static int pair_length(aura::compiler::CompilerService& cs,
-                       aura::compiler::types::EvalValue v) {
+static int pair_length(aura::compiler::CompilerService& cs, aura::compiler::types::EvalValue v) {
     int n = 0;
     while (aura::compiler::types::is_pair(v)) {
         auto c = pair_cdr(cs, v);
@@ -102,7 +102,8 @@ static int pair_length(aura::compiler::CompilerService& cs,
         }
         ++n;
         v = c;
-        if (n > 10000) break;  // safety
+        if (n > 10000)
+            break; // safety
     }
     return n;
 }
@@ -110,23 +111,28 @@ static int pair_length(aura::compiler::CompilerService& cs,
 // Helper: extract a std::string from a string EvalValue via the
 // evaluator's string heap.
 static std::string string_value(aura::compiler::CompilerService& cs,
-                                 aura::compiler::types::EvalValue v) {
-    if (!aura::compiler::types::is_string(v)) return "";
+                                aura::compiler::types::EvalValue v) {
+    if (!aura::compiler::types::is_string(v))
+        return "";
     auto idx = aura::compiler::types::as_string_idx(v);
     const auto& heap = cs.evaluator().string_heap();
-    if (idx >= heap.size()) return "";
+    if (idx >= heap.size())
+        return "";
     return std::string(heap[idx]);
 }
 
-static int64_t pair_nth_int(aura::compiler::CompilerService& cs,
-                            aura::compiler::types::EvalValue v, int n) {
+static int64_t pair_nth_int(aura::compiler::CompilerService& cs, aura::compiler::types::EvalValue v,
+                            int n) {
     for (int i = 0; i < n; ++i) {
-        if (!aura::compiler::types::is_pair(v)) return -1;
+        if (!aura::compiler::types::is_pair(v))
+            return -1;
         v = pair_cdr(cs, v);
     }
-    if (!aura::compiler::types::is_pair(v)) return -1;
+    if (!aura::compiler::types::is_pair(v))
+        return -1;
     auto car = pair_car(cs, v);
-    if (!aura::compiler::types::is_int(car)) return -1;
+    if (!aura::compiler::types::is_int(car))
+        return -1;
     return aura::compiler::types::as_int(car);
 }
 
@@ -390,23 +396,24 @@ bool test_workspace_switch() {
 // ── Test 3.5: workspace COW isolation — mutate in child, parent unchanged ──
 
 bool test_workspace_cow_isolation() {
-    std::println("\n--- Test 3.5: workspace COW isolation (parent unchanged after child mutate) ---");
+    std::println(
+        "\n--- Test 3.5: workspace COW isolation (parent unchanged after child mutate) ---");
     aura::compiler::CompilerService cs;
     // Set up code in root, create child, mutate in child, switch back, verify parent
     run_on(cs, "(set-code \"(define (f x) (+ x 1))\")");
     run_on(cs, "(workspace:create \"sandbox\")");
-    run_on(cs, "(workspace:switch 1)");  // child is ID 1
+    run_on(cs, "(workspace:switch 1)"); // child is ID 1
     run_on(cs, "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"test\")");
     auto child_src = run_on(cs, "(current-source :workspace)");
-    bool child_changed = aura::compiler::types::is_string(child_src) &&
-                          string_value(cs, child_src) ==
-                          std::string("(define f (lambda (x) (* x 2)))");
+    bool child_changed =
+        aura::compiler::types::is_string(child_src) &&
+        string_value(cs, child_src) == std::string("(define f (lambda (x) (* x 2)))");
     CHECK(child_changed, "child workspace shows mutated source (* x 2)");
-    run_on(cs, "(workspace:switch 0)");  // back to root
+    run_on(cs, "(workspace:switch 0)"); // back to root
     auto root_src = run_on(cs, "(current-source :workspace)");
-    bool root_unchanged = aura::compiler::types::is_string(root_src) &&
-                           string_value(cs, root_src) ==
-                           std::string("(define f (lambda (x) (+ x 1)))");
+    bool root_unchanged =
+        aura::compiler::types::is_string(root_src) &&
+        string_value(cs, root_src) == std::string("(define f (lambda (x) (+ x 1)))");
     CHECK(root_unchanged, "root workspace still has original source (+ x 1)");
     return true;
 }
@@ -419,20 +426,18 @@ bool test_workspace_lock() {
     run_on(cs, "(set-code \"(define (f x) (+ x 1))\")");
     run_on(cs, "(workspace:create \"locked\")");
     run_on(cs, "(workspace:switch 1)");  // child ID 1
-    run_on(cs, "(workspace:lock 1 #t)");  // lock child
+    run_on(cs, "(workspace:lock 1 #t)"); // lock child
     // Try to mutate — should fail or be a no-op
     auto v = run_on(cs, "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"test\")");
     // mutate:rebind returns #t on success, #f on failure
-    bool locked = !aura::compiler::types::is_bool(v) ||
-                  !aura::compiler::types::as_bool(v);
+    bool locked = !aura::compiler::types::is_bool(v) || !aura::compiler::types::as_bool(v);
     CHECK(locked, "mutate in locked workspace is rejected");
     // Unlock and try again
     run_on(cs, "(workspace:lock 1 #f)");
     run_on(cs, "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"test\")");
     auto child_src = run_on(cs, "(current-source :workspace)");
     bool unlocked = aura::compiler::types::is_string(child_src) &&
-                     string_value(cs, child_src) ==
-                     std::string("(define f (lambda (x) (* x 2)))");
+                    string_value(cs, child_src) == std::string("(define f (lambda (x) (* x 2)))");
     CHECK(unlocked, "after unlock, mutate succeeds and source updates");
     return true;
 }
@@ -461,14 +466,13 @@ bool test_workspace_merge() {
     aura::compiler::CompilerService cs;
     // Use a single eval so the workspace state persists across
     // the create / mutate / merge / switch sequence.
-    auto v = run_on(cs,
-        "(set-code \"(define (f x) (+ x 1))\") "
-        "(workspace:create \"merge-test\") "
-        "(workspace:switch 1) "
-        "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"merge-test\") "
-        "(workspace:merge 1) "
-        "(workspace:switch 0) "
-        "(query:def-use \"f\")");
+    auto v = run_on(cs, "(set-code \"(define (f x) (+ x 1))\") "
+                        "(workspace:create \"merge-test\") "
+                        "(workspace:switch 1) "
+                        "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"merge-test\") "
+                        "(workspace:merge 1) "
+                        "(workspace:switch 0) "
+                        "(query:def-use \"f\")");
     // After merge, f should be defined in root. query:def-use
     // returns the list of (source . definer) pairs. We just
     // verify the result is a non-empty list (a non-empty result
@@ -484,14 +488,13 @@ bool test_workspace_discard() {
     std::println("\n--- Test 3.9: workspace:discard drops child without merge ---");
     aura::compiler::CompilerService cs;
     // Single eval so workspace state is consistent.
-    auto v = run_on(cs,
-        "(set-code \"(define (f x) (+ x 1))\") "
-        "(workspace:create \"discard-test\") "
-        "(workspace:switch 1) "
-        "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"discard\") "
-        "(workspace:discard 1) "
-        "(workspace:switch 0) "
-        "(query:def-use \"f\")");
+    auto v = run_on(cs, "(set-code \"(define (f x) (+ x 1))\") "
+                        "(workspace:create \"discard-test\") "
+                        "(workspace:switch 1) "
+                        "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"discard\") "
+                        "(workspace:discard 1) "
+                        "(workspace:switch 0) "
+                        "(query:def-use \"f\")");
     // After discard, the original f is still in root. The query
     // result should reference the original source.
     bool unchanged = aura::compiler::types::is_pair(v);
@@ -540,10 +543,9 @@ bool test_workspace_merge_3way() {
     bool exists = aura::compiler::types::is_bool(v) && aura::compiler::types::as_bool(v);
     CHECK(exists, "workspace:merge-3way is a procedure");
     // Strategy arg should be accepted (ours/theirs) — call with no real conflict
-    bool r = run_bool(cs,
-        "(workspace:create \"m3a\") "
-        "(workspace:create \"m3b\") "
-        "(workspace:merge-3way 0 1 2 \"ours\")");
+    bool r = run_bool(cs, "(workspace:create \"m3a\") "
+                          "(workspace:create \"m3b\") "
+                          "(workspace:merge-3way 0 1 2 \"ours\")");
     // Returns #t (success) or #f (no work); either is acceptable
     CHECK(true, "workspace:merge-3way with strategy 'ours' runs without error");
     (void)r;
@@ -747,11 +749,11 @@ bool test_e2e_parallel_agents_in_workspaces() {
     int len = pair_length(cs, v);
     CHECK(len == 3, "E2E: 3 agents in isolated workspaces return 3 results");
     if (len == 3) {
-        int64_t r0 = pair_nth_int(cs, v, 0);  // agentA: 10*10 = 100
-        int64_t r1 = pair_nth_int(cs, v, 1);  // agentB: 10*2 = 20
-        int64_t r2 = pair_nth_int(cs, v, 2);  // agentC: 10+100 = 110
+        int64_t r0 = pair_nth_int(cs, v, 0); // agentA: 10*10 = 100
+        int64_t r1 = pair_nth_int(cs, v, 1); // agentB: 10*2 = 20
+        int64_t r2 = pair_nth_int(cs, v, 2); // agentC: 10+100 = 110
         CHECK(r0 == 100, "agentA: 10*10 = 100");
-        CHECK(r1 == 20,  "agentB: 10*2 = 20");
+        CHECK(r1 == 20, "agentB: 10*2 = 20");
         CHECK(r2 == 110, "agentC: 10+100 = 110");
     }
     return true;
@@ -827,12 +829,12 @@ int run_tests() {
     std::println("\n── End-to-end: parallel agents in isolated workspaces ──");
     test_e2e_parallel_agents_in_workspaces();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_135_detail
+} // namespace aura_issue_135_detail
 
-int aura_issue_135_run() { return aura_issue_135_detail::run_tests(); }
-
+int aura_issue_135_run() {
+    return aura_issue_135_detail::run_tests();
+}

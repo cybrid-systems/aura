@@ -82,7 +82,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -93,15 +93,23 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:arena-compaction-stats-hash) '{}')", key));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════
 // AC1: fresh Evaluator — compactions == 0
@@ -123,10 +131,9 @@ bool test_ten_fields_present() {
     std::println("\n--- AC2: 10 fields present + non-negative ---");
     aura::compiler::CompilerService cs;
     static const char* kFields[] = {
-        "auto-compact-triggers", "auto-compact-skips",
-        "compactions", "bytes-saved", "last-saved",
-        "paused-by-boundary", "mutation-volume",
-        "dirty-propagation", "fragmentation-ratio-pct",
+        "auto-compact-triggers", "auto-compact-skips", "compactions",
+        "bytes-saved",           "last-saved",         "paused-by-boundary",
+        "mutation-volume",       "dirty-propagation",  "fragmentation-ratio-pct",
         "peak-used-bytes",
     };
     bool all_ok = true;
@@ -173,8 +180,7 @@ bool test_skip_policy() {
     std::println("\n--- AC5: skip policy returns 0 ---");
     aura::compiler::CompilerService cs;
     auto r = run_on(cs, "(arena:compact-with-policy \"main\" \"skip\")");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) == 0;
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) == 0;
     CHECK(ok, "skip policy returns 0");
     return true;
 }
@@ -186,8 +192,7 @@ bool test_force_policy_no_crash() {
     std::println("\n--- AC6: force policy doesn't crash ---");
     aura::compiler::CompilerService cs;
     auto r = run_on(cs, "(arena:compact-with-policy \"main\" \"force\")");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) >= 0;
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) >= 0;
     CHECK(ok, "force policy returns a non-negative integer");
     return true;
 }
@@ -198,10 +203,8 @@ bool test_force_policy_no_crash() {
 bool test_nonexistent_arena_no_crash() {
     std::println("\n--- AC7: nonexistent arena — safe no-op ---");
     aura::compiler::CompilerService cs;
-    auto r = run_on(cs,
-        "(arena:compact-with-policy \"definitely-not-an-arena-xyz\" \"force\")");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) == 0;
+    auto r = run_on(cs, "(arena:compact-with-policy \"definitely-not-an-arena-xyz\" \"force\")");
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) == 0;
     CHECK(ok, "nonexistent arena returns 0 (safe no-op)");
     return true;
 }
@@ -212,14 +215,13 @@ bool test_nonexistent_arena_no_crash() {
 bool test_stats_list_includes() {
     std::println("\n--- AC8: stats:list includes the new primitive ---");
     aura::compiler::CompilerService cs;
-    auto r = run_on(cs,
-        "(letrec ((find? (lambda (needle hay) "
-        "                (if (pair? hay) "
-        "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
-        "                    #f)))) "
-        "  (if (find? \"query:arena-compaction-stats-hash\" (stats:list)) 1 0))");
-    bool included = aura::compiler::types::is_int(r) &&
-                    aura::compiler::types::as_int(r) == 1;
+    auto r = run_on(
+        cs, "(letrec ((find? (lambda (needle hay) "
+            "                (if (pair? hay) "
+            "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
+            "                    #f)))) "
+            "  (if (find? \"query:arena-compaction-stats-hash\" (stats:list)) 1 0))");
+    bool included = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) == 1;
     CHECK(included, "stats:list includes query:arena-compaction-stats-hash");
     return true;
 }
@@ -231,8 +233,7 @@ bool test_stats_count() {
     std::println("\n--- AC9: stats:count is up to date ---");
     aura::compiler::CompilerService cs;
     auto r = run_on(cs, "(stats:count)");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) >= 41;
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) >= 41;
     CHECK(ok, "stats:count >= 41 (was 40 in #429, now 41 in #430)");
     if (aura::compiler::types::is_int(r)) {
         std::println("    [stats:count = {}]", aura::compiler::types::as_int(r));
@@ -296,7 +297,7 @@ bool test_force_bumps_trigger() {
     return true;
 }
 
-}  // namespace aura_issue_430_detail
+} // namespace aura_issue_430_detail
 
 int main() {
     using namespace aura_issue_430_detail;

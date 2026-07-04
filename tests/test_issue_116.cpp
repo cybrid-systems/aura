@@ -21,8 +21,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -32,7 +32,6 @@ import aura.compiler.value;
 import aura.diag;
 import aura.core.type;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_116_detail {
@@ -57,7 +56,8 @@ TypecheckResult typecheck(const std::string& src) {
     r.flat = flat;
     r.root = pr.root;
     r.node_count_before = flat->size();
-    if (!pr.success) return r;
+    if (!pr.success)
+        return r;
     r.treg = std::make_unique<aura::core::TypeRegistry>();
     r.tc = std::make_unique<aura::compiler::TypeChecker>(*r.treg);
     return r;
@@ -66,7 +66,8 @@ TypecheckResult typecheck(const std::string& src) {
 int count_coercions(const aura::ast::FlatAST& flat) {
     int n = 0;
     for (aura::ast::NodeId i = 0; i < flat.size(); ++i) {
-        if (flat.get(i).tag == aura::ast::NodeTag::Coercion) ++n;
+        if (flat.get(i).tag == aura::ast::NodeTag::Coercion)
+            ++n;
     }
     return n;
 }
@@ -83,10 +84,8 @@ bool test_well_typed_no_mutation() {
 
     CHECK((*r.flat).size() == r.node_count_before,
           "well-typed expr: no new nodes added by infer_flat");
-    CHECK(count_coercions(*r.flat) == 0,
-          "well-typed expr: zero CoercionNodes in AST");
-    CHECK(r.tc->last_coercions().empty(),
-          "well-typed expr: CoercionMap is empty");
+    CHECK(count_coercions(*r.flat) == 0, "well-typed expr: zero CoercionNodes in AST");
+    CHECK(r.tc->last_coercions().empty(), "well-typed expr: CoercionMap is empty");
     return true;
 }
 
@@ -122,8 +121,7 @@ bool test_apply_round_trip() {
     // Snapshot before
     int n_before = flat->size();
     auto call_before = flat->get(call_id);
-    CHECK(call_before.child(1) == arg0,
-          "call.child[1] (arg0) link points to literal 42");
+    CHECK(call_before.child(1) == arg0, "call.child[1] (arg0) link points to literal 42");
 
     // Build a CoercionMap targeting arg0 at child_index=1
     // (the first argument position; child[0] is the callee).
@@ -142,16 +140,14 @@ bool test_apply_round_trip() {
     // new CoercionNode, not to arg0.
     auto parent = flat->get(call_id);
     auto new_link = parent.child(1);
-    CHECK(new_link != arg0,
-          "call.child[1] (arg0) no longer points to literal 42");
+    CHECK(new_link != arg0, "call.child[1] (arg0) no longer points to literal 42");
     CHECK(flat->get(new_link).tag == aura::ast::NodeTag::Coercion,
           "call.child[1] is now a CoercionNode");
 
     // The new CoercionNode's child should be the original arg0.
     auto coercion = flat->get(new_link);
     CHECK(coercion.children.size() == 1, "CoercionNode has 1 child");
-    CHECK(coercion.child(0) == arg0,
-          "CoercionNode's child is the original literal 42");
+    CHECK(coercion.child(0) == arg0, "CoercionNode's child is the original literal 42");
     return true;
 }
 
@@ -221,8 +217,7 @@ bool test_snapshot_semantics() {
     }
     CHECK(total_links_before == total_links_after,
           "total parent->child link count unchanged by infer_flat");
-    CHECK((*r.flat).size() == r.node_count_before,
-          "node count unchanged by infer_flat");
+    CHECK((*r.flat).size() == r.node_count_before, "node count unchanged by infer_flat");
     return true;
 }
 
@@ -261,12 +256,10 @@ bool test_real_program_defer() {
     auto r = typecheck("(let ((x 1)) (+ x 2))");
     aura::diag::DiagnosticCollector diag;
     r.tc->infer_flat(*r.flat, *r.pool, r.root, diag);
-    CHECK((*r.flat).size() == r.node_count_before,
-          "real program: no mutation by infer_flat");
+    CHECK((*r.flat).size() == r.node_count_before, "real program: no mutation by infer_flat");
     // For this well-typed input, the CoercionMap should be
     // empty (no coercions needed).
-    CHECK(r.tc->last_coercions().empty(),
-          "real program: well-typed → no coercions in map");
+    CHECK(r.tc->last_coercions().empty(), "real program: well-typed → no coercions in map");
     return true;
 }
 
@@ -278,12 +271,12 @@ int run_tests() {
     test_snapshot_semantics();
     test_type_results_unchanged();
     test_real_program_defer();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_116_detail
+} // namespace aura_issue_116_detail
 
-int aura_issue_116_run() { return aura_issue_116_detail::run_tests(); }
-
+int aura_issue_116_run() {
+    return aura_issue_116_detail::run_tests();
+}

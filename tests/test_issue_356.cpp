@@ -38,8 +38,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -59,8 +59,7 @@ namespace aura_issue_356_detail {
 
 bool test_invalid_version_constant_exists() {
     std::println("\n--- AC1: INVALID_VERSION sentinel = UINT64_MAX ---");
-    CHECK(aura::compiler::INVALID_VERSION ==
-          std::numeric_limits<std::uint64_t>::max(),
+    CHECK(aura::compiler::INVALID_VERSION == std::numeric_limits<std::uint64_t>::max(),
           "INVALID_VERSION == UINT64_MAX (monotonic counter never reaches this)");
     return true;
 }
@@ -69,8 +68,7 @@ bool test_is_env_frame_invalid_default() {
     std::println("\n--- AC2: fresh frame is NOT invalid ---");
     aura::compiler::Evaluator ev;
     aura::compiler::EnvId id = ev.alloc_env_frame();
-    CHECK(!ev.is_env_frame_invalid(id),
-          "fresh frame is not invalid (version_ != INVALID_VERSION)");
+    CHECK(!ev.is_env_frame_invalid(id), "fresh frame is not invalid (version_ != INVALID_VERSION)");
     return true;
 }
 
@@ -100,12 +98,14 @@ bool test_invalidate_marks_post_rollback_frames() {
     // frame's index).
     constexpr int PRE = 3;
     constexpr int POST = 4;
-    for (int i = 0; i < PRE; ++i) ev.alloc_env_frame();
+    for (int i = 0; i < PRE; ++i)
+        ev.alloc_env_frame();
     // Simulate the checkpoint: panic_safe_env_frames_size_ covers the
     // pre-existing frame + PRE allocs.
     const std::size_t base_size = ev.env_frames_size();
     ev.set_panic_safe_env_frames_size_for_test(base_size);
-    for (int i = 0; i < POST; ++i) ev.alloc_env_frame();
+    for (int i = 0; i < POST; ++i)
+        ev.alloc_env_frame();
 
     auto before = ev.get_envframe_post_rollback_invalidations();
     ev.invalidate_post_rollback_env_frames();
@@ -150,7 +150,8 @@ bool test_invalidate_idempotent() {
     aura::compiler::Evaluator ev;
     constexpr int PRE = 2;
     constexpr int POST = 3;
-    for (int i = 0; i < PRE + POST; ++i) ev.alloc_env_frame();
+    for (int i = 0; i < PRE + POST; ++i)
+        ev.alloc_env_frame();
     ev.set_panic_safe_env_frames_size_for_test(PRE);
 
     ev.invalidate_post_rollback_env_frames();
@@ -159,8 +160,7 @@ bool test_invalidate_idempotent() {
     // are already INVALID_VERSION).
     ev.invalidate_post_rollback_env_frames();
     auto second = ev.get_envframe_post_rollback_invalidations();
-    CHECK(first == second,
-          "second invalidate call does not re-bump the counter (idempotent)");
+    CHECK(first == second, "second invalidate call does not re-bump the counter (idempotent)");
     return true;
 }
 
@@ -184,8 +184,7 @@ bool test_materialize_call_env_skips_invalid_frame() {
     // The materialized Env must have NO bindings (we refused
     // to materialize the invalid frame). The closure body can
     // still find globals via the workspace walk.
-    CHECK(ne.bindings().empty(),
-          "materialize_call_env returns empty Env for invalid frame");
+    CHECK(ne.bindings().empty(), "materialize_call_env returns empty Env for invalid frame");
     return true;
 }
 
@@ -212,6 +211,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_356_detail
+} // namespace aura_issue_356_detail
 
-int aura_issue_356_run() { return aura_issue_356_detail::run_tests(); }
+int aura_issue_356_run() {
+    return aura_issue_356_detail::run_tests();
+}

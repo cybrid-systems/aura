@@ -55,8 +55,8 @@ import aura.compiler.ir_executor;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // ── wait_for_atomic helper (local to this file) ───────
 // Poll an atomic counter until it reaches `expected` or
@@ -69,12 +69,11 @@ using aura::test::g_failed;
 // wakeup can push completion past 2s, causing intermittent
 // flakes. Polling with a deadline is robust.
 namespace aura_issue_226_detail {
-template <typename A>
-bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 5000) {
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::milliseconds(timeout_ms);
+template <typename A> bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 5000) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (counter.load() < expected) {
-        if (std::chrono::steady_clock::now() >= deadline) return false;
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return true;
@@ -115,8 +114,7 @@ bool test_concurrent_mutate_and_invoke() {
             // share the same workspace). This populates the
             // IR cache for f_i and returns 10.
             std::string fname = "f_" + std::to_string(i);
-            std::string src1 = "(begin (define (" + fname +
-                               " x) (* x 2)) (" + fname + " 5))";
+            std::string src1 = "(begin (define (" + fname + " x) (* x 2)) (" + fname + " 5))";
             auto r1 = cs.eval(src1);
             if (!r1 || aura::compiler::types::as_int(*r1) != 10) {
                 completed.fetch_add(1);
@@ -125,15 +123,14 @@ bool test_concurrent_mutate_and_invoke() {
 
             // Mutate (this triggers mark_define_dirty +
             // invalidate_bridge_for per #225).
-            std::string src2 = "(mutate:rebind \"" + fname +
-                               "\" \"(lambda (x) (* x 3))\" \"test\")";
+            std::string src2 =
+                "(mutate:rebind \"" + fname + "\" \"(lambda (x) (* x 3))\" \"test\")";
             cs.eval(src2);
 
             // Re-define the function (this triggers
             // hot_swap_function_impl per #225). We use the
             // *3 body so the post-redefine call returns 15.
-            std::string src3 = "(begin (define (" + fname +
-                               " x) (* x 3)) (" + fname + " 5))";
+            std::string src3 = "(begin (define (" + fname + " x) (* x 3)) (" + fname + " 5))";
             auto r3 = cs.eval(src3);
             if (r3 && aura::compiler::types::as_int(*r3) == 15) {
                 ok.fetch_add(1);
@@ -149,8 +146,9 @@ bool test_concurrent_mutate_and_invoke() {
 
     CHECK(waited, "all 100 fibers completed (no hang)");
     int ok_count = ok.load();
-    std::string ok_msg = "all 100 fibers saw post-redefine value (no UAF / no race): " +
-                         std::to_string(ok_count) + "/" + std::to_string(NUM_FIBERS);
+    std::string ok_msg =
+        "all 100 fibers saw post-redefine value (no UAF / no race): " + std::to_string(ok_count) +
+        "/" + std::to_string(NUM_FIBERS);
     CHECK(ok_count == NUM_FIBERS, ok_msg.c_str());
     return true;
 }
@@ -173,8 +171,7 @@ bool test_reset_clears_bridge() {
     auto r1 = cs.eval("(begin (define (h x) (* x x)) (h 5))");
     CHECK(r1.has_value(), "first eval succeeds");
     if (r1) {
-        CHECK(aura::compiler::types::as_int(*r1) == 25,
-              "(h 5) = 25");
+        CHECK(aura::compiler::types::as_int(*r1) == 25, "(h 5) = 25");
     }
 
     // Bump the bridge epoch by triggering an invalidate.
@@ -184,8 +181,7 @@ bool test_reset_clears_bridge() {
     // The metric should bump (the invalidate is a no-op
     // for non-existent entries, but here we still call
     // for the test).
-    CHECK(epoch_after >= epoch_before,
-          "bridge_epoch non-decreasing");
+    CHECK(epoch_after >= epoch_before, "bridge_epoch non-decreasing");
 
     // Now eval a fresh expression after the bump. The
     // bridge data for 'h' is stale; any closure holding
@@ -194,8 +190,7 @@ bool test_reset_clears_bridge() {
     auto r2 = cs.eval("(+ 1 2)");
     CHECK(r2.has_value(), "post-invalidate eval works");
     if (r2) {
-        CHECK(aura::compiler::types::as_int(*r2) == 3,
-              "fresh eval result is correct (+ 1 2 = 3)");
+        CHECK(aura::compiler::types::as_int(*r2) == 3, "fresh eval result is correct (+ 1 2 = 3)");
     }
     return true;
 }
@@ -229,8 +224,7 @@ bool test_post_mutation_invariant() {
     aura::compiler::CompilerService cs;
 
     // Capture baseline metrics.
-    auto metric_before = cs.metrics().bridge_invalidations_count.load(
-        std::memory_order_relaxed);
+    auto metric_before = cs.metrics().bridge_invalidations_count.load(std::memory_order_relaxed);
     auto epoch_before = cs.bridge_epoch();
 
     // Define a function — populates the IR cache entry.
@@ -242,8 +236,7 @@ bool test_post_mutation_invariant() {
 
     // Mutate. The mark_define_dirty path is invoked.
     // mutate:rebind takes a STRING (the new source code).
-    auto r2 = cs.eval(
-        "(mutate:rebind \"i\" \"(lambda (x) (+ x 100))\" \"test\")");
+    auto r2 = cs.eval("(mutate:rebind \"i\" \"(lambda (x) (+ x 100))\" \"test\")");
     CHECK(r2.has_value(), "mutate:rebind succeeds");
     // The mutation succeeds (returns #t). Subsequent calls
     // may need a fresh IR cache invalidation; we don't
@@ -254,18 +247,15 @@ bool test_post_mutation_invariant() {
     // What we verify: the bridge epoch is now advanced
     // (or at least non-decreasing) after the mutation.
     auto epoch_post = cs.bridge_epoch();
-    CHECK(epoch_post >= epoch_before,
-          "bridge_epoch non-decreasing after mutation");
+    CHECK(epoch_post >= epoch_before, "bridge_epoch non-decreasing after mutation");
 
     // The bridge_invalidations_count metric only bumps if
     // the entry has bridge data. For a top-level define
     // without a closure capture, the entry's ir_cache_bridge_
     // is empty, so the helper is a no-op (no metric bump).
     // We just verify the metric didn't decrease.
-    auto metric_after = cs.metrics().bridge_invalidations_count.load(
-        std::memory_order_relaxed);
-    CHECK(metric_after >= metric_before,
-          "bridge_invalidations_count non-decreasing");
+    auto metric_after = cs.metrics().bridge_invalidations_count.load(std::memory_order_relaxed);
+    CHECK(metric_after >= metric_before, "bridge_invalidations_count non-decreasing");
 
     return true;
 }
@@ -320,15 +310,15 @@ bool test_doomsday_stress() {
                     switch (op_kind) {
                         case 0: {
                             // define + invoke
-                            std::string src = "(begin (define (" + fname +
-                                               " x) (* x 2)) (" + fname + " 5))";
+                            std::string src =
+                                "(begin (define (" + fname + " x) (* x 2)) (" + fname + " 5))";
                             cs.eval(src);
                             break;
                         }
                         case 1: {
                             // mutate (string source)
                             std::string src = "(mutate:rebind \"" + fname +
-                                               "\" \"(lambda (x) (* x 3))\" \"stress\")";
+                                              "\" \"(lambda (x) (* x 3))\" \"stress\")";
                             cs.eval(src);
                             break;
                         }
@@ -336,15 +326,15 @@ bool test_doomsday_stress() {
                             // plain arithmetic (no bridge impact,
                             // but exercises the eval path under
                             // concurrent load)
-                            std::string src = "(+ " + std::to_string(name_idx) +
-                                               " " + std::to_string(i) + ")";
+                            std::string src =
+                                "(+ " + std::to_string(name_idx) + " " + std::to_string(i) + ")";
                             cs.eval(src);
                             break;
                         }
                         case 3: {
                             // re-define (triggers hot_swap invalidation)
-                            std::string src = "(begin (define (" + fname +
-                                               " x) (+ x 1)) (" + fname + " 5))";
+                            std::string src =
+                                "(begin (define (" + fname + " x) (+ x 1)) (" + fname + " 5))";
                             cs.eval(src);
                             break;
                         }
@@ -358,18 +348,17 @@ bool test_doomsday_stress() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    bool waited = wait_for_atomic(
-        completed_ops, NUM_FIBERS * OPS_PER_FIBER);
+    bool waited = wait_for_atomic(completed_ops, NUM_FIBERS * OPS_PER_FIBER);
     sched.stop();
     t.join();
 
-    CHECK(waited,
-          ("all " + std::to_string(NUM_FIBERS * OPS_PER_FIBER) +
-           " ops completed (no hang)").c_str());
+    CHECK(
+        waited,
+        ("all " + std::to_string(NUM_FIBERS * OPS_PER_FIBER) + " ops completed (no hang)").c_str());
     int err_count = errors.load();
-    CHECK(err_count == 0,
-          ("no exceptions (no UAF / no data race caught as exception): " +
-           std::to_string(err_count) + " errors").c_str());
+    CHECK(err_count == 0, ("no exceptions (no UAF / no data race caught as exception): " +
+                           std::to_string(err_count) + " errors")
+                              .c_str());
     return true;
 }
 
@@ -389,7 +378,8 @@ int run_tests() {
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
-}  // namespace aura_issue_226_detail
+} // namespace aura_issue_226_detail
 
-int aura_issue_226_run() { return aura_issue_226_detail::run_tests(); }
-
+int aura_issue_226_run() {
+    return aura_issue_226_detail::run_tests();
+}

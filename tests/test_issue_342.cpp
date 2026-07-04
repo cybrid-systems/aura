@@ -50,24 +50,36 @@ namespace aura_342_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: fresh CompilerService → narrowing_provenance_total = 0
 bool test_initial_counter_zero() {
     std::println("\n--- AC1: narrowing_provenance_total starts at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.narrowing_provenance_total, 0u,
-             "narrowing_provenance_total == 0");
+    CHECK_EQ(snap.narrowing_provenance_total, 0u, "narrowing_provenance_total == 0");
     return true;
 }
 
@@ -87,8 +99,7 @@ bool test_narrowing_blame_stats_primitive() {
     cs.eval("(set-code \"(define nbs (compile:narrowing-blame-stats))\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(hash-ref nbs \"provenance-total\")");
-    CHECK(r && aura::compiler::types::is_int(*r),
-          "hash-ref nbs \"provenance-total\" returns int");
+    CHECK(r && aura::compiler::types::is_int(*r), "hash-ref nbs \"provenance-total\" returns int");
     return true;
 }
 
@@ -99,14 +110,11 @@ bool test_typecheck_bumps_provenance() {
     // Use the public typecheck() method (goes
     // through CompilerService::typecheck which uses
     // the same TypeChecker that plumbs the metric).
-    auto r = cs.typecheck(
-        "(let ((x 5)) (if (number? x) (+ x 1) 0))");
+    auto r = cs.typecheck("(let ((x 5)) (if (number? x) (+ x 1) 0))");
     std::println("  typecheck result: {} chars", r.size());
     auto snap = cs.snapshot();
-    std::println("  narrowing_provenance_total: {}",
-                 snap.narrowing_provenance_total);
-    std::println("  narrowing_applied_total: {}",
-                 snap.narrowing_applied_total);
+    std::println("  narrowing_provenance_total: {}", snap.narrowing_provenance_total);
+    std::println("  narrowing_applied_total: {}", snap.narrowing_applied_total);
     // The counter should be plumbed end-to-end. It
     // bumps when an OccurrenceInfoFlat with both
     // predicate_name + source_cond_id is applied.
@@ -122,13 +130,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define nbe 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define nbe 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_342_detail
+} // namespace aura_342_detail
 
 int main() {
     using namespace aura_342_detail;
@@ -138,7 +145,7 @@ int main() {
     test_narrowing_blame_stats_primitive();
     test_typecheck_bumps_provenance();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

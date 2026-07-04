@@ -70,19 +70,17 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (panic-auto-rollback?) — Query current auto-rollback state
     add("panic-auto-rollback?",
-                    [&ev](const auto&) -> EvalValue { return make_bool(ev.panic_auto_rollback_); });
+        [&ev](const auto&) -> EvalValue { return make_bool(ev.panic_auto_rollback_); });
 
     // (panic-checkpoint) — Save current workspace as a safe checkpoint
     // Returns #t on success, #f if no workspace loaded.
-    add("panic-checkpoint", [&ev](const auto&) -> EvalValue {
-        return make_bool(ev.save_panic_checkpoint());
-    });
+    add("panic-checkpoint",
+        [&ev](const auto&) -> EvalValue { return make_bool(ev.save_panic_checkpoint()); });
 
     // (panic-restore) — Restore to the last safe checkpoint
     // Returns #t on success, #f if no checkpoint available or restore failed.
-    add("panic-restore", [&ev](const auto&) -> EvalValue {
-        return make_bool(ev.restore_panic_checkpoint());
-    });
+    add("panic-restore",
+        [&ev](const auto&) -> EvalValue { return make_bool(ev.restore_panic_checkpoint()); });
 
     // (panic-safe-source) — Return the checkpoint source code
     // Returns empty string if no checkpoint.
@@ -129,7 +127,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto nidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(name);
                 auto pid = ev.pairs_.size();
-                ev.pairs_.push_back({make_string(nidx), meta_to_pair(ev.primitives_.meta_for_slot(slot))});
+                ev.pairs_.push_back(
+                    {make_string(nidx), meta_to_pair(ev.primitives_.meta_for_slot(slot))});
                 auto wrap = ev.pairs_.size();
                 ev.pairs_.push_back({make_pair(pid), result});
                 result = make_pair(wrap);
@@ -155,12 +154,12 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_void();
             const auto sk = generate_primitive_skeleton(ev.string_heap_[idx]);
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->primitive_skeleton_generations_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv)
-                -> EvalValue {
+                m->primitive_skeleton_generations_total.fetch_add(1, std::memory_order_relaxed);
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
-                if (!ht) return make_void();
+                if (!ht)
+                    return make_void();
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -170,7 +169,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                     auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF) fp = 0xFE;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
                     auto kidx = ev.string_heap_.size();
                     ev.string_heap_.push_back(k);
                     EvalValue key_ev = make_string(kidx);
@@ -178,12 +178,18 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto slot = ((h >> 1) + at) & (hcap - 1);
                         if (meta[slot] == 0xFF) {
-                            meta[slot] = fp; keys[slot] = key_ev.val;
-                            vals[slot] = v.val; ht->size++;
-                            inserted = true; break;
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
                         }
                     }
-                    if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
                 }
                 auto hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
@@ -244,12 +250,12 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             call_total = m->primitive_call_total.load(std::memory_order_relaxed);
         }
         prim_count = ev.primitives_.slot_count();
-        std::int64_t avg_per_prim = prim_count > 0
-            ? static_cast<std::int64_t>(call_total / prim_count)
-            : 0;
+        std::int64_t avg_per_prim =
+            prim_count > 0 ? static_cast<std::int64_t>(call_total / prim_count) : 0;
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -259,7 +265,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -267,12 +274,18 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -316,7 +329,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -326,7 +340,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -334,12 +349,18 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -367,7 +388,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto ccache_off = aura::ci::ccache_disabled();
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -377,7 +399,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -385,12 +408,18 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -444,7 +473,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -454,7 +484,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -462,12 +493,18 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -510,7 +547,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -520,7 +558,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -528,12 +567,18 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -587,7 +632,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         skip_count = ev.arena_group().auto_compact_skip_count();
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -597,7 +643,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -605,12 +652,18 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -651,7 +704,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -661,7 +715,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -669,12 +724,18 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -713,7 +774,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
     add("query:cxx26-hotpath-invariants", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
-            if (!ht) return make_void();
+            if (!ht)
+                return make_void();
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -723,7 +785,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF) fp = 0xFE;
+                if (fp == 0xFF)
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -731,12 +794,18 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
-                        meta[idx] = fp; keys[idx] = key_ev.val;
-                        vals[idx] = v.val; ht->size++;
-                        inserted = true; break;
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
                     }
                 }
-                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -753,10 +822,8 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         // AI Agent can verify a deployed binary matches
         // the expected encoding.
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"fixnum-tag-encoding", make_int(0)},
-            {"ref-tag-encoding", make_int(1)},
-            {"string-v2-tag-encoding", make_int(2)},
-            {"special-tag-encoding", make_int(3)},
+            {"fixnum-tag-encoding", make_int(0)},    {"ref-tag-encoding", make_int(1)},
+            {"string-v2-tag-encoding", make_int(2)}, {"special-tag-encoding", make_int(3)},
             {"float-tag-encoding", make_int(4)},
         };
         return build_hash(kv);
@@ -1003,14 +1070,16 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
             bridge_epoch_hits = m->bridge_epoch_hit_count_.load(std::memory_order_relaxed);
             bridge_epoch_drifts = m->closure_stale_refresh_count_.load(std::memory_order_relaxed);
         }
-        std::int64_t bridge_pct = calls > 0 ? static_cast<std::int64_t>((bridge_c * 100) / calls) : 0;
+        std::int64_t bridge_pct =
+            calls > 0 ? static_cast<std::int64_t>((bridge_c * 100) / calls) : 0;
         // Drift = stale-refreshes / (hits + drifts) * 100.
         // 0 if no checks yet (avoids divide-by-zero in the
         // dashboard, which would otherwise show NaN).
         std::uint64_t total_epoch_checks = bridge_epoch_hits + bridge_epoch_drifts;
-        std::int64_t drift_pct = total_epoch_checks > 0
-            ? static_cast<std::int64_t>((bridge_epoch_drifts * 100) / total_epoch_checks)
-            : 0;
+        std::int64_t drift_pct =
+            total_epoch_checks > 0
+                ? static_cast<std::int64_t>((bridge_epoch_drifts * 100) / total_epoch_checks)
+                : 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"calls-total", make_int(static_cast<std::int64_t>(calls))},
             {"ffi-calls", make_int(static_cast<std::int64_t>(ffi_c))},
@@ -1024,7 +1093,6 @@ void register_eval_observability_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         return build_hash(kv);
     });
-
 }
 
 void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -1490,7 +1558,8 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             linear_pass = m->linear_check_pass_count_.load(std::memory_order_relaxed);
             atomic_commits = m->atomic_batch_commits.load(std::memory_order_relaxed);
             stable_ref_invalidates = m->stable_ref_invalidations.load(std::memory_order_relaxed);
-            occurrence_stale_refreshes = m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed);
+            occurrence_stale_refreshes =
+                m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed);
         }
         // dirty-block-rate from #429's get_soa_dirty_stats.
         if (ev.get_soa_dirty_stats_fn_) {
@@ -1501,8 +1570,10 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
             {"closure-stale-refresh", make_int(static_cast<std::int64_t>(closure_stale))},
             {"linear-check-pass", make_int(static_cast<std::int64_t>(linear_pass))},
             {"atomic-batch-commits", make_int(static_cast<std::int64_t>(atomic_commits))},
-            {"stable-ref-invalidations", make_int(static_cast<std::int64_t>(stable_ref_invalidates))},
-            {"occurrence-stale-refreshes", make_int(static_cast<std::int64_t>(occurrence_stale_refreshes))},
+            {"stable-ref-invalidations",
+             make_int(static_cast<std::int64_t>(stable_ref_invalidates))},
+            {"occurrence-stale-refreshes",
+             make_int(static_cast<std::int64_t>(occurrence_stale_refreshes))},
             {"dirty-block-rate", make_int(dirty_pct)},
         };
         return build_hash(kv);
@@ -1924,7 +1995,6 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
         // query:hardware-backend-commercial-stats).
         return make_int(78);
     });
-
 }
 
 } // namespace aura::compiler::primitives_detail

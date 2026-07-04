@@ -58,11 +58,9 @@ static void test_equal_cross_delta_conflict() {
     TypeRegistry reg;
     ConstraintSystem cs(reg);
     const auto t = cs.fresh_var();
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) == SolveResult::SOLVED,
           "first delta T~Int solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) ==
-              SolveResult::CONFLICT,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.string_type()}) == SolveResult::CONFLICT,
           "second delta T~String conflicts via clean reverify");
 }
 
@@ -72,14 +70,11 @@ static void test_merge_binding_conflict() {
     ConstraintSystem cs(reg);
     const auto t = cs.fresh_var();
     const auto u = cs.fresh_var();
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, reg.int_type()}) == SolveResult::SOLVED,
           "T~Int solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, u, reg.string_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, u, reg.string_type()}) == SolveResult::SOLVED,
           "U~String solves");
-    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, u}) ==
-              SolveResult::CONFLICT,
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, t, u}) == SolveResult::CONFLICT,
           "T~U merge conflicts across clean constraints");
 }
 
@@ -94,14 +89,10 @@ static void test_dynamic_linear_clash() {
     CHECK(solve_delta_with(cs, {Constraint::CONSISTENT, t, reg.dynamic_type()}) ==
               SolveResult::SOLVED,
           "T~Dynamic solves");
-    const auto clash =
-        solve_delta_with(cs, {Constraint::CONSISTENT, t, linear});
-    std::println("  Dynamic/Linear delta result conflict={}",
-                 clash == SolveResult::CONFLICT);
-    CHECK(clash == SolveResult::CONFLICT,
-          "T~Linear after T~Dynamic conflicts (Linear reject)");
-    const auto detected =
-        metrics.delta_conflict_detected_total.load(std::memory_order_relaxed);
+    const auto clash = solve_delta_with(cs, {Constraint::CONSISTENT, t, linear});
+    std::println("  Dynamic/Linear delta result conflict={}", clash == SolveResult::CONFLICT);
+    CHECK(clash == SolveResult::CONFLICT, "T~Linear after T~Dynamic conflicts (Linear reject)");
+    const auto detected = metrics.delta_conflict_detected_total.load(std::memory_order_relaxed);
     CHECK(detected > 0, "delta_conflict_detected_total bumped");
 }
 
@@ -127,8 +118,7 @@ static void test_compatible_deltas_solved() {
     CHECK(solve_delta_with(cs, {Constraint::CONSISTENT, t, reg.dynamic_type()}) ==
               SolveResult::SOLVED,
           "T~Dynamic solves");
-    CHECK(solve_delta_with(cs, {Constraint::CONSISTENT, t, reg.int_type()}) ==
-              SolveResult::SOLVED,
+    CHECK(solve_delta_with(cs, {Constraint::CONSISTENT, t, reg.int_type()}) == SolveResult::SOLVED,
           "T~Int after Dynamic solves");
 }
 
@@ -165,14 +155,12 @@ static void test_conflict_matrix() {
         const auto t = cs.fresh_var();
         (void)solve_delta_with(cs, {Constraint::CONSISTENT, t, reg.dynamic_type()});
         ++conflict_injected;
-        if (solve_delta_with(cs, {Constraint::CONSISTENT, t, linear}) ==
-            SolveResult::CONFLICT)
+        if (solve_delta_with(cs, {Constraint::CONSISTENT, t, linear}) == SolveResult::CONFLICT)
             ++conflict_detected;
     }
 
     std::println("  conflict_detected={}/{}", conflict_detected, conflict_injected);
-    CHECK(conflict_detected * 2 >= conflict_injected,
-          "≥50% injected conflict scenarios detected");
+    CHECK(conflict_detected * 2 >= conflict_injected, "≥50% injected conflict scenarios detected");
 }
 
 static void run_integration_matrix(CompilerService& cs) {
@@ -187,17 +175,14 @@ static void run_integration_matrix(CompilerService& cs) {
     constraint_cs.set_metrics(&metrics);
     const auto t = constraint_cs.fresh_var();
     (void)solve_delta_with(constraint_cs, {Constraint::EQUAL, t, reg.int_type()});
-    (void)solve_delta_with(constraint_cs,
-                           {Constraint::EQUAL, t, reg.string_type()});
+    (void)solve_delta_with(constraint_cs, {Constraint::EQUAL, t, reg.string_type()});
 
     std::println("\n--- AC7: query:constraint-stats regression ---");
     auto cstats = cs.eval("(query:constraint-stats)");
     CHECK(cstats && is_int(*cstats), "query:constraint-stats returns int");
 
-    const auto detected =
-        metrics.delta_conflict_detected_total.load(std::memory_order_relaxed);
-    const auto reverify =
-        metrics.delta_conflict_reverify_total.load(std::memory_order_relaxed);
+    const auto detected = metrics.delta_conflict_detected_total.load(std::memory_order_relaxed);
+    const auto reverify = metrics.delta_conflict_reverify_total.load(std::memory_order_relaxed);
     std::println("  unit detected={} reverify={}", detected, reverify);
     CHECK(detected > 0, "unit path bumped clean_conflicts_detected");
     CHECK(reverify > 0, "unit path bumped delta_vs_full_consistency");

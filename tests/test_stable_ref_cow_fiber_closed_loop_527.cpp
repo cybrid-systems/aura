@@ -87,16 +87,14 @@ static void run_matrix(CompilerService& cs) {
     }
     const auto cc5b = cs.evaluator().get_cross_cow_invalidations();
     const auto stats5b = cow_fiber_stats(cs);
-    std::println("  cross_cow: {} -> {} stats: {} -> {}",
-                 cc5a, cc5b, stats5a, stats5b);
+    std::println("  cross_cow: {} -> {} stats: {} -> {}", cc5a, cc5b, stats5a, stats5b);
     CHECK(cc5b > cc5a, "mutate+validate loop grows cross_cow");
     CHECK(stats5b > stats5a, "cow-fiber stats grow under loop");
 
     std::println("\n--- AC6: multi-round matrix monotonic ---");
     const auto stats6a = cow_fiber_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"b\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"b\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(let ((r (query:stable-ref 1))) (query:ref-valid? r))");
     }

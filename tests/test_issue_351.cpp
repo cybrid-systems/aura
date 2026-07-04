@@ -36,8 +36,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -66,10 +66,8 @@ bool test_cpp_side_per_node_scoping() {
     // The conservative branch checks
     // !has_occ_bit && !flat.is_dirty(id) → skip.
     const auto view = flat.dirty_view();
-    CHECK(view.size() > let_node,
-          "dirty_view size > let_node");
-    CHECK(view[let_node] == 0,
-          "let_node starts clean (no dirty bits)");
+    CHECK(view.size() > let_node, "dirty_view size > let_node");
+    CHECK(view[let_node] == 0, "let_node starts clean (no dirty bits)");
     // The conservative path will skip this node
     // because it's clean. We can't directly call
     // find_match_pattern_contexts (it's a static
@@ -92,12 +90,10 @@ bool test_k_occurrence_dirty_emits_precise_note() {
     const auto subj = flat.add_variable(0);
     const auto let_node = flat.add_let(sym_id, subj, flat.add_variable(1));
     // Mark let_node with kOccurrenceDirty (0x04).
-    flat.mark_dirty(let_node,
-        static_cast<std::uint8_t>(aura::ast::FlatAST::kOccurrenceDirty));
+    flat.mark_dirty(let_node, static_cast<std::uint8_t>(aura::ast::FlatAST::kOccurrenceDirty));
     // The dirty_view should have let_node's byte = 0x04.
     const auto view = flat.dirty_view();
-    CHECK(view[let_node] == 0x04,
-          "let_node has kOccurrenceDirty (0x04)");
+    CHECK(view[let_node] == 0x04, "let_node has kOccurrenceDirty (0x04)");
     return true;
 }
 
@@ -116,12 +112,10 @@ bool test_k_general_dirty_emits_conservative_note() {
     // Mark let_node with kGeneralDirty (0x01) — no
     // kOccurrenceDirty. The conservative path fires
     // (vs the precise path which would skip).
-    flat.mark_dirty(let_node,
-        static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty));
+    flat.mark_dirty(let_node, static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty));
     // The dirty_view should have let_node's byte = 0x01.
     const auto view = flat.dirty_view();
-    CHECK(view[let_node] == 0x01,
-          "let_node has kGeneralDirty (0x01) without kOccurrenceDirty");
+    CHECK(view[let_node] == 0x01, "let_node has kGeneralDirty (0x01) without kOccurrenceDirty");
     return true;
 }
 
@@ -137,18 +131,18 @@ bool test_end_to_end_via_compiler_service() {
     compiler::CompilerService cs;
     // Build a small workspace.
     if (!cs.eval("(set-code \"(begin (define x 0))\")").has_value()) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     if (!cs.eval("(eval-current)").has_value()) {
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     // Run a mutation; the conservative match path
     // should be reachable from
     // post_mutation_invariant_check.
-    auto r = cs.eval(
-        "(mutate:rebind \"x\" \"1\" \"test-rebind-for-351\")");
-    CHECK(r.has_value(),
-          "mutate:rebind runs (end-to-end test)");
+    auto r = cs.eval("(mutate:rebind \"x\" \"1\" \"test-rebind-for-351\")");
+    CHECK(r.has_value(), "mutate:rebind runs (end-to-end test)");
     return true;
 }
 
@@ -163,10 +157,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_351_detail
+} // namespace aura_issue_351_detail
 
-int aura_issue_351_run() { return aura_issue_351_detail::run_tests(); }
+int aura_issue_351_run() {
+    return aura_issue_351_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_351_run(); }
+int main() {
+    return aura_issue_351_run();
+}
 #endif

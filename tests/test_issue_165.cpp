@@ -34,8 +34,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;
@@ -45,18 +45,22 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_165_detail {
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 static std::string run_str(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return "(eval error)";
+    if (!r)
+        return "(eval error)";
     auto& v = *r;
     if (aura::compiler::types::is_string(v)) {
         auto idx = aura::compiler::types::as_string_idx(v);
         const auto& heap = cs.evaluator().string_heap();
-        if (idx < heap.size()) return std::string(heap[idx]);
+        if (idx < heap.size())
+            return std::string(heap[idx]);
     }
     if (aura::compiler::types::is_int(v)) {
         return std::to_string(aura::compiler::types::as_int(v));
@@ -66,7 +70,8 @@ static std::string run_str(aura::compiler::CompilerService& cs, std::string_view
 
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
+    if (!r)
+        return -1;
     auto& v = *r;
     if (aura::compiler::types::is_int(v)) {
         return aura::compiler::types::as_int(v);
@@ -132,7 +137,8 @@ bool test_hygienic_macro_survives_mutation() {
     bool hygiene_preserved = (second == "macro-internal");
     CHECK(hygiene_preserved,
           std::string("after mutate:rebind adds outer tmp, (m) still returns \"macro-internal\" "
-                     "(got \"") + second + "\")");
+                      "(got \"") +
+              second + "\")");
     return true;
 }
 
@@ -192,10 +198,9 @@ bool test_macro_introduced_marker_preserved() {
     // After fix: after >= before (re-expansion adds at least as
     // many markers as before). Before fix: after < before (markers
     // lost during mutation).
-    CHECK(after >= before,
-          std::string("MacroIntroduced marker count preserved after mutation "
-                     "(before=") + std::to_string(before) +
-          ", after=" + std::to_string(after) + ")");
+    CHECK(after >= before, std::string("MacroIntroduced marker count preserved after mutation "
+                                       "(before=") +
+                               std::to_string(before) + ", after=" + std::to_string(after) + ")");
     return true;
 }
 
@@ -247,7 +252,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_165_detail
+} // namespace aura_issue_165_detail
 
-int aura_issue_165_run() { return aura_issue_165_detail::run_tests(); }
-
+int aura_issue_165_run() {
+    return aura_issue_165_detail::run_tests();
+}

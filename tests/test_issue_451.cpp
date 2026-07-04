@@ -15,11 +15,10 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
-extern "C" std::uint64_t
-aura_fiber_static_gc_pause_attributed_to_mutation();
+extern "C" std::uint64_t aura_fiber_static_gc_pause_attributed_to_mutation();
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -37,18 +36,15 @@ bool test_query_orchestration_metrics() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::is_string(*r),
-          "query:orchestration-metrics returns a string");
+    CHECK(aura::compiler::types::is_string(*r), "query:orchestration-metrics returns a string");
     return true;
 }
 
 // ── AC2: C-linkage shim is callable ──
 bool test_c_linkage_shim() {
     std::println("\n--- AC2: C-linkage shim aura_fiber_static_gc_pause_attributed_to_mutation ---");
-    const auto count =
-        aura_fiber_static_gc_pause_attributed_to_mutation();
-    CHECK(count >= 0,
-          "C-linkage shim returns >= 0 (no attribution in test context)");
+    const auto count = aura_fiber_static_gc_pause_attributed_to_mutation();
+    CHECK(count >= 0, "C-linkage shim returns >= 0 (no attribution in test context)");
     return true;
 }
 
@@ -126,8 +122,7 @@ bool test_define_eval_regression() {
         ++g_failed;
         return false;
     }
-    CHECK(aura::compiler::types::as_int(*r) == 42,
-          "smoke: (+ 20 22) == 42 (regression)");
+    CHECK(aura::compiler::types::as_int(*r) == 42, "smoke: (+ 20 22) == 42 (regression)");
     return true;
 }
 
@@ -145,8 +140,12 @@ int run_tests() {
 
 } // namespace aura_issue_451_detail
 
-int aura_issue_451_run() { return aura_issue_451_detail::run_tests(); }
+int aura_issue_451_run() {
+    return aura_issue_451_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_451_run(); }
+int main() {
+    return aura_issue_451_run();
+}
 #endif

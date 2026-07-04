@@ -72,7 +72,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -81,19 +81,26 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
     return *r;
 }
 
-static std::int64_t hash_int(aura::compiler::CompilerService& cs,
-                              std::string_view hash_src,
-                              std::string_view key) {
+static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view hash_src,
+                             std::string_view key) {
     auto r = cs.eval(std::format("(let ((h {})) (hash-ref h '{}))", hash_src, key));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════
 // AC1: fresh Evaluator — query:closure-stats hash with zeros
@@ -169,8 +176,7 @@ bool test_multi_round_set_body() {
     (void)rr;
     run_on(cs, "(display (f 5))");
     auto after_calls = hash_int(cs, "(query:closure-stats)", "calls-total");
-    CHECK(after_calls >= before_calls,
-          "calls-total is monotonic across multi-round mutate");
+    CHECK(after_calls >= before_calls, "calls-total is monotonic across multi-round mutate");
     return true;
 }
 
@@ -187,8 +193,8 @@ bool test_field_consistency() {
     // The 7 shared fields should produce the same value in
     // both primitives.
     static const char* kShared[] = {
-        "calls-total", "ffi-calls", "tw-calls", "ir-calls",
-        "bridge-calls", "stale-returns", "bridge-fraction-pct",
+        "calls-total",   "ffi-calls",           "tw-calls", "ir-calls", "bridge-calls",
+        "stale-returns", "bridge-fraction-pct",
     };
     bool all_match = true;
     for (auto* k : kShared) {
@@ -247,7 +253,7 @@ bool test_idempotent_observable() {
     return true;
 }
 
-}  // namespace aura_issue_428_detail
+} // namespace aura_issue_428_detail
 
 int main() {
     using namespace aura_issue_428_detail;

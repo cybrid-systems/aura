@@ -45,10 +45,16 @@ namespace aura_322_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 using aura::compiler::CompilerService;
 
@@ -67,7 +73,8 @@ bool test_workspace_integrity() {
 bool test_flatast_compact() {
     std::println("\n--- Scenario 4: FlatAST compaction via (ast:compact-nodes) ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
+    (void)cs.eval(
+        "(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(ast:compact-nodes)");
     CHECK(r.has_value(), "(ast:compact-nodes) callable");
@@ -89,8 +96,7 @@ bool test_dual_path_consistency() {
         code += std::to_string(100 + i * 11);
         code += "))";
         auto r = cs.eval(code);
-        CHECK(r.has_value(),
-              std::string("mutate #") + std::to_string(i) + " succeeds");
+        CHECK(r.has_value(), std::string("mutate #") + std::to_string(i) + " succeeds");
     }
     auto re = cs.eval("(eval-current)");
     CHECK(re.has_value(), "eval succeeds after 5 mutations");
@@ -104,8 +110,7 @@ int main() {
     test_workspace_integrity();
     test_flatast_compact();
     test_dual_path_consistency();
-    std::println("\nDual-path SoA + arena compaction (#322): {}/{} passed, {}/{} failed",
-                 g_passed, g_passed + g_failed,
-                 g_failed, g_passed + g_failed);
+    std::println("\nDual-path SoA + arena compaction (#322): {}/{} passed, {}/{} failed", g_passed,
+                 g_passed + g_failed, g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

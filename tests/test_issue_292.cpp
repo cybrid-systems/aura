@@ -3,8 +3,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core.ast;
 import aura.compiler.matcher;
 import aura.compiler.value;
@@ -15,9 +15,11 @@ namespace test_292_detail {
 
 static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
+    if (!r)
+        return -1;
     auto& v = *r;
-    if (!aura::compiler::types::is_int(v)) return -1;
+    if (!aura::compiler::types::is_int(v))
+        return -1;
     return aura::compiler::types::as_int(v);
 }
 
@@ -39,8 +41,7 @@ bool test_guard_int_positive() {
         (let ((rs (query:pattern "(:guard \"(> ?x 0)\" ?x)")))
           (length rs))
     )AU");
-    CHECK(n >= 2, "guard (> ?x 0) returns at least 2 matches (got " +
-          std::to_string(n) + ")");
+    CHECK(n >= 2, "guard (> ?x 0) returns at least 2 matches (got " + std::to_string(n) + ")");
     return true;
 }
 
@@ -53,8 +54,7 @@ bool test_guard_reject_all() {
         (let ((rs (query:pattern "(:guard \"(> ?x 1000)\" ?x)")))
           (length rs))
     )AU");
-    CHECK(n == 0, "guard (> ?x 1000) returns 0 matches (got " +
-          std::to_string(n) + ")");
+    CHECK(n == 0, "guard (> ?x 1000) returns 0 matches (got " + std::to_string(n) + ")");
     return true;
 }
 
@@ -67,8 +67,7 @@ bool test_no_guard_pattern_works() {
         (let ((rs (query:pattern "?x")))
           (length rs))
     )AU");
-    CHECK(n > 0, "no-guard pattern returns matches (got " +
-          std::to_string(n) + ")");
+    CHECK(n > 0, "no-guard pattern returns matches (got " + std::to_string(n) + ")");
     return true;
 }
 
@@ -86,8 +85,7 @@ bool test_guard_boolean() {
         (let ((rs (query:pattern "(:guard \"(integer? ?x)\" ?x)")))
           (length rs))
     )AU");
-    CHECK(n >= 5, "guard (integer? ?x) returns >= 5 matches (got " +
-          std::to_string(n) + ")");
+    CHECK(n >= 5, "guard (integer? ?x) returns >= 5 matches (got " + std::to_string(n) + ")");
     return true;
 }
 
@@ -96,15 +94,11 @@ bool test_matcher_api() {
     std::println("\n--- AC #5: matcher exposes guard API ---");
     aura::ast::FlatAST flat;
     aura::ast::StringPool pool;
-    aura::compiler::QueryMatcher m(
-        &flat, &pool, &flat, &pool,
-        pool.intern("..."),
-        /*nested_arity=*/true);
-    CHECK(!m.has_pending_guard(),
-          "fresh matcher has no pending guard");
+    aura::compiler::QueryMatcher m(&flat, &pool, &flat, &pool, pool.intern("..."),
+                                   /*nested_arity=*/true);
+    CHECK(!m.has_pending_guard(), "fresh matcher has no pending guard");
     m.setup_guard_detection();
-    CHECK(!m.has_pending_guard(),
-          "setup_guard_detection() is idempotent");
+    CHECK(!m.has_pending_guard(), "setup_guard_detection() is idempotent");
     return true;
 }
 
@@ -128,30 +122,25 @@ bool test_matcher_stashes_guard() {
     auto guard_node = pat_flat.add_call(guard_head_node, {expr_node, x_node});
     // Build workspace with a literal int 5
     auto five = ws_flat.add_literal(5);
-// (debug removed)
+    // (debug removed)
     // Matcher
-    aura::compiler::QueryMatcher m(
-        &ws_flat, &ws_pool, &pat_flat, &pat_pool,
-        pat_pool.intern("..."),
-        /*nested_arity=*/true);
+    aura::compiler::QueryMatcher m(&ws_flat, &ws_pool, &pat_flat, &pat_pool, pat_pool.intern("..."),
+                                   /*nested_arity=*/true);
     m.setup_guard_detection();
     auto guard_pat = pat_flat.get(guard_node);
-    std::print(std::cerr, "TEST: guard_node children[0]=%u, head sym=%u\n",
-        guard_pat.children[0], pat_flat.get(guard_pat.children[0]).sym_id);
+    std::print(std::cerr, "TEST: guard_node children[0]=%u, head sym=%u\n", guard_pat.children[0],
+               pat_flat.get(guard_pat.children[0]).sym_id);
     bool matched = m.match_subtree(five, guard_node);
     CHECK(matched, "matcher returns true for :guard pattern");
-    CHECK(m.has_pending_guard(),
-          "matcher stashes pending guard after :guard match");
+    CHECK(m.has_pending_guard(), "matcher stashes pending guard after :guard match");
     if (m.has_pending_guard()) {
         const auto& pg = m.take_pending_guard();
         CHECK(pg.guard_expr == "(> ?x 0)",
               "guard expression captured (got \"" + pg.guard_expr + "\")");
         CHECK(pg.captures.size() == 1,
-              "1 capture stashed (got " +
-              std::to_string(pg.captures.size()) + ")");
+              "1 capture stashed (got " + std::to_string(pg.captures.size()) + ")");
         m.clear_pending_guard();
-        CHECK(!m.has_pending_guard(),
-              "clear_pending_guard() removes the stashed guard");
+        CHECK(!m.has_pending_guard(), "clear_pending_guard() removes the stashed guard");
     }
     return true;
 }
@@ -164,15 +153,19 @@ int run_tests() {
     test_guard_boolean();
     test_matcher_api();
     test_matcher_stashes_guard();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 
+} // namespace test_292_detail
+
+int aura_issue_292_run() {
+    return test_292_detail::run_tests();
 }
 
-int aura_issue_292_run() { return test_292_detail::run_tests(); }
-
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_292_run(); }
+int main() {
+    return aura_issue_292_run();
+}
 #endif

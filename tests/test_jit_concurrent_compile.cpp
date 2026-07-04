@@ -25,15 +25,16 @@
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::println(std::cerr, "  FAIL: {} (line {})", (msg), __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", (msg)); \
-        ++g_passed; \
-    } \
-} while(0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            std::println(std::cerr, "  FAIL: {} (line {})", (msg), __LINE__);                      \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", (msg));                                                     \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ── Test 1: Concurrent increments to compile_count are exact ───
 // (Sanity check that the Metrics counters handle concurrent
@@ -54,11 +55,11 @@ bool test_concurrent_compile_count() {
             }
         });
     }
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
 
     auto expected = static_cast<std::uint64_t>(kThreads * kPerThread);
-    CHECK(m.compile_count.load() == expected,
-          "compile_count exact under concurrent updates");
+    CHECK(m.compile_count.load() == expected, "compile_count exact under concurrent updates");
     CHECK(m.cached_function_count.load() == expected,
           "cached_function_count exact under concurrent updates");
     return true;
@@ -123,14 +124,16 @@ bool test_concurrent_stress_with_format() {
         while (!stop.load(std::memory_order_relaxed)) {
             m.format(buf, sizeof(buf));
             // Touch the buffer to ensure it's not optimized out
-            if (buf[0] == 'X') std::println(std::cerr, "no");
+            if (buf[0] == 'X')
+                std::println(std::cerr, "no");
         }
     });
 
     // Let it run for ~100ms
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     stop.store(true, std::memory_order_relaxed);
-    for (auto& t : inc_threads) t.join();
+    for (auto& t : inc_threads)
+        t.join();
     reader.join();
 
     // All counters should be > 0

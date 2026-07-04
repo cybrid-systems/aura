@@ -781,12 +781,17 @@ export inline IRStatsSnapshot compute_ir_stats(const IRModule& mod) {
                 } else {
                     // Out-of-range opcode: fall back to a trailing-
                     // non-zero heuristic.
-                    if (instr.operands[0] != 0) used = std::max<std::uint8_t>(used, 1);
-                    if (instr.operands[1] != 0) used = std::max<std::uint8_t>(used, 2);
-                    if (instr.operands[2] != 0) used = std::max<std::uint8_t>(used, 3);
-                    if (instr.operands[3] != 0) used = std::max<std::uint8_t>(used, 4);
+                    if (instr.operands[0] != 0)
+                        used = std::max<std::uint8_t>(used, 1);
+                    if (instr.operands[1] != 0)
+                        used = std::max<std::uint8_t>(used, 2);
+                    if (instr.operands[2] != 0)
+                        used = std::max<std::uint8_t>(used, 3);
+                    if (instr.operands[3] != 0)
+                        used = std::max<std::uint8_t>(used, 4);
                 }
-                if (used > 4) used = 4;
+                if (used > 4)
+                    used = 4;
                 s.operand_count_distribution[used] += 1;
                 s.operands_used_sum += used;
             }
@@ -794,16 +799,14 @@ export inline IRStatsSnapshot compute_ir_stats(const IRModule& mod) {
     }
     s.aos_bytes_total = s.total_instructions * IRStatsSnapshot::AOS_BYTES_PER_INSTRUCTION;
     s.padding_bytes_total = s.total_instructions * IRStatsSnapshot::PADDING_BYTES_PER_INSTRUCTION;
-    s.unused_operand_bytes_total =
-        (s.total_instructions * 4u - s.operands_used_sum) * 4u;
+    s.unused_operand_bytes_total = (s.total_instructions * 4u - s.operands_used_sum) * 4u;
     for (std::size_t i = 0; i < 5; ++i) {
         std::uint64_t per_inst = 2 + static_cast<std::uint64_t>(i) * 4;
         per_inst = (per_inst + 3) & ~std::uint64_t(3);
         s.compact_bytes_projection += per_inst * s.operand_count_distribution[i];
     }
-    s.compact_ratio_bp = s.aos_bytes_total
-        ? (s.compact_bytes_projection * 10000u / s.aos_bytes_total)
-        : 0;
+    s.compact_ratio_bp =
+        s.aos_bytes_total ? (s.compact_bytes_projection * 10000u / s.aos_bytes_total) : 0;
     return s;
 }
 

@@ -82,8 +82,7 @@ struct BenchResult {
     std::size_t buf_bytes = 0;
 };
 
-template <typename Fn>
-double benchmark_median(Fn&& fn, int repeats = 5) {
+template <typename Fn> double benchmark_median(Fn&& fn, int repeats = 5) {
     std::vector<double> samples;
     samples.reserve(repeats);
     for (int i = 0; i < repeats; ++i) {
@@ -93,7 +92,7 @@ double benchmark_median(Fn&& fn, int repeats = 5) {
         samples.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
     }
     std::sort(samples.begin(), samples.end());
-    return samples[samples.size() / 2];  // median
+    return samples[samples.size() / 2]; // median
 }
 
 // Build a base PCV of N elements [0, N).
@@ -185,22 +184,22 @@ static void bench_pcv_ops(std::vector<BenchResult>& results) {
     std::println("  ├──────────────┼──────────────┼──────────────┼──────────┤");
     auto row = [](const char* name, double pcv_us, double vec_us) {
         double ratio = (vec_us > 0) ? (pcv_us / vec_us) : 0.0;
-        std::println("  │ {:<12} │ {:>10.3f}   │ {:>10.3f}   │ {:>6.2f}x │",
-                     name, pcv_us, vec_us, ratio);
+        std::println("  │ {:<12} │ {:>10.3f}   │ {:>10.3f}   │ {:>6.2f}x │", name, pcv_us, vec_us,
+                     ratio);
     };
     row("push_back", pcv_push_us, vec_push_us);
-    row("erase",     pcv_erase_us, vec_erase_us);
-    row("set",       pcv_set_us,   vec_set_us);
+    row("erase", pcv_erase_us, vec_erase_us);
+    row("set", pcv_set_us, vec_set_us);
     std::println("  └──────────────┴──────────────┴──────────────┴──────────┘");
     std::println("  with_insert at midpoint: {:.3f} µs/op", pcv_insert_us);
     std::println("  (Note: with_insert copies two halves — no in-place vec midpoint comparison)");
 
     results.push_back({"pcv_push_back", OPS, pcv_push_ms, pcv_push_us, BASE_N * sizeof(NodeId)});
-    results.push_back({"pcv_erase",     OPS, pcv_erase_ms, pcv_erase_us, BASE_N * sizeof(NodeId)});
-    results.push_back({"pcv_set",       OPS, pcv_set_ms, pcv_set_us, BASE_N * sizeof(NodeId)});
+    results.push_back({"pcv_erase", OPS, pcv_erase_ms, pcv_erase_us, BASE_N * sizeof(NodeId)});
+    results.push_back({"pcv_set", OPS, pcv_set_ms, pcv_set_us, BASE_N * sizeof(NodeId)});
     results.push_back({"vec_push_back", OPS, vec_push_ms, vec_push_us, BASE_N * sizeof(NodeId)});
-    results.push_back({"vec_erase",     OPS, vec_erase_ms, vec_erase_us, BASE_N * sizeof(NodeId)});
-    results.push_back({"vec_set",       OPS, vec_set_ms,   vec_set_us,   BASE_N * sizeof(NodeId)});
+    results.push_back({"vec_erase", OPS, vec_erase_ms, vec_erase_us, BASE_N * sizeof(NodeId)});
+    results.push_back({"vec_set", OPS, vec_set_ms, vec_set_us, BASE_N * sizeof(NodeId)});
 }
 
 // ── Bench 2: COW back-references (refcount growth on fork) ─────
@@ -237,7 +236,7 @@ static void bench_cow_backrefs(std::vector<BenchResult>& results) {
         long use_after_copy;
         auto t0 = std::chrono::steady_clock::now();
         for (int i = 0; i < copies; ++i) {
-            holders.push_back(base);  // PCV copy: shared_ptr refcount++
+            holders.push_back(base); // PCV copy: shared_ptr refcount++
         }
         auto t1 = std::chrono::steady_clock::now();
         use_after_copy = base.use_count();
@@ -252,10 +251,10 @@ static void bench_cow_backrefs(std::vector<BenchResult>& results) {
         // shared_ptrs prevent the original storage from being
         // freed even though only the copies + base hold it.
         auto& one_holder = holders[0];
-        long use_before_mutate = one_holder.use_count();  // copies + 1 (for base)
+        long use_before_mutate = one_holder.use_count(); // copies + 1 (for base)
         one_holder = one_holder.with_push_back(999);
-        long use_after_mutate_holder = one_holder.use_count();  // 1 (new storage)
-        long use_after_mutate_base = base.use_count();  // copies (unaffected by the mutate)
+        long use_after_mutate_holder = one_holder.use_count(); // 1 (new storage)
+        long use_after_mutate_base = base.use_count();         // copies (unaffected by the mutate)
 
         // Sanity: the original storage is still alive (its
         // use_count == copies, because base + the other
@@ -266,15 +265,16 @@ static void bench_cow_backrefs(std::vector<BenchResult>& results) {
         }
         std::println("  copies={:>5}  copy={:.3f} µs  base.use_count()={} (was {})  "
                      "after mutate: holder={}, base={}",
-                     copies, copy_us, use_after_copy, initial_use,
-                     use_after_mutate_holder, use_after_mutate_base);
-        results.push_back({"cow_backref_copy", static_cast<std::size_t>(copies), copy_ms,
-                           copy_us, BASE_N * sizeof(NodeId)});
+                     copies, copy_us, use_after_copy, initial_use, use_after_mutate_holder,
+                     use_after_mutate_base);
+        results.push_back({"cow_backref_copy", static_cast<std::size_t>(copies), copy_ms, copy_us,
+                           BASE_N * sizeof(NodeId)});
         // Reset for next iteration
         holders.clear();
     }
     std::println("  → original storage outlives mutations; use_count tracks shared holders");
-    std::println("  → mutated holder rebinds to fresh storage (old storage kept alive by base + holders)");
+    std::println(
+        "  → mutated holder rebinds to fresh storage (old storage kept alive by base + holders)");
 }
 
 // ── Bench 3: Simulated #177 rollback flow ──────────────────────
@@ -299,7 +299,7 @@ struct FlatASTStub {
 
 static void bench_rollback_flow(std::vector<BenchResult>& results) {
     std::println("\n── Bench 3: Simulated #177 rollback flow ──");
-    constexpr std::size_t NODE_COUNT = 5000;  // 5000-node AST
+    constexpr std::size_t NODE_COUNT = 5000; // 5000-node AST
     constexpr int BOUNDARIES = 100;
     constexpr int MUTATIONS_PER_BOUNDARY = 10;
 
@@ -317,7 +317,7 @@ static void bench_rollback_flow(std::vector<BenchResult>& results) {
     auto t0 = std::chrono::steady_clock::now();
     for (int b = 0; b < BOUNDARIES; ++b) {
         // enter_mutation_boundary: capture snapshot (PCV copy of children_)
-        auto snapshot = stub.children_;  // std::vector<PCV> copy = N shared_ptr copies
+        auto snapshot = stub.children_; // std::vector<PCV> copy = N shared_ptr copies
         // Mutations: replace 10 random children
         for (int m = 0; m < MUTATIONS_PER_BOUNDARY; ++m) {
             std::size_t idx = (b * MUTATIONS_PER_BOUNDARY + m) % NODE_COUNT;
@@ -325,19 +325,18 @@ static void bench_rollback_flow(std::vector<BenchResult>& results) {
                 static_cast<NodeId>(NODE_COUNT + b * MUTATIONS_PER_BOUNDARY + m));
         }
         // exit_mutation_boundary(false): rollback
-        stub.children_ = std::move(snapshot);  // move from snapshot back
+        stub.children_ = std::move(snapshot); // move from snapshot back
         stub.bump_generation();
     }
     auto t1 = std::chrono::steady_clock::now();
     double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     double us_per_op = (ms * 1000.0) / (BOUNDARIES * MUTATIONS_PER_BOUNDARY);
-    std::println("  {} nodes, {} boundaries × {} mutations = {} ops",
-                 NODE_COUNT, BOUNDARIES, MUTATIONS_PER_BOUNDARY,
-                 BOUNDARIES * MUTATIONS_PER_BOUNDARY);
+    std::println("  {} nodes, {} boundaries × {} mutations = {} ops", NODE_COUNT, BOUNDARIES,
+                 MUTATIONS_PER_BOUNDARY, BOUNDARIES * MUTATIONS_PER_BOUNDARY);
     std::println("  Total: {:.3f} ms ({:.3f} µs/op)", ms, us_per_op);
     std::println("  → includes snapshot copy + restore_children move + 10 mutations");
-    results.push_back({"rollback_flow", NODE_COUNT, ms, us_per_op,
-                       NODE_COUNT * 3 * sizeof(NodeId)});
+    results.push_back(
+        {"rollback_flow", NODE_COUNT, ms, us_per_op, NODE_COUNT * 3 * sizeof(NodeId)});
 }
 
 // ── Bench 4: Persistence stress (5000 nodes + 100 mutations < 2µs/op) ─
@@ -360,7 +359,7 @@ static void bench_persistence_stress(std::vector<BenchResult>& results) {
     std::uniform_int_distribution<std::size_t> dist(0, NODE_COUNT - 1);
 
     auto run = [&]() {
-        std::vector<PCV> cur = children;  // local copy
+        std::vector<PCV> cur = children; // local copy
         for (int m = 0; m < MUTATIONS; ++m) {
             std::size_t idx = dist(rng);
             cur[idx] = cur[idx].with_push_back(static_cast<NodeId>(NODE_COUNT + m));
@@ -372,8 +371,8 @@ static void bench_persistence_stress(std::vector<BenchResult>& results) {
     std::println("  {} nodes, {} mutations per run", NODE_COUNT, MUTATIONS);
     std::println("  Median: {:.3f} µs/op  {}", us_per_op,
                  meets_ac ? "✅ MEETS AC" : "❌ EXCEEDS AC");
-    results.push_back({"persistence_stress", NODE_COUNT, ms, us_per_op,
-                       NODE_COUNT * 3 * sizeof(NodeId)});
+    results.push_back(
+        {"persistence_stress", NODE_COUNT, ms, us_per_op, NODE_COUNT * 3 * sizeof(NodeId)});
 }
 
 // ── Main ───────────────────────────────────────────────────────
@@ -403,7 +402,8 @@ int main() {
               << ", \"median_ms\": " << std::fixed << std::setprecision(3) << r.median_ms
               << ", \"us_per_op\": " << std::setprecision(3) << r.median_us_per_op
               << ", \"buf_bytes\": " << r.buf_bytes << "}";
-            if (i + 1 < results.size()) f << ",";
+            if (i + 1 < results.size())
+                f << ",";
             f << "\n";
         }
         f << "  ]\n";

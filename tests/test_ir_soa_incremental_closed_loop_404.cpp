@@ -68,23 +68,20 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
     const auto stats3b = incremental_stats(cs);
     std::println("  incremental stats: {} -> {}", stats3a, stats3b);
-    CHECK(stats3b >= stats3a,
-          "mutate+eval bumps incremental re-lower stats");
+    CHECK(stats3b >= stats3a, "mutate+eval bumps incremental re-lower stats");
 
     std::println("\n--- AC4: eval-current :jit SoA bridge ---");
     const auto stats4a = incremental_stats(cs);
     auto jit = cs.eval("(eval-current :jit)");
     const auto stats4b = incremental_stats(cs);
-    std::println("  jit ok={} stats: {} -> {}",
-                 jit.has_value(), stats4a, stats4b);
+    std::println("  jit ok={} stats: {} -> {}", jit.has_value(), stats4a, stats4b);
     CHECK(jit.has_value(), "eval-current :jit succeeds");
     CHECK(stats4b >= stats4a, "JIT path monotonic");
 
     std::println("\n--- AC5: multi-round mutate matrix ---");
     const auto stats5a = incremental_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(eval-current :jit)");
     }

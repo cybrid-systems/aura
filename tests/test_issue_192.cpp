@@ -36,8 +36,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -47,10 +47,9 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_192_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -85,8 +84,8 @@ bool test_atomic_batch_bad_arg_no_workspace() {
     std::println("\n--- Test 1.1: bad-arg with no workspace ---");
     aura::compiler::CompilerService cs;
     // Without a workspace, atomic-batch returns an error pair.
-    auto v = run_on(cs,
-        "(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"x\" \"t\")) \"test\")");
+    auto v = run_on(
+        cs, "(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"x\" \"t\")) \"test\")");
     // Should NOT be void — it's a structured error or #f.
     CHECK(v.val != 11, "atomic-batch with no workspace returns non-void (error pair)");
     return true;
@@ -111,10 +110,9 @@ bool test_atomic_batch_bad_arg_malformed() {
 bool test_atomic_batch_empty_list_via_set_code() {
     std::println("\n--- Test 2.1: empty ops list via set-code ---");
     aura::compiler::CompilerService cs;
-    bool ok = run_bool(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x 2))\") "
-        "  (mutate:atomic-batch (list) \"empty-batch\"))");
+    bool ok = run_bool(cs, "(begin "
+                           "  (set-code \"(define (f x) (* x 2))\") "
+                           "  (mutate:atomic-batch (list) \"empty-batch\"))");
     CHECK(ok, "atomic-batch with empty ops list returns #t");
     return true;
 }
@@ -126,12 +124,11 @@ bool test_atomic_batch_empty_list_via_set_code() {
 bool test_atomic_batch_bad_op_name() {
     std::println("\n--- Test 3.1: bad op name returns #f ---");
     aura::compiler::CompilerService cs;
-    bool ok = run_bool(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x 2))\") "
-        "  (mutate:atomic-batch "
-        "    (list (list \"mutate:nonexistent-op\" \"f\")) "
-        "    \"bad-op-batch\"))");
+    bool ok = run_bool(cs, "(begin "
+                           "  (set-code \"(define (f x) (* x 2))\") "
+                           "  (mutate:atomic-batch "
+                           "    (list (list \"mutate:nonexistent-op\" \"f\")) "
+                           "    \"bad-op-batch\"))");
     CHECK(!ok, "atomic-batch with bad op name returns #f");
     return true;
 }
@@ -156,15 +153,15 @@ bool test_atomic_batch_bad_op_args_rolls_back() {
     // Use (rollback 0) which might return #f. Hmm, hard to
     // construct. Just verify that the failure path returns #f
     // and doesn't crash.
-    bool ok = run_bool(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x 2))\") "
-        "  (mutate:atomic-batch "
-        "    (list "
-        "      (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 5))\" \"first\") "
-        "      (list \"mutate:nonexistent-op\" \"x\") "
-        "    ) "
-        "    \"mixed-batch\"))");
+    bool ok =
+        run_bool(cs, "(begin "
+                     "  (set-code \"(define (f x) (* x 2))\") "
+                     "  (mutate:atomic-batch "
+                     "    (list "
+                     "      (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 5))\" \"first\") "
+                     "      (list \"mutate:nonexistent-op\" \"x\") "
+                     "    ) "
+                     "    \"mixed-batch\"))");
     CHECK(!ok, "mixed batch with bad op in middle returns #f (rollback applied)");
     return true;
 }
@@ -196,15 +193,13 @@ bool test_existing_mutate_rebind_still_works() {
     aura::compiler::CompilerService cs;
     // Use the same pattern that worked in test_issue_189/191.
     // (define (f x) ...) then mutate:rebind then call f.
-    int64_t g0 = run_int(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x 2))\") "
-        "  (ast:generation))");
-    int64_t g1 = run_int(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x 2))\") "
-        "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
-        "  (ast:generation))");
+    int64_t g0 = run_int(cs, "(begin "
+                             "  (set-code \"(define (f x) (* x 2))\") "
+                             "  (ast:generation))");
+    int64_t g1 = run_int(cs, "(begin "
+                             "  (set-code \"(define (f x) (* x 2))\") "
+                             "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
+                             "  (ast:generation))");
     CHECK(g1 > g0, "mutate:rebind still bumps generation (backward compat)");
     return true;
 }
@@ -218,10 +213,10 @@ bool test_atomic_batch_returns_bool() {
     aura::compiler::CompilerService cs;
     // The no-workspace case returns an error pair, not a bool.
     // The with-workspace case returns a bool (#t or #f).
-    auto v = run_on(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x 2))\") "
-        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 3))\" \"test\")) \"test\"))");
+    auto v = run_on(cs, "(begin "
+                        "  (set-code \"(define (f x) (* x 2))\") "
+                        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) "
+                        "(* x 3))\" \"test\")) \"test\"))");
     if (v.val == 11) {
         std::println("    [expected bool, got void]");
         ++g_failed;
@@ -244,15 +239,19 @@ bool test_fuzzer_many_batches() {
     aura::compiler::CompilerService cs;
     // 5 batches with a single rebind op each. Verify the batch
     // count incremented by 5 (via the stats primitive).
-    auto v = run_on(cs,
-        "(begin "
-        "  (set-code \"(define (f x) (* x 2))\") "
-        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 2))\" \"1\")) \"batch1\") "
-        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 2))\" \"2\")) \"batch2\") "
-        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 2))\" \"3\")) \"batch3\") "
-        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 2))\" \"4\")) \"batch4\") "
-        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 2))\" \"5\")) \"batch5\") "
-        "  (atomic-batch:stats))");
+    auto v = run_on(cs, "(begin "
+                        "  (set-code \"(define (f x) (* x 2))\") "
+                        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) "
+                        "(* x 2))\" \"1\")) \"batch1\") "
+                        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) "
+                        "(* x 2))\" \"2\")) \"batch2\") "
+                        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) "
+                        "(* x 2))\" \"3\")) \"batch3\") "
+                        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) "
+                        "(* x 2))\" \"4\")) \"batch4\") "
+                        "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) "
+                        "(* x 2))\" \"5\")) \"batch5\") "
+                        "  (atomic-batch:stats))");
     if (v.val == 11) {
         std::println("    [expected hash, got void]");
         ++g_failed;
@@ -297,7 +296,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_192_detail
+} // namespace aura_issue_192_detail
 
-int aura_issue_192_run() { return aura_issue_192_detail::run_tests(); }
-
+int aura_issue_192_run() {
+    return aura_issue_192_detail::run_tests();
+}

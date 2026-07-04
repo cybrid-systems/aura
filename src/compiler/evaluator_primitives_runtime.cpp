@@ -1,5 +1,6 @@
-// evaluator_primitives_runtime.cpp — P0 step 26: equal? / gensym / apply / display / format / error / check-* primitives
-// aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
+// evaluator_primitives_runtime.cpp — P0 step 26: equal? / gensym / apply / display / format / error
+// / check-* primitives aura.compiler.evaluator module partition; registered via
+// evaluator_primitives_registry.cpp.
 
 module;
 

@@ -316,7 +316,6 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         ev.string_heap_.push_back(std::move(result));
         return make_string(sid);
     });
-
 }
 
 void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -573,7 +572,6 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         ::close(static_cast<int>(types::as_int(a[0])));
         return make_void();
     });
-
 }
 
 } // namespace aura::compiler::primitives_detail

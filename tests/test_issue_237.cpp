@@ -31,9 +31,12 @@
 #include <unistd.h>
 
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+using aura::test::g_passed;
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 namespace fs = std::filesystem;
 
@@ -65,9 +68,10 @@ std::string find_aura_binary() {
     if (n > 0) {
         fs::path p(buf);
         fs::path candidate = p.parent_path() / "aura";
-        if (fs::is_regular_file(candidate)) return candidate.string();
+        if (fs::is_regular_file(candidate))
+            return candidate.string();
     }
-    return "aura";  // fallback: PATH lookup
+    return "aura"; // fallback: PATH lookup
 }
 
 // Run aura --emit-binary on stdin source, return true on success.
@@ -76,23 +80,33 @@ std::string find_aura_binary() {
 // exit) when the binary fails on a CI architecture we can't
 // reproduce locally (e.g. x86_64 segfaults).
 struct EmitResult {
-    bool ok;               // true iff aura exited 0
-    bool crashed;          // true iff aura was killed by signal (SIGSEGV, etc.)
-    int exit_code;         // raw exit status
-    int signal;            // signal number if killed, else 0
-    std::string stderr;    // captured stderr
+    bool ok;            // true iff aura exited 0
+    bool crashed;       // true iff aura was killed by signal (SIGSEGV, etc.)
+    int exit_code;      // raw exit status
+    int signal;         // signal number if killed, else 0
+    std::string stderr; // captured stderr
 };
 EmitResult run_emit_binary(const std::string& aura, const std::string& src,
-                            const std::string& out_path) {
+                           const std::string& out_path) {
     EmitResult res{};
     int in_pipe[2], err_pipe[2];
-    if (pipe(in_pipe) != 0) { res.exit_code = -1; return res; }
-    if (pipe(err_pipe) != 0) { close(in_pipe[0]); close(in_pipe[1]); res.exit_code = -1; return res; }
+    if (pipe(in_pipe) != 0) {
+        res.exit_code = -1;
+        return res;
+    }
+    if (pipe(err_pipe) != 0) {
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        res.exit_code = -1;
+        return res;
+    }
 
     pid_t pid = fork();
     if (pid < 0) {
-        close(in_pipe[0]); close(in_pipe[1]);
-        close(err_pipe[0]); close(err_pipe[1]);
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        close(err_pipe[0]);
+        close(err_pipe[1]);
         res.exit_code = -1;
         return res;
     }
@@ -100,8 +114,10 @@ EmitResult run_emit_binary(const std::string& aura, const std::string& src,
         // child: wire stdin to in_pipe, stderr to err_pipe, exec aura
         dup2(in_pipe[0], STDIN_FILENO);
         dup2(err_pipe[1], STDERR_FILENO);
-        close(in_pipe[0]); close(in_pipe[1]);
-        close(err_pipe[0]); close(err_pipe[1]);
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        close(err_pipe[0]);
+        close(err_pipe[1]);
         execl(aura.c_str(), aura.c_str(), "--emit-binary", out_path.c_str(),
               static_cast<char*>(nullptr));
         _exit(127);
@@ -132,11 +148,21 @@ EmitResult run_emit_binary(const std::string& aura, const std::string& src,
         // Append the signal name to stderr for diagnostics
         res.stderr += "\n[signal] aura killed by SIG";
         switch (res.signal) {
-            case SIGSEGV: res.stderr += "SEGV"; break;
-            case SIGBUS:  res.stderr += "BUS"; break;
-            case SIGABRT: res.stderr += "ABRT"; break;
-            case SIGILL:  res.stderr += "ILL"; break;
-            default:      res.stderr += std::to_string(res.signal); break;
+            case SIGSEGV:
+                res.stderr += "SEGV";
+                break;
+            case SIGBUS:
+                res.stderr += "BUS";
+                break;
+            case SIGABRT:
+                res.stderr += "ABRT";
+                break;
+            case SIGILL:
+                res.stderr += "ILL";
+                break;
+            default:
+                res.stderr += std::to_string(res.signal);
+                break;
         }
         res.stderr += " (likely a crash in aura's IR pipeline / LLVM / linker)";
     }
@@ -148,13 +174,19 @@ std::string run_capture_stdout(const std::string& exe) {
     std::array<char, 4096> buf;
     std::string out;
     int pipefd[2];
-    if (pipe(pipefd) != 0) return {};
+    if (pipe(pipefd) != 0)
+        return {};
     pid_t pid = fork();
-    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return {}; }
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return {};
+    }
     if (pid == 0) {
         dup2(pipefd[1], STDOUT_FILENO);
         dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[0]); close(pipefd[1]);
+        close(pipefd[0]);
+        close(pipefd[1]);
         execl(exe.c_str(), exe.c_str(), static_cast<char*>(nullptr));
         _exit(127);
     }
@@ -166,19 +198,21 @@ std::string run_capture_stdout(const std::string& exe) {
     close(pipefd[0]);
     int status = 0;
     waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return {};
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        return {};
     return out;
 }
 
 bool is_elf(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
+    if (!f)
+        return false;
     char magic[4] = {0};
     f.read(magic, 4);
     return magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
 }
 
-}  // namespace
+} // namespace
 
 bool test_emit_binary_simple_add() {
     PRINTLN("\n--- Test 1: aura --emit-binary on (+ 1 2) produces ELF that outputs 3 ---");
@@ -193,8 +227,8 @@ bool test_emit_binary_simple_add() {
     // CHECKs (is_elf, output.contains("3")) would silently
     // fail without surfacing the AOT stderr that explains why.
     if (!res.ok || g_failed > 0) {
-        std::println("       [aura failure] exit={} signal={} crashed={}",
-                     res.exit_code, res.signal, res.crashed);
+        std::println("       [aura failure] exit={} signal={} crashed={}", res.exit_code,
+                     res.signal, res.crashed);
         if (!res.stderr.empty()) {
             std::println("       [aura stderr] {}", res.stderr);
         }
@@ -204,7 +238,8 @@ bool test_emit_binary_simple_add() {
     if (!fs::exists(out_path)) {
         // Belt-and-suspenders: print stderr even on the early
         // return path so CI logs always have it.
-        if (!res.stderr.empty()) std::println("       [aura stderr] {}", res.stderr);
+        if (!res.stderr.empty())
+            std::println("       [aura stderr] {}", res.stderr);
         return false;
     }
     CHECK(is_elf(out_path), "output is ELF (magic 0x7f 'E' 'L' 'F')");
@@ -231,8 +266,8 @@ bool test_emit_binary_lambda() {
     // (was: only when res.ok was false; downstream is_elf /
     // output.contains("49") checks could silently fail).
     if (!res.ok || g_failed > 0) {
-        std::println("       [aura failure] exit={} signal={} crashed={}",
-                     res.exit_code, res.signal, res.crashed);
+        std::println("       [aura failure] exit={} signal={} crashed={}", res.exit_code,
+                     res.signal, res.crashed);
         if (!res.stderr.empty()) {
             std::println("       [aura stderr] {}", res.stderr);
         }
@@ -242,7 +277,8 @@ bool test_emit_binary_lambda() {
     if (!fs::exists(out_path)) {
         std::println("       [test_237 early-return] aura returned {} but {} does not exist",
                      res.ok ? "ok" : "non-ok", out_path);
-        if (!res.stderr.empty()) std::println("       [aura stderr] {}", res.stderr);
+        if (!res.stderr.empty())
+            std::println("       [aura stderr] {}", res.stderr);
         return false;
     }
     CHECK(is_elf(out_path), "output is ELF (magic 0x7f 'E' 'L' 'F')");

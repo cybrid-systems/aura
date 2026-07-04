@@ -92,15 +92,11 @@ static void test_post_mutate_leak_violations() {
     rec.target_node = root;
     rec.mutation_id = 638;
     std::vector<aura::compiler::OwnershipNote> notes;
-    (void)aura::compiler::post_mutation_invariant_check(
-        *flat, *pool, reg, rec, notes, &metrics);
-    const auto violations =
-        metrics.linear_violations_caught_total.load(std::memory_order_relaxed);
-    const auto leaks =
-        metrics.linear_leak_prevented_total.load(std::memory_order_relaxed);
+    (void)aura::compiler::post_mutation_invariant_check(*flat, *pool, reg, rec, notes, &metrics);
+    const auto violations = metrics.linear_violations_caught_total.load(std::memory_order_relaxed);
+    const auto leaks = metrics.linear_leak_prevented_total.load(std::memory_order_relaxed);
     std::println("  violations_caught={} leak_prevented={}", violations, leaks);
-    CHECK(violations >= 1 || leaks >= 1,
-          "leaked-linear bumps violation or leak counters");
+    CHECK(violations >= 1 || leaks >= 1, "leaked-linear bumps violation or leak counters");
     CHECK(count_kind(notes, "leaked-linear") >= 1,
           "post_mutation_invariant_check finds leaked-linear");
 }
@@ -130,46 +126,41 @@ static void run_matrix(CompilerService& cs) {
     rec.target_node = root;
     rec.mutation_id = 6383;
     std::vector<aura::compiler::OwnershipNote> notes;
-    const auto status = aura::compiler::post_mutation_invariant_check(
-        *flat, *str_pool, reg, rec, notes, &metrics);
+    const auto status =
+        aura::compiler::post_mutation_invariant_check(*flat, *str_pool, reg, rec, notes, &metrics);
     CHECK(status == aura::ast::InvariantStatus::Ok,
           "moved linear binding passes post-mutate revalidate");
 
     std::println("\n--- AC4: mutate + eval linear → safety stats monotonic ---");
     const auto stats4a = linear_safety_stats(cs);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
-        "\"issue-638-leak\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
+                  "\"issue-638-leak\")");
     auto* ws = cs.evaluator().workspace_flat();
     auto* ws_pool = cs.evaluator().workspace_pool();
     if (ws && ws_pool && !ws->all_mutations().empty()) {
         TypeRegistry reg2;
         std::vector<aura::compiler::OwnershipNote> notes2;
-        (void)aura::compiler::post_mutation_invariant_check(
-            *ws, *ws_pool, reg2, ws->all_mutations().back(), notes2,
-            cs.evaluator().compiler_metrics());
+        (void)aura::compiler::post_mutation_invariant_check(*ws, *ws_pool, reg2,
+                                                            ws->all_mutations().back(), notes2,
+                                                            cs.evaluator().compiler_metrics());
     }
     const auto stats4b = linear_safety_stats(cs);
     std::println("  linear-ownership-safety-stats: {} -> {}", stats4a, stats4b);
-    CHECK(stats4b >= stats4a,
-          "safety-stats monotonic after post-mutate linear revalidate");
+    CHECK(stats4b >= stats4a, "safety-stats monotonic after post-mutate linear revalidate");
 
     std::println("\n--- AC5: invalidate_shape clears GuardShape stability ---");
     (void)cs.eval("(set-code \"(define add1 (lambda (x) (+ x 1)))\")");
     CHECK(cs.eval("(eval-current)").has_value(), "add1 workspace eval");
     const bool stable_before = cs.is_shape_stable("add1");
     cs.invalidate_shape("add1");
-    CHECK(!cs.is_shape_stable("add1"),
-          "invalidate_shape clears stability for GuardShape refresh");
+    CHECK(!cs.is_shape_stable("add1"), "invalidate_shape clears stability for GuardShape refresh");
 
     std::println("\n--- AC6: multi-round linear mutate matrix ---");
     const auto stats6a = linear_safety_stats(cs);
     for (int round = 0; round < 3; ++round) {
         const std::string body =
-            "(lambda () (let ((x (Linear " + std::to_string(round + 10) +
-            "))) (move x)))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" +
-                      std::to_string(round) + "\")");
+            "(lambda () (let ((x (Linear " + std::to_string(round + 10) + "))) (move x)))";
+        (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) + "\")");
         auto r = cs.eval("(f)");
         CHECK(r.has_value(), "f eval ok round " + std::to_string(round));
     }

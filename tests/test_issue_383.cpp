@@ -45,28 +45,38 @@ namespace aura_383_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 // ── AC1: fresh CompilerService → all 3 counters == 0
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: constraint counters start at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.consistent_unify_total, 0u,
-             "consistent_unify_total == 0");
-    CHECK_EQ(snap.consistent_subtype_total, 0u,
-             "consistent_subtype_total == 0");
-    CHECK_EQ(snap.worklist_restart_total, 0u,
-             "worklist_restart_total == 0");
+    CHECK_EQ(snap.consistent_unify_total, 0u, "consistent_unify_total == 0");
+    CHECK_EQ(snap.consistent_subtype_total, 0u, "consistent_subtype_total == 0");
+    CHECK_EQ(snap.worklist_restart_total, 0u, "worklist_restart_total == 0");
     return true;
 }
 
@@ -114,17 +124,13 @@ bool test_typecheck_bumps_counters() {
     // inside a let. The poly path goes through
     // consistent_unify when (number? x) refines
     // the bound type variable to Number.
-    auto r = cs.typecheck(
-        "(let ((id (lambda (x) x))) "
-        "(if (number? (id 5)) (id 5) 0))");
+    auto r = cs.typecheck("(let ((id (lambda (x) x))) "
+                          "(if (number? (id 5)) (id 5) 0))");
     std::println("  typecheck result: {} chars", r.size());
     auto snap = cs.snapshot();
-    std::println("  consistent_unify_total: {}",
-                 snap.consistent_unify_total);
-    std::println("  consistent_subtype_total: {}",
-                 snap.consistent_subtype_total);
-    std::println("  worklist_restart_total: {}",
-                 snap.worklist_restart_total);
+    std::println("  consistent_unify_total: {}", snap.consistent_unify_total);
+    std::println("  consistent_subtype_total: {}", snap.consistent_subtype_total);
+    std::println("  worklist_restart_total: {}", snap.worklist_restart_total);
     CHECK(snap.consistent_unify_total > 0u,
           "consistent_unify_total > 0 (poly + gradual path fired)");
     return true;
@@ -137,23 +143,23 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define cse 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define cse 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_383_detail
+} // namespace aura_383_detail
 
 int main() {
     using namespace aura_383_detail;
-    std::println("=== Issue #383: ConstraintSystem worklist + consistent_unify (scope-limited) ===");
+    std::println(
+        "=== Issue #383: ConstraintSystem worklist + consistent_unify (scope-limited) ===");
     test_initial_counters_zero();
     test_snapshot_has_new_fields();
     test_constraint_solver_stats_primitive();
     test_typecheck_bumps_counters();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

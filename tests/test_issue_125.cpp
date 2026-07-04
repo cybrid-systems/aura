@@ -27,8 +27,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -39,7 +39,6 @@ import aura.compiler.type_checker;
 import aura.parser.parser;
 
 
-
 // ── Test 1: the dirty-skip counters exist on CompilerMetrics ──
 
 namespace aura_issue_125_detail {
@@ -47,17 +46,14 @@ bool test_dirty_skip_counters_exist() {
     std::println("\n--- Test: dirty-skip counters exist on CompilerMetrics ---");
 
     aura::compiler::CompilerMetrics m;
-    CHECK(m.module_dirty_skips.load() == 0,
-          "module_dirty_skips counter exists and starts at 0");
+    CHECK(m.module_dirty_skips.load() == 0, "module_dirty_skips counter exists and starts at 0");
     CHECK(m.module_dirty_recompiles.load() == 0,
           "module_dirty_recompiles counter exists and starts at 0");
 
     m.module_dirty_skips.fetch_add(3, std::memory_order_relaxed);
     m.module_dirty_recompiles.fetch_add(2, std::memory_order_relaxed);
-    CHECK(m.module_dirty_skips.load() == 3,
-          "module_dirty_skips counter increments");
-    CHECK(m.module_dirty_recompiles.load() == 2,
-          "module_dirty_recompiles counter increments");
+    CHECK(m.module_dirty_skips.load() == 3, "module_dirty_skips counter increments");
+    CHECK(m.module_dirty_recompiles.load() == 2, "module_dirty_recompiles counter increments");
     return true;
 }
 
@@ -99,12 +95,12 @@ int run_tests() {
     test_dirty_skip_counters_exist();
     test_parse_smoke();
     test_metrics_struct_has_counters();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_125_detail
+} // namespace aura_issue_125_detail
 
-int aura_issue_125_run() { return aura_issue_125_detail::run_tests(); }
-
+int aura_issue_125_run() {
+    return aura_issue_125_detail::run_tests();
+}

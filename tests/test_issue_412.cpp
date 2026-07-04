@@ -46,23 +46,35 @@ namespace aura_issue_412_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: type cache gen_saved counter starts at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.typecheck_gen_saved_total, 0u,
-             "typecheck_gen_saved_total == 0 on fresh service");
+    CHECK_EQ(snap.typecheck_gen_saved_total, 0u, "typecheck_gen_saved_total == 0 on fresh service");
     CHECK_EQ(snap.typecheck_gen_saved_ratio_bp, 0u,
              "typecheck_gen_saved_ratio_bp == 0 (no rescues yet)");
     return true;
@@ -72,14 +84,22 @@ bool test_aura_primitive_returns_hash() {
     std::println("\n--- AC2: (compile:type-cache-stats) returns hash with 5 keys ---");
     aura::compiler::CompilerService cs;
     auto r1 = cs.eval("(set-code \"(define h (compile:type-cache-stats))\")");
-    if (!r1) { std::println("  FAIL: define h failed"); ++g_failed; return false; }
+    if (!r1) {
+        std::println("  FAIL: define h failed");
+        ++g_failed;
+        return false;
+    }
     auto r2 = cs.eval("(eval-current)");
-    if (!r2) { std::println("  FAIL: eval-current failed"); ++g_failed; return false; }
+    if (!r2) {
+        std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        return false;
+    }
     auto rh = cs.eval("(hash? h)");
-    if (!rh || !aura::compiler::types::is_bool(*rh) ||
-        !aura::compiler::types::as_bool(*rh)) {
+    if (!rh || !aura::compiler::types::is_bool(*rh) || !aura::compiler::types::as_bool(*rh)) {
         std::println("  FAIL: (hash? h) did not return #t");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:type-cache-stats) returns a hash");
     // Verify the 5 keys exist with int values.
@@ -115,10 +135,8 @@ bool test_typecheck_populates_cache() {
     (void)tc_out;
     auto snap = cs.snapshot();
     std::println("  cache-hits={} cache-misses={} stale={} gen-saved={}",
-                 snap.typecheck_cache_hits_total,
-                 snap.typecheck_cache_misses_total,
-                 snap.typecheck_stale_cache_total,
-                 snap.typecheck_gen_saved_total);
+                 snap.typecheck_cache_hits_total, snap.typecheck_cache_misses_total,
+                 snap.typecheck_stale_cache_total, snap.typecheck_gen_saved_total);
     CHECK(snap.typecheck_cache_hits_total + snap.typecheck_cache_misses_total > 0,
           "typecheck ran (hits+misses > 0)");
     return true;
@@ -128,7 +146,11 @@ bool test_stats_start_at_zero() {
     std::println("\n--- AC4: all type-cache-stats fields start at 0 on fresh service ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval("(set-code \"(define h (compile:type-cache-stats))\")");
-    if (!r) { std::println("  FAIL: define h failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: define h failed");
+        ++g_failed;
+        return false;
+    }
     cs.eval("(eval-current)");
     for (const char* key : {"cache-hits-total", "cache-misses-total", "stale-cache-total",
                             "gen-saved-total", "gen-saved-ratio-bp"}) {
@@ -156,8 +178,7 @@ bool test_typecheck_returns_valid_type() {
     auto out = cs.typecheck("(define f 42)");
     std::println("  typecheck output (first 80 chars): {}",
                  out.substr(0, std::min<std::size_t>(80, out.size())));
-    CHECK(!out.empty(),
-          "cs.typecheck() returns a non-empty type-check output string");
+    CHECK(!out.empty(), "cs.typecheck() returns a non-empty type-check output string");
     return true;
 }
 
@@ -197,8 +218,7 @@ bool test_set_type_stamps_gen() {
              "type_cache_gen[node] == 0 (matches current gen, no bump yet)");
     // Now mark_dirty_upward bumps the gen.
     flat.mark_dirty_upward(id);
-    CHECK(flat.type_cache_generation() > 0u,
-          "type_cache_generation > 0 after mark_dirty_upward");
+    CHECK(flat.type_cache_generation() > 0u, "type_cache_generation > 0 after mark_dirty_upward");
     // The cached gen (0) no longer matches the current gen.
     CHECK(flat.type_cache_gen(id) != flat.type_cache_generation(),
           "type_cache_gen[node] != current gen after mark_dirty_upward "
@@ -218,7 +238,7 @@ int main() {
     test_typecheck_returns_valid_type();
     test_snapshot_fields_present();
     test_set_type_stamps_gen();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

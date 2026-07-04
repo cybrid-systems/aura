@@ -57,9 +57,8 @@ static void test_check_mode_narrow_after_mutate() {
     std::println("\n--- AC1: check-mode narrow after mutate ---");
     CompilerService cs;
     CHECK(load_if_workspace(cs), "load if workspace");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
-        "\"issue-627-check\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
+                  "\"issue-627-check\")");
     auto tc = cs.eval("(typecheck-current)");
     CHECK(tc.has_value(), "typecheck-current after mutate succeeds");
     auto prov = cs.eval("(query:provenance-of \"x\")");
@@ -70,9 +69,8 @@ static void test_synthesize_eval_semantics_preserved() {
     std::println("\n--- AC2: synthesize eval semantics preserved ---");
     CompilerService cs;
     CHECK(load_if_workspace(cs), "load if workspace");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
-        "\"issue-627-synth\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
+                  "\"issue-627-synth\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     (void)cs.incremental_infer(ws->all_mutations().back());
@@ -87,9 +85,8 @@ static void test_bidirectional_narrow_stats_grow() {
     CompilerService cs;
     CHECK(load_if_workspace(cs), "load if workspace");
     const auto stats0 = bidirectional_narrow_stats(cs);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
-        "\"issue-627-stats\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
+                  "\"issue-627-stats\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     (void)cs.incremental_infer(ws->all_mutations().back());
@@ -99,10 +96,10 @@ static void test_bidirectional_narrow_stats_grow() {
     std::println("  bidirectional-narrow-stats: {} -> {}", stats0, stats1);
     std::println("  check_hits={} switches={} consistency={} stale_prevented={}",
                  snap.check_mode_narrow_hits_total, snap.synthesize_check_switch_count_total,
-                 snap.post_mutate_narrow_consistency_total, snap.stale_check_narrow_prevented_total);
+                 snap.post_mutate_narrow_consistency_total,
+                 snap.stale_check_narrow_prevented_total);
     CHECK(stats1 >= stats0, "query:bidirectional-narrow-stats monotonic");
-    CHECK(snap.synthesize_check_switch_count_total > 0 ||
-              snap.check_mode_narrow_hits_total > 0 ||
+    CHECK(snap.synthesize_check_switch_count_total > 0 || snap.check_mode_narrow_hits_total > 0 ||
               snap.post_mutate_narrow_consistency_total > 0,
           "at least one #627 counter bumped");
 }
@@ -113,9 +110,8 @@ static void test_stale_check_prevented_with_blame() {
     CHECK(load_if_workspace(cs), "load if workspace");
     const auto blame0 = narrow_blame_stats(cs);
     cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
-        "\"issue-627-stale\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
+                  "\"issue-627-stale\")");
     (void)cs.eval("(typecheck-current)");
     const auto blame1 = narrow_blame_stats(cs);
     const auto snap = cs.snapshot();
@@ -130,9 +126,8 @@ static void test_incremental_then_typecheck_eval_ok() {
     CompilerService cs;
     CHECK(load_if_workspace(cs), "load if workspace");
     cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 20) 0))\" "
-        "\"issue-627-inc\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 20) 0))\" "
+                  "\"issue-627-inc\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
     (void)cs.incremental_infer(ws->all_mutations().back());
@@ -148,9 +143,8 @@ static void test_bidirectional_opt_out_after_mutate() {
     CompilerService cs;
     CHECK(load_if_workspace(cs), "load if workspace");
     cs.set_bidirectional_mode(false);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 1) 0))\" "
-        "\"issue-627-optout\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 1) 0))\" "
+                  "\"issue-627-optout\")");
     auto tc = cs.eval("(typecheck-current)");
     CHECK(tc.has_value(), "typecheck works with bidirectional_mode=false post-mutate");
     cs.set_bidirectional_mode(true);

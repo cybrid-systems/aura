@@ -5,8 +5,8 @@
 
 #include "test_harness.hpp"
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.mutation;
 import aura.core.ast;
@@ -40,7 +40,8 @@ bool test_create_mutation_record_pure() {
     CHECK(rec.operator_name == "replace-value", "operator_name preserved");
     CHECK(rec.has_rollback_data, "rollback flag preserved");
     CHECK(rec.timestamp_ms > 0, "timestamp auto-filled");
-    CHECK(rec.invariant_status == aura::ast::InvariantStatus::NotChecked, "default invariant status");
+    CHECK(rec.invariant_status == aura::ast::InvariantStatus::NotChecked,
+          "default invariant status");
     return true;
 }
 
@@ -88,7 +89,8 @@ bool test_wire_roundtrip_pure() {
     auto decoded = aura::ast::mutation::wire_read_mutation_record(buf, pos);
     CHECK(decoded.mutation_id == original.mutation_id, "wire id roundtrip");
     CHECK(decoded.parent_id == original.parent_id, "wire parent roundtrip");
-    CHECK(decoded.old_subtree_source == original.old_subtree_source, "wire subtree source roundtrip");
+    CHECK(decoded.old_subtree_source == original.old_subtree_source,
+          "wire subtree source roundtrip");
     CHECK(decoded.has_subtree_rollback, "wire subtree flag roundtrip");
     return true;
 }
@@ -129,8 +131,12 @@ int run_tests() {
 
 } // namespace aura_issue_275_detail
 
-int aura_issue_275_run() { return aura_issue_275_detail::run_tests(); }
+int aura_issue_275_run() {
+    return aura_issue_275_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_275_run(); }
+int main() {
+    return aura_issue_275_run();
+}
 #endif

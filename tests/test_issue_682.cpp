@@ -18,20 +18,25 @@ namespace aura_issue_682_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:compiler-gc-root-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:compiler-gc-root-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-}  // namespace aura_issue_682_detail
+} // namespace aura_issue_682_detail
 
 int main() {
     using namespace aura_issue_682_detail;
@@ -60,12 +65,10 @@ int main() {
             (void)cs.eval("(fact 4)");
         aura::serve::GCRootSet roots;
         cs.evaluator().flush_gc_roots(&roots);
-        CHECK(!roots.compiler_closure_roots.empty() ||
-                  cs.get_ir_closure_roots_registered() > 0,
+        CHECK(!roots.compiler_closure_roots.empty() || cs.get_ir_closure_roots_registered() > 0,
               "compiler closure roots registered after fact eval");
         std::println("  compiler_closure_roots={} compiler_env_roots={} metric={}",
-                     roots.compiler_closure_roots.size(),
-                     roots.compiler_env_roots.size(),
+                     roots.compiler_closure_roots.size(), roots.compiler_env_roots.size(),
                      cs.get_ir_closure_roots_registered());
     }
 
@@ -75,12 +78,10 @@ int main() {
     // AC3: mutate:rebind + post-inval GC root refresh
     {
         std::println("\n--- AC3: mutate:rebind + GC root refresh ---");
-        auto r = cs.eval(
-            "(mutate:rebind \"fact\" "
-            "\"(lambda (n) (if (= n 0) 1 (* n (fact (- n 1)))))\" "
-            "\"issue-682\")");
-        CHECK(r && aura::compiler::types::is_bool(*r) &&
-                  aura::compiler::types::as_bool(*r),
+        auto r = cs.eval("(mutate:rebind \"fact\" "
+                         "\"(lambda (n) (if (= n 0) 1 (* n (fact (- n 1)))))\" "
+                         "\"issue-682\")");
+        CHECK(r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
               "mutate:rebind on fact succeeds");
         cs.eval("(eval-current)");
         auto fact5 = cs.eval("(fact 5)");
@@ -91,12 +92,11 @@ int main() {
         cs.evaluator().flush_gc_roots(&roots);
         const auto roots_after = cs.get_ir_closure_roots_registered();
         CHECK(roots_after >= roots_before,
-              std::format("ir-closure-roots-registered non-decreasing ({} -> {})",
-                          roots_before, roots_after));
+              std::format("ir-closure-roots-registered non-decreasing ({} -> {})", roots_before,
+                          roots_after));
         const auto miss_after = cs.get_hotswap_root_miss();
         CHECK(miss_after >= miss_before,
-              std::format("hotswap-root-miss non-decreasing ({} -> {})",
-                          miss_before, miss_after));
+              std::format("hotswap-root-miss non-decreasing ({} -> {})", miss_before, miss_after));
     }
 
     // AC4: metrics via query primitive
@@ -131,8 +131,7 @@ int main() {
         aura::serve::GCRootSet roots;
         cs.evaluator().flush_gc_roots(&roots);
         CHECK(ok_count.load() == k_iters * 2,
-              std::format("fiber stress: {} / {} correct",
-                          ok_count.load(), k_iters * 2));
+              std::format("fiber stress: {} / {} correct", ok_count.load(), k_iters * 2));
         CHECK(cs.get_ir_closure_roots_registered() >= 0,
               "GC root metric still readable after fiber stress");
     }
@@ -141,9 +140,8 @@ int main() {
     {
         std::println("\n--- AC6: stats:list + stats:count ---");
         auto r = cs.eval("(stats:count)");
-        const auto n = r && aura::compiler::types::is_int(*r)
-                           ? aura::compiler::types::as_int(*r)
-                           : 0;
+        const auto n =
+            r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r) : 0;
         CHECK(n >= 61, std::format("stats:count >= 61 (got {})", n));
     }
 

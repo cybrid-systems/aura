@@ -3,7 +3,7 @@
 #include "compiler/runtime_shared.h"
 #include "compiler/observability_snapshot.h"
 #include "compiler/observability_metrics.h"
-#include "compiler/observability_logger.h"  // for snapshot_to_json
+#include "compiler/observability_logger.h" // for snapshot_to_json
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -170,8 +170,8 @@ invariant_diagnostics_to_json(const std::vector<aura::compiler::OwnershipNote>& 
         if (!first)
             out += ",";
         first = false;
-        out += std::format(R"({{"node":{},"kind":"{}","message":"{}")", n.node,
-                           json_escape(n.kind), json_escape(n.message));
+        out += std::format(R"({{"node":{},"kind":"{}","message":"{}")", n.node, json_escape(n.kind),
+                           json_escape(n.message));
         if (n.source_mutation_id)
             out += std::format(R"(,"mutation_id":{})", *n.source_mutation_id);
         if (n.blame) {
@@ -621,7 +621,8 @@ int main(int argc, char* argv[]) {
         std::println("Completed: {}/{}", completed.load(), N * 2);
         sched.metrics().dump();
 #else
-        std::println(std::cerr, "aura: --concurrent-metrics not supported on macOS (requires epoll)");
+        std::println(std::cerr,
+                     "aura: --concurrent-metrics not supported on macOS (requires epoll)");
 #endif
         return 0;
     }
@@ -635,7 +636,8 @@ int main(int argc, char* argv[]) {
         std::string file_path = (argc > 2) ? argv[2] : "tests/bench.aura";
         aura::serve::run_serve_async_bench(file_path, num_workers);
 #else
-        std::println(std::cerr, "aura: --serve-async-bench not supported on macOS (requires epoll)");
+        std::println(std::cerr,
+                     "aura: --serve-async-bench not supported on macOS (requires epoll)");
 #endif
         return 0;
     }
@@ -1004,7 +1006,8 @@ int main(int argc, char* argv[]) {
                                 try {
                                     auto& v = *result;
                                     if (aura::compiler::types::is_closure(v)) {
-                                        std::println("{{\"status\":\"closure\",\"value\":\"#<procedure>\"}}");
+                                        std::println("{{\"status\":\"closure\",\"value\":\"#<"
+                                                     "procedure>\"}}");
                                     } else {
                                         std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
                                                      json_escape(fmt_val(v, cs)));
@@ -1083,7 +1086,8 @@ int main(int argc, char* argv[]) {
                             if (result) {
                                 auto& v = *result;
                                 if (aura::compiler::types::is_closure(v)) {
-                                    std::println("{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
+                                    std::println(
+                                        "{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
                                 } else {
                                     std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
                                                  json_escape(fmt_val(v, cs)));
@@ -2408,7 +2412,8 @@ int main(int argc, char* argv[]) {
             {
                 std::ofstream sf(out_path);
                 if (!sf) {
-                    std::println(std::cerr, "[#237] ERROR: cannot open {} for write (rc=1)", out_path);
+                    std::println(std::cerr, "[#237] ERROR: cannot open {} for write (rc=1)",
+                                 out_path);
                     return 1;
                 }
                 sf << "#!/bin/bash\n";
@@ -2428,7 +2433,8 @@ int main(int argc, char* argv[]) {
             {
                 std::ofstream sf(out_path + ".tmp.aura");
                 if (!sf) {
-                    std::println(std::cerr, "[#237] ERROR: cannot open {}.tmp.aura for write (rc=1)",
+                    std::println(std::cerr,
+                                 "[#237] ERROR: cannot open {}.tmp.aura for write (rc=1)",
                                  out_path);
                     return 1;
                 }

@@ -48,18 +48,27 @@ namespace aura_345_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 using aura::ast::FlatAST;
 
 // Configurable iteration count via env var, default 1000.
 static int stress_iterations() {
     if (const char* env = std::getenv("AURA_STRESS_ITERS")) {
-        try { return std::max(1, std::stoi(env)); }
-        catch (...) { return 1000; }
+        try {
+            return std::max(1, std::stoi(env));
+        } catch (...) {
+            return 1000;
+        }
     }
     return 1000;
 }
@@ -78,7 +87,7 @@ bool test_long_iteration_stress() {
         {
             auto g = ast.begin_structural_mutation();
             (void)g;
-        }  // gen bumped
+        } // gen bumped
         // Validate the ref — depending on NodeId(0) status it
         // may be invalid now. We just check the call is safe.
         bool valid = ref.is_valid_in(ast);
@@ -88,8 +97,8 @@ bool test_long_iteration_stress() {
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     std::uint16_t g1 = ast.generation();
     auto total_bumps = ast.bump_generation_count();
-    std::println("  N={} iterations, gen {}→{}, total bumps {}, elapsed {}µs",
-                 N, g0, g1, total_bumps, us);
+    std::println("  N={} iterations, gen {}→{}, total bumps {}, elapsed {}µs", N, g0, g1,
+                 total_bumps, us);
     std::println("  per-iter avg: {:.2f}µs", static_cast<double>(us) / N);
     CHECK(total_bumps >= static_cast<std::uint64_t>(N),
           "bump_generation_count >= iteration count (each iter bumps once)");
@@ -100,7 +109,7 @@ bool test_long_iteration_stress() {
 bool test_concurrent_readers_mutators() {
     std::println("\n--- Scenario 2: concurrent readers + mutators (4 threads × 200 iters) ---");
     FlatAST ast;
-    std::mutex mtx;  // serialize eval-equivalent calls
+    std::mutex mtx; // serialize eval-equivalent calls
     constexpr int K_ITERS = 200;
     std::atomic<int> reads{0};
     std::atomic<int> mutates{0};
@@ -127,7 +136,10 @@ bool test_concurrent_readers_mutators() {
     std::thread t_q2(worker, false);
     std::thread t_m1(worker, true);
     std::thread t_m2(worker, true);
-    t_q1.join(); t_q2.join(); t_m1.join(); t_m2.join();
+    t_q1.join();
+    t_q2.join();
+    t_m1.join();
+    t_m2.join();
     int r = reads.load();
     int m = mutates.load();
     int v = valid_refs.load();
@@ -159,9 +171,8 @@ bool test_generation_wraparound() {
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     std::uint16_t g1 = ast.generation();
     auto total_bumps = ast.bump_generation_count();
-    std::println("  65540 bumps: gen {}→{} (delta={}), total bumps={}, elapsed {}µs",
-                 g0, g1, static_cast<int>(g1) - static_cast<int>(g0),
-                 total_bumps, us);
+    std::println("  65540 bumps: gen {}→{} (delta={}), total bumps={}, elapsed {}µs", g0, g1,
+                 static_cast<int>(g1) - static_cast<int>(g0), total_bumps, us);
     CHECK(g1 >= 1, "generation_ stays >= 1 after wrap-around (Issue #457)");
     CHECK(total_bumps >= 65540u, "all bumps recorded");
     return true;
@@ -195,10 +206,10 @@ bool test_perf_benchmark() {
     }
     auto t_inv1 = std::chrono::steady_clock::now();
     auto inv_us = std::chrono::duration_cast<std::chrono::microseconds>(t_inv1 - t_inv0).count();
-    std::println("  bump only:           {} iters in {}µs ({:.3f}µs/iter)",
-                 N, bump_us, static_cast<double>(bump_us) / N);
-    std::println("  capture+mutate+check: {} iters in {}µs ({:.3f}µs/iter)",
-                 N, inv_us, static_cast<double>(inv_us) / N);
+    std::println("  bump only:           {} iters in {}µs ({:.3f}µs/iter)", N, bump_us,
+                 static_cast<double>(bump_us) / N);
+    std::println("  capture+mutate+check: {} iters in {}µs ({:.3f}µs/iter)", N, inv_us,
+                 static_cast<double>(inv_us) / N);
     std::println("  invalidate detected: {} / {}", invalid_count, N);
     CHECK(bump_us > 0, "bump timing is non-zero");
     CHECK(inv_us > bump_us, "capture+mutate+check takes longer than bump-only");
@@ -216,7 +227,7 @@ bool test_rollback_consistency() {
     {
         auto g = ast.begin_structural_mutation();
         (void)g;
-    }  // gen bumped
+    } // gen bumped
     bool valid_after_mutate = ref_before.is_valid_in(ast);
     std::uint16_t g1 = ast.generation();
     std::println("  before: gen={} ref_valid={}", g0, valid_before);
@@ -240,7 +251,6 @@ int main() {
     test_rollback_consistency();
     std::println("\nStress testing for StructuralMutationGuard + generation (#345): "
                  "{}/{} passed, {}/{} failed",
-                 g_passed, g_passed + g_failed,
-                 g_failed, g_passed + g_failed);
+                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -85,7 +85,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -96,15 +96,23 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:cxx26-invariants) '{}')", key));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cout, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cout, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════
 // AC7-AC10: (query:cxx26-invariants) returns 5 fields
@@ -131,14 +139,13 @@ bool test_query_cxx26_invariants() {
 bool test_stats_list_includes() {
     std::println("\n--- AC11: stats:list includes the new primitive ---");
     aura::compiler::CompilerService cs;
-    auto r = run_on(cs,
-        "(letrec ((find? (lambda (needle hay) "
-        "                (if (pair? hay) "
-        "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
-        "                    #f)))) "
-        "  (if (find? \"query:cxx26-invariants\" (stats:list)) 1 0))");
-    bool included = aura::compiler::types::is_int(r) &&
-                    aura::compiler::types::as_int(r) == 1;
+    auto r = run_on(
+        cs, "(letrec ((find? (lambda (needle hay) "
+            "                (if (pair? hay) "
+            "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
+            "                    #f)))) "
+            "  (if (find? \"query:cxx26-invariants\" (stats:list)) 1 0))");
+    bool included = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) == 1;
     CHECK(included, "stats:list includes query:cxx26-invariants");
     return true;
 }
@@ -150,8 +157,7 @@ bool test_stats_count() {
     std::println("\n--- AC12: stats:count is up to date ---");
     aura::compiler::CompilerService cs;
     auto r = run_on(cs, "(stats:count)");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) >= 42;
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) >= 42;
     CHECK(ok, "stats:count >= 42 (was 41 in #430, now 42 in #431)");
     if (aura::compiler::types::is_int(r)) {
         std::println("    [stats:count = {}]", aura::compiler::types::as_int(r));
@@ -187,7 +193,7 @@ bool test_concepts_compile_time() {
     return true;
 }
 
-}  // namespace aura_issue_431_detail
+} // namespace aura_issue_431_detail
 
 int main() {
     using namespace aura_issue_431_detail;

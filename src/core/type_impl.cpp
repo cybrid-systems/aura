@@ -395,8 +395,7 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
     // Issue #385: bump the register counter for
     // observability. Every call bumps it.
     if (poly_register_counter_) {
-        poly_register_counter_->fetch_add(
-            1, std::memory_order_relaxed);
+        poly_register_counter_->fetch_add(1, std::memory_order_relaxed);
     }
     // Dedup: same var index + same body returns the existing TypeId.
     // (Caveat: bound var is by INDEX. Two calls with structurally
@@ -415,8 +414,7 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
             // a new entry. The dedup_hits / register
             // ratio measures the cache effectiveness.
             if (poly_dedup_hits_counter_) {
-                poly_dedup_hits_counter_->fetch_add(
-                    1, std::memory_order_relaxed);
+                poly_dedup_hits_counter_->fetch_add(1, std::memory_order_relaxed);
             }
             return TypeId{i, next_generation_};
         }
@@ -501,8 +499,7 @@ TypeId TypeRegistry::instantiate_forall(TypeId forall_id, const std::vector<Type
     // counter is bumped once per call, not once
     // per layer, to match the call-site rate).
     if (poly_instantiate_counter_) {
-        poly_instantiate_counter_->fetch_add(
-            1, std::memory_order_relaxed);
+        poly_instantiate_counter_->fetch_add(1, std::memory_order_relaxed);
     }
     TypeId result = forall_id;
     std::size_t arg_idx = 0;
@@ -826,9 +823,12 @@ TypeId TypeRegistry::meet(TypeId a, TypeId b) const {
     // Occurrence Typing and/or precision. Returns
     // the most specific type that is a subtype of
     // both a and b.
-    if (!a.valid() || a.index == 0) return b;
-    if (!b.valid() || b.index == 0) return a;
-    if (a == b) return a;
+    if (!a.valid() || a.index == 0)
+        return b;
+    if (!b.valid() || b.index == 0)
+        return a;
+    if (a == b)
+        return a;
     // Tag mismatch: fall back to dynamic (the
     // bottom of Aura's shallow type lattice —
     // there are no real intersection types in the
@@ -841,9 +841,12 @@ TypeId TypeRegistry::join(TypeId a, TypeId b) const {
     // Occurrence Typing and/or precision. Returns
     // the least specific type that is a supertype
     // of both a and b.
-    if (!a.valid() || a.index == 0) return b;
-    if (!b.valid() || b.index == 0) return a;
-    if (a == b) return a;
+    if (!a.valid() || a.index == 0)
+        return b;
+    if (!b.valid() || b.index == 0)
+        return a;
+    if (a == b)
+        return a;
     // Tag mismatch: fall back to dynamic (the
     // top of Aura's shallow type lattice —
     // Any — conservative widening).

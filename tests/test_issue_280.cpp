@@ -7,8 +7,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -218,8 +218,12 @@ int run_tests() {
 
 } // namespace aura_issue_280_detail
 
-int aura_issue_280_run() { return aura_issue_280_detail::run_tests(); }
+int aura_issue_280_run() {
+    return aura_issue_280_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_280_run(); }
+int main() {
+    return aura_issue_280_run();
+}
 #endif

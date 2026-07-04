@@ -117,8 +117,8 @@ void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pairs.push_back({a[0], a[1]});
         return make_pair(id);
     });
-    add("car", [&pairs, &string_heap, &error_values, primitive_error_counter](
-                   std::span<const EvalValue> a) {
+    add("car", [&pairs, &string_heap, &error_values,
+                primitive_error_counter](std::span<const EvalValue> a) {
         if (a.empty() || !is_pair(a[0])) {
             return make_primitive_error(string_heap, error_values, "car: not a pair",
                                         primitive_error_counter);
@@ -131,8 +131,8 @@ void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return types::EvalValue{g_pair_slots[id]->car};
         return make_int(0);
     });
-    add("cdr", [&pairs, &string_heap, &error_values, primitive_error_counter](
-                   std::span<const EvalValue> a) {
+    add("cdr", [&pairs, &string_heap, &error_values,
+                primitive_error_counter](std::span<const EvalValue> a) {
         if (a.empty() || !is_pair(a[0])) {
             return make_primitive_error(string_heap, error_values, "cdr: not a pair",
                                         primitive_error_counter);
@@ -310,28 +310,30 @@ void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pai
     });
 
     // ── Mutable pair operations ───────────────────────────────────
-    add("set-car!", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_pair(a[0]))
+    add("set-car!",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx < pairs.size()) {
+                pairs[idx].car = a[1];
+            } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
+                g_pair_slots[idx]->car = a[1].val;
+            }
             return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx < pairs.size()) {
-            pairs[idx].car = a[1];
-        } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
-            g_pair_slots[idx]->car = a[1].val;
-        }
-        return make_void();
-    });
-    add("set-cdr!", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_pair(a[0]))
+        });
+    add("set-cdr!",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx < pairs.size()) {
+                pairs[idx].cdr = a[1];
+            } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
+                g_pair_slots[idx]->cdr = a[1].val;
+            }
             return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx < pairs.size()) {
-            pairs[idx].cdr = a[1];
-        } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
-            g_pair_slots[idx]->cdr = a[1].val;
-        }
-        return make_void();
-    });
+        });
 
     add("string?", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.empty())
@@ -546,7 +548,6 @@ void register_pair_and_string_primitives(PrimRegistrar add, std::pmr::vector<Pai
         }
         return make_bool(false);
     });
-
 }
 
-}  // namespace aura::compiler::primitives_detail
+} // namespace aura::compiler::primitives_detail

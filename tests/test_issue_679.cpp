@@ -13,10 +13,16 @@ namespace aura_issue_679_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:nested-guard-atomic-stats) '{}')", key));
@@ -25,7 +31,7 @@ static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_vi
     return aura::compiler::types::as_int(*r);
 }
 
-}  // namespace aura_issue_679_detail
+} // namespace aura_issue_679_detail
 
 int main() {
     using namespace aura_issue_679_detail;
@@ -85,30 +91,23 @@ int main() {
         std::println("\n--- AC4: mutate:atomic-batch failure rollback ---");
         cs.eval("(set-code \"(define x 1)\")");
         cs.eval("(eval-current)");
-        const auto gen_before = ev.workspace_flat()
-                                    ? ev.workspace_flat()->generation()
-                                    : 0;
+        const auto gen_before = ev.workspace_flat() ? ev.workspace_flat()->generation() : 0;
         const auto rollbacks_before = ev.atomic_batch_rollbacks();
-        auto r = cs.eval(
-            "(mutate:atomic-batch (list (list \"mutate:noop\")) \"fail\")");
+        auto r = cs.eval("(mutate:atomic-batch (list (list \"mutate:noop\")) \"fail\")");
         const auto rollbacks_after = ev.atomic_batch_rollbacks();
         CHECK(rollbacks_after > rollbacks_before,
               "atomic-batch unsupported op increments rollback counter");
         (void)r;
-        const auto gen_after = ev.workspace_flat()
-                                   ? ev.workspace_flat()->generation()
-                                   : 0;
-        CHECK(gen_before == gen_after || gen_after > 0,
-              "generation stable after batch rollback");
+        const auto gen_after = ev.workspace_flat() ? ev.workspace_flat()->generation() : 0;
+        CHECK(gen_before == gen_after || gen_after > 0, "generation stable after batch rollback");
     }
 
     // AC5: stats registry
     {
         std::println("\n--- AC5: stats:list + stats:count ---");
         auto r = cs.eval("(stats:count)");
-        const auto n = r && aura::compiler::types::is_int(*r)
-                           ? aura::compiler::types::as_int(*r)
-                           : 0;
+        const auto n =
+            r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r) : 0;
         CHECK(n >= 58, std::format("stats:count >= 58 (got {})", n));
     }
 

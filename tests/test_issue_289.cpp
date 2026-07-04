@@ -48,8 +48,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.value;
 import aura.compiler.evaluator;
@@ -98,8 +98,8 @@ static bool set_source(aura::compiler::CompilerService& cs, std::string_view src
 // default). `with_markers = true` adds the provenance pair wrapper.
 // Use `count_default(cs, pat)` to test the actual current default
 // without any keyword override.
-static int64_t count(aura::compiler::CompilerService& cs, std::string_view pat,
-                     bool nested = false, bool with_markers = false) {
+static int64_t count(aura::compiler::CompilerService& cs, std::string_view pat, bool nested = false,
+                     bool with_markers = false) {
     std::string code = "(length (query:pattern \"";
     for (char c : pat) {
         if (c == '\\' || c == '"')
@@ -119,8 +119,7 @@ static int64_t count(aura::compiler::CompilerService& cs, std::string_view pat,
 // default is. Issue #481 flipped the default to Kleene; this helper
 // deliberately omits any `:nested-arity` keyword so the test exercises
 // the default code path.
-static int64_t count_default(aura::compiler::CompilerService& cs,
-                             std::string_view pat) {
+static int64_t count_default(aura::compiler::CompilerService& cs, std::string_view pat) {
     std::string code = "(length (query:pattern \"";
     for (char c : pat) {
         if (c == '\\' || c == '"')
@@ -144,25 +143,24 @@ bool test_nested_arity_zero_consumption() {
     // match. 3 matches.
     int64_t def = count_default(cs, "(+ ...)");
     CHECK(def == 3, "default Kleene (+ ...) matches 3 (0+ tail, no arity gate) (got " +
-                       std::to_string(def) + ")");
+                        std::to_string(def) + ")");
 
     // Explicit `:nested-arity #t` is the same as default since #481.
     int64_t kle = count(cs, "(+ ...)", /*nested=*/true);
-    CHECK(kle == 3, "explicit :nested-arity #t also = 3 (got " +
-                       std::to_string(kle) + ")");
+    CHECK(kle == 3, "explicit :nested-arity #t also = 3 (got " + std::to_string(kle) + ")");
 
     // The discriminative case: (+ 1 ...) — pattern is 3-child Call
     // root with `...` tail. Default (Kleene) lets `...` consume
     // 0+, so all three `+` calls match. 3 matches.
     int64_t def_strict_3 = count_default(cs, "(+ 1 ...)");
     CHECK(def_strict_3 == 3, "default Kleene (+ 1 ...) matches 3 (0+, 1+, 2+ tail) (got " +
-                                  std::to_string(def_strict_3) + ")");
+                                 std::to_string(def_strict_3) + ")");
 
     // Strict opt-out (` :nested-arity #f `): `...` consumes exactly 1.
     // Pattern arity must match ws arity. Only `(+ 1 2)` qualifies.
     int64_t strict_3 = count(cs, "(+ 1 ...)", /*nested=*/false);
     CHECK(strict_3 == 1, ":nested-arity #f (+ 1 ...) matches 1 (only (+ 1 2) is 3-child) (got " +
-                            std::to_string(strict_3) + ")");
+                             std::to_string(strict_3) + ")");
     return true;
 }
 
@@ -178,22 +176,19 @@ bool test_default_strict_is_pre_289() {
     // semantics, callers pass `:strict-arity #t` (discoverable
     // alias) or `:nested-arity #f`. The pre-#289 test_issue_140
     // expectation was: "(+ 1 ...)" matches 2 (only 3-child ones).
-    auto strict_via_alias = cs.eval(
-        "(length (query:pattern \"(+ 1 ...)\" :strict-arity #t))");
+    auto strict_via_alias = cs.eval("(length (query:pattern \"(+ 1 ...)\" :strict-arity #t))");
     int64_t got = (strict_via_alias && aura::compiler::types::is_int(*strict_via_alias))
                       ? aura::compiler::types::as_int(*strict_via_alias)
                       : -1;
     CHECK(got == 2, ":strict-arity #t '(+ 1 ...)' matches 2 (pre-#289 contract, got " +
-                       std::to_string(got) + ")");
+                        std::to_string(got) + ")");
 
     // Bare `:strict-arity` (no value) defaults to #t (idiomatic Lisp).
-    auto bare_alias = cs.eval(
-        "(length (query:pattern \"(+ 1 ...)\" :strict-arity))");
+    auto bare_alias = cs.eval("(length (query:pattern \"(+ 1 ...)\" :strict-arity))");
     int64_t got_bare = (bare_alias && aura::compiler::types::is_int(*bare_alias))
                            ? aura::compiler::types::as_int(*bare_alias)
                            : -1;
-    CHECK(got_bare == 2, "bare :strict-arity keyword = 2 (got " +
-                            std::to_string(got_bare) + ")");
+    CHECK(got_bare == 2, "bare :strict-arity keyword = 2 (got " + std::to_string(got_bare) + ")");
     return true;
 }
 
@@ -210,10 +205,8 @@ bool test_nested_arity_false_is_strict() {
     // and they should be equivalent.
     int64_t explicit_false = count(cs, "(+ 1 ...)", /*nested=*/false);
     CHECK(explicit_false == 2,
-          ":nested-arity #f '(+ 1 ...)' matches 2 (got " +
-              std::to_string(explicit_false) + ")");
-    auto alias_true = cs.eval(
-        "(length (query:pattern \"(+ 1 ...)\" :strict-arity #t))");
+          ":nested-arity #f '(+ 1 ...)' matches 2 (got " + std::to_string(explicit_false) + ")");
+    auto alias_true = cs.eval("(length (query:pattern \"(+ 1 ...)\" :strict-arity #t))");
     int64_t alias_t = (alias_true && aura::compiler::types::is_int(*alias_true))
                           ? aura::compiler::types::as_int(*alias_true)
                           : -1;
@@ -235,8 +228,7 @@ bool test_capture_variable() {
     // Workspace has 4 `+` calls: (+ 1 1) ✓, (+ 2 2) ✓, (+ 1 2) ✗,
     // (+ 1 1) ✓. 3 matches.
     int64_t n = count(cs, "(+ ?x ?x)");
-    CHECK(n == 3, "(+ ?x ?x) matches 3 (X X calls) (got " +
-                     std::to_string(n) + ")");
+    CHECK(n == 3, "(+ ?x ?x) matches 3 (X X calls) (got " + std::to_string(n) + ")");
     return true;
 }
 
@@ -253,8 +245,7 @@ bool test_capture_in_nested_arity() {
     //   (+ 1 1 1) — 3 args, all 1. ?x=1, ?x=1. ✓
     //   (+ 1 2) — 3 args, 1 != 2. ✗
     int64_t n = count(cs, "(+ ?x ?x)", /*nested=*/true);
-    CHECK(n == 1, "Kleene (+ ?x ?x) (no ellipsis) matches 1 (got " +
-                     std::to_string(n) + ")");
+    CHECK(n == 1, "Kleene (+ ?x ?x) (no ellipsis) matches 1 (got " + std::to_string(n) + ")");
     return true;
 }
 
@@ -274,26 +265,23 @@ bool test_with_markers_result_format() {
     // Use a 2-child pattern so both calls match (default strict).
     // Plain result: 2 elements (NodeId ints).
     int64_t plain = count(cs, "(+ 1 ...)");
-    CHECK(plain == 1, "plain (+ 1 ...) = 1 (only (+ 1 2) is 3-child) (got " +
-                         std::to_string(plain) + ")");
+    CHECK(plain == 1,
+          "plain (+ 1 ...) = 1 (only (+ 1 2) is 3-child) (got " + std::to_string(plain) + ")");
 
     // With markers: still 1 element, but the element is a pair.
     // Probe the element shape: (car (car result)) is the NodeId,
     // (cdr (car result)) is the marker-int. Both should be ints.
-    auto r = cs.eval(
-        "(let ((x (car (query:pattern \"(+ 1 ...)\" :with-markers #t))))"
-        "  (and (pair? x) (integer? (car x)) (integer? (cdr x))))");
-    bool shape_ok = r && aura::compiler::types::is_bool(*r) &&
-                    aura::compiler::types::as_bool(*r);
+    auto r = cs.eval("(let ((x (car (query:pattern \"(+ 1 ...)\" :with-markers #t))))"
+                     "  (and (pair? x) (integer? (car x)) (integer? (cdr x))))");
+    bool shape_ok = r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r);
     CHECK(shape_ok, "with-markers: first result is a (IntNodeId . IntMarker) pair");
 
     // And without :with-markers, the first result is just an int.
-    auto r2 = cs.eval(
-        "(let ((x (car (query:pattern \"(+ 1 ...)\")))"
-        "      (rest (cdr (query:pattern \"(+ 1 ...)\"))))"
-        "  (integer? x))");
-    bool plain_is_int = r2 && aura::compiler::types::is_bool(*r2) &&
-                        aura::compiler::types::as_bool(*r2);
+    auto r2 = cs.eval("(let ((x (car (query:pattern \"(+ 1 ...)\")))"
+                      "      (rest (cdr (query:pattern \"(+ 1 ...)\"))))"
+                      "  (integer? x))");
+    bool plain_is_int =
+        r2 && aura::compiler::types::is_bool(*r2) && aura::compiler::types::as_bool(*r2);
     CHECK(plain_is_int, "plain (no markers): first result is a bare IntNodeId");
     return true;
 }
@@ -311,17 +299,15 @@ bool test_nested_and_markers_combined() {
     // pair — verify the list has 2 elements AND the first
     // element is a pair.
     int64_t kle_default = count_default(cs, "(+ 1 ...)");
-    CHECK(kle_default == 2, "default Kleene (+ 1 ...) = 2 (0+ tail) (got " +
-                               std::to_string(kle_default) + ")");
+    CHECK(kle_default == 2,
+          "default Kleene (+ 1 ...) = 2 (0+ tail) (got " + std::to_string(kle_default) + ")");
 
     // Kleene: matches 2 (both). With markers, each result is a
     // pair — verify the list still has 2 elements AND the first
     // element is a pair.
-    auto r = cs.eval(
-        "(let ((xs (query:pattern \"(+ 1 ...)\" :nested-arity #t :with-markers #t)))"
-        "  (and (= (length xs) 2) (pair? (car xs)) (integer? (car (car xs)))))");
-    bool ok = r && aura::compiler::types::is_bool(*r) &&
-              aura::compiler::types::as_bool(*r);
+    auto r = cs.eval("(let ((xs (query:pattern \"(+ 1 ...)\" :nested-arity #t :with-markers #t)))"
+                     "  (and (= (length xs) 2) (pair? (car xs)) (integer? (car (car xs)))))");
+    bool ok = r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r);
     CHECK(ok, "Kleene + markers: 2 elements, first is a pair with int car");
     return true;
 }
@@ -339,13 +325,11 @@ bool test_regression_140_271_271_contracts() {
             ++g_failed;
             return false;
         }
-        auto r = cs.eval(
-            "(length (query:pattern \"(+ 1 ...)\" :strict-arity #t))");
-        int64_t n = (r && aura::compiler::types::is_int(*r))
-                        ? aura::compiler::types::as_int(*r)
-                        : -1;
-        CHECK(n == 2, "140 test 1.2: :strict-arity #t '(+ 1 ...)' = 2 (got " +
-                         std::to_string(n) + ")");
+        auto r = cs.eval("(length (query:pattern \"(+ 1 ...)\" :strict-arity #t))");
+        int64_t n =
+            (r && aura::compiler::types::is_int(*r)) ? aura::compiler::types::as_int(*r) : -1;
+        CHECK(n == 2,
+              "140 test 1.2: :strict-arity #t '(+ 1 ...)' = 2 (got " + std::to_string(n) + ")");
     }
     // test_issue_271 AC2 — query↔mutate consistency. The pre-#289
     // test was: before mutate, "(+ ... ...)" matches 3 (3 calls).
@@ -359,8 +343,7 @@ bool test_regression_140_271_271_contracts() {
             return false;
         }
         int64_t before = count(cs, "(+ ... ...)");
-        CHECK(before == 3, "271 AC2: default (+ ... ...) = 3 (got " +
-                              std::to_string(before) + ")");
+        CHECK(before == 3, "271 AC2: default (+ ... ...) = 3 (got " + std::to_string(before) + ")");
         // Don't actually run mutate here — mutate:replace-pattern
         // still uses its own strict matcher (#482 will share it),
         // and has the separate ADD-instead-of-replace bug (#484).
@@ -369,14 +352,12 @@ bool test_regression_140_271_271_contracts() {
     // test_issue_267 AC1 — default hygiene still skips macro-introduced
     {
         aura::compiler::CompilerService cs;
-        if (!set_source(cs,
-                        "(define-hygienic-macro (twice x) (+ x x)) (twice 7)")) {
+        if (!set_source(cs, "(define-hygienic-macro (twice x) (+ x x)) (twice 7)")) {
             ++g_failed;
             return false;
         }
-        int64_t n = count(cs, "(+ 7 7)");  // Only exists in macro body as (+ x x)
-        CHECK(n == 0, "267 AC1: (+ 7 7) hygiene-skipped = 0 (got " +
-                         std::to_string(n) + ")");
+        int64_t n = count(cs, "(+ 7 7)"); // Only exists in macro body as (+ x x)
+        CHECK(n == 0, "267 AC1: (+ 7 7) hygiene-skipped = 0 (got " + std::to_string(n) + ")");
     }
     return true;
 }
@@ -391,18 +372,14 @@ bool test_keyword_default_true() {
     }
     // Bare :nested-arity should enable Kleene (target = true on consume).
     // Re-eval with bare keyword:
-    auto r = cs.eval(
-        "(length (query:pattern \"(+ 1 ...)\" :nested-arity))");
-    int64_t with_bare_kw = (r && aura::compiler::types::is_int(*r))
-                               ? aura::compiler::types::as_int(*r)
-                               : -1;
+    auto r = cs.eval("(length (query:pattern \"(+ 1 ...)\" :nested-arity))");
+    int64_t with_bare_kw =
+        (r && aura::compiler::types::is_int(*r)) ? aura::compiler::types::as_int(*r) : -1;
     int64_t with_kw_true = count(cs, "(+ 1 ...)", /*nested=*/true);
-    CHECK(with_bare_kw == with_kw_true,
-          "bare :nested-arity keyword === :nested-arity #t (both " +
-              std::to_string(with_bare_kw) + ")");
+    CHECK(with_bare_kw == with_kw_true, "bare :nested-arity keyword === :nested-arity #t (both " +
+                                            std::to_string(with_bare_kw) + ")");
     CHECK(with_bare_kw == 3,
-          "Kleene (+ 1 ...) with bare keyword = 3 (got " +
-              std::to_string(with_bare_kw) + ")");
+          "Kleene (+ 1 ...) with bare keyword = 3 (got " + std::to_string(with_bare_kw) + ")");
     return true;
 }
 
@@ -416,8 +393,8 @@ bool test_root_wildcard() {
     }
     // Pattern "..." matches every node in the workspace.
     int64_t n = count(cs, "...");
-    CHECK(n >= 5, "pattern `...` matches every node (got " +
-                     std::to_string(n) + ", expected >= 5)");
+    CHECK(n >= 5,
+          "pattern `...` matches every node (got " + std::to_string(n) + ", expected >= 5)");
     return true;
 }
 
@@ -447,16 +424,19 @@ int run_tests() {
     test_keyword_default_true();
     test_root_wildcard();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 
-}  // namespace aura_issue_289_detail
+} // namespace aura_issue_289_detail
 
-int aura_issue_289_run() { return aura_issue_289_detail::run_tests(); }
+int aura_issue_289_run() {
+    return aura_issue_289_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_289_run(); }
+int main() {
+    return aura_issue_289_run();
+}
 #endif

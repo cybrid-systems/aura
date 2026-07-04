@@ -42,16 +42,29 @@ namespace aura_412fu1_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: per-binding gen counters start at 0 ---");
@@ -76,8 +89,7 @@ bool test_snapshot_has_new_fields() {
 bool test_typed_mutate_bumps_per_binding_gen() {
     std::println("\n--- AC3: typed_mutate on a top-level define bumps per-binding gen ---");
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Eager);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Eager);
     cs.eval("(set-code \"(define f 1) (define g (+ f 1))\")");
     cs.eval("(eval-current)");
     auto snap0 = cs.snapshot();
@@ -85,10 +97,13 @@ bool test_typed_mutate_bumps_per_binding_gen() {
     // should bump f's per-binding gen (since the target
     // node is a Define with sym_id).
     auto r = cs.eval("(mutate:rebind \"f\" \"100\" \"bump\")");
-    if (!r) { std::println("  FAIL: mutate:rebind failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: mutate:rebind failed");
+        ++g_failed;
+        return false;
+    }
     auto snap1 = cs.snapshot();
-    std::println("  per_binding_gen_bumps: {} -> {}",
-                 snap0.per_binding_gen_bumps_total,
+    std::println("  per_binding_gen_bumps: {} -> {}", snap0.per_binding_gen_bumps_total,
                  snap1.per_binding_gen_bumps_total);
     CHECK(snap1.per_binding_gen_bumps_total > snap0.per_binding_gen_bumps_total,
           "per_binding_gen_bumps_total incremented (Define target → per-binding gen bumped)");
@@ -100,9 +115,8 @@ bool test_type_cache_stats_primitive_works() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define h (compile:type-cache-stats))\")");
     cs.eval("(eval-current)");
-    for (const char* key : {"cache-hits-total", "cache-misses-total",
-                            "stale-cache-total", "gen-saved-total",
-                            "gen-saved-ratio-bp"}) {
+    for (const char* key : {"cache-hits-total", "cache-misses-total", "stale-cache-total",
+                            "gen-saved-total", "gen-saved-ratio-bp"}) {
         std::string check = std::string("(hash-ref h \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
@@ -121,13 +135,12 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define x 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define x 42) + (eval-current) returns 42");
     return true;
 }
 
-}  // namespace aura_412fu1_detail
+} // namespace aura_412fu1_detail
 
 int main() {
     using namespace aura_412fu1_detail;
@@ -137,7 +150,7 @@ int main() {
     test_typed_mutate_bumps_per_binding_gen();
     test_type_cache_stats_primitive_works();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -7,8 +7,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.mutation;
@@ -59,8 +59,7 @@ bool test_detect_empty_sens_to_comb() {
         return false;
     }
     auto kind = run_symbol_str(cs, "(eda:always-detect-kind a)");
-    CHECK(kind == "always_comb",
-          "empty sensitivity always @() detects as 'always_comb");
+    CHECK(kind == "always_comb", "empty sensitivity always @() detects as 'always_comb");
 
     return true;
 }
@@ -81,8 +80,7 @@ bool test_detect_single_posedge_to_ff() {
         return false;
     }
     auto kind = run_symbol_str(cs, "(eda:always-detect-kind a)");
-    CHECK(kind == "always_ff",
-          "single posedge clk detects as 'always_ff");
+    CHECK(kind == "always_ff", "single posedge clk detects as 'always_ff");
 
     // Same for negedge.
     if (!cs.eval("(define a2 "
@@ -93,8 +91,7 @@ bool test_detect_single_posedge_to_ff() {
         return false;
     }
     auto kind2 = run_symbol_str(cs, "(eda:always-detect-kind a2)");
-    CHECK(kind2 == "always_ff",
-          "single negedge rst also detects as 'always_ff");
+    CHECK(kind2 == "always_ff", "single negedge rst also detects as 'always_ff");
 
     return true;
 }
@@ -117,8 +114,7 @@ bool test_detect_multi_or_level_keeps_always() {
         return false;
     }
     auto kind_multi = run_symbol_str(cs, "(eda:always-detect-kind a-multi)");
-    CHECK(kind_multi == "always",
-          "two-edge sens (posedge clk + negedge rst) keeps as 'always");
+    CHECK(kind_multi == "always", "two-edge sens (posedge clk + negedge rst) keeps as 'always");
 
     // Level-sensitive: edge symbol is 'level (not posedge/negedge).
     if (!cs.eval("(define a-level "
@@ -129,8 +125,7 @@ bool test_detect_multi_or_level_keeps_always() {
         return false;
     }
     auto kind_level = run_symbol_str(cs, "(eda:always-detect-kind a-level)");
-    CHECK(kind_level == "always",
-          "level-sensitive (no edge) keeps as 'always");
+    CHECK(kind_level == "always", "level-sensitive (no edge) keeps as 'always");
 
     return true;
 }
@@ -165,12 +160,12 @@ bool test_upgrade_always_preserves_body() {
     auto ss_len = run_int(cs, "(length (eda:always-sensitivity a-upgraded))");
     CHECK(ss_len == 1, "sensitivity list length preserved (1)");
 
-    auto edge = run_symbol_str(cs,
-        "(eda:sensitivity-edge (car (eda:always-sensitivity a-upgraded)))");
+    auto edge =
+        run_symbol_str(cs, "(eda:sensitivity-edge (car (eda:always-sensitivity a-upgraded)))");
     CHECK(edge == "posedge", "sensitivity edge is still 'posedge");
 
-    auto sig = run_symbol_str(cs,
-        "(eda:sensitivity-signal (car (eda:always-sensitivity a-upgraded)))");
+    auto sig =
+        run_symbol_str(cs, "(eda:sensitivity-signal (car (eda:always-sensitivity a-upgraded)))");
     CHECK(sig == "clk", "sensitivity signal is still 'clk");
 
     // Body preserved (1 assign).
@@ -254,22 +249,16 @@ bool test_upgrade_module_mixed() {
     CHECK(name == "dff_async", "upgraded module name preserved");
 
     // First always (was empty sens) → always_comb.
-    auto kind1 = run_symbol_str(cs,
-        "(eda:always-kind (car (eda:module-body m-up)))");
-    CHECK(kind1 == "always_comb",
-          "always #1 (empty sens) upgraded to always_comb");
+    auto kind1 = run_symbol_str(cs, "(eda:always-kind (car (eda:module-body m-up)))");
+    CHECK(kind1 == "always_comb", "always #1 (empty sens) upgraded to always_comb");
 
     // Second always (was posedge clk) → always_ff.
-    auto kind2 = run_symbol_str(cs,
-        "(eda:always-kind (cadr (eda:module-body m-up)))");
-    CHECK(kind2 == "always_ff",
-          "always #2 (posedge clk) upgraded to always_ff");
+    auto kind2 = run_symbol_str(cs, "(eda:always-kind (cadr (eda:module-body m-up)))");
+    CHECK(kind2 == "always_ff", "always #2 (posedge clk) upgraded to always_ff");
 
     // Third always (multi-edge) → stays 'always.
-    auto kind3 = run_symbol_str(cs,
-        "(eda:always-kind (caddr (eda:module-body m-up)))");
-    CHECK(kind3 == "always",
-          "always #3 (multi-edge) stays as 'always");
+    auto kind3 = run_symbol_str(cs, "(eda:always-kind (caddr (eda:module-body m-up)))");
+    CHECK(kind3 == "always", "always #3 (multi-edge) stays as 'always");
 
     // Emitted Verilog shows both comb and ff keywords.
     auto s = run_string(cs, "(eda:emit-verilog m-up)");
@@ -301,20 +290,17 @@ bool test_heuristic_primitives() {
     CHECK(clk == 0, "(eda:edge? 'clk) → #f");
 
     // single-edge-sensitivity? — 1 posedge → #t
-    auto single_pe = run_int(cs,
-        "(if (eda:single-edge-sensitivity? "
-        "      (list (make-eda:sensitivity 'posedge 'clk))) 1 0)");
+    auto single_pe = run_int(cs, "(if (eda:single-edge-sensitivity? "
+                                 "      (list (make-eda:sensitivity 'posedge 'clk))) 1 0)");
     CHECK(single_pe == 1, "single posedge sens → #t");
 
     // 1 level → #f
-    auto single_lvl = run_int(cs,
-        "(if (eda:single-edge-sensitivity? "
-        "      (list (make-eda:sensitivity 'level 'clk))) 1 0)");
+    auto single_lvl = run_int(cs, "(if (eda:single-edge-sensitivity? "
+                                  "      (list (make-eda:sensitivity 'level 'clk))) 1 0)");
     CHECK(single_lvl == 0, "single level sens → #f");
 
     // empty sens → #f (not a single-edge; treated as combinational)
-    auto single_empty = run_int(cs,
-        "(if (eda:single-edge-sensitivity? '()) 1 0)");
+    auto single_empty = run_int(cs, "(if (eda:single-edge-sensitivity? '()) 1 0)");
     CHECK(single_empty == 0, "empty sens → #f (not single-edge)");
 
     return true;
@@ -335,8 +321,12 @@ int run_tests() {
 
 } // namespace aura_issue_436_phase2_detail
 
-int aura_issue_436_phase2_run() { return aura_issue_436_phase2_detail::run_tests(); }
+int aura_issue_436_phase2_run() {
+    return aura_issue_436_phase2_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_436_phase2_run(); }
+int main() {
+    return aura_issue_436_phase2_run();
+}
 #endif

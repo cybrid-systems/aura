@@ -30,8 +30,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.value;
 import aura.compiler.evaluator;
@@ -41,35 +41,39 @@ namespace aura_issue_482_detail {
 
 static bool run_int(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return false;
+    if (!r)
+        return false;
     auto& v = *r;
-    if (!aura::compiler::types::is_bool(v)) return false;
+    if (!aura::compiler::types::is_bool(v))
+        return false;
     return aura::compiler::types::as_bool(v);
 }
 
-static int64_t run_int_value(aura::compiler::CompilerService& cs,
-                             std::string_view src) {
+static int64_t run_int_value(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return -1;
+    if (!r)
+        return -1;
     auto& v = *r;
-    if (!aura::compiler::types::is_int(v)) return -1;
+    if (!aura::compiler::types::is_int(v))
+        return -1;
     return aura::compiler::types::as_int(v);
 }
 
-static std::string run_string_value(aura::compiler::CompilerService& cs,
-                                    std::string_view src) {
+static std::string run_string_value(aura::compiler::CompilerService& cs, std::string_view src) {
     auto r = cs.eval(src);
-    if (!r) return "";
+    if (!r)
+        return "";
     auto& v = *r;
-    if (!aura::compiler::types::is_string(v)) return "";
+    if (!aura::compiler::types::is_string(v))
+        return "";
     auto sidx = aura::compiler::types::as_string_idx(v);
     auto heap = cs.evaluator().string_heap();
-    if (sidx >= heap.size()) return "";
+    if (sidx >= heap.size())
+        return "";
     return std::string(heap[sidx]);
 }
 
-static bool set_source(aura::compiler::CompilerService& cs,
-                       std::string_view src) {
+static bool set_source(aura::compiler::CompilerService& cs, std::string_view src) {
     std::string cmd = "(set-code \"";
     for (char c : src) {
         if (c == '\\' || c == '"')
@@ -78,7 +82,8 @@ static bool set_source(aura::compiler::CompilerService& cs,
     }
     cmd += "\")";
     auto r = cs.eval(cmd);
-    if (!r) return false;
+    if (!r)
+        return false;
     auto& v = *r;
     if (aura::compiler::types::is_bool(v))
         return aura::compiler::types::as_bool(v);
@@ -96,16 +101,13 @@ bool test_strict_strict_alignment() {
     // Workspace has 2-, 3-, and 4-child `+` calls. Pattern
     // "(+ ...)" is 2-child Call(+, Wildcard). In strict mode,
     // `...` matches exactly 1 child → matches the 2-child call.
-    if (!set_source(cs,
-        "(begin (+ 1) (+ 1 2) (+ 1 2 3) (- 1) (- 1 2))")) {
+    if (!set_source(cs, "(begin (+ 1) (+ 1 2) (+ 1 2 3) (- 1) (- 1 2))")) {
         ++g_failed;
         return false;
     }
-    auto q_count = run_int_value(cs,
-        "(length (query:pattern \"(+ ...)\" :strict-arity #t))");
-    CHECK(q_count == 1,
-          "strict query '(+ ...)' matches 1 (2-child + call only) (got " +
-              std::to_string(q_count) + ")");
+    auto q_count = run_int_value(cs, "(length (query:pattern \"(+ ...)\" :strict-arity #t))");
+    CHECK(q_count == 1, "strict query '(+ ...)' matches 1 (2-child + call only) (got " +
+                            std::to_string(q_count) + ")");
     return true;
 }
 
@@ -116,8 +118,7 @@ bool test_strict_strict_alignment() {
 bool test_strict_mutate_aligns_with_strict_query() {
     std::println("\n--- AC2: strict mutate removes the same nodes strict query finds ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs,
-        "(begin (+ 1 2) (+ 2 3) (* 4 5))")) {
+    if (!set_source(cs, "(begin (+ 1 2) (+ 2 3) (* 4 5))")) {
         ++g_failed;
         return false;
     }
@@ -125,30 +126,23 @@ bool test_strict_mutate_aligns_with_strict_query() {
     // In workspace: only (+ 1 2) matches exactly. (* 4 5) doesn't match
     // (callee is `*` not `+`). (+ 2 3) doesn't match (literal values differ).
     // So strict count = 1.
-    auto before = run_int_value(cs,
-        "(length (query:pattern \"(+ 1 2)\" :strict-arity #t))");
-    CHECK(before == 1, "before mutate: strict '(+ 1 2)' = 1 (got " +
-                          std::to_string(before) + ")");
+    auto before = run_int_value(cs, "(length (query:pattern \"(+ 1 2)\" :strict-arity #t))");
+    CHECK(before == 1, "before mutate: strict '(+ 1 2)' = 1 (got " + std::to_string(before) + ")");
 
     // Mutate: replace `(+ 1 2)` with `(* 1 2)`.
-    if (!run_int(cs,
-        "(mutate:replace-pattern \"(+ 1 2)\" \"(* 1 2)\" \"482\")")) {
+    if (!run_int(cs, "(mutate:replace-pattern \"(+ 1 2)\" \"(* 1 2)\" \"482\")")) {
         ++g_failed;
         return false;
     }
 
     // Post-mutate: query for `(+ 1 2)` should return 0; query
     // for `(* 1 2)` should return 1 (the new `*` call).
-    auto after_plus = run_int_value(cs,
-        "(length (query:pattern \"(+ 1 2)\" :strict-arity #t))");
-    auto after_star = run_int_value(cs,
-        "(length (query:pattern \"(* 1 2)\" :strict-arity #t))");
+    auto after_plus = run_int_value(cs, "(length (query:pattern \"(+ 1 2)\" :strict-arity #t))");
+    auto after_star = run_int_value(cs, "(length (query:pattern \"(* 1 2)\" :strict-arity #t))");
     CHECK(after_plus == 0,
-          "post-mutate: strict '(+ 1 2)' = 0 (got " +
-              std::to_string(after_plus) + ")");
+          "post-mutate: strict '(+ 1 2)' = 0 (got " + std::to_string(after_plus) + ")");
     CHECK(after_star == 1,
-          "post-mutate: strict '(* 1 2)' = 1 (got " +
-              std::to_string(after_star) + ")");
+          "post-mutate: strict '(* 1 2)' = 1 (got " + std::to_string(after_star) + ")");
     return true;
 }
 
@@ -176,20 +170,16 @@ bool test_mutate_nested_arity_keyword() {
     // attempted. (We don't assert post-mutate node counts because
     // #484's ADD-instead-of-replace bug is independent; fixing it
     // is a separate follow-up.)
-    bool mutate_ok = run_int(cs,
-        "(mutate:replace-pattern \"(* ...)\" \"(+ 0)\" :nested-arity #t)");
-    CHECK(mutate_ok,
-          "mutate:replace-pattern with :nested-arity #t returns #t "
-          "(keyword accepted, replacement attempted)");
+    bool mutate_ok = run_int(cs, "(mutate:replace-pattern \"(* ...)\" \"(+ 0)\" :nested-arity #t)");
+    CHECK(mutate_ok, "mutate:replace-pattern with :nested-arity #t returns #t "
+                     "(keyword accepted, replacement attempted)");
 
     // Also verify Kleene query no longer finds the original 3
     // `(* ...)` calls (they're now orphans — #484 fix correctly
     // excludes orphans from query:pattern results).
-    auto kle_count = run_int_value(cs,
-        "(length (query:pattern \"(* ...)\" :nested-arity #t))");
-    CHECK(kle_count == 0,
-          "Kleene query '(* ...)' finds 0 orphans post-mutate (got " +
-              std::to_string(kle_count) + ")");
+    auto kle_count = run_int_value(cs, "(length (query:pattern \"(* ...)\" :nested-arity #t))");
+    CHECK(kle_count == 0, "Kleene query '(* ...)' finds 0 orphans post-mutate (got " +
+                              std::to_string(kle_count) + ")");
     return true;
 }
 
@@ -202,8 +192,7 @@ bool test_mutate_nested_arity_keyword() {
 bool test_shared_matcher_node_set() {
     std::println("\n--- AC4: query and mutate agree on node set ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs,
-        "(begin (define a 1) (define b 2) (define c 3))")) {
+    if (!set_source(cs, "(begin (define a 1) (define b 2) (define c 3))")) {
         ++g_failed;
         return false;
     }
@@ -214,8 +203,7 @@ bool test_shared_matcher_node_set() {
     // Then mutate the value of one Define.
     // Actually for shared-matcher alignment, simpler test:
     // a 3-child Call pattern.
-    if (!set_source(cs,
-        "(begin (foo a b) (foo x y) (bar p q))")) {
+    if (!set_source(cs, "(begin (foo a b) (foo x y) (bar p q))")) {
         ++g_failed;
         return false;
     }
@@ -223,27 +211,22 @@ bool test_shared_matcher_node_set() {
     // In workspace: (foo a b) [matches] and (foo x y) [matches].
     // (bar p q) is 3-child Call(bar) — callee is `bar` not `foo`,
     // doesn't match.
-    auto q_count = run_int_value(cs,
-        "(length (query:pattern \"(foo ... ...)\" :strict-arity #t))");
-    CHECK(q_count == 2,
-          "strict query '(foo ... ...)' matches 2 (3-child foo calls) (got " +
-              std::to_string(q_count) + ")");
+    auto q_count = run_int_value(cs, "(length (query:pattern \"(foo ... ...)\" :strict-arity #t))");
+    CHECK(q_count == 2, "strict query '(foo ... ...)' matches 2 (3-child foo calls) (got " +
+                            std::to_string(q_count) + ")");
 
     // Mutate in strict mode: replace `(foo ... ...)` with `(baz ... ...)`.
-    if (!run_int(cs,
-        "(mutate:replace-pattern \"(foo ... ...)\" \"(baz ... ...)\" \"482\")")) {
+    if (!run_int(cs, "(mutate:replace-pattern \"(foo ... ...)\" \"(baz ... ...)\" \"482\")")) {
         ++g_failed;
         return false;
     }
 
-    auto foo_count = run_int_value(cs,
-        "(length (query:pattern \"(foo ... ...)\" :strict-arity #t))");
-    auto baz_count = run_int_value(cs,
-        "(length (query:pattern \"(baz ... ...)\" :strict-arity #t))");
-    CHECK(foo_count == 0, "post-mutate: no (foo ... ...) (got " +
-                              std::to_string(foo_count) + ")");
-    CHECK(baz_count == 2, "post-mutate: 2 (baz ... ...) (got " +
-                              std::to_string(baz_count) + ")");
+    auto foo_count =
+        run_int_value(cs, "(length (query:pattern \"(foo ... ...)\" :strict-arity #t))");
+    auto baz_count =
+        run_int_value(cs, "(length (query:pattern \"(baz ... ...)\" :strict-arity #t))");
+    CHECK(foo_count == 0, "post-mutate: no (foo ... ...) (got " + std::to_string(foo_count) + ")");
+    CHECK(baz_count == 2, "post-mutate: 2 (baz ... ...) (got " + std::to_string(baz_count) + ")");
     return true;
 }
 
@@ -266,12 +249,9 @@ bool test_pre_482_mutate_contracts() {
     }
     auto src = run_string_value(cs, "(current-source :workspace)");
     // After mutate, 2 should be replaced with 99.
-    CHECK(src.find("99") != std::string::npos,
-          "post-mutate: '99' in source (got " + src + ")");
-    CHECK(src.find("1") != std::string::npos,
-          "post-mutate: '1' still in source (got " + src + ")");
-    CHECK(src.find("3") != std::string::npos,
-          "post-mutate: '3' still in source (got " + src + ")");
+    CHECK(src.find("99") != std::string::npos, "post-mutate: '99' in source (got " + src + ")");
+    CHECK(src.find("1") != std::string::npos, "post-mutate: '1' still in source (got " + src + ")");
+    CHECK(src.find("3") != std::string::npos, "post-mutate: '3' still in source (got " + src + ")");
     return true;
 }
 
@@ -294,22 +274,21 @@ bool test_state_reset_between_matches() {
     // Pattern "(?x 1)" matches Call nodes where first child is
     // a Variable named "?x" and second is LiteralInt 1.
     auto r = cs.eval("(length (query:pattern \"(?x 1)\"))");
-    int64_t q_count = (r && aura::compiler::types::is_int(*r))
-                          ? aura::compiler::types::as_int(*r)
-                          : -1;
+    int64_t q_count =
+        (r && aura::compiler::types::is_int(*r)) ? aura::compiler::types::as_int(*r) : -1;
     // Just verify the count is non-negative (the actual number
     // depends on Aura's parsing of `?x` in source — it could be
     // 0, 1, or more depending on whether `?x` is interned as a
     // symbol or rejected).
     CHECK(q_count >= 0,
-          "query:(?x 1) returns non-negative count (got " +
-              std::to_string(q_count) + ")");
+          "query:(?x 1) returns non-negative count (got " + std::to_string(q_count) + ")");
     return true;
 }
 
 // ── main ──────────────────────────────────────────────────
 int run_tests() {
-    std::println("═══ Issue #482: shared matcher between query:pattern and mutate:replace-pattern ═══\n");
+    std::println(
+        "═══ Issue #482: shared matcher between query:pattern and mutate:replace-pattern ═══\n");
 
     std::println("── AC #1: strict query == strict mutate ──");
     test_strict_strict_alignment();
@@ -329,16 +308,19 @@ int run_tests() {
     std::println("\n── AC #6: matcher state reset between positions ──");
     test_state_reset_between_matches();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
 
-}  // namespace aura_issue_482_detail
+} // namespace aura_issue_482_detail
 
-int aura_issue_482_run() { return aura_issue_482_detail::run_tests(); }
+int aura_issue_482_run() {
+    return aura_issue_482_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_482_run(); }
+int main() {
+    return aura_issue_482_run();
+}
 #endif

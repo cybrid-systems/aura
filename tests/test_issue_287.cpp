@@ -16,8 +16,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 #include "compiler/aura_jit_bridge.h"
 
@@ -27,12 +27,10 @@ namespace aura_issue_287_detail {
 bool test_module_version_roundtrip() {
     std::println("\n--- AC1: aura_set_module_version / aura_get_module_version roundtrip ---");
     aura_set_module_version(42);
-    CHECK(aura_get_module_version() == 42,
-          "set(42) → get() == 42");
+    CHECK(aura_get_module_version() == 42, "set(42) → get() == 42");
 
     aura_set_module_version(0);
-    CHECK(aura_get_module_version() == 0,
-          "set(0) → get() == 0 (unversioned baseline)");
+    CHECK(aura_get_module_version() == 0, "set(0) → get() == 0 (unversioned baseline)");
 
     aura_set_module_version(1'000'000);
     CHECK(aura_get_module_version() == 1'000'000,
@@ -48,17 +46,14 @@ bool test_module_version_independent() {
     aura_set_aot_defuse_version(100);
     aura_set_module_version(7);
 
-    CHECK(aura_get_aot_defuse_version() == 100,
-          "defuse_version stays at 100");
-    CHECK(aura_get_module_version() == 7,
-          "module_version stays at 7");
+    CHECK(aura_get_aot_defuse_version() == 100, "defuse_version stays at 100");
+    CHECK(aura_get_module_version() == 7, "module_version stays at 7");
 
     // Setting one does not change the other
     aura_set_module_version(99);
     CHECK(aura_get_aot_defuse_version() == 100,
           "set_module_version(99) does not change defuse_version");
-    CHECK(aura_get_module_version() == 99,
-          "module_version updated to 99");
+    CHECK(aura_get_module_version() == 99, "module_version updated to 99");
 
     // Reset
     aura_set_aot_defuse_version(0);
@@ -104,11 +99,11 @@ bool test_reload_empty_file_treated_as_failed() {
     const char* path = "/tmp/__aura_empty_287__.so";
     {
         FILE* f = std::fopen(path, "w");
-        if (f) std::fclose(f);
+        if (f)
+            std::fclose(f);
     }
     bool ok = aura_reload_aot_module(path, 0);
-    CHECK(ok == false,
-          "reload of empty (non-ELF) file returns false (dlopen failure)");
+    CHECK(ok == false, "reload of empty (non-ELF) file returns false (dlopen failure)");
     std::remove(path);
     return true;
 }
@@ -126,8 +121,12 @@ int run_tests() {
 
 } // namespace aura_issue_287_detail
 
-int aura_issue_287_run() { return aura_issue_287_detail::run_tests(); }
+int aura_issue_287_run() {
+    return aura_issue_287_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_287_run(); }
+int main() {
+    return aura_issue_287_run();
+}
 #endif

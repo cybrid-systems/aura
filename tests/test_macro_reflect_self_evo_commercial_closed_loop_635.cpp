@@ -69,8 +69,7 @@ static void run_matrix(CompilerService& cs) {
     (void)cs.eval("(eval-current)");
     const auto stats3b = commercial_stats(cs);
     std::println("  commercial-stats: {} -> {}", stats3a, stats3b);
-    CHECK(stats3b > stats3a,
-          "Guard mutate bumps reflect/guard/dirty commercial counters");
+    CHECK(stats3b > stats3a, "Guard mutate bumps reflect/guard/dirty commercial counters");
 
     std::println("\n--- AC4: compile:macro-dirty-stats regression ---");
     auto mds = cs.eval("(compile:macro-dirty-stats)");
@@ -80,8 +79,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats5a = commercial_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"user-val\")");
-        (void)cs.eval("(mutate:rebind \"user-val\" \"" +
-                      std::to_string(100 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"user-val\" \"" + std::to_string(100 + round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats5b = commercial_stats(cs);

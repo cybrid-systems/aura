@@ -57,21 +57,17 @@ bool test_reanalyze_via_incremental_infer() {
         return false;
     }
     const auto n0 = cs.evaluator().get_narrowing_refresh_count();
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
-        "\"issue-518\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
+                  "\"issue-518\")");
     auto* ws = cs.workspace_flat();
-    CHECK(ws != nullptr && !ws->all_mutations().empty(),
-          "workspace has mutation after rebind");
+    CHECK(ws != nullptr && !ws->all_mutations().empty(), "workspace has mutation after rebind");
     if (!ws || ws->all_mutations().empty())
         return false;
     const auto reinferred = cs.incremental_infer(ws->all_mutations().back());
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
-    std::println("  reinferred={} narrowing_refresh: {} -> {}",
-                 reinferred, n0, n1);
+    std::println("  reinferred={} narrowing_refresh: {} -> {}", reinferred, n0, n1);
     CHECK(reinferred >= 0, "incremental_infer returns count");
-    CHECK(n1 > n0,
-          "narrowing_refresh bumped on actual re-narrow path (#518)");
+    CHECK(n1 > n0, "narrowing_refresh bumped on actual re-narrow path (#518)");
     return true;
 }
 
@@ -88,18 +84,14 @@ bool test_dirty_recovery_counters_bump() {
     // run_post_mutate_typecheck_no_lock → infer_flat_partial
     // re-narrow; counters bump on mutate, not only on a
     // follow-up incremental_infer.
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 3) 0))\" "
-        "\"issue-518-dirty\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 3) 0))\" "
+                  "\"issue-518-dirty\")");
     const auto snap1 = cs.snapshot();
-    std::println("  dirty_recovery: {} -> {}",
-                 snap0.narrowing_dirty_recovery_total,
+    std::println("  dirty_recovery: {} -> {}", snap0.narrowing_dirty_recovery_total,
                  snap1.narrowing_dirty_recovery_total);
-    std::println("  reanalyzed: {} -> {}",
-                 snap0.narrowing_reanalyzed_total,
+    std::println("  reanalyzed: {} -> {}", snap0.narrowing_reanalyzed_total,
                  snap1.narrowing_reanalyzed_total);
-    CHECK(snap1.narrowing_dirty_recovery_total >
-              snap0.narrowing_dirty_recovery_total,
+    CHECK(snap1.narrowing_dirty_recovery_total > snap0.narrowing_dirty_recovery_total,
           "narrowing_dirty_recovery_total bumped on auto re-narrow");
     CHECK(snap1.narrowing_reanalyzed_total > snap0.narrowing_reanalyzed_total,
           "narrowing_reanalyzed_total bumped on auto re-narrow");
@@ -118,23 +110,18 @@ bool test_occurrence_stale_cleared() {
     // post-mutate typecheck (even when CompilerService Lazy
     // mode defers the post-eval guard). Stale bits clear on
     // mutate itself.
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Lazy);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
-        "\"issue-518-stale\")");
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
+                  "\"issue-518-stale\")");
     auto stale_after_mutate = cs.eval("(query:occurrence-stale-count)");
-    CHECK(stale_after_mutate.has_value() &&
-              aura::compiler::types::is_int(*stale_after_mutate),
+    CHECK(stale_after_mutate.has_value() && aura::compiler::types::is_int(*stale_after_mutate),
           "(query:occurrence-stale-count) after mutate");
     const auto stale_after =
         stale_after_mutate && aura::compiler::types::is_int(*stale_after_mutate)
             ? aura::compiler::types::as_int(*stale_after_mutate)
             : -1;
-    std::println("  stale_count after auto re-narrow on mutate: {}",
-                 stale_after);
-    CHECK(stale_after == 0,
-          "occurrence-stale-count == 0 after mutate auto re-narrow");
+    std::println("  stale_count after auto re-narrow on mutate: {}", stale_after);
+    CHECK(stale_after == 0, "occurrence-stale-count == 0 after mutate auto re-narrow");
     return true;
 }
 
@@ -148,10 +135,9 @@ bool test_multi_round_mutate_typechecks() {
     }
     for (int round = 0; round < 3; ++round) {
         const std::string body =
-            "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 5) +
-            ") 0))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"round-" +
-                      std::to_string(round) + "\")");
+            "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 5) + ") 0))";
+        (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"round-" + std::to_string(round) +
+                      "\")");
         auto* ws = cs.workspace_flat();
         if (!ws || ws->all_mutations().empty()) {
             CHECK(false, "mutation log non-empty in multi-round");
@@ -159,8 +145,7 @@ bool test_multi_round_mutate_typechecks() {
         }
         (void)cs.incremental_infer(ws->all_mutations().back());
         const auto tc = cs.typecheck(body);
-        CHECK(!tc.empty(),
-              "typecheck succeeds after round " + std::to_string(round));
+        CHECK(!tc.empty(), "typecheck succeeds after round " + std::to_string(round));
     }
     return true;
 }
@@ -173,19 +158,14 @@ bool test_occurrence_stale_count_decreases() {
         CHECK(false, "load if workspace");
         return false;
     }
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Lazy);
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (- x 1) 0))\" "
-        "\"issue-518-dec\")");
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (- x 1) 0))\" "
+                  "\"issue-518-dec\")");
     auto after = cs.eval("(query:occurrence-stale-count)");
     const auto count_after =
-        after && aura::compiler::types::is_int(*after)
-            ? aura::compiler::types::as_int(*after)
-            : -1;
+        after && aura::compiler::types::is_int(*after) ? aura::compiler::types::as_int(*after) : -1;
     std::println("  stale_count after mutate auto re-narrow: {}", count_after);
-    CHECK(count_after == 0,
-          "occurrence-stale-count is 0 after mutate auto re-narrow");
+    CHECK(count_after == 0, "occurrence-stale-count is 0 after mutate auto re-narrow");
     return true;
 }
 
@@ -201,9 +181,8 @@ bool test_query_occurrence_narrowing_stats() {
     const auto v0 = stats0 && aura::compiler::types::is_int(*stats0)
                         ? aura::compiler::types::as_int(*stats0)
                         : 0;
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 7) 0))\" "
-        "\"issue-537-stats\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 7) 0))\" "
+                  "\"issue-537-stats\")");
     auto* ws = cs.workspace_flat();
     if (!ws || ws->all_mutations().empty()) {
         CHECK(false, "mutation log non-empty");
@@ -228,9 +207,8 @@ bool test_narrowing_log_source_mutation_id() {
         return false;
     }
     const auto count0 = cs.all_narrowings().size();
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 8) 0))\" "
-        "\"issue-537-prov\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 8) 0))\" "
+                  "\"issue-537-prov\")");
     auto* ws = cs.workspace_flat();
     if (!ws || ws->all_mutations().empty()) {
         CHECK(false, "mutation log non-empty");
@@ -260,9 +238,8 @@ bool test_snapshot_stale_refreshes_bumped() {
         return false;
     }
     const auto snap0 = cs.snapshot();
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 9) 0))\" "
-        "\"issue-537-snap\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 9) 0))\" "
+                  "\"issue-537-snap\")");
     auto* ws = cs.workspace_flat();
     if (!ws || ws->all_mutations().empty()) {
         CHECK(false, "mutation log non-empty");
@@ -270,11 +247,9 @@ bool test_snapshot_stale_refreshes_bumped() {
     }
     (void)cs.incremental_infer(ws->all_mutations().back());
     const auto snap1 = cs.snapshot();
-    std::println("  stale_refreshes: {} -> {}",
-                 snap0.occurrence_stale_refreshes_total,
+    std::println("  stale_refreshes: {} -> {}", snap0.occurrence_stale_refreshes_total,
                  snap1.occurrence_stale_refreshes_total);
-    CHECK(snap1.occurrence_stale_refreshes_total >
-              snap0.occurrence_stale_refreshes_total,
+    CHECK(snap1.occurrence_stale_refreshes_total > snap0.occurrence_stale_refreshes_total,
           "occurrence_stale_refreshes_total bumped after re-narrow");
     return true;
 }
@@ -287,32 +262,23 @@ bool test_mutate_auto_renarrow_eager() {
         CHECK(false, "load if workspace");
         return false;
     }
-    CHECK(cs.incremental_typecheck_mode() ==
-              aura::compiler::IncrementalTypecheckMode::Eager,
+    CHECK(cs.incremental_typecheck_mode() == aura::compiler::IncrementalTypecheckMode::Eager,
           "default incremental typecheck mode is Eager");
     const auto n0 = cs.evaluator().get_narrowing_refresh_count();
     const auto snap0 = cs.snapshot();
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 11) 0))\" "
-        "\"issue-537-auto\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 11) 0))\" "
+                  "\"issue-537-auto\")");
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
     const auto snap1 = cs.snapshot();
     auto stale = cs.eval("(query:occurrence-stale-count)");
     const auto stale_count =
-        stale && aura::compiler::types::is_int(*stale)
-            ? aura::compiler::types::as_int(*stale)
-            : -1;
-    std::println("  narrowing_refresh: {} -> {}, stale_count={}",
-                 n0, n1, stale_count);
-    std::println("  stale_refreshes: {} -> {}",
-                 snap0.occurrence_stale_refreshes_total,
+        stale && aura::compiler::types::is_int(*stale) ? aura::compiler::types::as_int(*stale) : -1;
+    std::println("  narrowing_refresh: {} -> {}, stale_count={}", n0, n1, stale_count);
+    std::println("  stale_refreshes: {} -> {}", snap0.occurrence_stale_refreshes_total,
                  snap1.occurrence_stale_refreshes_total);
-    CHECK(n1 > n0,
-          "mutate:rebind auto-invokes re-narrow via run_post_mutate_typecheck");
-    CHECK(stale_count == 0,
-          "occurrence-stale-count == 0 after auto re-narrow");
-    CHECK(snap1.occurrence_stale_refreshes_total >
-              snap0.occurrence_stale_refreshes_total,
+    CHECK(n1 > n0, "mutate:rebind auto-invokes re-narrow via run_post_mutate_typecheck");
+    CHECK(stale_count == 0, "occurrence-stale-count == 0 after auto re-narrow");
+    CHECK(snap1.occurrence_stale_refreshes_total > snap0.occurrence_stale_refreshes_total,
           "snapshot stale_refreshes bumped on auto path");
     return true;
 }
@@ -326,9 +292,8 @@ bool test_post_mutate_provenance_and_eval() {
         return false;
     }
     (void)cs.eval("(typecheck-current)");
-    (void)cs.eval(
-        "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 12) 0))\" "
-        "\"issue-537-e2e\")");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 12) 0))\" "
+                  "\"issue-537-e2e\")");
     auto prov = cs.eval("(query:provenance-of \"x\")");
     CHECK(prov.has_value(), "query:provenance-of after predicate mutate");
     auto r = cs.eval("(f 4)");
@@ -373,8 +338,12 @@ int run_tests() {
 
 } // namespace aura_issue_518_detail
 
-int aura_issue_518_run() { return aura_issue_518_detail::run_tests(); }
+int aura_issue_518_run() {
+    return aura_issue_518_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_518_run(); }
+int main() {
+    return aura_issue_518_run();
+}
 #endif

@@ -63,8 +63,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -80,8 +80,8 @@ import aura.compiler.service;
 // errors like test_issue_188's run_on). Use this for queries
 // where we don't care about the typed return value.
 namespace aura_issue_240_detail {
-static aura::compiler::types::EvalValue run_on(
-        aura::compiler::CompilerService& cs, std::string_view src) {
+static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error in: {}]", std::string(src).substr(0, 80));
@@ -94,8 +94,7 @@ static aura::compiler::types::EvalValue run_on(
 // Aura primitive that ALSO sets workspace_flat_ on the evaluator.
 // The C++ cs.set_code() helper parses into current_ast_/current_pool_
 // but does NOT set workspace_flat_; only the Aura primitive does.
-static bool load_workspace(aura::compiler::CompilerService& cs,
-                            const std::string& code) {
+static bool load_workspace(aura::compiler::CompilerService& cs, const std::string& code) {
     std::string cmd = std::string("(set-code \"") + code + "\")";
     auto r = cs.eval(cmd);
     return r.has_value();
@@ -113,18 +112,20 @@ bool test_mark_sets_bit() {
     std::println("\n--- AC1+AC2: compile:mark-narrowing-dirty! sets / clears the bit ---");
     aura::compiler::CompilerService cs;
     // (set-code ...) sets workspace_flat_ so the hook can find it.
-    CHECK(load_workspace(cs,
-        "(define (f x) "
-        "  (if (number? x) (+ x 1) (* x 2)))"),
-        "load_workspace succeeds");
+    CHECK(load_workspace(cs, "(define (f x) "
+                             "  (if (number? x) (+ x 1) (* x 2)))"),
+          "load_workspace succeeds");
 
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr, "workspace_flat() non-null after set-code");
-    if (!ws) return true;
+    if (!ws)
+        return true;
     CHECK(ws->size() > 0, "workspace has nodes");
-    if (ws->size() == 0) return true;
+    if (ws->size() == 0)
+        return true;
     aura::ast::NodeId target = 1;
-    if (target >= ws->size()) target = static_cast<aura::ast::NodeId>(ws->size() - 1);
+    if (target >= ws->size())
+        target = static_cast<aura::ast::NodeId>(ws->size() - 1);
 
     // Capture prior state — should be 0 (workspace was just
     // type-checked and dirty bits cleared).
@@ -134,9 +135,8 @@ bool test_mark_sets_bit() {
     // Set the bit via the Aura primitive.
     // The primitive returns the PRIOR state (hook contract).
     // First mark on a clean node → prior was false → returns #f.
-    auto set_r = cs.eval(
-        std::string("(compile:mark-narrowing-dirty! ") +
-        std::to_string(target) + ")");
+    auto set_r =
+        cs.eval(std::string("(compile:mark-narrowing-dirty! ") + std::to_string(target) + ")");
     CHECK(set_r.has_value(), "mark-narrowing-dirty! returns a value");
     if (set_r) {
         CHECK(!aura::compiler::types::as_bool(*set_r),
@@ -145,25 +145,21 @@ bool test_mark_sets_bit() {
 
     // Verify the bit is set on the FlatAST.
     auto reasons_after_set = ws->dirty_reasons(target);
-    const auto kOccBit = static_cast<std::uint8_t>(
-        aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
+    const auto kOccBit =
+        static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
     CHECK((reasons_after_set & kOccBit) != 0,
           "kOccurrenceDirty bit is set after mark-narrowing-dirty!");
 
     // Peek via the query primitive — should be #t.
-    auto peek_r = cs.eval(
-        std::string("(compile:narrowing-dirty? ") +
-        std::to_string(target) + ")");
+    auto peek_r = cs.eval(std::string("(compile:narrowing-dirty? ") + std::to_string(target) + ")");
     CHECK(peek_r.has_value(), "narrowing-dirty? returns a value");
     if (peek_r) {
-        CHECK(aura::compiler::types::as_bool(*peek_r),
-              "narrowing-dirty? returns #t after mark");
+        CHECK(aura::compiler::types::as_bool(*peek_r), "narrowing-dirty? returns #t after mark");
     }
 
     // Re-mark (bit already set). Returns #t (prior was true).
-    auto set_again = cs.eval(
-        std::string("(compile:mark-narrowing-dirty! ") +
-        std::to_string(target) + ")");
+    auto set_again =
+        cs.eval(std::string("(compile:mark-narrowing-dirty! ") + std::to_string(target) + ")");
     CHECK(set_again.has_value(), "re-mark returns");
     if (set_again) {
         CHECK(aura::compiler::types::as_bool(*set_again),
@@ -172,9 +168,8 @@ bool test_mark_sets_bit() {
 
     // Clear the bit.
     // Clear on already-set bit → prior was true → returns #t.
-    auto clear_r = cs.eval(
-        std::string("(compile:mark-narrowing-dirty! ") +
-        std::to_string(target) + " #f)");
+    auto clear_r =
+        cs.eval(std::string("(compile:mark-narrowing-dirty! ") + std::to_string(target) + " #f)");
     CHECK(clear_r.has_value(), "mark-narrowing-dirty! with #f returns");
     if (clear_r) {
         CHECK(aura::compiler::types::as_bool(*clear_r),
@@ -182,23 +177,19 @@ bool test_mark_sets_bit() {
     }
 
     auto reasons_after_clear = ws->dirty_reasons(target);
-    CHECK((reasons_after_clear & kOccBit) == 0,
-          "kOccurrenceDirty bit cleared after mark with #f");
+    CHECK((reasons_after_clear & kOccBit) == 0, "kOccurrenceDirty bit cleared after mark with #f");
 
     // Peek again — should be #f.
-    auto peek_r2 = cs.eval(
-        std::string("(compile:narrowing-dirty? ") +
-        std::to_string(target) + ")");
+    auto peek_r2 =
+        cs.eval(std::string("(compile:narrowing-dirty? ") + std::to_string(target) + ")");
     CHECK(peek_r2.has_value(), "narrowing-dirty? post-clear returns");
     if (peek_r2) {
-        CHECK(!aura::compiler::types::as_bool(*peek_r2),
-              "narrowing-dirty? returns #f after clear");
+        CHECK(!aura::compiler::types::as_bool(*peek_r2), "narrowing-dirty? returns #f after clear");
     }
 
     // Clear again on clean bit → prior was false → returns #f.
-    auto clear_again = cs.eval(
-        std::string("(compile:mark-narrowing-dirty! ") +
-        std::to_string(target) + " #f)");
+    auto clear_again =
+        cs.eval(std::string("(compile:mark-narrowing-dirty! ") + std::to_string(target) + " #f)");
     CHECK(clear_again.has_value(), "clear-on-clean returns");
     if (clear_again) {
         CHECK(!aura::compiler::types::as_bool(*clear_again),
@@ -218,20 +209,20 @@ bool test_mark_sets_bit() {
 bool test_mark_preserves_other_bits() {
     std::println("\n--- AC3: kOccurrenceDirty bit doesn't clobber other bits ---");
     aura::compiler::CompilerService cs;
-    CHECK(load_workspace(cs, "(define g 42)"),
-          "load_workspace succeeds");
+    CHECK(load_workspace(cs, "(define g 42)"), "load_workspace succeeds");
 
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr, "workspace_flat() non-null");
-    if (!ws) return true;
+    if (!ws)
+        return true;
     aura::ast::NodeId target = 1;
-    if (target >= ws->size()) target = static_cast<aura::ast::NodeId>(ws->size() - 1);
+    if (target >= ws->size())
+        target = static_cast<aura::ast::NodeId>(ws->size() - 1);
 
     // Mark with both general + occurrence bits via direct API.
-    const auto kGeneral = static_cast<std::uint8_t>(
-        aura::ast::FlatAST::DirtyReason::kGeneralDirty);
-    const auto kOccBit = static_cast<std::uint8_t>(
-        aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
+    const auto kGeneral = static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kGeneralDirty);
+    const auto kOccBit =
+        static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
     ws->mark_dirty(target, kGeneral | kOccBit);
 
     auto reasons_combined = ws->dirty_reasons(target);
@@ -239,16 +230,13 @@ bool test_mark_preserves_other_bits() {
     CHECK((reasons_combined & kOccBit) != 0, "kOccurrenceDirty set");
 
     // Now clear just the occurrence bit via the Aura primitive.
-    auto clear_r = cs.eval(
-        std::string("(compile:mark-narrowing-dirty! ") +
-        std::to_string(target) + " #f)");
+    auto clear_r =
+        cs.eval(std::string("(compile:mark-narrowing-dirty! ") + std::to_string(target) + " #f)");
     CHECK(clear_r.has_value(), "clear returns");
 
     auto reasons_after = ws->dirty_reasons(target);
-    CHECK((reasons_after & kOccBit) == 0,
-          "kOccurrenceDirty cleared via primitive");
-    CHECK((reasons_after & kGeneral) != 0,
-          "kGeneralDirty preserved (primitive doesn't clobber)");
+    CHECK((reasons_after & kOccBit) == 0, "kOccurrenceDirty cleared via primitive");
+    CHECK((reasons_after & kGeneral) != 0, "kGeneralDirty preserved (primitive doesn't clobber)");
 
     // Cleanup: clear all dirty bits for the target so we don't
     // leak state into other tests.
@@ -265,30 +253,25 @@ bool test_mark_preserves_other_bits() {
 bool test_out_of_range_returns_false() {
     std::println("\n--- AC4: out-of-range node-id returns #f ---");
     aura::compiler::CompilerService cs;
-    CHECK(load_workspace(cs, "(define h 1)"),
-          "load_workspace succeeds");
+    CHECK(load_workspace(cs, "(define h 1)"), "load_workspace succeeds");
 
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr, "workspace_flat() non-null");
-    if (!ws) return true;
+    if (!ws)
+        return true;
 
     // Pick a node-id past the workspace size.
     aura::ast::NodeId bad = static_cast<aura::ast::NodeId>(ws->size() + 100);
-    auto mark_r = cs.eval(
-        std::string("(compile:mark-narrowing-dirty! ") +
-        std::to_string(bad) + ")");
+    auto mark_r =
+        cs.eval(std::string("(compile:mark-narrowing-dirty! ") + std::to_string(bad) + ")");
     CHECK(mark_r.has_value(), "mark with bad id returns");
     if (mark_r) {
-        CHECK(!aura::compiler::types::as_bool(*mark_r),
-              "mark with bad id returns #f");
+        CHECK(!aura::compiler::types::as_bool(*mark_r), "mark with bad id returns #f");
     }
-    auto peek_r = cs.eval(
-        std::string("(compile:narrowing-dirty? ") +
-        std::to_string(bad) + ")");
+    auto peek_r = cs.eval(std::string("(compile:narrowing-dirty? ") + std::to_string(bad) + ")");
     CHECK(peek_r.has_value(), "peek with bad id returns");
     if (peek_r) {
-        CHECK(!aura::compiler::types::as_bool(*peek_r),
-              "peek with bad id returns #f");
+        CHECK(!aura::compiler::types::as_bool(*peek_r), "peek with bad id returns #f");
     }
     return true;
 }
@@ -301,29 +284,25 @@ bool test_out_of_range_returns_false() {
 bool test_bad_args_return_false() {
     std::println("\n--- AC5: empty / non-int args return #f ---");
     aura::compiler::CompilerService cs;
-    CHECK(load_workspace(cs, "(define k 1)"),
-          "load_workspace succeeds");
+    CHECK(load_workspace(cs, "(define k 1)"), "load_workspace succeeds");
 
     // No args.
     auto r1 = cs.eval("(compile:mark-narrowing-dirty!)");
     CHECK(r1.has_value(), "no-args returns");
     if (r1) {
-        CHECK(!aura::compiler::types::as_bool(*r1),
-              "no-args returns #f");
+        CHECK(!aura::compiler::types::as_bool(*r1), "no-args returns #f");
     }
     auto r2 = cs.eval("(compile:narrowing-dirty?)");
     CHECK(r2.has_value(), "no-args (peek) returns");
     if (r2) {
-        CHECK(!aura::compiler::types::as_bool(*r2),
-              "no-args (peek) returns #f");
+        CHECK(!aura::compiler::types::as_bool(*r2), "no-args (peek) returns #f");
     }
 
     // Non-int first arg.
     auto r3 = cs.eval("(compile:mark-narrowing-dirty! \"not-a-number\")");
     CHECK(r3.has_value(), "non-int arg returns");
     if (r3) {
-        CHECK(!aura::compiler::types::as_bool(*r3),
-              "non-int arg returns #f");
+        CHECK(!aura::compiler::types::as_bool(*r3), "non-int arg returns #f");
     }
 
     // Non-bool second arg (defaults to set=true via the
@@ -347,9 +326,8 @@ bool test_bad_args_return_false() {
     auto* ws = cs.workspace_flat();
     if (ws) {
         for (std::uint32_t i = 0; i < ws->size(); ++i) {
-            ws->clear_dirty_for(i,
-                static_cast<std::uint8_t>(
-                    aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
+            ws->clear_dirty_for(
+                i, static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
         }
     }
 
@@ -373,16 +351,17 @@ bool test_per_node_scoping_in_post_mutation_check() {
     aura::compiler::CompilerService cs;
     // (if (string? x) ...) uses a built-in predicate that
     // analyze_predicate_flat recognizes without TypeRegistry state.
-    CHECK(load_workspace(cs,
-        "(define (pred x) "
-        "  (if (string? x) (+ 1 2) (+ 3 4)))"),
-        "load_workspace succeeds");
+    CHECK(load_workspace(cs, "(define (pred x) "
+                             "  (if (string? x) (+ 1 2) (+ 3 4)))"),
+          "load_workspace succeeds");
 
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr, "workspace_flat() non-null");
-    if (!ws) return true;
+    if (!ws)
+        return true;
     CHECK(cs.workspace_pool() != nullptr, "workspace_pool() non-null");
-    if (!cs.workspace_pool()) return true;
+    if (!cs.workspace_pool())
+        return true;
     auto& pool_ref = *cs.workspace_pool();
 
     // Find the IfExpr node in the workspace. Walk all nodes,
@@ -395,9 +374,9 @@ bool test_per_node_scoping_in_post_mutation_check() {
             break;
         }
     }
-    CHECK(if_id != aura::ast::NULL_NODE,
-          "found IfExpr node in workspace");
-    if (if_id == aura::ast::NULL_NODE) return true;
+    CHECK(if_id != aura::ast::NULL_NODE, "found IfExpr node in workspace");
+    if (if_id == aura::ast::NULL_NODE)
+        return true;
 
     // Build a minimal MutationRecord so post_mutation_invariant_check
     // can walk the dirty scope (parent_id + target_node). Note: the
@@ -418,27 +397,25 @@ bool test_per_node_scoping_in_post_mutation_check() {
     // Mark the IfExpr node with kOccurrenceDirty and clear
     // other bits. Post-mutation check should emit a precise
     // note with kind == "StaleOccurrenceRefinement".
-    const auto kOccBit = static_cast<std::uint8_t>(
-        aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
-    const auto kGeneral = static_cast<std::uint8_t>(
-        aura::ast::FlatAST::DirtyReason::kGeneralDirty);
+    const auto kOccBit =
+        static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
+    const auto kGeneral = static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kGeneralDirty);
     ws->clear_dirty(if_id);
     ws->mark_dirty(if_id, kOccBit);
 
     std::vector<aura::compiler::OwnershipNote> notes;
-    auto status = aura::compiler::post_mutation_invariant_check(
-        *ws, pool_ref, reg, rec, notes);
+    auto status = aura::compiler::post_mutation_invariant_check(*ws, pool_ref, reg, rec, notes);
 
     bool found_precise = false;
     bool found_conservative = false;
     for (auto& n : notes) {
-        if (n.kind == "StaleOccurrenceRefinement") found_precise = true;
-        if (n.kind == "StaleOccurrenceRefinement-conservative") found_conservative = true;
+        if (n.kind == "StaleOccurrenceRefinement")
+            found_precise = true;
+        if (n.kind == "StaleOccurrenceRefinement-conservative")
+            found_conservative = true;
     }
-    CHECK(found_precise,
-          "Case A: precise note emitted for kOccurrenceDirty-tagged node");
-    CHECK(!found_conservative,
-          "Case A: conservative note NOT emitted when precise bit is set");
+    CHECK(found_precise, "Case A: precise note emitted for kOccurrenceDirty-tagged node");
+    CHECK(!found_conservative, "Case A: conservative note NOT emitted when precise bit is set");
 
     // ── Case B: only kGeneralDirty set (no kOccurrenceDirty) ───
     // Pre-#240 behavior — emits the conservative note.
@@ -446,19 +423,18 @@ bool test_per_node_scoping_in_post_mutation_check() {
     ws->mark_dirty(if_id, kGeneral);
 
     notes.clear();
-    status = aura::compiler::post_mutation_invariant_check(
-        *ws, pool_ref, reg, rec, notes);
+    status = aura::compiler::post_mutation_invariant_check(*ws, pool_ref, reg, rec, notes);
 
     found_precise = false;
     found_conservative = false;
     for (auto& n : notes) {
-        if (n.kind == "StaleOccurrenceRefinement") found_precise = true;
-        if (n.kind == "StaleOccurrenceRefinement-conservative") found_conservative = true;
+        if (n.kind == "StaleOccurrenceRefinement")
+            found_precise = true;
+        if (n.kind == "StaleOccurrenceRefinement-conservative")
+            found_conservative = true;
     }
-    CHECK(!found_precise,
-          "Case B: precise note NOT emitted when only general bit is set");
-    CHECK(found_conservative,
-          "Case B: conservative note emitted (backward-compat path)");
+    CHECK(!found_precise, "Case B: precise note NOT emitted when only general bit is set");
+    CHECK(found_conservative, "Case B: conservative note emitted (backward-compat path)");
 
     // ── Case C: no dirty bits ───
     // The pre-#240 behavior would still flag (false positive).
@@ -466,19 +442,18 @@ bool test_per_node_scoping_in_post_mutation_check() {
     ws->clear_dirty(if_id);
 
     notes.clear();
-    status = aura::compiler::post_mutation_invariant_check(
-        *ws, pool_ref, reg, rec, notes);
+    status = aura::compiler::post_mutation_invariant_check(*ws, pool_ref, reg, rec, notes);
 
     found_precise = false;
     found_conservative = false;
     for (auto& n : notes) {
-        if (n.kind == "StaleOccurrenceRefinement") found_precise = true;
-        if (n.kind == "StaleOccurrenceRefinement-conservative") found_conservative = true;
+        if (n.kind == "StaleOccurrenceRefinement")
+            found_precise = true;
+        if (n.kind == "StaleOccurrenceRefinement-conservative")
+            found_conservative = true;
     }
-    CHECK(!found_precise,
-          "Case C: precise note NOT emitted for clean node");
-    CHECK(!found_conservative,
-          "Case C: conservative note NOT emitted for clean node");
+    CHECK(!found_precise, "Case C: precise note NOT emitted for clean node");
+    CHECK(!found_conservative, "Case C: conservative note NOT emitted for clean node");
 
     return true;
 }
@@ -491,31 +466,30 @@ bool test_per_node_scoping_in_post_mutation_check() {
 bool test_mark_is_idempotent() {
     std::println("\n--- AC7: mark-narrowing-dirty! is idempotent ---");
     aura::compiler::CompilerService cs;
-    CHECK(load_workspace(cs, "(define (m x) (* x 2))"),
-          "load_workspace succeeds");
+    CHECK(load_workspace(cs, "(define (m x) (* x 2))"), "load_workspace succeeds");
 
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr, "workspace_flat() non-null");
-    if (!ws) return true;
+    if (!ws)
+        return true;
     aura::ast::NodeId target = 1;
-    if (target >= ws->size()) target = static_cast<aura::ast::NodeId>(ws->size() - 1);
+    if (target >= ws->size())
+        target = static_cast<aura::ast::NodeId>(ws->size() - 1);
 
-    const auto kOccBit = static_cast<std::uint8_t>(
-        aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
+    const auto kOccBit =
+        static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
     ws->clear_dirty(target);
 
     // First mark.
-    auto r1 = cs.eval(
-        std::string("(compile:mark-narrowing-dirty! ") +
-        std::to_string(target) + ")");
+    auto r1 =
+        cs.eval(std::string("(compile:mark-narrowing-dirty! ") + std::to_string(target) + ")");
     CHECK(r1.has_value(), "first mark returns");
     auto reasons1 = ws->dirty_reasons(target);
     CHECK((reasons1 & kOccBit) != 0, "bit set after first mark");
 
     // Second mark — bit stays set, no error.
-    auto r2 = cs.eval(
-        std::string("(compile:mark-narrowing-dirty! ") +
-        std::to_string(target) + ")");
+    auto r2 =
+        cs.eval(std::string("(compile:mark-narrowing-dirty! ") + std::to_string(target) + ")");
     CHECK(r2.has_value(), "second mark returns");
     auto reasons2 = ws->dirty_reasons(target);
     CHECK((reasons2 & kOccBit) != 0, "bit still set after second mark");
@@ -552,7 +526,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_240_detail
+} // namespace aura_issue_240_detail
 
-int aura_issue_240_run() { return aura_issue_240_detail::run_tests(); }
-
+int aura_issue_240_run() {
+    return aura_issue_240_detail::run_tests();
+}

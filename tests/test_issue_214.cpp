@@ -26,9 +26,8 @@
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
-
+using aura::test::g_passed;
 
 
 #define PRINTLN(msg) std::println("{}", (msg))
@@ -40,7 +39,7 @@ using aura::test::g_failed;
 // ground truth) and compared to module_exports<T>()'s
 // output.
 struct MathModule {
-    int data_member;       // (should appear in module_exports)
+    int data_member; // (should appear in module_exports)
     int add_fn(int a, int b) { return a + b; }
     int sub_fn(int a, int b) { return a - b; }
     int mul_fn(int a, int b) { return a * b; }
@@ -65,19 +64,18 @@ bool test_compile_time_reflection() {
     }
 
     // Verify size matches the manual enumeration (6 members)
-    CHECK(exports.size == 6,
-          "module_exports<MathModule>() returns 6 entries");
+    CHECK(exports.size == 6, "module_exports<MathModule>() returns 6 entries");
 
     // Verify each expected name is present (order may vary by
     // GCC version; check by name set, not position)
     std::array<std::string_view, 6> expected = {
-        "data_member", "add_fn", "sub_fn", "mul_fn",
-        "static_helper", "void_method",
+        "data_member", "add_fn", "sub_fn", "mul_fn", "static_helper", "void_method",
     };
     std::size_t matches = 0;
     for (std::size_t i = 0; i < exports.size; ++i) {
         for (auto& e : expected) {
-            if (exports.data[i] == e) ++matches;
+            if (exports.data[i] == e)
+                ++matches;
         }
     }
     CHECK(matches == 6, "all 6 expected names are in the exports");
@@ -85,12 +83,14 @@ bool test_compile_time_reflection() {
     // Verify individual names by position (best-effort)
     bool found_data = false, found_add = false, found_sub = false;
     for (std::size_t i = 0; i < exports.size; ++i) {
-        if (exports.data[i] == "data_member") found_data = true;
-        if (exports.data[i] == "add_fn") found_add = true;
-        if (exports.data[i] == "sub_fn") found_sub = true;
+        if (exports.data[i] == "data_member")
+            found_data = true;
+        if (exports.data[i] == "add_fn")
+            found_add = true;
+        if (exports.data[i] == "sub_fn")
+            found_sub = true;
     }
-    CHECK(found_data && found_add && found_sub,
-          "data_member, add_fn, sub_fn all found");
+    CHECK(found_data && found_add && found_sub, "data_member, add_fn, sub_fn all found");
     return true;
 }
 
@@ -118,32 +118,30 @@ bool test_json_roundtrip() {
     // Serialize as a JSON array of strings
     std::string json = "[";
     for (std::size_t i = 0; i < exports.size; ++i) {
-        if (i > 0) json += ",";
+        if (i > 0)
+            json += ",";
         json += "\"";
         // Escape any special chars (none expected, but be safe)
         for (char c : exports.data[i]) {
-            if (c == '"' || c == '\\') json += '\\';
+            if (c == '"' || c == '\\')
+                json += '\\';
             json += c;
         }
         json += "\"";
     }
     json += "]";
     std::println("JSON: {}", json);
-    CHECK(json.find("\"data_member\"") != std::string::npos,
-          "JSON contains \"data_member\"");
-    CHECK(json.find("\"add_fn\"") != std::string::npos,
-          "JSON contains \"add_fn\"");
-    CHECK(json.find("\"sub_fn\"") != std::string::npos,
-          "JSON contains \"sub_fn\"");
-    CHECK(json.find("\"mul_fn\"") != std::string::npos,
-          "JSON contains \"mul_fn\"");
-    CHECK(json.find("\"static_helper\"") != std::string::npos,
-          "JSON contains \"static_helper\"");
-    CHECK(json.find("\"void_method\"") != std::string::npos,
-          "JSON contains \"void_method\"");
+    CHECK(json.find("\"data_member\"") != std::string::npos, "JSON contains \"data_member\"");
+    CHECK(json.find("\"add_fn\"") != std::string::npos, "JSON contains \"add_fn\"");
+    CHECK(json.find("\"sub_fn\"") != std::string::npos, "JSON contains \"sub_fn\"");
+    CHECK(json.find("\"mul_fn\"") != std::string::npos, "JSON contains \"mul_fn\"");
+    CHECK(json.find("\"static_helper\"") != std::string::npos, "JSON contains \"static_helper\"");
+    CHECK(json.find("\"void_method\"") != std::string::npos, "JSON contains \"void_method\"");
     // Verify count
     int count = 0;
-    for (char c : json) if (c == '"') ++count;
+    for (char c : json)
+        if (c == '"')
+            ++count;
     CHECK(count == 12, "JSON has 12 quotes (6 strings × 2)");
     return true;
 }
@@ -176,16 +174,19 @@ namespace fs = std::filesystem;
 // /__w/aura/aura/ working dir).
 static std::string find_aura_binary_path() {
     const char* env = ::getenv("AURA_BIN");
-    if (env && *env && fs::is_regular_file(env)) return env;
+    if (env && *env && fs::is_regular_file(env))
+        return env;
     char buf[4096] = {0};
     ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (n > 0) {
         fs::path p(buf);
         fs::path candidate = p.parent_path() / "aura";
-        if (fs::is_regular_file(candidate)) return candidate.string();
+        if (fs::is_regular_file(candidate))
+            return candidate.string();
     }
     // Fallback: CWD-relative
-    if (fs::is_regular_file("./build/aura")) return fs::absolute("./build/aura").string();
+    if (fs::is_regular_file("./build/aura"))
+        return fs::absolute("./build/aura").string();
     return "aura";
 }
 
@@ -194,15 +195,19 @@ static std::string exec_aura(const std::string& code) {
     // Escape single quotes in code for safe shell interpolation
     std::string escaped;
     for (char c : code) {
-        if (c == '\'') escaped += "'\\''";
-        else escaped += c;
+        if (c == '\'')
+            escaped += "'\\''";
+        else
+            escaped += c;
     }
     std::string cmd = "echo '" + escaped + "' | '" + aura_path + "' 2>/dev/null";
     FILE* p = ::popen(cmd.c_str(), "r");
-    if (!p) return "";
+    if (!p)
+        return "";
     std::string out;
     char buf[4096];
-    while (std::fgets(buf, sizeof(buf), p)) out += buf;
+    while (std::fgets(buf, sizeof(buf), p))
+        out += buf;
     ::pclose(p);
     // Trim trailing newline
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
@@ -212,23 +217,17 @@ static std::string exec_aura(const std::string& code) {
 
 bool test_aura_primitive() {
     PRINTLN("\n--- Test 4: query:module-exports (Aura) ---");
-    std::string out = exec_aura(
-        "(define xs (query:module-exports \"std/list\")) "
-        "(display xs) (newline)");
+    std::string out = exec_aura("(define xs (query:module-exports \"std/list\")) "
+                                "(display xs) (newline)");
     std::println("output: {}", out);
     // Expected: (foldr map for-each member? zip zip3 take skip ...)
     CHECK(!out.empty(), "Aura returned non-empty output");
-    CHECK(out.find("foldr") != std::string::npos,
-          "Aura output contains foldr");
-    CHECK(out.find("map") != std::string::npos,
-          "Aura output contains map");
-    CHECK(out.find("for-each") != std::string::npos,
-          "Aura output contains for-each");
-    CHECK(out.find("zip") != std::string::npos,
-          "Aura output contains zip");
+    CHECK(out.find("foldr") != std::string::npos, "Aura output contains foldr");
+    CHECK(out.find("map") != std::string::npos, "Aura output contains map");
+    CHECK(out.find("for-each") != std::string::npos, "Aura output contains for-each");
+    CHECK(out.find("zip") != std::string::npos, "Aura output contains zip");
     // For non-existent path, should return '()
-    std::string out2 = exec_aura(
-        "(display (query:module-exports \"nonexistent/path\")) (newline)");
+    std::string out2 = exec_aura("(display (query:module-exports \"nonexistent/path\")) (newline)");
     std::println("nonexistent: {}", out2);
     CHECK(out2 == "()", "non-existent path returns '()");
     return true;

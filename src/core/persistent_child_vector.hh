@@ -75,41 +75,44 @@
 
 namespace aura::ast {
 
-template <typename T>
-class PersistentChildVector {
+template <typename T> class PersistentChildVector {
 public:
-    using value_type     = T;
-    using size_type      = std::size_t;
+    using value_type = T;
+    using size_type = std::size_t;
     using difference_type = std::ptrdiff_t;
     // All accessors return const references / pointers — the
     // vector is immutable. Mutations go through the with_*
     // methods, which return a new vector.
-    using reference      = const T&;
+    using reference = const T&;
     using const_reference = const T&;
-    using pointer        = const T*;
-    using const_pointer  = const T*;
-    using iterator       = const T*;
+    using pointer = const T*;
+    using const_pointer = const T*;
+    using iterator = const T*;
     using const_iterator = const T*;
 
     constexpr PersistentChildVector() noexcept = default;
 
     PersistentChildVector(std::initializer_list<T> init) {
-        if (init.size() == 0) return;
+        if (init.size() == 0)
+            return;
         size_ = init.size();
         data_ = make_storage(init.size());
         std::copy(init.begin(), init.end(), data_->data.get());
     }
 
     explicit PersistentChildVector(size_type n) {
-        if (n == 0) return;
+        if (n == 0)
+            return;
         size_ = n;
         data_ = make_storage(n);
         // value-initialized
-        for (std::size_t i = 0; i < n; ++i) data_->data[i] = T{};
+        for (std::size_t i = 0; i < n; ++i)
+            data_->data[i] = T{};
     }
 
     PersistentChildVector(size_type n, const T& v) {
-        if (n == 0) return;
+        if (n == 0)
+            return;
         size_ = n;
         data_ = make_storage(n);
         std::fill_n(data_->data.get(), n, v);
@@ -119,10 +122,10 @@ public:
     // build a per-node list from a std::span<NodeId> or a
     // temporary std::vector). Constructs in O(n) — no per-
     // element COW copies.
-    template <typename It>
-    PersistentChildVector(It first, It last) {
+    template <typename It> PersistentChildVector(It first, It last) {
         auto n = static_cast<size_type>(std::distance(first, last));
-        if (n == 0) return;
+        if (n == 0)
+            return;
         size_ = n;
         data_ = make_storage(n);
         std::copy(first, last, data_->data.get());
@@ -139,9 +142,9 @@ public:
     //       3, [](size_t i) -> NodeId {
     //           return i == 0 ? cond : (i == 1 ? then_b : else_b);
     //       });
-    template <typename FillFn>
-    PersistentChildVector(size_type n, FillFn fill) {
-        if (n == 0) return;
+    template <typename FillFn> PersistentChildVector(size_type n, FillFn fill) {
+        if (n == 0)
+            return;
         size_ = n;
         data_ = make_storage(n);
         for (size_type i = 0; i < n; ++i) {
@@ -158,7 +161,8 @@ public:
     // "moved-from" vector with size > 0 but data() == nullptr — a
     // bug waiting to crash. We explicitly reset size_ on move.
     PersistentChildVector(PersistentChildVector&& other) noexcept
-        : data_(std::move(other.data_)), size_(other.size_) {
+        : data_(std::move(other.data_))
+        , size_(other.size_) {
         other.size_ = 0;
     }
     PersistentChildVector& operator=(PersistentChildVector&& other) noexcept {
@@ -173,9 +177,7 @@ public:
     // ── Capacity (const) ──────────────────────────────────────
     constexpr size_type size() const noexcept { return size_; }
     constexpr bool empty() const noexcept { return size_ == 0; }
-    constexpr const_pointer data() const noexcept {
-        return data_ ? data_->data.get() : nullptr;
-    }
+    constexpr const_pointer data() const noexcept { return data_ ? data_->data.get() : nullptr; }
     // ref-count of the underlying storage. Useful for tests
     // verifying COW semantics (a mutation should leave the
     // old storage with refcount > 1).
@@ -197,7 +199,8 @@ public:
         return data_->data[i];
     }
     const_reference at(size_type i) const {
-        if (i >= size_) throw std::out_of_range("PersistentChildVector::at");
+        if (i >= size_)
+            throw std::out_of_range("PersistentChildVector::at");
         return data_->data[i];
     }
     const_reference front() const { return data_->data[0]; }
@@ -207,12 +210,8 @@ public:
     // Safe for empty / default-constructed vectors: when data_
     // is null (no underlying Storage), begin() == end() ==
     // nullptr. The for-range loop on an empty PCV is a no-op.
-    const_iterator begin() const noexcept {
-        return data_ ? data_->data.get() : nullptr;
-    }
-    const_iterator end() const noexcept {
-        return data_ ? data_->data.get() + size_ : nullptr;
-    }
+    const_iterator begin() const noexcept { return data_ ? data_->data.get() : nullptr; }
+    const_iterator end() const noexcept { return data_ ? data_->data.get() + size_ : nullptr; }
     const_iterator cbegin() const noexcept { return begin(); }
     const_iterator cend() const noexcept { return end(); }
 
@@ -228,14 +227,13 @@ public:
     // storage is empty (no underlying buffer). The with_* methods
     // use this to skip the std::copy when the source is empty
     // (calling std::copy with a null source is UB).
-    const T* src_data() const noexcept {
-        return data_ ? data_->data.get() : nullptr;
-    }
+    const T* src_data() const noexcept { return data_ ? data_->data.get() : nullptr; }
 
     PersistentChildVector with_push_back(const T& v) const {
         auto out = make_storage_owned(size_ + 1);
         const T* src = src_data();
-        if (src) std::copy(src, src + size_, out->data.get());
+        if (src)
+            std::copy(src, src + size_, out->data.get());
         out->data[size_] = v;
         auto result = from_storage(out, size_ + 1);
         contract_assert(result.size() == size_ + 1);
@@ -245,7 +243,8 @@ public:
     PersistentChildVector with_push_back(T&& v) const {
         auto out = make_storage_owned(size_ + 1);
         const T* src = src_data();
-        if (src) std::move(src, src + size_, out->data.get());
+        if (src)
+            std::move(src, src + size_, out->data.get());
         out->data[size_] = std::move(v);
         auto result = from_storage(out, size_ + 1);
         contract_assert(result.size() == size_ + 1);
@@ -253,7 +252,8 @@ public:
     }
 
     PersistentChildVector with_insert(size_type pos, const T& v) const {
-        if (pos > size_) pos = size_;
+        if (pos > size_)
+            pos = size_;
         auto out = make_storage_owned(size_ + 1);
         const T* src = src_data();
         if (src) {
@@ -267,7 +267,8 @@ public:
     }
 
     PersistentChildVector with_erase(size_type pos) const {
-        if (pos >= size_) return *this;  // no-op
+        if (pos >= size_)
+            return *this; // no-op
         auto out = make_storage_owned(size_ - 1);
         const T* src = src_data();
         if (src) {
@@ -280,10 +281,12 @@ public:
     }
 
     PersistentChildVector with_set(size_type i, const T& v) const {
-        if (i >= size_) return *this;  // no-op
+        if (i >= size_)
+            return *this; // no-op
         auto out = make_storage_owned(size_);
         const T* src = src_data();
-        if (src) std::copy(src, src + size_, out->data.get());
+        if (src)
+            std::copy(src, src + size_, out->data.get());
         out->data[i] = v;
         auto result = from_storage(out, size_);
         contract_assert(result.size() == size_);
@@ -292,23 +295,20 @@ public:
 
     // ── Comparison ───────────────────────────────────────────
     bool operator==(const PersistentChildVector& other) const {
-        if (size_ != other.size_) return false;
-        if (size_ == 0) return true;  // both empty
-        return std::equal(data_->data.get(),
-                          data_->data.get() + size_,
-                          other.data_->data.get());
+        if (size_ != other.size_)
+            return false;
+        if (size_ == 0)
+            return true; // both empty
+        return std::equal(data_->data.get(), data_->data.get() + size_, other.data_->data.get());
     }
-    bool operator!=(const PersistentChildVector& other) const {
-        return !(*this == other);
-    }
+    bool operator!=(const PersistentChildVector& other) const { return !(*this == other); }
 
     // Issue #370: expose the SafePCVSpan<T> as a friend so it
     // can access the private Storage type + data_ member
     // needed to construct a lifetime-pinned view. (Without
     // this friend, SafePCVSpan would need to take its own
     // copy of Storage — doubling the alloc cost.)
-    template <typename U>
-    friend class SafePCVSpan;
+    template <typename U> friend class SafePCVSpan;
 
     // Issue #370: free function form of share_storage. Friend
     // access grants read of the private data_; SafePCVSpan
@@ -354,13 +354,15 @@ private:
         size_type size;
 
         Storage() noexcept = default;
-        Storage(size_type n) : data(std::make_unique<T[]>(n)), size(n) {}
+        Storage(size_type n)
+            : data(std::make_unique<T[]>(n))
+            , size(n) {}
     };
 
     using StoragePtr = std::shared_ptr<const Storage>;
 
     StoragePtr data_;
-    size_type size_ = 0;  // mirrored from data_->size for O(1) access
+    size_type size_ = 0; // mirrored from data_->size for O(1) access
 
     // Allocate a fresh shared storage with the given capacity.
     // The elements are uninitialized (the caller fills them).
@@ -387,8 +389,7 @@ private:
     // Convert a freshly-allocated StoragePtr + size to a
     // PersistentChildVector. The storage's data has been
     // written by the caller; the size is recorded.
-    static PersistentChildVector from_storage(StoragePtr s,
-                                              size_type n) {
+    static PersistentChildVector from_storage(StoragePtr s, size_type n) {
         PersistentChildVector out;
         out.data_ = std::move(s);
         out.size_ = n;
@@ -440,18 +441,23 @@ private:
 //  threads can hold independent SafePCVSpans of the same PCV
 //  without data races (the storage is immutable).
 // ─────────────────────────────────────────────────────────────
-template <typename T>
-class SafePCVSpan {
+template <typename T> class SafePCVSpan {
 public:
     SafePCVSpan() noexcept = default;
-    SafePCVSpan(std::span<const T> sp, std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep)
-        : span_(sp), keep_(std::move(keep)) {}
+    SafePCVSpan(std::span<const T> sp,
+                std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep)
+        : span_(sp)
+        , keep_(std::move(keep)) {}
 
     [[nodiscard]] std::span<const T> span() const noexcept { return span_; }
-    [[nodiscard]] typename PersistentChildVector<T>::size_type size() const noexcept { return span_.size(); }
+    [[nodiscard]] typename PersistentChildVector<T>::size_type size() const noexcept {
+        return span_.size();
+    }
     [[nodiscard]] bool empty() const noexcept { return span_.empty(); }
     [[nodiscard]] const T* data() const noexcept { return span_.data(); }
-    [[nodiscard]] const T& operator[](typename PersistentChildVector<T>::size_type i) const { return span_[i]; }
+    [[nodiscard]] const T& operator[](typename PersistentChildVector<T>::size_type i) const {
+        return span_[i];
+    }
 
     // Refcount of the kept storage. Mostly for tests; useful
     // diagnostic for AI agents to verify their hold doesn't
@@ -463,6 +469,6 @@ private:
     std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep_;
 };
 
-}  // namespace aura::ast
+} // namespace aura::ast
 
-#endif  // AURA_CORE_PERSISTENT_CHILD_VECTOR_HH
+#endif // AURA_CORE_PERSISTENT_CHILD_VECTOR_HH

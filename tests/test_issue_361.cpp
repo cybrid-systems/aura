@@ -34,8 +34,8 @@
 #include "serve/scheduler.h"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -51,12 +51,11 @@ namespace aura_issue_361_detail {
 
 // Poll an atomic counter until it reaches `expected` or
 // `timeout` elapses. Returns true on success.
-template <typename A>
-bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 15000) {
-    auto deadline = std::chrono::steady_clock::now() +
-                    std::chrono::milliseconds(timeout_ms);
+template <typename A> bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 15000) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (counter.load() < expected) {
-        if (std::chrono::steady_clock::now() >= deadline) return false;
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return true;
@@ -67,7 +66,8 @@ bool wait_for_atomic(const A& counter, int expected, int timeout_ms = 15000) {
 // ═══════════════════════════════════════════════════════════
 
 bool test_concurrent_mutate_invoke_stress() {
-    std::println("\n--- AC1: concurrent mutate + closure invocation (no UAF, no stale bindings) ---");
+    std::println(
+        "\n--- AC1: concurrent mutate + closure invocation (no UAF, no stale bindings) ---");
     // Each fiber defines a closure that captures an EnvFrame,
     // mutates the captured binding, then invokes the closure.
     // The closure body materializes the captured frame via
@@ -114,8 +114,7 @@ bool test_concurrent_mutate_invoke_stress() {
     CHECK(waited, "all 32 fibers completed (no deadlock)");
     int ok_count = ok.load();
     std::string ok_msg = "all fibers saw consistent capture (no stale binding, no UAF): " +
-                         std::to_string(ok_count) + "/" +
-                         std::to_string(NUM_FIBERS);
+                         std::to_string(ok_count) + "/" + std::to_string(NUM_FIBERS);
     CHECK(ok_count == NUM_FIBERS, ok_msg.c_str());
     return true;
 }
@@ -174,8 +173,7 @@ bool test_mutation_allocation_storm() {
             // Each alloc creates a closure (which allocates
             // a new EnvFrame via eval_data_as_code).
             for (int a = 0; a < ALLOCS_PER_ALLOCATOR; ++a) {
-                std::string src = "(define (g" + std::to_string(a) +
-                                   " x) (* x 2))";
+                std::string src = "(define (g" + std::to_string(a) + " x) (* x 2))";
                 cs.eval(src);
             }
             completed.fetch_add(1);
@@ -189,9 +187,8 @@ bool test_mutation_allocation_storm() {
 
     CHECK(waited, "all mutator + allocator fibers completed (no deadlock)");
     int ok_count = ok_mutators.load();
-    std::string ok_msg = "all mutator fibers completed without UAF: " +
-                         std::to_string(ok_count) + "/" +
-                         std::to_string(MUTATORS);
+    std::string ok_msg = "all mutator fibers completed without UAF: " + std::to_string(ok_count) +
+                         "/" + std::to_string(MUTATORS);
     CHECK(ok_count == MUTATORS, ok_msg.c_str());
     return true;
 }
@@ -212,6 +209,8 @@ int run_tests() {
     std::println("\n════════════════════════════════════════");
     return RUN_ALL_TESTS();
 }
-}  // namespace aura_issue_361_detail
+} // namespace aura_issue_361_detail
 
-int aura_issue_361_run() { return aura_issue_361_detail::run_tests(); }
+int aura_issue_361_run() {
+    return aura_issue_361_detail::run_tests();
+}

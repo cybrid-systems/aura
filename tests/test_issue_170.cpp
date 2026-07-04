@@ -21,7 +21,7 @@
 //     9. Counter can be reset (store 0) without affecting others
 
 #include "aura_jit.h"
-#include "test_harness.hpp"   // Provides CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
+#include "test_harness.hpp" // Provides CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
 
 // Stub: the full definition lives in service.ixx (under the
 // AURA_HAVE_LLVM guard). The test_issue_170 target only links
@@ -31,14 +31,16 @@
 // tests below).
 
 import std;
-extern "C" std::int64_t aura_jit_prim_dispatch(
-    std::int64_t /*prim_id*/, std::int64_t* /*args*/, std::int32_t /*argc*/) {
+extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t /*prim_id*/, std::int64_t* /*args*/,
+                                               std::int32_t /*argc*/) {
     return 0;
 }
 
 
-
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 // ── Test 1: AOT entry points exist and don't crash on empty state ──
 bool test_aot_empty_state() {
@@ -118,7 +120,8 @@ bool test_unhandled_opcode_counter_independent() {
     CHECK(m.unhandled_opcode_count.load() == 81, "unhandled_opcode_count bumped");
     CHECK(m.compile_count.load() == 10, "compile_count unchanged after unhandled_opcode bump");
     CHECK(m.hot_swap_count.load() == 20, "hot_swap_count unchanged after unhandled_opcode bump");
-    CHECK(m.verify_fail_count.load() == 30, "verify_fail_count unchanged after unhandled_opcode bump");
+    CHECK(m.verify_fail_count.load() == 30,
+          "verify_fail_count unchanged after unhandled_opcode bump");
     CHECK(m.add_module_fail_count.load() == 40, "add_module_fail_count unchanged");
     CHECK(m.cached_function_count.load() == 50, "cached_function_count unchanged");
     CHECK(m.inlined_prim_count.load() == 60, "inlined_prim_count unchanged");
@@ -139,16 +142,15 @@ bool test_format_includes_unhandled() {
     // 'unhandled_opcode=123' for this test value.
     std::string s(buf);
     auto pos = s.find("unhandled_opcode=");
-    CHECK(pos != std::string::npos,
-          "format() output contains 'unhandled_opcode=' label");
+    CHECK(pos != std::string::npos, "format() output contains 'unhandled_opcode=' label");
     if (pos != std::string::npos) {
         // Extract the value after the label
         auto val_str = s.substr(pos + std::string("unhandled_opcode=").size());
         // The value ends at the next space or end of string
         auto end = val_str.find(' ');
-        if (end != std::string::npos) val_str = val_str.substr(0, end);
-        CHECK(val_str == "123",
-              "format() output shows unhandled_opcode=123 (the stored value)");
+        if (end != std::string::npos)
+            val_str = val_str.substr(0, end);
+        CHECK(val_str == "123", "format() output shows unhandled_opcode=123 (the stored value)");
     }
     return true;
 }
@@ -169,7 +171,8 @@ bool test_unhandled_opcode_concurrent() {
                 m.unhandled_opcode_count.fetch_add(1, std::memory_order_relaxed);
         });
     }
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
 
     auto expected = static_cast<std::uint64_t>(kThreads * kPerThread);
     CHECK(m.unhandled_opcode_count.load() == expected,
@@ -184,11 +187,11 @@ bool test_unhandled_opcode_concurrent() {
 // symbols; we declare them here so we can call them directly and
 // verify the LIFO semantics + empty-stack handling.
 extern "C" {
-    void aura_exception_push(std::uint64_t handler_block, std::uint64_t payload_slot);
-    void aura_exception_pop();
-    std::uint64_t aura_exception_top_handler();
-    std::uint64_t aura_exception_top_payload();
-    std::uint64_t aura_exception_depth();
+void aura_exception_push(std::uint64_t handler_block, std::uint64_t payload_slot);
+void aura_exception_pop();
+std::uint64_t aura_exception_top_handler();
+std::uint64_t aura_exception_top_payload();
+std::uint64_t aura_exception_depth();
 }
 bool test_exception_stack_push_pop() {
     PRINTLN("\n--- Test 8: exception stack push/pop semantics ---");
@@ -259,16 +262,15 @@ bool test_exception_stack_nested() {
 // this file now uses the harness's versions.
 // (Include moved to the top of the file so CHECK / g_passed /
 // g_failed are visible at the use sites above.)
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 bool test_spec_jit_deopt_signal() {
     PRINTLN("\n--- Test 11: spec_jit_controller deopt signal ---");
     aura::jit::AuraJIT jit;
     aura::compiler::shape::SpecJITController ctrl(jit);
 
     // Initial: no unhandled opcodes → should NOT deopt
-    CHECK(ctrl.unhandled_opcode_count() == 0,
-          "spec controller sees 0 unhandled opcodes initially");
+    CHECK(ctrl.unhandled_opcode_count() == 0, "spec controller sees 0 unhandled opcodes initially");
     CHECK(!ctrl.should_deopt_specialization(),
           "should_deopt_specialization() returns false initially");
 
@@ -282,11 +284,9 @@ bool test_spec_jit_deopt_signal() {
           "should_deopt_specialization() returns true after unhandled opcode");
 
     // compile_specialized should now return nullptr (deopt)
-    uint8_t shape_map[] = {1, 1, 0, 0};  // Int, Int, Dynamic, Dynamic
-    auto fn = ctrl.compile_specialized("test_fn", shape_map, 4,
-                                       nullptr, 2, 4);
-    CHECK(fn == nullptr,
-          "compile_specialized returns nullptr when deopt signal is set");
+    uint8_t shape_map[] = {1, 1, 0, 0}; // Int, Int, Dynamic, Dynamic
+    auto fn = ctrl.compile_specialized("test_fn", shape_map, 4, nullptr, 2, 4);
+    CHECK(fn == nullptr, "compile_specialized returns nullptr when deopt signal is set");
     return true;
 }
 
@@ -303,8 +303,7 @@ bool test_spec_jit_deopt_reset() {
 
     // Reset
     jit.mutable_metrics().unhandled_opcode_count.store(0, std::memory_order_relaxed);
-    CHECK(!ctrl.should_deopt_specialization(),
-          "deopt cleared when counter reset to 0");
+    CHECK(!ctrl.should_deopt_specialization(), "deopt cleared when counter reset to 0");
     return true;
 }
 
@@ -321,8 +320,7 @@ bool test_intrinsic_counter_exposed() {
     auto initial = m.intrinsic_count.load(std::memory_order_relaxed);
     CHECK(initial == 0, "intrinsic_count starts at 0 on fresh JIT");
     m.intrinsic_count.store(7, std::memory_order_relaxed);
-    CHECK(m.intrinsic_count.load() == 7,
-          "intrinsic_count is mutable via store/load");
+    CHECK(m.intrinsic_count.load() == 7, "intrinsic_count is mutable via store/load");
     return true;
 }
 
@@ -336,14 +334,13 @@ bool test_format_includes_intrinsics() {
     m.format(buf, sizeof(buf));
     std::string s(buf);
     auto pos = s.find("intrinsics=");
-    CHECK(pos != std::string::npos,
-          "format() output contains 'intrinsics=' label");
+    CHECK(pos != std::string::npos, "format() output contains 'intrinsics=' label");
     if (pos != std::string::npos) {
         auto val_str = s.substr(pos + std::string("intrinsics=").size());
         auto end = val_str.find(' ');
-        if (end != std::string::npos) val_str = val_str.substr(0, end);
-        CHECK(val_str == "42",
-              "format() output shows intrinsics=42 (the stored value)");
+        if (end != std::string::npos)
+            val_str = val_str.substr(0, end);
+        CHECK(val_str == "42", "format() output shows intrinsics=42 (the stored value)");
     }
     return true;
 }
@@ -360,10 +357,8 @@ bool test_per_function_unhandled_count() {
     aura::compiler::shape::SpecJITController ctrl(jit);
 
     // Initial: no function has been compiled, so all counts are 0
-    CHECK(jit.unhandled_opcode_count_for_function("foo") == 0,
-          "unseen function reports count=0");
-    CHECK(!ctrl.should_deopt_specialization_for("foo"),
-          "unseen function: no deopt");
+    CHECK(jit.unhandled_opcode_count_for_function("foo") == 0, "unseen function reports count=0");
+    CHECK(!ctrl.should_deopt_specialization_for("foo"), "unseen function: no deopt");
     CHECK(jit.unhandled_opcode_count_for_function(nullptr) == 0,
           "nullptr name: count=0 (defensive)");
 
@@ -393,14 +388,14 @@ bool test_issue_170_phase1_item2_enum_values() {
     // They MUST match the JIT's Op enum (aura_jit.cpp) or the
     // lower() switch will mis-dispatch and the
     // unhandled_opcode_count will increment spuriously.
-    constexpr std::uint32_t IR_RAISE     = 37;
-    constexpr std::uint32_t IR_ISERROR   = 38;
-    constexpr std::uint32_t IR_TRYBEGIN  = 39;
-    constexpr std::uint32_t IR_TRYEND    = 40;
-    CHECK(IR_RAISE == 37,     "IR Raise value documented as 37");
-    CHECK(IR_ISERROR == 38,   "IR IsError value documented as 38");
-    CHECK(IR_TRYBEGIN == 39,  "IR TryBegin value documented as 39");
-    CHECK(IR_TRYEND == 40,    "IR TryEnd value documented as 40");
+    constexpr std::uint32_t IR_RAISE = 37;
+    constexpr std::uint32_t IR_ISERROR = 38;
+    constexpr std::uint32_t IR_TRYBEGIN = 39;
+    constexpr std::uint32_t IR_TRYEND = 40;
+    CHECK(IR_RAISE == 37, "IR Raise value documented as 37");
+    CHECK(IR_ISERROR == 38, "IR IsError value documented as 38");
+    CHECK(IR_TRYBEGIN == 39, "IR TryBegin value documented as 39");
+    CHECK(IR_TRYEND == 40, "IR TryEnd value documented as 40");
     // If these drift, the JIT switch won't match the IR's actual
     // opcode values, and we'll silently fall to the default branch.
     // The unhandled_opcode_count is the runtime observability hook

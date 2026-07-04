@@ -54,15 +54,16 @@
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::println(std::cerr, "  FAIL: {} (line {})", (msg), __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", (msg)); \
-        ++g_passed; \
-    } \
-} while(0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            std::println(std::cerr, "  FAIL: {} (line {})", (msg), __LINE__);                      \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", (msg));                                                     \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ── Test 1: format() includes all 12 documented fields ───────
 //
@@ -96,10 +97,9 @@ bool test_format_includes_all_fields() {
     // 12 documented keys are present (any value would do — the
     // key surface is what (query:jit-stats) parses).
     static const char* kKeys[] = {
-        "compiles",       "avg_us",       "hot_swaps",
-        "cached_fns",     "inlined_prims", "slow_prims",
-        "prim_calls",     "prim_avg_ns",  "verify_fail",
-        "add_mod_fail",   "unhandled_opcode", "intrinsics",
+        "compiles",      "avg_us",       "hot_swaps",        "cached_fns",
+        "inlined_prims", "slow_prims",   "prim_calls",       "prim_avg_ns",
+        "verify_fail",   "add_mod_fail", "unhandled_opcode", "intrinsics",
     };
     int found = 0;
     for (auto* k : kKeys) {
@@ -136,7 +136,8 @@ bool test_unhandled_opcode_atomic() {
                 m.unhandled_opcode_count.fetch_add(1, std::memory_order_relaxed);
         });
     }
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
 
     auto expected = static_cast<std::uint64_t>(kThreads * kPerThread);
     CHECK(m.unhandled_opcode_count.load() == expected,
@@ -226,7 +227,8 @@ bool test_format_under_concurrent_bumps() {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     stop.store(true, std::memory_order_relaxed);
-    for (auto& t : inc_threads) t.join();
+    for (auto& t : inc_threads)
+        t.join();
     reader.join();
 
     CHECK(reads_ok == kReads, "all format() calls produced 'jit:' prefix");

@@ -32,8 +32,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -44,7 +44,6 @@ import aura.diag;
 import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_139_detail {
@@ -73,7 +72,8 @@ static std::string run_str(aura::compiler::CompilerService& cs, std::string_view
     }
     auto idx = aura::compiler::types::as_string_idx(*r);
     const auto& heap = cs.evaluator().string_heap();
-    if (idx >= heap.size()) return "";
+    if (idx >= heap.size())
+        return "";
     return std::string(heap[idx]);
 }
 
@@ -97,14 +97,12 @@ bool test_rename_symbol_all_occurrences() {
     // because workspace defines are not in the eval env. We use
     // typecheck-current as a proxy for "the workspace is still
     // valid after rename".
-    std::string status = run_str(cs,
-        "(set-code \"(define (f x) (+ x x))\") "
-        "(begin "
-        "  (mutate:rename-symbol \"x\" \"y\" \"rename test\") "
-        "  (typecheck-current))");
+    std::string status = run_str(cs, "(set-code \"(define (f x) (+ x x))\") "
+                                     "(begin "
+                                     "  (mutate:rename-symbol \"x\" \"y\" \"rename test\") "
+                                     "  (typecheck-current))");
     bool ok = status.find("no errors") != std::string::npos;
-    CHECK(ok, "after rename x→y, typecheck-current passes (status: " +
-          status.substr(0, 60) + ")");
+    CHECK(ok, "after rename x→y, typecheck-current passes (status: " + status.substr(0, 60) + ")");
     return true;
 }
 
@@ -114,11 +112,10 @@ bool test_rename_symbol_creates_new_binding() {
     std::println("\n--- Test 1.2: rename-symbol cross-binding verification ---");
     aura::compiler::CompilerService cs;
     // Rename f → g; the body should still work
-    int64_t r = run_int(cs,
-        "(set-code \"(define (f x) (+ x 1))(f 5)\") "
-        "(mutate:rename-symbol \"f\" \"g\" \"rename test\") "
-        "(eval-current) "
-        "(g 5)");
+    int64_t r = run_int(cs, "(set-code \"(define (f x) (+ x 1))(f 5)\") "
+                            "(mutate:rename-symbol \"f\" \"g\" \"rename test\") "
+                            "(eval-current) "
+                            "(g 5)");
     CHECK(r == 6, "after rename f→g, (g 5) = 6 (got " + std::to_string(r) + ")");
     return true;
 }
@@ -131,18 +128,16 @@ bool test_rename_symbol_preserves_shadow() {
     // The inner `x` shadows the outer `x`. Renaming outer `x` should
     // not touch the inner `x`. We use a function where outer and
     // inner are both used to verify they remain distinct.
-    int64_t r = run_int(cs,
-        "(set-code "
-        "\""
-        "(define (outer x) (define (inner x) (* x 2)) (+ x (inner x)))"
-        "\") "
-        "(mutate:rename-symbol \"outer\" \"outer2\" \"test\") "
-        "(eval-current) "
-        "(outer2 5)");
+    int64_t r = run_int(cs, "(set-code "
+                            "\""
+                            "(define (outer x) (define (inner x) (* x 2)) (+ x (inner x)))"
+                            "\") "
+                            "(mutate:rename-symbol \"outer\" \"outer2\" \"test\") "
+                            "(eval-current) "
+                            "(outer2 5)");
     // After rename, outer → outer2, but inner's x is unchanged.
     // (outer2 5) should still compute (5 + (5*2)) = 15.
-    CHECK(r == 15, "after rename outer→outer2, (outer2 5) = 15 (got " +
-          std::to_string(r) + ")");
+    CHECK(r == 15, "after rename outer→outer2, (outer2 5) = 15 (got " + std::to_string(r) + ")");
     return true;
 }
 
@@ -155,16 +150,15 @@ bool test_inline_call_basic() {
     // (define v (sq 5))  -> v=25
     // After inline-call on (sq 5), the call site becomes (* 5 5).
     // The result should still be 25.
-    int64_t r = run_int(cs,
-        "(set-code \"(define (sq x) (* x x))(define v (sq 5))\") "
-        // Inline the call to sq. Find Call nodes; the (sq 5) call
-        // site is the second one (after the (* x x) in sq's body).
-        "(begin "
-        "  (define call-ids (query:node-type \"Call\")) "
-        "  (define target (list-ref call-ids 1)) "
-        "  (mutate:inline-call target \"inline test\") "
-        "  (eval-current) "
-        "  v)");
+    int64_t r = run_int(cs, "(set-code \"(define (sq x) (* x x))(define v (sq 5))\") "
+                            // Inline the call to sq. Find Call nodes; the (sq 5) call
+                            // site is the second one (after the (* x x) in sq's body).
+                            "(begin "
+                            "  (define call-ids (query:node-type \"Call\")) "
+                            "  (define target (list-ref call-ids 1)) "
+                            "  (mutate:inline-call target \"inline test\") "
+                            "  (eval-current) "
+                            "  v)");
     CHECK(r == 25, "after inline-call, v=25 (got " + std::to_string(r) + ")");
     return true;
 }
@@ -177,16 +171,14 @@ bool test_refactor_extract_basic() {
     // (define (f x) (+ (* x 2) 1)) has 1 Define.
     // After extract, the workspace has 2 Defines: the original f
     // and the extracted `doubled` function. Verify the count.
-    int64_t after = run_int(cs,
-        "(set-code \"(define (f x) (+ (* x 2) 1))\") "
-        "(begin "
-        "  (define call-id (car (query:node-type \"Call\"))) "
-        "  (mutate:refactor/extract call-id \"doubled\") "
-        "  (length (query:node-type \"Define\")))");
+    int64_t after = run_int(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
+                                "(begin "
+                                "  (define call-id (car (query:node-type \"Call\"))) "
+                                "  (mutate:refactor/extract call-id \"doubled\") "
+                                "  (length (query:node-type \"Define\")))");
     std::println("    [Defines after extract: {}]", after);
-    CHECK(after == 2,
-          "after refactor/extract: 2 Defines (original + extracted, got " +
-          std::to_string(after) + ")");
+    CHECK(after == 2, "after refactor/extract: 2 Defines (original + extracted, got " +
+                          std::to_string(after) + ")");
     return true;
 }
 
@@ -199,16 +191,15 @@ bool test_move_node_basic() {
     // (begin (define a 1) (define b 2)) — move `(define b 2)` to before `(define a 1)`.
     // After move, the workspace is structurally reorganized.
     // The result of eval-current should still produce both bindings.
-    int64_t r = run_int(cs,
-        "(set-code \"(begin (define a 1) (define b 2))\") "
-        // Count Begin nodes before move
-        "(begin "
-        "  (mutate:move-node (query:find \"b\") "
-        "                       (query:find \"a\") "
-        "                       0 "
-        "                       \"move b before a\") "
-        "  (eval-current) "
-        "  (+ a b))");
+    int64_t r = run_int(cs, "(set-code \"(begin (define a 1) (define b 2))\") "
+                            // Count Begin nodes before move
+                            "(begin "
+                            "  (mutate:move-node (query:find \"b\") "
+                            "                       (query:find \"a\") "
+                            "                       0 "
+                            "                       \"move b before a\") "
+                            "  (eval-current) "
+                            "  (+ a b))");
     // After move, a=1 and b=2 still, (+ 1 2) = 3.
     CHECK(r == 3, "after move-node, (+ a b) = 3 (got " + std::to_string(r) + ")");
     return true;
@@ -223,15 +214,13 @@ bool test_extract_function_basic() {
     // Extract the (* x 2) call body — mutate:extract-function
     // detects free variables and creates a function with them
     // as parameters.
-    int64_t r = run_int(cs,
-        "(set-code \"(define (f x) (+ (* x 2) 1))\") "
-        "(begin "
-        "  (define call-id (car (query:node-type \"Call\"))) "
-        "  (mutate:extract-function call-id \"double-of\") "
-        "  (eval-current) "
-        "  (f 5))");
-    CHECK(r == 11, "after extract-function, (f 5) still = 11 (got " +
-          std::to_string(r) + ")");
+    int64_t r = run_int(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
+                            "(begin "
+                            "  (define call-id (car (query:node-type \"Call\"))) "
+                            "  (mutate:extract-function call-id \"double-of\") "
+                            "  (eval-current) "
+                            "  (f 5))");
+    CHECK(r == 11, "after extract-function, (f 5) still = 11 (got " + std::to_string(r) + ")");
     return true;
 }
 
@@ -243,18 +232,18 @@ bool test_rename_hygiene() {
     // A classic capture test: caller has a tmp, the macro/template
     // body has its own tmp. Renaming the macro's tmp should not
     // affect the caller's tmp.
-    int64_t r = run_int(cs,
-        "(set-code "
-        "\""
-        "(define-hygienic-macro (swap! a b) (let ((tmp a)) (set! a b) (set! b tmp)))"
-        "(define x 1) (define y 2) (define tmp 99)"
-        "\") "
-        "(eval-current) "
-        "(begin (swap! x y) tmp)");
+    int64_t r =
+        run_int(cs, "(set-code "
+                    "\""
+                    "(define-hygienic-macro (swap! a b) (let ((tmp a)) (set! a b) (set! b tmp)))"
+                    "(define x 1) (define y 2) (define tmp 99)"
+                    "\") "
+                    "(eval-current) "
+                    "(begin (swap! x y) tmp)");
     // After (swap! x y), x=2, y=1. The caller's tmp should be
     // unchanged (hygienic macro).
-    CHECK(r == 99, "caller's tmp is NOT captured by hygienic swap! (got " +
-          std::to_string(r) + ")");
+    CHECK(r == 99,
+          "caller's tmp is NOT captured by hygienic swap! (got " + std::to_string(r) + ")");
     return true;
 }
 
@@ -280,8 +269,8 @@ bool test_stress_rename_cycles() {
     code2 += "(typecheck-current))";
     std::string status = run_str(cs, code2);
     bool ok = status.find("no errors") != std::string::npos;
-    CHECK(ok, "after 50 rename cycles, typecheck-current passes (status: " +
-          status.substr(0, 60) + ")");
+    CHECK(ok, "after 50 rename cycles, typecheck-current passes (status: " + status.substr(0, 60) +
+                  ")");
     return true;
 }
 
@@ -292,15 +281,15 @@ bool test_mixed_refactors() {
     aura::compiler::CompilerService cs;
     // Combine rename + inline in a single workspace. The result
     // should still produce a valid workspace (typecheck passes).
-    std::string status = run_str(cs,
-        "(set-code \"(define (sq x) (* x x))(define v (sq 5))\") "
-        "(begin "
-        "  (mutate:rename-symbol \"sq\" \"square\" \"test\") "
-        "  (mutate:inline-call (list-ref (query:node-type \"Call\") 1) \"test\") "
-        "  (typecheck-current))");
+    std::string status =
+        run_str(cs, "(set-code \"(define (sq x) (* x x))(define v (sq 5))\") "
+                    "(begin "
+                    "  (mutate:rename-symbol \"sq\" \"square\" \"test\") "
+                    "  (mutate:inline-call (list-ref (query:node-type \"Call\") 1) \"test\") "
+                    "  (typecheck-current))");
     bool ok = status.find("no errors") != std::string::npos;
     CHECK(ok, "after rename+inline, typecheck-current still passes (status: " +
-          status.substr(0, 60) + ")");
+                  status.substr(0, 60) + ")");
     return true;
 }
 
@@ -316,8 +305,7 @@ bool test_splice_wrap() {
                        "  (typecheck-current))";
     std::string status = run_str(cs, code);
     bool ok = status.find("no errors") != std::string::npos;
-    CHECK(ok, "after mutate:wrap, typecheck-current passes (status: " +
-          status.substr(0, 60) + ")");
+    CHECK(ok, "after mutate:wrap, typecheck-current passes (status: " + status.substr(0, 60) + ")");
     return true;
 }
 
@@ -337,8 +325,8 @@ bool test_rename_type_correctness() {
                        "  (typecheck-current))";
     std::string status = run_str(cs, code);
     bool ok = status.find("no errors") != std::string::npos;
-    CHECK(ok, "after rename add1→increment, typecheck passes (status: " +
-          status.substr(0, 60) + ")");
+    CHECK(ok,
+          "after rename add1→increment, typecheck passes (status: " + status.substr(0, 60) + ")");
     return true;
 }
 
@@ -353,8 +341,7 @@ bool test_extract_type_correctness() {
                        "  (typecheck-current))";
     std::string status = run_str(cs, code);
     bool ok = status.find("no errors") != std::string::npos;
-    CHECK(ok, "after extract-function, typecheck passes (status: " +
-          status.substr(0, 60) + ")");
+    CHECK(ok, "after extract-function, typecheck passes (status: " + status.substr(0, 60) + ")");
     return true;
 }
 
@@ -384,12 +371,12 @@ int run_tests() {
     test_rename_type_correctness();
     test_extract_type_correctness();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_139_detail
+} // namespace aura_issue_139_detail
 
-int aura_issue_139_run() { return aura_issue_139_detail::run_tests(); }
-
+int aura_issue_139_run() {
+    return aura_issue_139_detail::run_tests();
+}

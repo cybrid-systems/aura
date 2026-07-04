@@ -67,24 +67,20 @@ bool test_panic_checkpoint_lifecycle_counters() {
     const auto r0 = cs.evaluator().get_panic_checkpoint_restore_count();
     const auto c0 = cs.evaluator().get_panic_checkpoint_commit_count();
     const auto rs0 = cs.evaluator().get_rollback_success_on_panic();
-    std::println("  baseline: save={} restore={} commit={} rollback_success={}",
-                 s0, r0, c0, rs0);
+    std::println("  baseline: save={} restore={} commit={} rollback_success={}", s0, r0, c0, rs0);
     // Trigger a (panic-checkpoint) to bump save.
     auto r = cs.eval("(panic-checkpoint)");
-    CHECK(r.has_value() && aura::compiler::types::is_bool(*r) &&
-              aura::compiler::types::as_bool(*r),
+    CHECK(r.has_value() && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r),
           "(panic-checkpoint) succeeded");
     const auto s1 = cs.evaluator().get_panic_checkpoint_save_count();
     std::println("  after save: save={} -> {}", s0, s1);
     CHECK(s1 > s0, "panic_checkpoint_save_count bumped after (panic-checkpoint)");
     // Trigger a (panic-restore) to bump restore + rollback_success.
     auto rr = cs.eval("(panic-restore)");
-    CHECK(rr.has_value() && aura::compiler::types::is_bool(*rr),
-          "(panic-restore) succeeded");
+    CHECK(rr.has_value() && aura::compiler::types::is_bool(*rr), "(panic-restore) succeeded");
     const auto r1 = cs.evaluator().get_panic_checkpoint_restore_count();
     const auto rs1 = cs.evaluator().get_rollback_success_on_panic();
-    std::println("  after restore: restore={} -> {} rollback_success={} -> {}",
-                 r0, r1, rs0, rs1);
+    std::println("  after restore: restore={} -> {} rollback_success={} -> {}", r0, r1, rs0, rs1);
     CHECK(r1 > r0, "panic_checkpoint_restore_count bumped after (panic-restore)");
     CHECK(rs1 > rs0, "rollback_success_on_panic bumped after successful restore");
     return true;
@@ -100,19 +96,16 @@ bool test_query_panic_checkpoint_lifecycle_stats() {
     // Trigger a few saves + restores.
     for (int i = 0; i < 3; ++i) {
         (void)cs.eval("(panic-checkpoint)");
-        (void)cs.eval("(mutate:replace-value (define a " +
-            std::to_string(i) + ") (define a " +
-            std::to_string(i) + "))");
+        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
+                      std::to_string(i) + "))");
     }
     auto r = cs.eval("(query:panic-checkpoint-lifecycle-stats)");
     CHECK(r.has_value(), "(query:panic-checkpoint-lifecycle-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:panic-checkpoint-lifecycle-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:panic-checkpoint-lifecycle-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:panic-checkpoint-lifecycle-stats = {}", v);
-        CHECK(v > 0,
-              "(query:panic-checkpoint-lifecycle-stats) > 0 after saves + mutates");
+        CHECK(v > 0, "(query:panic-checkpoint-lifecycle-stats) > 0 after saves + mutates");
     }
     return true;
 }
@@ -131,22 +124,18 @@ bool test_nested_guard_basic() {
             // Both Guards active — verify depth C-linkage
             // shim returns >= 1.
             const auto depth = aura_evaluator_mutation_boundary_depth();
-            CHECK(depth >= 1,
-                  "aura_evaluator_mutation_boundary_depth >= 1 inside nested Guard");
+            CHECK(depth >= 1, "aura_evaluator_mutation_boundary_depth >= 1 inside nested Guard");
             (void)inner_ok;
         }
         // After inner exits, only outer is active.
-        const auto depth_after_inner =
-            aura_evaluator_mutation_boundary_depth();
-        CHECK(depth_after_inner >= 1,
-              "depth >= 1 still (outer Guard active after inner exit)");
+        const auto depth_after_inner = aura_evaluator_mutation_boundary_depth();
+        CHECK(depth_after_inner >= 1, "depth >= 1 still (outer Guard active after inner exit)");
     }
     // After outer exits, depth should be 0.
     const auto depth_final = aura_evaluator_mutation_boundary_depth();
     CHECK(depth_final == 0, "depth == 0 after all Guards exit");
     const auto v1 = ev.defuse_version_for_test();
-    std::println("  defuse_version_: {} -> {} depth_final: {}",
-                 v0, v1, depth_final);
+    std::println("  defuse_version_: {} -> {} depth_final: {}", v0, v1, depth_final);
     CHECK(v1 > v0, "defuse_version_ bumped after nested Guard");
     return true;
 }
@@ -182,13 +171,12 @@ bool test_panic_restore_lifecycle() {
     (void)cs.eval("(panic-checkpoint)");
     (void)cs.eval("(mutate:replace-value (define x 99) (define x 99))");
     auto rr = cs.eval("(panic-restore)");
-    CHECK(rr.has_value() && aura::compiler::types::is_bool(*rr),
-          "(panic-restore) returned");
+    CHECK(rr.has_value() && aura::compiler::types::is_bool(*rr), "(panic-restore) returned");
     const auto s1 = cs.evaluator().get_panic_checkpoint_save_count();
     const auto r1 = cs.evaluator().get_panic_checkpoint_restore_count();
     const auto rs1 = cs.evaluator().get_rollback_success_on_panic();
-    std::println("  save: {} -> {} restore: {} -> {} rollback_success: {} -> {}",
-                 s0, s1, r0, r1, rs0, rs1);
+    std::println("  save: {} -> {} restore: {} -> {} rollback_success: {} -> {}", s0, s1, r0, r1,
+                 rs0, rs1);
     CHECK(s1 > s0, "save_count bumped");
     CHECK(r1 > r0, "restore_count bumped");
     CHECK(rs1 > rs0, "rollback_success bumped on successful restore");
@@ -211,8 +199,7 @@ bool test_panic_commit_lifecycle() {
     const auto s1 = ev.get_panic_checkpoint_save_count();
     const auto c1 = ev.get_panic_checkpoint_commit_count();
     const auto r1 = ev.get_panic_checkpoint_restore_count();
-    std::println("  save: {} -> {} commit: {} -> {} restore: {} -> {}",
-                 s0, s1, c0, c1, r0, r1);
+    std::println("  save: {} -> {} commit: {} -> {} restore: {} -> {}", s0, s1, c0, c1, r0, r1);
     CHECK(s1 == s0 + 2, "save_count bumped by 2");
     CHECK(c1 == c0 + 1, "commit_count bumped by 1");
     CHECK(r1 == r0, "restore_count unchanged (commit path doesn't restore)");
@@ -235,14 +222,16 @@ bool test_per_fiber_depth_probe() {
                 bool ok = true;
                 Evaluator::MutationBoundaryGuard guard(ev, &ok);
                 const auto d = aura_evaluator_mutation_boundary_depth();
-                if (d > 0) depth_nonzero_count.fetch_add(1);
+                if (d > 0)
+                    depth_nonzero_count.fetch_add(1);
             }
             // After guard exit, depth should be 0.
             const auto d_after = aura_evaluator_mutation_boundary_depth();
             (void)d_after;
         });
     }
-    for (auto& th : threads) th.join();
+    for (auto& th : threads)
+        th.join();
     std::println("  depth_nonzero_count: {}/{}", depth_nonzero_count.load(), k_threads);
     CHECK(depth_nonzero_count.load() == k_threads,
           "all 4 threads observed depth > 0 inside their own Guard "
@@ -252,8 +241,7 @@ bool test_per_fiber_depth_probe() {
 
 // ── AC8: 500 iters nested mutate + random panic fuzz ─────
 bool test_nested_panic_fuzz() {
-    std::println("\n--- AC8: {} iters nested mutate + random panic fuzz ---",
-                 k_fuzz_iters());
+    std::println("\n--- AC8: {} iters nested mutate + random panic fuzz ---", k_fuzz_iters());
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
     (void)cs.eval("(eval-current)");
@@ -265,9 +253,8 @@ bool test_nested_panic_fuzz() {
     const auto s0 = cs.evaluator().get_panic_checkpoint_save_count();
     const auto r0 = cs.evaluator().get_panic_checkpoint_restore_count();
     for (int i = 0; i < k_fuzz_iters(); ++i) {
-        std::string code = std::string("(define ") +
-            (i & 1 ? "a" : "b") + " " +
-            std::to_string(val_dist(rng)) + ")";
+        std::string code = std::string("(define ") + (i & 1 ? "a" : "b") + " " +
+                           std::to_string(val_dist(rng)) + ")";
         (void)cs.eval(code);
         if (i == next_panic) {
             (void)cs.eval("(panic-checkpoint)");
@@ -317,25 +304,25 @@ bool test_eight_thread_concurrent_nested_mutate() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(define v" + std::to_string(tid) +
-                " " + std::to_string(i) + ")";
+            std::string code = "(define v" + std::to_string(tid) + " " + std::to_string(i) + ")";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
     };
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
 
     const auto s = cs.evaluator().get_panic_checkpoint_save_count();
     const auto r = cs.evaluator().get_panic_checkpoint_restore_count();
     const auto c = cs.evaluator().get_panic_checkpoint_commit_count();
-    std::println("  completed: {}/{} save: {} restore: {} commit: {}",
-                 completed.load(), n_threads * n_iters, s, r, c);
+    std::println("  completed: {}/{} save: {} restore: {} commit: {}", completed.load(),
+                 n_threads * n_iters, s, r, c);
     CHECK(completed.load() == n_threads * n_iters,
           "all 160 ops completed (no crash under concurrent mutate)");
-    CHECK(s >= 0 && r >= 0 && c >= 0,
-          "lifecycle counters non-negative after concurrent load");
+    CHECK(s >= 0 && r >= 0 && c >= 0, "lifecycle counters non-negative after concurrent load");
     return true;
 }
 
@@ -390,8 +377,12 @@ int run_tests() {
 
 } // namespace aura_issue_548_detail
 
-int aura_issue_548_run() { return aura_issue_548_detail::run_tests(); }
+int aura_issue_548_run() {
+    return aura_issue_548_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_548_run(); }
+int main() {
+    return aura_issue_548_run();
+}
 #endif

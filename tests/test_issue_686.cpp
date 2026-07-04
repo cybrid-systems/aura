@@ -18,27 +18,32 @@ namespace aura_issue_686_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 static std::int64_t stat_int(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (query:shape-value-pass-stats) '{}')", key));
+    auto r = cs.eval(std::format("(hash-ref (query:shape-value-pass-stats) '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-}  // namespace aura_issue_686_detail
+} // namespace aura_issue_686_detail
 
 int main() {
     using namespace aura_issue_686_detail;
+    using aura::compiler::shape::make_fn_key;
     using aura::compiler::shape::SHAPE_INT;
     using aura::compiler::shape::SHAPE_STRING;
     using aura::compiler::shape::ShapeProfiler;
-    using aura::compiler::shape::make_fn_key;
 
     std::println("=== Issue #686: shape-value-pass zero-jitter incremental ===");
 
@@ -50,13 +55,11 @@ int main() {
         auto stats = cs.eval("(query:shape-value-pass-stats)");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:shape-value-pass-stats returns hash");
-        CHECK(stat_int(cs, "history-jitter-reduction") >= 0,
-              "history-jitter-reduction present");
+        CHECK(stat_int(cs, "history-jitter-reduction") >= 0, "history-jitter-reduction present");
         CHECK(stat_int(cs, "dispatch-stats") >= 0, "dispatch-stats present");
         CHECK(stat_int(cs, "dirty-shortcircuit-savings") >= 0,
               "dirty-shortcircuit-savings present");
-        CHECK(stat_int(cs, "consteval-hits") >= 20,
-              "consteval-hits present (>= 20)");
+        CHECK(stat_int(cs, "consteval-hits") >= 20, "consteval-hits present (>= 20)");
     }
 
     // AC2: ring-buffer O(1) history — jitter reduction counter grows
@@ -70,8 +73,7 @@ int main() {
             profiler.record_shape(fn, (i % 5 == 0) ? SHAPE_STRING : SHAPE_INT);
         const auto jitter_after = stat_int(cs, "history-jitter-reduction");
         CHECK(jitter_after > jitter_before,
-              std::format("history-jitter-reduction grew ({} -> {})",
-                          jitter_before, jitter_after));
+              std::format("history-jitter-reduction grew ({} -> {})", jitter_before, jitter_after));
     }
 
     const auto dispatch_before = stat_int(cs, "dispatch-stats");
@@ -84,19 +86,18 @@ int main() {
         cs.eval("(eval-current)");
         for (int i = 0; i < 40; ++i)
             (void)cs.eval("(fact 4)");
-        cs.eval(
-            "(mutate:rebind \"fact\" "
-            "\"(lambda (n) (if (= n 0) 1 (* n (fact (- n 1)))))\" "
-            "\"issue-686\")");
+        cs.eval("(mutate:rebind \"fact\" "
+                "\"(lambda (n) (if (= n 0) 1 (* n (fact (- n 1)))))\" "
+                "\"issue-686\")");
         cs.eval("(eval-current)");
         const auto dispatch_after = stat_int(cs, "dispatch-stats");
         const auto dirty_after = stat_int(cs, "dirty-shortcircuit-savings");
         CHECK(dispatch_after >= dispatch_before,
-              std::format("dispatch-stats non-decreasing ({} -> {})",
-                          dispatch_before, dispatch_after));
+              std::format("dispatch-stats non-decreasing ({} -> {})", dispatch_before,
+                          dispatch_after));
         CHECK(dirty_after >= dirty_before,
-              std::format("dirty-shortcircuit-savings non-decreasing ({} -> {})",
-                          dirty_before, dirty_after));
+              std::format("dirty-shortcircuit-savings non-decreasing ({} -> {})", dirty_before,
+                          dirty_after));
     }
 
     // AC4: repeated eval + fiber stress
@@ -120,17 +121,15 @@ int main() {
         t1.join();
         t2.join();
         CHECK(ok_count.load() == k_iters * 2,
-              std::format("fiber stress: {} / {} correct",
-                          ok_count.load(), k_iters * 2));
+              std::format("fiber stress: {} / {} correct", ok_count.load(), k_iters * 2));
     }
 
     // AC5: stats registry
     {
         std::println("\n--- AC5: stats:list + stats:count ---");
         auto r = cs.eval("(stats:count)");
-        const auto n = r && aura::compiler::types::is_int(*r)
-                           ? aura::compiler::types::as_int(*r)
-                           : 0;
+        const auto n =
+            r && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r) : 0;
         CHECK(n >= 66, std::format("stats:count >= 66 (got {})", n));
     }
 

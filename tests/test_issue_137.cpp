@@ -25,8 +25,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -39,11 +39,10 @@ import aura.compiler.type_checker;
 import aura.parser.parser;
 
 
-
 // Helper: run a snippet and return the raw EvalValue
 namespace aura_issue_137_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -71,11 +70,13 @@ static bool run_bool(aura::compiler::CompilerService& cs, std::string_view src) 
 }
 
 static std::string string_value(aura::compiler::CompilerService& cs,
-                                 aura::compiler::types::EvalValue v) {
-    if (!aura::compiler::types::is_string(v)) return "";
+                                aura::compiler::types::EvalValue v) {
+    if (!aura::compiler::types::is_string(v))
+        return "";
     auto idx = aura::compiler::types::as_string_idx(v);
     const auto& heap = cs.evaluator().string_heap();
-    if (idx >= heap.size()) return "";
+    if (idx >= heap.size())
+        return "";
     return std::string(heap[idx]);
 }
 
@@ -88,23 +89,21 @@ static std::string string_value(aura::compiler::CompilerService& cs,
 bool test_classic_swap_capture() {
     std::println("\n--- Test 1.1: classic swap! capture bug ---");
     aura::compiler::CompilerService cs;
-    int64_t result = run_int(cs,
-        "(define-hygienic-macro (swap! a b) "
-        "  (let ((tmp a)) (set! a b) (set! b tmp))) "
-        "(define tmp \"caller\") "
-        "(define x 1) (define y 2) "
-        "(swap! x y) "
-        "(cons x (cons y (cons tmp (quote ()))))");
+    int64_t result = run_int(cs, "(define-hygienic-macro (swap! a b) "
+                                 "  (let ((tmp a)) (set! a b) (set! b tmp))) "
+                                 "(define tmp \"caller\") "
+                                 "(define x 1) (define y 2) "
+                                 "(swap! x y) "
+                                 "(cons x (cons y (cons tmp (quote ()))))");
     // result is a pair (1 . (2 . ("caller" . ())))
     // We can't easily check pair contents; instead check that
     // the eval returned a pair and the caller's tmp is preserved.
-    auto v = run_on(cs,
-        "(define-hygienic-macro (swap! a b) "
-        "  (let ((tmp a)) (set! a b) (set! b tmp))) "
-        "(define tmp \"caller\") "
-        "(define x 1) (define y 2) "
-        "(swap! x y) "
-        "tmp)");
+    auto v = run_on(cs, "(define-hygienic-macro (swap! a b) "
+                        "  (let ((tmp a)) (set! a b) (set! b tmp))) "
+                        "(define tmp \"caller\") "
+                        "(define x 1) (define y 2) "
+                        "(swap! x y) "
+                        "tmp)");
     std::string captured = string_value(cs, v);
     CHECK(captured == "caller",
           "caller's `tmp` is NOT captured by hygienic swap! (still \"caller\")");
@@ -115,12 +114,11 @@ bool test_classic_swap_capture() {
 bool test_swap_actually_swaps() {
     std::println("\n--- Test 1.2: swap! actually swaps x and y ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs,
-        "(define-hygienic-macro (swap! a b) "
-        "  (let ((tmp a)) (set! a b) (set! b tmp))) "
-        "(define x 1) (define y 2) "
-        "(swap! x y) "
-        "(+ (* x 100) y)");
+    auto v = run_on(cs, "(define-hygienic-macro (swap! a b) "
+                        "  (let ((tmp a)) (set! a b) (set! b tmp))) "
+                        "(define x 1) (define y 2) "
+                        "(swap! x y) "
+                        "(+ (* x 100) y)");
     // x=2, y=1 → 201
     int64_t r = -1;
     if (aura::compiler::types::is_int(v))
@@ -132,12 +130,11 @@ bool test_swap_actually_swaps() {
 bool test_swap_with_same_value() {
     std::println("\n--- Test 1.3: swap! with same values works ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (swap! a b) "
-        "  (let ((tmp a)) (set! a b) (set! b tmp))) "
-        "(define x 7) (define y 7) "
-        "(swap! x y) "
-        "(+ x y))");
+    int64_t r = run_int(cs, "(define-hygienic-macro (swap! a b) "
+                            "  (let ((tmp a)) (set! a b) (set! b tmp))) "
+                            "(define x 7) (define y 7) "
+                            "(swap! x y) "
+                            "(+ x y))");
     CHECK(r == 14, "swap! 7 7 still gives x+y = 14");
     return true;
 }
@@ -149,9 +146,8 @@ bool test_swap_with_same_value() {
 bool test_define_hygienic_macro_basic() {
     std::println("\n--- Test 2.1: define-hygienic-macro basic ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (double x) `(+ ,x ,x)) "
-        "(double 21)");
+    int64_t r = run_int(cs, "(define-hygienic-macro (double x) `(+ ,x ,x)) "
+                            "(double 21)");
     CHECK(r == 42, "(double 21) with hygienic macro returns 42");
     return true;
 }
@@ -159,24 +155,21 @@ bool test_define_hygienic_macro_basic() {
 bool test_define_hygienic_macro_no_capture() {
     std::println("\n--- Test 2.2: define-hygienic-macro avoids capture ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs,
-        "(define-hygienic-macro (double x) "
-        "  (let ((tmp x)) (+ tmp tmp))) "
-        "(define tmp \"outer\") "
-        "(double 5) "
-        "tmp)");
+    auto v = run_on(cs, "(define-hygienic-macro (double x) "
+                        "  (let ((tmp x)) (+ tmp tmp))) "
+                        "(define tmp \"outer\") "
+                        "(double 5) "
+                        "tmp)");
     std::string outer_tmp = string_value(cs, v);
-    CHECK(outer_tmp == "outer",
-          "outer `tmp` is NOT captured by double's internal tmp");
+    CHECK(outer_tmp == "outer", "outer `tmp` is NOT captured by double's internal tmp");
     return true;
 }
 
 bool test_hygienic_macro_expansion_in_expression() {
     std::println("\n--- Test 2.3: hygienic macro used inside an expression ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (square x) `(* ,x ,x)) "
-        "(+ (square 3) (square 4))");
+    int64_t r = run_int(cs, "(define-hygienic-macro (square x) `(* ,x ,x)) "
+                            "(+ (square 3) (square 4))");
     CHECK(r == 25, "(square 3) + (square 4) = 9 + 16 = 25");
     return true;
 }
@@ -191,9 +184,8 @@ bool test_builtin_preservation_let() {
     // If `let` were gensym'd, this would fail because the
     // outer code's `let` wouldn't be visible inside the
     // macro expansion.
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (with-let x) (let ((y x)) y)) "
-        "(with-let 99)");
+    int64_t r = run_int(cs, "(define-hygienic-macro (with-let x) (let ((y x)) y)) "
+                            "(with-let 99)");
     CHECK(r == 99, "hygienic macro that intros `let` still works (built-in not gensym'd)");
     return true;
 }
@@ -202,9 +194,8 @@ bool test_builtin_preservation_arithmetic() {
     std::println("\n--- Test: builtin arithmetic not gensym'd ---");
     aura::compiler::CompilerService cs;
     // Macro body uses `+`, `*`, `-` — all built-ins
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (compute x) (+ (* x 2) (- x 1))) "
-        "(compute 10)");
+    int64_t r = run_int(cs, "(define-hygienic-macro (compute x) (+ (* x 2) (- x 1))) "
+                            "(compute 10)");
     // 10*2 + 9 = 29
     CHECK(r == 29, "hygienic macro with `+`, `*`, `-` (built-ins) returns 29");
     return true;
@@ -213,13 +204,11 @@ bool test_builtin_preservation_arithmetic() {
 bool test_builtin_preservation_if() {
     std::println("\n--- Test: builtin `if` not gensym'd ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (safe-div a b) (if (= b 0) -1 (/ a b))) "
-        "(safe-div 10 2)");
+    int64_t r = run_int(cs, "(define-hygienic-macro (safe-div a b) (if (= b 0) -1 (/ a b))) "
+                            "(safe-div 10 2)");
     CHECK(r == 5, "safe-div 10 2 returns 5");
-    int64_t r2 = run_int(cs,
-        "(define-hygienic-macro (safe-div a b) (if (= b 0) -1 (/ a b))) "
-        "(safe-div 10 0)");
+    int64_t r2 = run_int(cs, "(define-hygienic-macro (safe-div a b) (if (= b 0) -1 (/ a b))) "
+                             "(safe-div 10 0)");
     CHECK(r2 == -1, "safe-div 10 0 returns -1");
     return true;
 }
@@ -234,9 +223,8 @@ bool test_two_expansions_independent() {
     // The macro intros a `tmp` binding. Two expansions in the
     // same scope would conflict if gensym wasn't unique per
     // expansion.
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (square x) (let ((tmp x)) (* tmp tmp))) "
-        "(+ (square 3) (square 4))");
+    int64_t r = run_int(cs, "(define-hygienic-macro (square x) (let ((tmp x)) (* tmp tmp))) "
+                            "(+ (square 3) (square 4))");
     CHECK(r == 25, "two (square ...) expansions don't conflict (3² + 4² = 25)");
     return true;
 }
@@ -251,9 +239,8 @@ bool test_expansion_in_let_body() {
     // (test 1.3 / 6.1 already covers this) with multi-call
     // semantics inside a let body — making sure repeated
     // expansions compose correctly with the surrounding scope.
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (incr x) (begin (set! x (+ x 1)) x)) "
-        "(let ((a 10)) (incr a) (incr a) a))");
+    int64_t r = run_int(cs, "(define-hygienic-macro (incr x) (begin (set! x (+ x 1)) x)) "
+                            "(let ((a 10)) (incr a) (incr a) a))");
     // a = 12 after two (incr a) calls
     CHECK(r == 12, "(incr a) twice in let body: a=12");
     return true;
@@ -268,10 +255,10 @@ bool test_cross_layer_basic() {
     aura::compiler::CompilerService cs;
     // Both macros intros a `tmp` binding. The outer's tmp
     // should not collide with the inner's tmp.
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (inner-double x) (let ((tmp x)) (* tmp 2))) "
-        "(define-hygienic-macro (outer-wrap x) (let ((tmp x)) (+ (inner-double tmp) tmp))) "
-        "(outer-wrap 5)");
+    int64_t r = run_int(
+        cs, "(define-hygienic-macro (inner-double x) (let ((tmp x)) (* tmp 2))) "
+            "(define-hygienic-macro (outer-wrap x) (let ((tmp x)) (+ (inner-double tmp) tmp))) "
+            "(outer-wrap 5)");
     // 5*2 + 5 = 15
     CHECK(r == 15, "outer (5) + inner-double (5) = 5 + 10 = 15");
     return true;
@@ -280,15 +267,14 @@ bool test_cross_layer_basic() {
 bool test_cross_layer_preserves_caller() {
     std::println("\n--- Test 5.2: cross-layer hygiene preserves caller's `tmp` ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs,
-        "(define-hygienic-macro (inner-double x) (let ((tmp x)) (* tmp 2))) "
-        "(define-hygienic-macro (outer-wrap x) (let ((tmp x)) (+ (inner-double tmp) tmp))) "
-        "(define tmp \"caller\") "
-        "(outer-wrap 5) "
-        "tmp)");
+    auto v = run_on(
+        cs, "(define-hygienic-macro (inner-double x) (let ((tmp x)) (* tmp 2))) "
+            "(define-hygienic-macro (outer-wrap x) (let ((tmp x)) (+ (inner-double tmp) tmp))) "
+            "(define tmp \"caller\") "
+            "(outer-wrap 5) "
+            "tmp)");
     std::string caller_tmp = string_value(cs, v);
-    CHECK(caller_tmp == "caller",
-          "caller's `tmp` preserved across nested hygienic macros");
+    CHECK(caller_tmp == "caller", "caller's `tmp` preserved across nested hygienic macros");
     return true;
 }
 
@@ -297,10 +283,9 @@ bool test_cross_layer_different_temps() {
     aura::compiler::CompilerService cs;
     // Each layer uses a different internal name. Neither
     // should leak out.
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (m1 x) (let ((a x)) (* a 3))) "
-        "(define-hygienic-macro (m2 x) (let ((b x)) (+ b 100))) "
-        "(+ (m1 5) (m2 5))");
+    int64_t r = run_int(cs, "(define-hygienic-macro (m1 x) (let ((a x)) (* a 3))) "
+                            "(define-hygienic-macro (m2 x) (let ((b x)) (+ b 100))) "
+                            "(+ (m1 5) (m2 5))");
     // 15 + 105 = 120
     CHECK(r == 120, "two macros with different internals (a, b) compose correctly");
     return true;
@@ -313,9 +298,8 @@ bool test_cross_layer_different_temps() {
 bool test_set_inside_hygienic_macro() {
     std::println("\n--- Test 6.1: set! inside hygienic macro works ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (reset! v) (set! v 0)) "
-        "(define x 42) (reset! x) x)");
+    int64_t r = run_int(cs, "(define-hygienic-macro (reset! v) (set! v 0)) "
+                            "(define x 42) (reset! x) x)");
     CHECK(r == 0, "(reset! x) sets x to 0");
     return true;
 }
@@ -335,14 +319,13 @@ bool test_workspace_set_code_with_hygienic() {
     //  that operate on a non-macro Define, exercising the same
     //  macro-across-workspace-mutation concern without conflating
     //  it with mutate:rebind semantics.)
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (hsq x) (let ((tmp x)) (* tmp tmp))) "
-        "(define y 100) "
-        "(workspace:create \"scratch\") "
-        "(workspace:switch (workspace:current)) "
-        "(mutate:rebind \"y\" \"(lambda () 200)\" \"noop\") "
-        "(workspace:switch 0) "
-        "(hsq 7))");
+    int64_t r = run_int(cs, "(define-hygienic-macro (hsq x) (let ((tmp x)) (* tmp tmp))) "
+                            "(define y 100) "
+                            "(workspace:create \"scratch\") "
+                            "(workspace:switch (workspace:current)) "
+                            "(mutate:rebind \"y\" \"(lambda () 200)\" \"noop\") "
+                            "(workspace:switch 0) "
+                            "(hsq 7))");
     // hsq 7 = 49 (macro survives workspace operations)
     CHECK(r == 49, "hygienic macro + workspace mutations: macro call still works");
     return true;
@@ -351,11 +334,10 @@ bool test_workspace_set_code_with_hygienic() {
 bool test_hygienic_macro_with_local_define() {
     std::println("\n--- Test 6.3: hygienic macro intros a local define ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (with-helper x) "
-        "  (define (helper v) (* v 2)) "
-        "  (helper x)) "
-        "(with-helper 21)");
+    int64_t r = run_int(cs, "(define-hygienic-macro (with-helper x) "
+                            "  (define (helper v) (* v 2)) "
+                            "  (helper x)) "
+                            "(with-helper 21)");
     CHECK(r == 42, "hygienic macro with internal `define` intros a gensym'd helper");
     return true;
 }
@@ -367,11 +349,10 @@ bool test_hygienic_macro_with_local_define() {
 bool test_perf_simple_macro() {
     std::println("\n--- Test 7.1: performance of simple hygienic macro ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (id x) x) "
-        "(define (loop n acc) "
-        "  (if (= n 0) acc (loop (- n 1) (+ acc (id n))))) "
-        "(loop 100 0))");
+    int64_t r = run_int(cs, "(define-hygienic-macro (id x) x) "
+                            "(define (loop n acc) "
+                            "  (if (= n 0) acc (loop (- n 1) (+ acc (id n))))) "
+                            "(loop 100 0))");
     // sum 1..100 = 5050
     CHECK(r == 5050, "100 iterations of `id` macro sum to 5050 (sanity check perf)");
     return true;
@@ -380,10 +361,9 @@ bool test_perf_simple_macro() {
 bool test_perf_complex_macro() {
     std::println("\n--- Test 7.2: performance of complex hygienic macro ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (quad x) "
-        "  (let ((a x)) (let ((b (* a 2))) (* b b)))) "
-        "(+ (quad 1) (quad 2) (quad 3) (quad 4) (quad 5))");
+    int64_t r = run_int(cs, "(define-hygienic-macro (quad x) "
+                            "  (let ((a x)) (let ((b (* a 2))) (* b b)))) "
+                            "(+ (quad 1) (quad 2) (quad 3) (quad 4) (quad 5))");
     // quad n = (2n)² = 4n²: 4 + 16 + 36 + 64 + 100 = 220
     CHECK(r == 220, "5 quad expansions: 4+16+36+64+100 = 220");
     return true;
@@ -396,9 +376,8 @@ bool test_perf_complex_macro() {
 bool test_legacy_defmacro_still_works() {
     std::println("\n--- Test 8.1: legacy defmacro (non-hygienic) still works ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(defmacro (double x) `(+ ,x ,x)) "
-        "(double 21)");
+    int64_t r = run_int(cs, "(defmacro (double x) `(+ ,x ,x)) "
+                            "(double 21)");
     CHECK(r == 42, "legacy defmacro with quasiquote returns 42");
     return true;
 }
@@ -422,9 +401,8 @@ bool test_rest_param_hygienic_returns_void() {
     // fall through to a no-op return (void)." Verify the
     // current behavior so when it's fixed, the regression
     // test will flip.
-    auto v = run_on(cs,
-        "(define-hygienic-macro (first-of . rest) (car rest)) "
-        "(first-of 1 2 3))");
+    auto v = run_on(cs, "(define-hygienic-macro (first-of . rest) (car rest)) "
+                        "(first-of 1 2 3))");
     // First check: it should NOT throw a parse error.
     // Current behavior: returns void (the no-op fallback).
     // After fix: would return 1.
@@ -445,14 +423,13 @@ bool test_define_struct_pattern() {
     // A mini define-struct that creates a constructor + field
     // accessors. The macro body uses gensym'd bindings for
     // internal state.
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (mini-struct name . fields) "
-        "  (define (make- name) "
-        "    (lambda (f) "
-        "      (if (= f (quote ,name)) 'ctor (error \"no field\")))) "
-        "  (cons (cons 'make- make-) (cons name (quote ())))) "
-        "(let ((s (mini-struct Point x y))) "
-        "  (if (procedure? (car (car s))) 1 0))");
+    int64_t r = run_int(cs, "(define-hygienic-macro (mini-struct name . fields) "
+                            "  (define (make- name) "
+                            "    (lambda (f) "
+                            "      (if (= f (quote ,name)) 'ctor (error \"no field\")))) "
+                            "  (cons (cons 'make- make-) (cons name (quote ())))) "
+                            "(let ((s (mini-struct Point x y))) "
+                            "  (if (procedure? (car (car s))) 1 0))");
     // mini-struct should produce a list with constructor fn
     CHECK(r == 1, "define-struct-like macro produces a working constructor");
     return true;
@@ -508,12 +485,12 @@ int run_tests() {
     std::println("\n── Documentation example: define-struct-like macro ──");
     test_define_struct_pattern();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_137_detail
+} // namespace aura_issue_137_detail
 
-int aura_issue_137_run() { return aura_issue_137_detail::run_tests(); }
-
+int aura_issue_137_run() {
+    return aura_issue_137_detail::run_tests();
+}

@@ -27,8 +27,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -37,7 +37,6 @@ import aura.diag;
 import aura.core.type;
 import aura.compiler.type_checker;
 import aura.parser.parser;
-
 
 
 namespace aura_issue_120_detail {
@@ -77,12 +76,11 @@ bool test_capture_outer_tmp() {
     //   - After the macro expands, the caller's `tmp` should
     //     still be "x" (the macro's `tmp` is gensym'd).
     auto e = make_env();
-    auto root = parse(e,
-        "(define-hygienic-macro (swap! a b) "
-        "  (let ((tmp a)) (set! a b) (set! b tmp))) "
-        "(let ((a 1) (b 2) (tmp \"outer\")) "
-        "  (swap! a b) "
-        "  tmp)");
+    auto root = parse(e, "(define-hygienic-macro (swap! a b) "
+                         "  (let ((tmp a)) (set! a b) (set! b tmp))) "
+                         "(let ((a 1) (b 2) (tmp \"outer\")) "
+                         "  (swap! a b) "
+                         "  tmp)");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "capture-bug shape returns a valid type");
@@ -96,10 +94,9 @@ bool test_nested_hygienic_macros() {
 
     // Define two hygienic macros; one calls the other.
     auto e = make_env();
-    auto root = parse(e,
-        "(define-hygienic-macro (incr1 x) (let ((tmp x)) (set! x (+ tmp 1)) x)) "
-        "(define-hygienic-macro (double-it x) (let ((tmp x)) (* tmp 2))) "
-        "(incr1 (double-it 5))");
+    auto root = parse(e, "(define-hygienic-macro (incr1 x) (let ((tmp x)) (set! x (+ tmp 1)) x)) "
+                         "(define-hygienic-macro (double-it x) (let ((tmp x)) (* tmp 2))) "
+                         "(incr1 (double-it 5))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "nested hygienic macros return a valid type");
@@ -116,9 +113,8 @@ bool test_macro_params_vs_builtins() {
     // gensym'd. This is correct: `if` is a keyword, not a
     // user binding.
     auto e = make_env();
-    auto root = parse(e,
-        "(define-hygienic-macro (my-if c t e) (if c t e)) "
-        "(my-if #t 1 2)");
+    auto root = parse(e, "(define-hygienic-macro (my-if c t e) (if c t e)) "
+                         "(my-if #t 1 2)");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "macro with builtin-named param returns a valid type");
@@ -133,12 +129,11 @@ bool test_multiple_expansions_no_collision() {
     // Two expansions of the same macro. Each gets its own
     // gensym'd `tmp`. The body of each let is independent.
     auto e = make_env();
-    auto root = parse(e,
-        "(define-hygienic-macro (m-swap a b) "
-        "  (let ((tmp a)) (set! a b) (set! b tmp))) "
-        "(let ((x 1) (y 2)) "
-        "  (m-swap x y) "
-        "  (m-swap x y))");
+    auto root = parse(e, "(define-hygienic-macro (m-swap a b) "
+                         "  (let ((tmp a)) (set! a b) (set! b tmp))) "
+                         "(let ((x 1) (y 2)) "
+                         "  (m-swap x y) "
+                         "  (m-swap x y))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "multiple expansions of same macro return a valid type");
@@ -151,9 +146,8 @@ bool test_legacy_defmacro_still_parses() {
     std::println("\n--- Test: legacy `defmacro` still parses (backward compat) ---");
 
     auto e = make_env();
-    auto root = parse(e,
-        "(defmacro (my-double x) `(+ ,x ,x)) "
-        "(my-double 5)");
+    auto root = parse(e, "(defmacro (my-double x) `(+ ,x ,x)) "
+                         "(my-double 5)");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "legacy defmacro parses + typechecks");
@@ -170,9 +164,8 @@ bool test_hygienic_macro_without_binding() {
     // (no internal binding). This is a no-op for hygiene but
     // ensures the name_map path doesn't crash on empty maps.
     auto e = make_env();
-    auto root = parse(e,
-        "(define-hygienic-macro (id x) x) "
-        "(id 42)");
+    auto root = parse(e, "(define-hygienic-macro (id x) x) "
+                         "(id 42)");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "binding-less hygienic macro returns a valid type");
@@ -189,12 +182,11 @@ bool test_runtime_end_to_end() {
     // binary. The shell wrapper is what we use to verify
     // behavior; here we just confirm the macro is parseable.
     auto e = make_env();
-    auto root = parse(e,
-        "(define-hygienic-macro (hswap! a b) "
-        "  (let ((tmp a)) (set! a b) (set! b tmp))) "
-        "(let ((x 1) (y 2) (tmp \"outer\")) "
-        "  (hswap! x y) "
-        "  (list x y tmp))");
+    auto root = parse(e, "(define-hygienic-macro (hswap! a b) "
+                         "  (let ((tmp a)) (set! a b) (set! b tmp))) "
+                         "(let ((x 1) (y 2) (tmp \"outer\")) "
+                         "  (hswap! x y) "
+                         "  (list x y tmp))");
     aura::diag::DiagnosticCollector diag;
     auto tid = e.tc->infer_flat(*e.flat, *e.pool, root, diag);
     CHECK(tid.valid(), "runtime smoke test parses + typechecks");
@@ -210,12 +202,12 @@ int run_tests() {
     test_legacy_defmacro_still_parses();
     test_hygienic_macro_without_binding();
     test_runtime_end_to_end();
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_120_detail
+} // namespace aura_issue_120_detail
 
-int aura_issue_120_run() { return aura_issue_120_detail::run_tests(); }
-
+int aura_issue_120_run() {
+    return aura_issue_120_detail::run_tests();
+}

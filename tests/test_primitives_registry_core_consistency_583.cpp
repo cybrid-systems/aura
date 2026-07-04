@@ -59,8 +59,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(setup_workspace(cs), "list workspace setup");
     auto car_r = cs.eval("(car xs)");
     auto cdr_r = cs.eval("(cdr xs)");
-    CHECK(car_r && is_int(*car_r) && as_int(*car_r) == 1,
-          "car returns head element");
+    CHECK(car_r && is_int(*car_r) && as_int(*car_r) == 1, "car returns head element");
     CHECK(cdr_r.has_value(), "cdr returns tail");
 
     std::println("\n--- AC3: math error path consistency ---");
@@ -77,8 +76,7 @@ static void run_matrix(CompilerService& cs) {
     (void)cs.eval("(eval-current)");
     const auto mut1 = cs.evaluator().total_mutations();
     const auto stats4b = primitives_stats(cs);
-    std::println("  mutations: {} -> {} primitives-stats: {} -> {}",
-                 mut0, mut1, stats4a, stats4b);
+    std::println("  mutations: {} -> {} primitives-stats: {} -> {}", mut0, mut1, stats4a, stats4b);
     CHECK(mut1 > mut0, "mutate bumps total_mutations");
     CHECK(stats4b >= stats4a, "primitives-stats monotonic after mutate");
 
@@ -93,8 +91,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = primitives_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"acc\")");
-        (void)cs.eval("(mutate:rebind \"acc\" \"" +
-                      std::to_string(round) + "\")");
+        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(+ 1 2)");
     }
@@ -106,8 +103,7 @@ static void run_matrix(CompilerService& cs) {
     auto pes = cs.eval("(query:primitive-error-stats)");
     auto sc = cs.eval("(stats:count)");
     CHECK(pes && is_pair(*pes), "primitive-error-stats regression");
-    CHECK(sc && is_int(*sc) && as_int(*sc) >= 30,
-          "stats:count regression >= 30");
+    CHECK(sc && is_int(*sc) && as_int(*sc) >= 30, "stats:count regression >= 30");
 }
 
 } // namespace aura_583_detail

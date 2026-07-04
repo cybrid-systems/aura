@@ -37,23 +37,35 @@ namespace aura_413_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: invalidation_trace_records_total starts at 0 ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    CHECK_EQ(snap.invalidation_trace_records_total, 0u,
-             "invalidation_trace_records_total == 0");
+    CHECK_EQ(snap.invalidation_trace_records_total, 0u, "invalidation_trace_records_total == 0");
     return true;
 }
 
@@ -68,16 +80,18 @@ bool test_snapshot_has_new_field() {
 bool test_typed_mutate_increments_trace() {
     std::println("\n--- AC3: typed_mutate on a top-level define increments trace ---");
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Eager);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Eager);
     cs.eval("(set-code \"(define p 1) (define q (+ p 1))\")");
     cs.eval("(eval-current)");
     auto snap0 = cs.snapshot();
     auto r = cs.eval("(mutate:rebind \"p\" \"100\" \"trace-test\")");
-    if (!r) { std::println("  FAIL: mutate:rebind failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: mutate:rebind failed");
+        ++g_failed;
+        return false;
+    }
     auto snap1 = cs.snapshot();
-    std::println("  invalidation_trace_records: {} -> {}",
-                 snap0.invalidation_trace_records_total,
+    std::println("  invalidation_trace_records: {} -> {}", snap0.invalidation_trace_records_total,
                  snap1.invalidation_trace_records_total);
     CHECK(snap1.invalidation_trace_records_total > snap0.invalidation_trace_records_total,
           "invalidation_trace_records_total incremented (binding mutation traced)");
@@ -105,18 +119,20 @@ bool test_invalidation_stats_primitive() {
 bool test_trace_size_nonzero_after_mutation() {
     std::println("\n--- AC5: trace-size > 0 after a binding mutation ---");
     aura::compiler::CompilerService cs;
-    cs.set_incremental_typecheck_mode(
-        aura::compiler::IncrementalTypecheckMode::Eager);
+    cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Eager);
     cs.eval("(set-code \"(define r 5)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(mutate:rebind \"r\" \"10\" \"size-test\")");
-    if (!r) { std::println("  FAIL: mutate:rebind failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: mutate:rebind failed");
+        ++g_failed;
+        return false;
+    }
     auto rstats = cs.eval("(compile:mutation-log-invalidation-stats)");
     CHECK(rstats && aura::compiler::types::is_hash(*rstats),
           "compile:mutation-log-invalidation-stats returns hash");
     auto sz = cs.eval("(hash-ref (compile:mutation-log-invalidation-stats) \"trace-size\")");
-    CHECK(sz && aura::compiler::types::is_int(*sz) &&
-              aura::compiler::types::as_int(*sz) > 0,
+    CHECK(sz && aura::compiler::types::is_int(*sz) && aura::compiler::types::as_int(*sz) > 0,
           "trace-size > 0 after a binding mutation");
     return true;
 }
@@ -127,24 +143,24 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define z 99)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 99,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 99,
           "plain (define z 99) + (eval-current) returns 99");
     return true;
 }
 
-}  // namespace aura_413_detail
+} // namespace aura_413_detail
 
 int main() {
     using namespace aura_413_detail;
-    std::println("=== Issue #413: MutationLog-integrated type cache invalidation (scope-limited) ===");
+    std::println(
+        "=== Issue #413: MutationLog-integrated type cache invalidation (scope-limited) ===");
     test_initial_counters_zero();
     test_snapshot_has_new_field();
     test_typed_mutate_increments_trace();
     test_invalidation_stats_primitive();
     test_trace_size_nonzero_after_mutation();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -255,8 +255,7 @@ export struct IRFunctionSoA {
 
     // Issue #380: public read-only view of the per-instruction
     // dirty bitmask for the observability layer.
-    [[nodiscard]] const std::pmr::vector<std::uint8_t>&
-    instruction_dirty_column() const noexcept {
+    [[nodiscard]] const std::pmr::vector<std::uint8_t>& instruction_dirty_column() const noexcept {
         return instruction_dirty_;
     }
 };
@@ -338,7 +337,7 @@ export struct IRInstructionView {
         return func->opcodes_[idx];
     }
     constexpr std::uint32_t operand(std::size_t i) const {
-        contract_assert(i < 4);  // only 4 operand columns exist
+        contract_assert(i < 4); // only 4 operand columns exist
         switch (i) {
             case 0:
                 return func->operand0_[idx];
@@ -444,8 +443,7 @@ export struct IRModuleV2 {
     // Issue #463: add a function to the module. Returns the
     // index of the newly added function. Mirrors the pattern
     // used by the existing AoS IRModule::add_function.
-    std::size_t add_function(std::string name = "",
-                              std::uint32_t local_count = 0) {
+    std::size_t add_function(std::string name = "", std::uint32_t local_count = 0) {
         IRFunctionSoA func;
         func.name = std::move(name);
         func.local_count = local_count;
@@ -485,8 +483,8 @@ export inline aura::ir::IRFunction to_aos_view(const IRFunctionSoA& soa) {
         for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
             aura::ir::IRInstruction instr;
             instr.opcode = soa.opcodes_[i];
-            instr.operands = {soa.operand0_[i], soa.operand1_[i],
-                              soa.operand2_[i], soa.operand3_[i]};
+            instr.operands = {soa.operand0_[i], soa.operand1_[i], soa.operand2_[i],
+                              soa.operand3_[i]};
             instr.source_ast_node_id = soa.source_node_ids_[i];
             instr.type_id = soa.type_ids_[i];
             instr.shape_id = soa.shape_ids_[i];

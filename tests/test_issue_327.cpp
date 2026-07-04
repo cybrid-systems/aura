@@ -42,10 +42,16 @@ namespace aura_327_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 using aura::compiler::CompilerService;
 
@@ -57,8 +63,7 @@ bool test_relower_strategy_callable() {
     (void)cs.eval("(eval-current)");
     // Use a known-bad function name to get 'unknown first.
     auto r = cs.eval("(compile:relower-strategy \"nonexistent_fn_zzz\")");
-    CHECK(r.has_value(),
-          "(compile:relower-strategy) is callable + returns a value");
+    CHECK(r.has_value(), "(compile:relower-strategy) is callable + returns a value");
     return true;
 }
 
@@ -70,8 +75,7 @@ bool test_epoch_gate_only_dirty_parts() {
     (void)cs.eval("(eval-current)");
     // Snapshot incremental-effectiveness BEFORE mutate.
     auto before = cs.eval("(query:incremental-effectiveness)");
-    CHECK(before.has_value(),
-          "incremental-effectiveness observable pre-mutate");
+    CHECK(before.has_value(), "incremental-effectiveness observable pre-mutate");
     // Mutate one node.
     auto r = cs.eval("(mutate:query-and-replace a 999)");
     CHECK(r.has_value(), "mutate:query-and-replace succeeds");
@@ -82,8 +86,7 @@ bool test_epoch_gate_only_dirty_parts() {
     // After mutating one of three defines, ratio should
     // be < 10000 (i.e. NOT "all dirty").
     auto after = cs.eval("(query:incremental-effectiveness)");
-    CHECK(after.has_value(),
-          "incremental-effectiveness observable post-mutate");
+    CHECK(after.has_value(), "incremental-effectiveness observable post-mutate");
     return true;
 }
 
@@ -125,15 +128,13 @@ bool test_chained_mutations_bounded() {
         code += std::to_string(100 + i * 7);
         code += "))";
         auto r = cs.eval(code);
-        CHECK(r.has_value(),
-              std::string("mutate cycle #") + std::to_string(i) + " succeeds");
+        CHECK(r.has_value(), std::string("mutate cycle #") + std::to_string(i) + " succeeds");
     }
     // The recompile ratio after 5 mutations on 5 distinct
     // defines (each define possibly cached as a separate
     // IR function) should be observable.
     auto eff = cs.eval("(query:incremental-effectiveness)");
-    CHECK(eff.has_value(),
-          "incremental-effectiveness observable after 5 chained mutations");
+    CHECK(eff.has_value(), "incremental-effectiveness observable after 5 chained mutations");
     return true;
 }
 
@@ -146,14 +147,12 @@ bool test_macro_then_multi_query_pattern() {
                   "(mk 100) (mk 200)\")");
     (void)cs.eval("(eval-current)");
     auto q = cs.eval("(query:pattern \"v\")");
-    CHECK(q.has_value(),
-          "query:pattern finds macro-introduced v bindings");
+    CHECK(q.has_value(), "query:pattern finds macro-introduced v bindings");
     // Now mutate one v and re-query — should still find
     // v (the binding exists), but possibly with new value.
     (void)cs.eval("(mutate:query-and-replace v 999)");
     auto q2 = cs.eval("(query:pattern \"v\")");
-    CHECK(q2.has_value(),
-          "query:pattern still finds v bindings after mutate");
+    CHECK(q2.has_value(), "query:pattern still finds v bindings after mutate");
     return true;
 }
 
@@ -165,8 +164,7 @@ bool test_compiler_cache_stats_observable() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:compiler-cache-stats)");
     CHECK(r.has_value(), "query:compiler-cache-stats returns a value");
-    CHECK(r && aura::compiler::types::is_pair(*r),
-          "query:compiler-cache-stats result is a pair");
+    CHECK(r && aura::compiler::types::is_pair(*r), "query:compiler-cache-stats result is a pair");
     return true;
 }
 
@@ -203,8 +201,7 @@ int main() {
     test_macro_then_multi_query_pattern();
     test_compiler_cache_stats_observable();
     test_e2e_pipeline();
-    std::println("\nIncremental compilation e2e (#327): {}/{} passed, {}/{} failed",
-                 g_passed, g_passed + g_failed,
-                 g_failed, g_passed + g_failed);
+    std::println("\nIncremental compilation e2e (#327): {}/{} passed, {}/{} failed", g_passed,
+                 g_passed + g_failed, g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

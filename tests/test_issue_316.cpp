@@ -36,8 +36,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.compiler.sv_ir;
@@ -69,9 +69,9 @@ void check_local_(bool cond, const char* msg, int line) {
 // import std migration, 8d3e42b7).
 
 // Helper: count substring occurrences in `haystack`.
-static std::size_t count_occurrences(const std::string& haystack,
-                                     const std::string& needle) {
-    if (needle.empty()) return 0;
+static std::size_t count_occurrences(const std::string& haystack, const std::string& needle) {
+    if (needle.empty())
+        return 0;
     std::size_t n = 0;
     auto pos = haystack.find(needle, 0);
     while (pos != std::string::npos) {
@@ -98,8 +98,8 @@ bool test_emit_sv_interface_syntax() {
     // Build SVModportIR + SVInterfaceIR.
     auto master_mp = compiler::sv_ir::make_sv_modport(master, {data, valid});
     auto slave_mp = compiler::sv_ir::make_sv_modport(slave, {valid, data});
-    auto bus_ir = compiler::sv_ir::make_sv_interface(
-        bus, std::move(master_mp), std::move(slave_mp));
+    auto bus_ir =
+        compiler::sv_ir::make_sv_interface(bus, std::move(master_mp), std::move(slave_mp));
     // Emit.
     auto emitted = compiler::sv_ir::emit_sv_interface(bus_ir, pool);
     std::println("  --- emitted ---\n{}\n  --- end ---", emitted);
@@ -107,18 +107,15 @@ bool test_emit_sv_interface_syntax() {
     CHECK(emitted.find("interface Bus();") != std::string::npos,
           "header 'interface Bus();' present");
     // AC1: footer `endinterface`.
-    CHECK(emitted.find("endinterface") != std::string::npos,
-          "footer 'endinterface' present");
+    CHECK(emitted.find("endinterface") != std::string::npos, "footer 'endinterface' present");
     // AC2: each modport line emitted exactly once.
-    CHECK_EQ_LOCAL(count_occurrences(emitted, "modport master"),
-                   std::size_t{1}, "1 'modport master' line emitted");
-    CHECK_EQ_LOCAL(count_occurrences(emitted, "modport slave"),
-                   std::size_t{1}, "1 'modport slave' line emitted");
+    CHECK_EQ_LOCAL(count_occurrences(emitted, "modport master"), std::size_t{1},
+                   "1 'modport master' line emitted");
+    CHECK_EQ_LOCAL(count_occurrences(emitted, "modport slave"), std::size_t{1},
+                   "1 'modport slave' line emitted");
     // AC2: each modport's port list contains the 2 ports.
-    CHECK(emitted.find("data") != std::string::npos,
-          "modport body contains 'data' port");
-    CHECK(emitted.find("valid") != std::string::npos,
-          "modport body contains 'valid' port");
+    CHECK(emitted.find("data") != std::string::npos, "modport body contains 'data' port");
+    CHECK(emitted.find("valid") != std::string::npos, "modport body contains 'valid' port");
     // AC1: no spurious characters that would break SV grammar.
     // The canonical SV interface grammar uses no semicolons
     // outside the modport headers; the endinterface has none.
@@ -143,16 +140,12 @@ bool test_emit_sv_modport_alone() {
     auto text = compiler::sv_ir::emit_sv_modport(mp, pool);
     std::println("  --- emitted ---\n{}\n  --- end ---", text);
     // The text is a single line ending in ';'.
-    CHECK_EQ_LOCAL(count_occurrences(text, "\n"), std::size_t{0},
-                   "single-line emit (no newline)");
-    CHECK(text.find(";") != std::string::npos,
-          "modport declaration ends with ';'");
+    CHECK_EQ_LOCAL(count_occurrences(text, "\n"), std::size_t{0}, "single-line emit (no newline)");
+    CHECK(text.find(";") != std::string::npos, "modport declaration ends with ';'");
     CHECK(text.find("modport master") != std::string::npos,
           "modport declaration starts with 'modport master'");
-    CHECK(text.find("data") != std::string::npos,
-          "modport contains 'data' port");
-    CHECK(text.find("valid") != std::string::npos,
-          "modport contains 'valid' port");
+    CHECK(text.find("data") != std::string::npos, "modport contains 'data' port");
+    CHECK(text.find("valid") != std::string::npos, "modport contains 'valid' port");
     return true;
 }
 
@@ -176,26 +169,24 @@ bool test_emit_sv_grammar_lint() {
     auto master_mp = compiler::sv_ir::make_sv_modport(master, {p_clk, p_data, p_valid});
     auto slave_mp = compiler::sv_ir::make_sv_modport(slave, {p_clk, p_data, p_rdy});
     auto monitor_mp = compiler::sv_ir::make_sv_modport(monitor, {p_clk, p_valid});
-    auto apb_ir = compiler::sv_ir::make_sv_interface(
-        apb, std::move(master_mp), std::move(slave_mp), std::move(monitor_mp));
+    auto apb_ir = compiler::sv_ir::make_sv_interface(apb, std::move(master_mp), std::move(slave_mp),
+                                                     std::move(monitor_mp));
     auto emitted = compiler::sv_ir::emit_sv_interface(apb_ir, pool);
     std::println("  --- emitted ---\n{}\n  --- end ---", emitted);
     // Grammar checks: the SV `interface` keyword appears once,
     // the `endinterface` keyword appears once, modport count
     // matches, and each modport has balanced parens.
-    CHECK_EQ_LOCAL(count_occurrences(emitted, "interface APB"),
-                   std::size_t{1}, "header 'interface APB' appears once");
-    CHECK_EQ_LOCAL(count_occurrences(emitted, "endinterface"),
-                   std::size_t{1}, "'endinterface' appears once");
-    CHECK_EQ_LOCAL(count_occurrences(emitted, "modport "),
-                   std::size_t{3},
+    CHECK_EQ_LOCAL(count_occurrences(emitted, "interface APB"), std::size_t{1},
+                   "header 'interface APB' appears once");
+    CHECK_EQ_LOCAL(count_occurrences(emitted, "endinterface"), std::size_t{1},
+                   "'endinterface' appears once");
+    CHECK_EQ_LOCAL(count_occurrences(emitted, "modport "), std::size_t{3},
                    "exactly 3 modport declarations emitted");
     // Balanced parens around each modport body: open '('
     // and close ')' both appear N times.
     const auto opens = count_occurrences(emitted, "(");
     const auto closes = count_occurrences(emitted, ")");
-    CHECK_EQ_LOCAL(opens, closes,
-                   "open and close parens are balanced around modport bodies");
+    CHECK_EQ_LOCAL(opens, closes, "open and close parens are balanced around modport bodies");
     return true;
 }
 
@@ -209,10 +200,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_316_detail
+} // namespace aura_issue_316_detail
 
-int aura_issue_316_run() { return aura_issue_316_detail::run_tests(); }
+int aura_issue_316_run() {
+    return aura_issue_316_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_316_run(); }
+int main() {
+    return aura_issue_316_run();
+}
 #endif

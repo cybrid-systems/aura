@@ -35,15 +35,15 @@ import aura.compiler.service;
 namespace aura_issue_570_detail {
 
 using aura::compiler::CompilerService;
-using aura::compiler::shape::SHAPE_INT;
-using aura::compiler::shape::ShapeProfiler;
 using aura::compiler::shape::inline_shape_of;
 using aura::compiler::shape::is_known_inline_shape_id;
 using aura::compiler::shape::make_fn_key;
 using aura::compiler::shape::mutation_shape_churn_count;
 using aura::compiler::shape::shape_fiber_refresh_count;
+using aura::compiler::shape::SHAPE_INT;
 using aura::compiler::shape::shape_stability_hit_count;
 using aura::compiler::shape::shape_version_bump_count;
+using aura::compiler::shape::ShapeProfiler;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::compiler::types::make_int;
@@ -65,7 +65,8 @@ static int k_concurrent_iters() {
 
 static std::int64_t eval_int(CompilerService& cs, std::string_view code) {
     auto r = cs.eval(code);
-    if (!r || !is_int(*r)) return -1;
+    if (!r || !is_int(*r))
+        return -1;
     return static_cast<std::int64_t>(as_int(*r));
 }
 
@@ -110,8 +111,7 @@ bool test_record_shape_stability_judgment() {
     CHECK(profiler.dominant_shape(fn) == SHAPE_INT, "dominant shape is Int");
     const auto snap = profiler.current_snapshot(fn);
     CHECK(snap.version == 0, "version starts at 0 before invalidate");
-    CHECK(shape_stability_hit_count.load() > hits0,
-          "stability_hit_count grew on first stable");
+    CHECK(shape_stability_hit_count.load() > hits0, "stability_hit_count grew on first stable");
     return true;
 }
 
@@ -130,8 +130,7 @@ bool test_invalidate_version_bump_needs_deopt() {
     CHECK(!profiler.is_stable(fn), "unstable after invalidate");
     const auto snap = profiler.current_snapshot(fn);
     CHECK(snap.version == 1, "version bumped to 1");
-    CHECK(shape_version_bump_count.load() > bumps0,
-          "global version_bump_count incremented");
+    CHECK(shape_version_bump_count.load() > bumps0, "global version_bump_count incremented");
     return true;
 }
 
@@ -150,8 +149,7 @@ bool test_invalidate_all_mutation_path() {
     profiler.invalidate_all();
     CHECK(shape_version_bump_count.load() >= bumps0 + 2,
           "invalidate_all bumps version for each profile");
-    CHECK(profiler.tracked_fns().size() == 2,
-          "profiles preserved after invalidate_all");
+    CHECK(profiler.tracked_fns().size() == 2, "profiles preserved after invalidate_all");
     return true;
 }
 
@@ -175,15 +173,14 @@ bool test_stats_grow_under_mutate_eval() {
     const auto s0 = eval_int(cs, "(query:shape-stability-stats)");
     for (int i = 0; i < 15; ++i) {
         (void)cs.eval("(add1 " + std::to_string(i) + ")");
-        const auto mr = cs.typed_mutate(
-            "(mutate:rebind \"base\" \"" + std::to_string(50 + i) + "\")");
+        const auto mr =
+            cs.typed_mutate("(mutate:rebind \"base\" \"" + std::to_string(50 + i) + "\")");
         CHECK(mr.success, "typed_mutate rebind succeeds");
         (void)cs.eval("(eval-current)");
     }
     const auto s1 = eval_int(cs, "(query:shape-stability-stats)");
     const auto churn = mutation_shape_churn_count.load();
-    std::println("  shape-stability-stats: {} -> {} churn={}",
-                 s0, s1, churn);
+    std::println("  shape-stability-stats: {} -> {} churn={}", s0, s1, churn);
     CHECK(s1 >= s0, "shape-stability-stats monotonic under mutate");
     CHECK(churn > 0, "mutation_shape_churn under mutate load");
     return true;
@@ -213,10 +210,10 @@ bool test_fuzz_shape_stability_sequences() {
         const int v = val_dist(rng);
         (void)cs.eval("(dbl " + std::to_string(v & 15) + ")");
         if ((i & 3) == 0) {
-            (void)cs.typed_mutate("(mutate:rebind \"acc\" \"" +
-                std::to_string(v) + "\")");
+            (void)cs.typed_mutate("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
         }
-        if ((i & 7) == 0) (void)cs.eval("(eval-current)");
+        if ((i & 7) == 0)
+            (void)cs.eval("(eval-current)");
     }
     const auto stats1 = eval_int(cs, "(query:shape-stability-stats)");
     CHECK(stats1 >= stats0, "shape-stability-stats grew during fuzz");
@@ -232,27 +229,27 @@ bool test_eight_thread_concurrent_shape() {
     std::mutex eval_mu;
     const int iters = k_concurrent_iters();
     auto worker = [&]() {
-        std::mt19937 rng(static_cast<unsigned>(
-            std::hash<std::thread::id>{}(std::this_thread::get_id())));
+        std::mt19937 rng(
+            static_cast<unsigned>(std::hash<std::thread::id>{}(std::this_thread::get_id())));
         std::uniform_int_distribution<int> val_dist(0, 100);
         for (int i = 0; i < iters; ++i) {
             const int v = val_dist(rng);
             {
                 std::lock_guard lock(eval_mu);
                 (void)cs.eval("(wrap " + std::to_string(v & 7) + ")");
-                (void)cs.typed_mutate("(mutate:rebind \"acc\" \"" +
-                    std::to_string(v) + "\")");
+                (void)cs.typed_mutate("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
             }
         }
         done.fetch_add(1, std::memory_order_relaxed);
     };
     std::vector<std::thread> threads;
     threads.reserve(8);
-    for (int t = 0; t < 8; ++t) threads.emplace_back(worker);
-    for (auto& th : threads) th.join();
+    for (int t = 0; t < 8; ++t)
+        threads.emplace_back(worker);
+    for (auto& th : threads)
+        th.join();
     CHECK(done.load() == 8, "all 8 threads completed");
-    CHECK(prompt6_violations(cs) == 0,
-          "zero Prompt6 violations under concurrent shape load");
+    CHECK(prompt6_violations(cs) == 0, "zero Prompt6 violations under concurrent shape load");
     return true;
 }
 
@@ -280,10 +277,8 @@ bool test_fiber_yield_shape_refresh() {
         });
     }
     std::thread io_thread([&sched]() { sched.run(); });
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::seconds(30);
-    while (done.load() < k_fibers &&
-           std::chrono::steady_clock::now() < deadline) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (done.load() < k_fibers && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     sched.stop();
@@ -306,20 +301,18 @@ bool test_long_running_shape_stress() {
         const int v = val_dist(rng);
         (void)cs.eval("(dbl " + std::to_string(v & 31) + ")");
         if ((i & 1) == 0) {
-            (void)cs.typed_mutate("(mutate:rebind \"base\" \"" +
-                std::to_string(v) + "\")");
+            (void)cs.typed_mutate("(mutate:rebind \"base\" \"" + std::to_string(v) + "\")");
         } else {
-            (void)cs.typed_mutate("(mutate:replace-value (define acc " +
-                std::to_string(v) + ") (define acc " +
-                std::to_string(v) + "))");
+            (void)cs.typed_mutate("(mutate:replace-value (define acc " + std::to_string(v) +
+                                  ") (define acc " + std::to_string(v) + "))");
         }
-        if ((i & 15) == 0) (void)cs.eval("(eval-current)");
+        if ((i & 15) == 0)
+            (void)cs.eval("(eval-current)");
     }
     const auto s1 = eval_int(cs, "(query:shape-stability-stats)");
     const auto v = prompt6_violations(cs);
     const auto metrics = cs.shape_metrics("add1");
-    std::println("  stats: {} -> {} add1_calls={} violations={}",
-                 s0, s1, metrics.total_calls, v);
+    std::println("  stats: {} -> {} add1_calls={} violations={}", s0, s1, metrics.total_calls, v);
     CHECK(s1 >= s0, "shape-stability-stats monotonic under stress");
     CHECK(v == 0, "zero Prompt6 violations under stress");
     return true;
@@ -330,14 +323,11 @@ bool test_regression_related_primitives() {
     std::println("\n--- AC12: regression primitives ---");
     CompilerService cs;
     auto r1 = cs.eval("(query:value-dispatch-stats)");
-    CHECK(r1.has_value() && is_int(*r1),
-          "(query:value-dispatch-stats) regression for #571");
+    CHECK(r1.has_value() && is_int(*r1), "(query:value-dispatch-stats) regression for #571");
     auto r2 = cs.eval("(query:task4-hotpath-safety-score)");
-    CHECK(r2.has_value() && is_int(*r2),
-          "(query:task4-hotpath-safety-score) regression for #607");
+    CHECK(r2.has_value() && is_int(*r2), "(query:task4-hotpath-safety-score) regression for #607");
     auto r3 = cs.eval("(query:shape-stability-stats)");
-    CHECK(r3.has_value() && is_int(*r3),
-          "(query:shape-stability-stats) reachable");
+    CHECK(r3.has_value() && is_int(*r3), "(query:shape-stability-stats) reachable");
     if (!cs.eval("(define reg-570-a 12)")) {
         CHECK(false, "define regression");
         return false;
@@ -371,8 +361,12 @@ int run_tests() {
 
 } // namespace aura_issue_570_detail
 
-int aura_issue_570_run() { return aura_issue_570_detail::run_tests(); }
+int aura_issue_570_run() {
+    return aura_issue_570_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_570_run(); }
+int main() {
+    return aura_issue_570_run();
+}
 #endif

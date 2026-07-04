@@ -36,7 +36,7 @@ namespace aura::compiler {
 // scan lookup is fine for typical patterns (≤10 captures).
 export struct QueryMatchState {
     std::vector<std::pair<SymId, NodeId>> captures;
-    bool nested_arity = false;  // true = Kleene (0..N), false = strict (exactly 1)
+    bool nested_arity = false; // true = Kleene (0..N), false = strict (exactly 1)
     int depth = 0;
 };
 
@@ -47,13 +47,8 @@ export struct QueryMatchState {
 // by reassigning `state` (preserving `nested_arity`).
 export class QueryMatcher {
 public:
-    QueryMatcher(FlatAST* ws_flat,
-                 StringPool* ws_pool,
-                 FlatAST* pat_flat,
-                 StringPool* pat_pool,
-                 SymId wildcard_sym,
-                 bool nested_arity,
-                 bool skip_macro_introduced = false);
+    QueryMatcher(FlatAST* ws_flat, StringPool* ws_pool, FlatAST* pat_flat, StringPool* pat_pool,
+                 SymId wildcard_sym, bool nested_arity, bool skip_macro_introduced = false);
 
     // ─── Pure helpers ─────────────────────────────────────────
     bool is_wildcard(NodeId pid) const;
@@ -65,8 +60,7 @@ public:
 
     // ─── Core matchers ────────────────────────────────────────
     bool match_subtree(NodeId ws_id, NodeId pat_id);
-    bool match_list(std::span<const NodeId> ws_ch,
-                    std::span<const NodeId> pat_ch);
+    bool match_list(std::span<const NodeId> ws_ch, std::span<const NodeId> pat_ch);
     bool pat_has_ellipsis_rec(NodeId pid);
 
     // ─── Issue #292: guard predicate support ────────────────
@@ -83,7 +77,7 @@ public:
         std::string guard_expr;
     };
     std::vector<PendingGuard> pending_guards_;
-    SymId guard_sym_ = 0;  // interned ":guard" symbol in pat_pool
+    SymId guard_sym_ = 0; // interned ":guard" symbol in pat_pool
 
     // Setup: intern the ":guard" keyword symbol. Call from the
     // pattern-parsing site (e.g. query:pattern) before matching.
@@ -100,9 +94,7 @@ public:
     // Returns true if no guard or guard is satisfied; false if
     // guard failed (caller should reject the match).
     [[nodiscard]] bool has_pending_guard() const { return !pending_guards_.empty(); }
-    [[nodiscard]] const PendingGuard& take_pending_guard() {
-        return pending_guards_.back();
-    }
+    [[nodiscard]] const PendingGuard& take_pending_guard() { return pending_guards_.back(); }
     void clear_pending_guard() { pending_guards_.pop_back(); }
 
     // Issue #421: recursive MacroIntroduced subtree skips during
@@ -124,4 +116,4 @@ private:
     std::uint64_t recursive_macro_skipped_ = 0;
 };
 
-}  // namespace aura::compiler
+} // namespace aura::compiler

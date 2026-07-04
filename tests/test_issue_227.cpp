@@ -55,8 +55,8 @@ import aura.compiler.ir_executor;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // ── Test 1: post_mutation_invariant_check still runs ───────
 //
@@ -75,22 +75,19 @@ bool test_invariant_check_runs_after_rebind() {
     std::println("\n--- Test 1: invariant check runs after rebind ---");
     aura::compiler::CompilerService cs;
     // Define a function with an occurrence-typed predicate.
-    auto r1 = cs.eval(
-        "(begin "
-        "  (define (f x) "
-        "    (if (number? x) (+ x 1) (string-append x \"!\"))) "
-        "  (f 5))");
+    auto r1 = cs.eval("(begin "
+                      "  (define (f x) "
+                      "    (if (number? x) (+ x 1) (string-append x \"!\"))) "
+                      "  (f 5))");
     CHECK(r1.has_value(), "first eval succeeds");
     if (r1) {
-        CHECK(aura::compiler::types::as_int(*r1) == 6,
-              "first eval: (f 5) = 6");
+        CHECK(aura::compiler::types::as_int(*r1) == 6, "first eval: (f 5) = 6");
     }
     // Mutate the function. The mutation should propagate
     // dirty bits upward through `f`'s IfExpr predicate.
-    auto r2 = cs.eval(
-        "(mutate:rebind \"f\" "
-        "\"(lambda (x) (if (number? x) (* x 2) x))\" "
-        "\"test\")");
+    auto r2 = cs.eval("(mutate:rebind \"f\" "
+                      "\"(lambda (x) (if (number? x) (* x 2) x))\" "
+                      "\"test\")");
     CHECK(r2.has_value(), "mutate:rebind succeeds");
 
     // Verify the typed_mutate counter advanced (Issue #142
@@ -99,8 +96,7 @@ bool test_invariant_check_runs_after_rebind() {
     // (Note: `mutate:rebind` via the eval path is the
     // tree-walker primitive, not typed_mutate — so the
     // epoch bump is on the typed_mutate path only.)
-    auto epoch_post = cs.mutation_epoch_.load(
-        std::memory_order_relaxed);
+    auto epoch_post = cs.mutation_epoch_.load(std::memory_order_relaxed);
     CHECK(epoch_post >= 0, "mutation_epoch_ readable");
 
     return true;
@@ -114,13 +110,10 @@ bool test_strict_mode_promotes_warning() {
     // Strict mode is the recommended setting for AI mutation
     // paths (per the issue's Recommended Fix #3). Verify
     // the setter and getter are wired.
-    CHECK(cs.invariant_check_mode() !=
-              aura::compiler::InvariantCheckMode::Strict,
+    CHECK(cs.invariant_check_mode() != aura::compiler::InvariantCheckMode::Strict,
           "default is not Strict (sanity check)");
-    cs.set_invariant_check_mode(
-        aura::compiler::InvariantCheckMode::Strict);
-    CHECK(cs.invariant_check_mode() ==
-              aura::compiler::InvariantCheckMode::Strict,
+    cs.set_invariant_check_mode(aura::compiler::InvariantCheckMode::Strict);
+    CHECK(cs.invariant_check_mode() == aura::compiler::InvariantCheckMode::Strict,
           "set_invariant_check_mode(Strict) is readable");
     return true;
 }
@@ -136,19 +129,15 @@ bool test_strict_mode_promotes_warning() {
 bool test_cache_epoch_advances_on_mutation() {
     std::println("\n--- Test 3: cache_epoch_ advances on mutation ---");
     aura::compiler::CompilerService cs;
-    auto epoch_before = cs.mutation_epoch_.load(
-        std::memory_order_relaxed);
+    auto epoch_before = cs.mutation_epoch_.load(std::memory_order_relaxed);
     // Mutate:rebind bumps the mutation_epoch_ atomically
     // via the typed_mutate path. (tree-walker mutate:rebind
     // does NOT bump the epoch — see #147 follow-up.)
-    cs.eval(
-        "(begin "
-        "  (define (g x) (* x 2)) "
-        "  (mutate:rebind \"g\" \"(lambda (x) (+ x 10))\" \"test\"))");
-    auto epoch_after = cs.mutation_epoch_.load(
-        std::memory_order_relaxed);
-    CHECK(epoch_after >= epoch_before,
-          "mutation_epoch_ non-decreasing (coarse gate consistent)");
+    cs.eval("(begin "
+            "  (define (g x) (* x 2)) "
+            "  (mutate:rebind \"g\" \"(lambda (x) (+ x 10))\" \"test\"))");
+    auto epoch_after = cs.mutation_epoch_.load(std::memory_order_relaxed);
+    CHECK(epoch_after >= epoch_before, "mutation_epoch_ non-decreasing (coarse gate consistent)");
     return true;
 }
 
@@ -173,14 +162,13 @@ bool test_dirty_propagation_marks_predicate_chain() {
     // state directly from outside the call. We verify
     // the call succeeds without crash + post-condition
     // (the eval result) is consistent.
-    auto r = cs.eval(
-        "(begin "
-        "  (define (h x) "
-        "    (if (number? x) (+ x 1) x)) "
-        "  (mutate:rebind \"h\" "
-        "    \"(lambda (x) (if (number? x) (* x 2) x))\" "
-        "    \"test\") "
-        "  (h 5))");
+    auto r = cs.eval("(begin "
+                     "  (define (h x) "
+                     "    (if (number? x) (+ x 1) x)) "
+                     "  (mutate:rebind \"h\" "
+                     "    \"(lambda (x) (if (number? x) (* x 2) x))\" "
+                     "    \"test\") "
+                     "  (h 5))");
     // NOTE: the actual return value may be 6 (old body) or
     // 10 (new body) depending on which cache invalidation
     // path fires. This is the bug #227 is tracking — the
@@ -207,7 +195,8 @@ int run_tests() {
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
-}  // namespace aura_issue_227_detail
+} // namespace aura_issue_227_detail
 
-int aura_issue_227_run() { return aura_issue_227_detail::run_tests(); }
-
+int aura_issue_227_run() {
+    return aura_issue_227_detail::run_tests();
+}

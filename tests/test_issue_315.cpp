@@ -33,8 +33,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.compiler.sv_ir;
@@ -85,8 +85,8 @@ bool test_sv_interface_ir_constructible() {
     CHECK_EQ_LOCAL(master_mp.port_names[0], port_a, "master port_names[0] is data");
     CHECK_EQ_LOCAL(master_mp.port_names[1], port_b, "master port_names[1] is valid");
     auto bus = pool.intern("Bus");
-    auto bus_ir = compiler::sv_ir::make_sv_interface(
-        bus, std::move(master_mp), std::move(slave_mp));
+    auto bus_ir =
+        compiler::sv_ir::make_sv_interface(bus, std::move(master_mp), std::move(slave_mp));
     CHECK_EQ_LOCAL(bus_ir.name, bus, "Bus SVInterfaceIR name matches");
     CHECK_EQ_LOCAL(bus_ir.modports.size(), 2, "Bus SVInterfaceIR has 2 modports");
     return true;
@@ -110,30 +110,25 @@ bool test_map_interface_node_to_ir() {
     auto valid_var = flat.add_variable(valid_sym);
     // Build 2 Modport nodes, each with a 2-port list.
     std::vector<SymId> master_ports{data_sym, valid_sym};
-    auto master_mp = flat.add_modport(pool.intern("master"),
-                                      std::span<const SymId>(master_ports));
+    auto master_mp = flat.add_modport(pool.intern("master"), std::span<const SymId>(master_ports));
     std::vector<SymId> slave_ports{valid_sym, data_sym};
-    auto slave_mp = flat.add_modport(pool.intern("slave"),
-                                     std::span<const SymId>(slave_ports));
+    auto slave_mp = flat.add_modport(pool.intern("slave"), std::span<const SymId>(slave_ports));
     // Build the Interface node with the 4 body items.
     std::vector<NodeId> body{data_var, valid_var, master_mp, slave_mp};
     auto bus = flat.add_interface(pool.intern("Bus"), std::span<const NodeId>(body));
     // AC2: map_interface_node_to_ir on the Interface NodeId.
     auto ir_opt = compiler::sv_ir::map_interface_node_to_ir(flat, pool, bus);
-    CHECK(ir_opt.has_value(),
-          "map_interface_node_to_ir returns a value for Interface node");
-    if (!ir_opt) return false;
+    CHECK(ir_opt.has_value(), "map_interface_node_to_ir returns a value for Interface node");
+    if (!ir_opt)
+        return false;
     auto& ir = *ir_opt;
     CHECK_EQ_LOCAL(ir.name, std::uint32_t{pool.intern("Bus")},
                    "IR.name matches the interface's SymId");
     // Only Modport children are reflected in IR (Variables are skipped).
-    CHECK_EQ_LOCAL(ir.modports.size(), 2,
-                   "IR collects 2 modports (Variables silently skipped)");
+    CHECK_EQ_LOCAL(ir.modports.size(), 2, "IR collects 2 modports (Variables silently skipped)");
     // Resolve port lists via SymId → pool.resolve.
-    CHECK_EQ_LOCAL(ir.modports[0].port_names.size(), 2,
-                   "master modport has 2 port names");
-    CHECK_EQ_LOCAL(ir.modports[1].port_names.size(), 2,
-                   "slave modport has 2 port names");
+    CHECK_EQ_LOCAL(ir.modports[0].port_names.size(), 2, "master modport has 2 port names");
+    CHECK_EQ_LOCAL(ir.modports[1].port_names.size(), 2, "slave modport has 2 port names");
     // Debug format with the pool — SymIds resolve back to strings.
     auto dbg = compiler::sv_ir::debug_sv_interface(ir, pool);
     CHECK(dbg.find("interface Bus") != std::string::npos,
@@ -142,8 +137,7 @@ bool test_map_interface_node_to_ir() {
           "debug_sv_interface contains 'master' modport name");
     CHECK(dbg.find("slave") != std::string::npos,
           "debug_sv_interface contains 'slave' modport name");
-    CHECK(dbg.find("data") != std::string::npos,
-          "debug_sv_interface resolves 'data' port");
+    CHECK(dbg.find("data") != std::string::npos, "debug_sv_interface resolves 'data' port");
     return true;
 }
 
@@ -179,10 +173,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_315_detail
+} // namespace aura_issue_315_detail
 
-int aura_issue_315_run() { return aura_issue_315_detail::run_tests(); }
+int aura_issue_315_run() {
+    return aura_issue_315_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_315_run(); }
+int main() {
+    return aura_issue_315_run();
+}
 #endif

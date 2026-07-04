@@ -68,8 +68,7 @@ bool test_concurrency_counters_reachable() {
     (void)cs.eval("(eval-current)");
     const auto uba0 = cs.evaluator().get_unsafe_boundary_attempts();
     const auto lcu0 = cs.evaluator().get_lock_contention_us();
-    std::println("  baseline: unsafe_boundary_attempts={} lock_contention_us={}",
-                 uba0, lcu0);
+    std::println("  baseline: unsafe_boundary_attempts={} lock_contention_us={}", uba0, lcu0);
     CHECK(uba0 == 0, "unsafe_boundary_attempts starts at 0");
     CHECK(lcu0 == 0, "lock_contention_us starts at 0");
     return true;
@@ -83,13 +82,11 @@ bool test_query_edsl_concurrency_stats() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:edsl-concurrency-stats)");
     CHECK(r.has_value(), "(query:edsl-concurrency-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(query:edsl-concurrency-stats) is integer");
+    CHECK(aura::compiler::types::is_int(*r), "(query:edsl-concurrency-stats) is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:edsl-concurrency-stats = {}", v);
-        CHECK(v >= 0,
-              "(query:edsl-concurrency-stats) >= 0 (4 counters sum)");
+        CHECK(v >= 0, "(query:edsl-concurrency-stats) >= 0 (4 counters sum)");
     }
     return true;
 }
@@ -110,13 +107,12 @@ bool test_eight_thread_concurrent_mutate_query() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = std::string("(mutate:replace-value (define ") +
-                (i & 1 ? "a" : "b") + " " +
-                std::to_string(tid * 1000 + i) +
-                ") (define " + (i & 1 ? "a" : "b") + " " +
-                std::to_string(tid * 1000 + i) + "))";
+            std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
+                               " " + std::to_string(tid * 1000 + i) + ") (define " +
+                               (i & 1 ? "a" : "b") + " " + std::to_string(tid * 1000 + i) + "))";
             auto r = cs.eval(code);
-            if (!r) errors.fetch_add(1);
+            if (!r)
+                errors.fetch_add(1);
             // Periodic query.
             if ((i & 15) == 0) {
                 (void)cs.eval("(query:tag-arity-count 32 0)");
@@ -126,21 +122,22 @@ bool test_eight_thread_concurrent_mutate_query() {
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
 
     const auto lcu = cs.evaluator().get_lock_contention_us();
     const auto uba = cs.evaluator().get_unsafe_boundary_attempts();
     std::println("  completed: {}/{} errors: {} lock_contention_us: {} "
                  "unsafe_boundary: {} elapsed: {}ms",
-                 completed.load(), n_threads * n_iters, errors.load(),
-                 lcu, uba, ms);
+                 completed.load(), n_threads * n_iters, errors.load(), lcu, uba, ms);
     CHECK(completed.load() == n_threads * n_iters,
           "all 800 ops completed (no deadlock under concurrent mutate+query)");
-    CHECK(errors.load() == 0,
-          "no errors during concurrent mutate+query");
+    CHECK(errors.load() == 0, "no errors during concurrent mutate+query");
     CHECK(lcu >= 0, "lock_contention_us observable + non-negative");
     CHECK(ms < 60000, "completed within 60s wall-clock budget");
     return true;
@@ -170,15 +167,16 @@ bool test_scheduler_fiber_yield_concurrent() {
     auto t0 = std::chrono::steady_clock::now();
     while (done.load() < k_fibers) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        if (elapsed > 30000) break;
+                           std::chrono::steady_clock::now() - t0)
+                           .count();
+        if (elapsed > 30000)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.stop();
     io_thread.join();
     std::println("  done: {}/{}", done.load(), k_fibers);
-    CHECK(done.load() == k_fibers,
-          "all 8 fibers completed 50 yields (no scheduler stall)");
+    CHECK(done.load() == k_fibers, "all 8 fibers completed 50 yields (no scheduler stall)");
     return true;
 }
 
@@ -201,30 +199,32 @@ bool test_long_running_concurrent_stress() {
     (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
     (void)cs.eval("(eval-current)");
     constexpr int n_threads = 8;
-    constexpr int n_iters = 125;  // 8 * 125 = 1000 ops
+    constexpr int n_iters = 125; // 8 * 125 = 1000 ops
     std::mutex mtx;
     std::atomic<int> completed{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
             std::string code = std::string("(mutate:replace-value (define v") +
-                std::to_string(tid) + " " + std::to_string(i) +
-                ") (define v" + std::to_string(tid) + " " +
-                std::to_string(i) + "))";
+                               std::to_string(tid) + " " + std::to_string(i) + ") (define v" +
+                               std::to_string(tid) + " " + std::to_string(i) + "))";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
     };
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
-    for (int i = 0; i < n_threads; ++i) threads.emplace_back(worker, i);
-    for (auto& t : threads) t.join();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - t0).count();
+    for (int i = 0; i < n_threads; ++i)
+        threads.emplace_back(worker, i);
+    for (auto& t : threads)
+        t.join();
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
 
     const auto lcu = cs.evaluator().get_lock_contention_us();
-    std::println("  completed: {}/{} lock_contention_us: {} elapsed: {}ms",
-                 completed.load(), n_threads * n_iters, lcu, ms);
+    std::println("  completed: {}/{} lock_contention_us: {} elapsed: {}ms", completed.load(),
+                 n_threads * n_iters, lcu, ms);
     CHECK(completed.load() == n_threads * n_iters,
           "all 1000 ops completed (no crash under heavy concurrent mutate load)");
     CHECK(lcu >= 0, "lock_contention_us observable + non-negative");
@@ -308,8 +308,12 @@ int run_tests() {
 
 } // namespace aura_issue_556_detail
 
-int aura_issue_556_run() { return aura_issue_556_detail::run_tests(); }
+int aura_issue_556_run() {
+    return aura_issue_556_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_556_run(); }
+int main() {
+    return aura_issue_556_run();
+}
 #endif

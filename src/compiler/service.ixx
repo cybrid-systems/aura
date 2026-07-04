@@ -253,12 +253,14 @@ export struct EscapeAnalysisWrap {
                 if (block_dirty_fn_ && !is_block_dirty(static_cast<std::uint32_t>(bi)))
                     continue;
                 for (auto& instr : func.blocks[bi].instructions) {
-                    flat_instrs[bi].push_back(
-                        {static_cast<std::uint32_t>(instr.opcode),
-                         {instr.operands[0], instr.operands[1], instr.operands[2],
-                          instr.operands[3]},
-                         0, instr.narrow_evidence, instr.type_id, instr.linear_ownership_state,
-                         0});
+                    flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
+                                               {instr.operands[0], instr.operands[1],
+                                                instr.operands[2], instr.operands[3]},
+                                               0,
+                                               instr.narrow_evidence,
+                                               instr.type_id,
+                                               instr.linear_ownership_state,
+                                               0});
                 }
             }
             aura::jit::run_escape_analysis(flat_instrs, func.local_count, maps[func.id]);
@@ -385,20 +387,16 @@ public:
     // hit + linear_check_pass). Exposed via
     // (query:closure-env-safety-stats) primitive.
     [[nodiscard]] std::uint64_t get_closure_stale_refresh_count() const noexcept {
-        return metrics_.closure_stale_refresh_count_.load(
-            std::memory_order_relaxed);
+        return metrics_.closure_stale_refresh_count_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_bridge_epoch_hit_count() const noexcept {
-        return metrics_.bridge_epoch_hit_count_.load(
-            std::memory_order_relaxed);
+        return metrics_.bridge_epoch_hit_count_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_linear_check_pass_count() const noexcept {
-        return metrics_.linear_check_pass_count_.load(
-            std::memory_order_relaxed);
+        return metrics_.linear_check_pass_count_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_gc_envframe_stale_skipped() const noexcept {
-        return metrics_.gc_envframe_stale_skipped_.load(
-            std::memory_order_relaxed);
+        return metrics_.gc_envframe_stale_skipped_.load(std::memory_order_relaxed);
     }
     // Issue #305: TypeId/TypeScheme propagation observability
     // accessors (EDA hardware optimization / synthesis track).
@@ -407,20 +405,16 @@ public:
     // and the bit-width-inference pass in the EDA backend).
     // Exposed via (compile:type-propagation-stats) primitive.
     [[nodiscard]] std::uint64_t get_type_propagation_runs() const noexcept {
-        return metrics_.type_propagation_runs_.load(
-            std::memory_order_relaxed);
+        return metrics_.type_propagation_runs_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_type_propagation_total() const noexcept {
-        return metrics_.type_propagation_total_.load(
-            std::memory_order_relaxed);
+        return metrics_.type_propagation_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_type_propagation_unknown() const noexcept {
-        return metrics_.type_propagation_unknown_.load(
-            std::memory_order_relaxed);
+        return metrics_.type_propagation_unknown_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_type_propagation_int_width() const noexcept {
-        return metrics_.type_propagation_int_width_.load(
-            std::memory_order_relaxed);
+        return metrics_.type_propagation_int_width_.load(std::memory_order_relaxed);
     }
     // Bump helpers (for the follow-up TypePropagationPass +
     // bit-width-inference wire-up in the EDA backend).
@@ -430,8 +424,7 @@ public:
         metrics_.type_propagation_runs_.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_type_propagation_total(std::uint64_t delta) noexcept {
-        metrics_.type_propagation_total_.fetch_add(
-            delta, std::memory_order_relaxed);
+        metrics_.type_propagation_total_.fetch_add(delta, std::memory_order_relaxed);
     }
     void bump_type_propagation_unknown() noexcept {
         metrics_.type_propagation_unknown_.fetch_add(1, std::memory_order_relaxed);
@@ -454,20 +447,16 @@ public:
     // OwnershipEnv wire-up in lowering_linear_types). Exposed
     // via (query:linear-ownership-stats) primitive.
     [[nodiscard]] std::uint64_t get_hw_resource_wire_borrows() const noexcept {
-        return metrics_.hw_resource_wire_borrows_.load(
-            std::memory_order_relaxed);
+        return metrics_.hw_resource_wire_borrows_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_hw_resource_reg_writes() const noexcept {
-        return metrics_.hw_resource_reg_writes_.load(
-            std::memory_order_relaxed);
+        return metrics_.hw_resource_reg_writes_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_hw_resource_mem_access() const noexcept {
-        return metrics_.hw_resource_mem_access_.load(
-            std::memory_order_relaxed);
+        return metrics_.hw_resource_mem_access_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_hw_resource_double_drive() const noexcept {
-        return metrics_.hw_resource_double_drive_.load(
-            std::memory_order_relaxed);
+        return metrics_.hw_resource_double_drive_.load(std::memory_order_relaxed);
     }
     // Bump helpers (for the follow-up OwnershipEnv + linear
     // lowering wire-up in the EDA backend). Public so the
@@ -489,41 +478,33 @@ public:
     // GCEnvWalkFn integration). Public so the test file can
     // verify the counter wiring is reachable from C++.
     void bump_bridge_epoch_hit_count() noexcept {
-        metrics_.bridge_epoch_hit_count_.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.bridge_epoch_hit_count_.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_linear_check_pass_count() noexcept {
-        metrics_.linear_check_pass_count_.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.linear_check_pass_count_.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_gc_envframe_stale_skipped() noexcept {
-        metrics_.gc_envframe_stale_skipped_.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.gc_envframe_stale_skipped_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #681: compiler closure invalidation observability.
     [[nodiscard]] std::uint64_t get_compiler_inval_bridge_epoch_total() const noexcept {
-        return metrics_.compiler_inval_bridge_epoch_total.load(
-            std::memory_order_relaxed);
+        return metrics_.compiler_inval_bridge_epoch_total.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_compiler_closure_epoch_mismatch_hits() const noexcept {
-        return metrics_.compiler_closure_epoch_mismatch_hits.load(
-            std::memory_order_relaxed);
+        return metrics_.compiler_closure_epoch_mismatch_hits.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_compiler_closure_safe_fallbacks() const noexcept {
-        return metrics_.compiler_closure_safe_fallbacks.load(
-            std::memory_order_relaxed);
+        return metrics_.compiler_closure_safe_fallbacks.load(std::memory_order_relaxed);
     }
     // Issue #682: compiler GC root coordination observability.
     [[nodiscard]] std::uint64_t get_ir_closure_roots_registered() const noexcept {
-        return metrics_.ir_closure_roots_registered.load(
-            std::memory_order_relaxed);
+        return metrics_.ir_closure_roots_registered.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_hotswap_root_miss() const noexcept {
         return metrics_.hotswap_root_miss.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_compiler_gc_safepoint_defer_count() const noexcept {
-        return metrics_.compiler_gc_safepoint_defer_count.load(
-            std::memory_order_relaxed);
+        return metrics_.compiler_gc_safepoint_defer_count.load(std::memory_order_relaxed);
     }
 
     CompilerService()
@@ -557,15 +538,13 @@ public:
         evaluator_.set_compiler_service(this);
         // Issue #681: wire mutation_epoch / bridge_epoch for
         // apply_closure + IRClosure lifetime checks.
-        evaluator_.install_bridge_epoch_fn(
-            [](void* svc) -> std::uint64_t {
-                return static_cast<CompilerService*>(svc)->bridge_epoch();
-            });
+        evaluator_.install_bridge_epoch_fn([](void* svc) -> std::uint64_t {
+            return static_cast<CompilerService*>(svc)->bridge_epoch();
+        });
         // Issue #682: register compiler IRClosure/EnvId GC roots at safepoint.
-        evaluator_.install_compiler_gc_roots_fn(
-            [](void* svc, void* roots) {
-                static_cast<CompilerService*>(svc)->flush_compiler_gc_roots(roots);
-            });
+        evaluator_.install_compiler_gc_roots_fn([](void* svc, void* roots) {
+            static_cast<CompilerService*>(svc)->flush_compiler_gc_roots(roots);
+        });
         evaluator_.set_workspace_adt_sync_fn([](void* svc) {
             static_cast<CompilerService*>(svc)->refresh_adt_constructors_from_workspace();
         });
@@ -733,9 +712,8 @@ public:
         // Issue #429: hook for (query:soa-dirty-stats).
         // The closure reads the live SoaDirtyStats in one
         // pass over ir_cache_v2_ (cheap; ~1ns per entry).
-        evaluator_.set_get_soa_dirty_stats_fn([this]() -> Evaluator::SoaDirtyStats {
-            return get_soa_dirty_stats();
-        });
+        evaluator_.set_get_soa_dirty_stats_fn(
+            [this]() -> Evaluator::SoaDirtyStats { return get_soa_dirty_stats(); });
         // Issue #460: per-instruction dirty hooks. The
         // P0 ship wires no-op implementations (always
         // return false) because the underlying
@@ -744,35 +722,35 @@ public:
         // the primitive path is exercisable; the
         // follow-up adds the bitmask and the
         // mark/clear implementations.
-        evaluator_.set_is_instruction_dirty_fn(
-            [this](const char* name, std::size_t func_idx, std::uint32_t block_idx,
-                   std::uint32_t inst_idx) -> bool {
-                std::string n = name ? std::string(name) : std::string();
-                auto it = ir_cache_v2_.find(n);
-                if (it == ir_cache_v2_.end())
-                    return false;
-                return it->second.is_instruction_dirty(func_idx, block_idx, inst_idx);
-            });
-        evaluator_.set_mark_instruction_dirty_fn(
-            [this](const char* name, std::size_t func_idx, std::uint32_t block_idx,
-                   std::uint32_t inst_idx) -> bool {
-                std::string n = name ? std::string(name) : std::string();
-                auto it = ir_cache_v2_.find(n);
-                if (it == ir_cache_v2_.end())
-                    return false;
-                it->second.mark_instruction_dirty(func_idx, block_idx, inst_idx);
-                return true;
-            });
-        evaluator_.set_clear_instruction_dirty_fn(
-            [this](const char* name, std::size_t func_idx, std::uint32_t block_idx,
-                   std::uint32_t inst_idx) -> bool {
-                std::string n = name ? std::string(name) : std::string();
-                auto it = ir_cache_v2_.find(n);
-                if (it == ir_cache_v2_.end())
-                    return false;
-                it->second.clear_instruction_dirty(func_idx, block_idx, inst_idx);
-                return true;
-            });
+        evaluator_.set_is_instruction_dirty_fn([this](const char* name, std::size_t func_idx,
+                                                      std::uint32_t block_idx,
+                                                      std::uint32_t inst_idx) -> bool {
+            std::string n = name ? std::string(name) : std::string();
+            auto it = ir_cache_v2_.find(n);
+            if (it == ir_cache_v2_.end())
+                return false;
+            return it->second.is_instruction_dirty(func_idx, block_idx, inst_idx);
+        });
+        evaluator_.set_mark_instruction_dirty_fn([this](const char* name, std::size_t func_idx,
+                                                        std::uint32_t block_idx,
+                                                        std::uint32_t inst_idx) -> bool {
+            std::string n = name ? std::string(name) : std::string();
+            auto it = ir_cache_v2_.find(n);
+            if (it == ir_cache_v2_.end())
+                return false;
+            it->second.mark_instruction_dirty(func_idx, block_idx, inst_idx);
+            return true;
+        });
+        evaluator_.set_clear_instruction_dirty_fn([this](const char* name, std::size_t func_idx,
+                                                         std::uint32_t block_idx,
+                                                         std::uint32_t inst_idx) -> bool {
+            std::string n = name ? std::string(name) : std::string();
+            auto it = ir_cache_v2_.find(n);
+            if (it == ir_cache_v2_.end())
+                return false;
+            it->second.clear_instruction_dirty(func_idx, block_idx, inst_idx);
+            return true;
+        });
         // Issue #240: per-node occurrence-dirty hook. The
         // hook reads / writes the kOccurrenceDirty bit on
         // the workspace FlatAST's dirty bitmask
@@ -821,11 +799,10 @@ public:
         });
         // Issue #388: macro-hygiene skipped total (separate
         // getter so the packed uint64 layout stays unchanged).
-        evaluator_.set_get_macro_hygiene_skipped_fn(
-            []() -> std::uint64_t {
-                return static_cast<std::uint64_t>(
-                    aura::compiler::InlinePass::total_macro_hygiene_skipped());
-            });
+        evaluator_.set_get_macro_hygiene_skipped_fn([]() -> std::uint64_t {
+            return static_cast<std::uint64_t>(
+                aura::compiler::InlinePass::total_macro_hygiene_skipped());
+        });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send = [](const std::string& target,
@@ -1089,8 +1066,7 @@ public:
         // Issue #402 observability: bump the call counter
         // first so callers see every invocation (incl. early
         // returns for NULL_NODE / out-of-range root).
-        metrics_.needs_tree_walker_fallback_calls.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.needs_tree_walker_fallback_calls.fetch_add(1, std::memory_order_relaxed);
         if (root == aura::ast::NULL_NODE || root >= flat.size())
             return false;
 
@@ -1106,8 +1082,7 @@ public:
         // returns false without paying the O(flat.size())
         // scan cost.
         if (flat.summary_flags() == 0) {
-            metrics_.needs_tree_walker_fast_path_hits.fetch_add(
-                1, std::memory_order_relaxed);
+            metrics_.needs_tree_walker_fast_path_hits.fetch_add(1, std::memory_order_relaxed);
             // Issue #402: top-level defines need a body-aware
             // check (params + function name are NOT free vars,
             // even though walk_subtree would see them as such).
@@ -1115,14 +1090,12 @@ public:
             // when root is a Define so the slow path's logic
             // is reused verbatim — same answer for the same AST.
             auto fast_root_v = flat.get(root);
-            if (fast_root_v.tag == aura::ast::NodeTag::Define &&
-                !fast_root_v.children.empty()) {
+            if (fast_root_v.tag == aura::ast::NodeTag::Define && !fast_root_v.children.empty()) {
                 auto fast_body_id = fast_root_v.child(0);
                 if (fast_body_id < flat.size()) {
-                    auto fast_name = std::string(
-                        pool.resolve(fast_root_v.sym_id));
-                    return define_body_needs_tree_walker_fallback(
-                        flat, pool, fast_body_id, fast_name);
+                    auto fast_name = std::string(pool.resolve(fast_root_v.sym_id));
+                    return define_body_needs_tree_walker_fallback(flat, pool, fast_body_id,
+                                                                  fast_name);
                 }
             }
             return subtree_needs_tree_walker_fallback(flat, pool, root);
@@ -1133,8 +1106,7 @@ public:
         // somewhere in the flat. Fall back to the original
         // O(flat.size()) scan, which has the same logic as
         // before #402.
-        metrics_.needs_tree_walker_slow_path_hits.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.needs_tree_walker_slow_path_hits.fetch_add(1, std::memory_order_relaxed);
 
         // Issue #272: top-level defines are IR-native when the body only
         // references params, self, primitives, cached functions, or IR value cells.
@@ -1347,8 +1319,8 @@ public:
     // keyword check, Call query:/mutate: prefix, primitive
     // slot lookup, etc. — but bounded by root size.
     bool subtree_needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
-                                             const aura::ast::StringPool& pool,
-                                             aura::ast::NodeId root) const {
+                                            const aura::ast::StringPool& pool,
+                                            aura::ast::NodeId root) const {
         if (root == aura::ast::NULL_NODE || root >= flat.size())
             return false;
 
@@ -1418,76 +1390,85 @@ public:
         };
 
         bool needs = false;
-        const std::size_t visited = flat.walk_subtree(root,
-            [&](aura::ast::NodeId id) {
-                if (needs) return; // short-circuit
-                const auto v = flat.get(id);
-                // Tag-only early-returns (mirrors slow path).
-                switch (v.tag) {
+        const std::size_t visited = flat.walk_subtree(root, [&](aura::ast::NodeId id) {
+            if (needs)
+                return; // short-circuit
+            const auto v = flat.get(id);
+            // Tag-only early-returns (mirrors slow path).
+            switch (v.tag) {
                 case aura::ast::NodeTag::MacroDef:
                 case aura::ast::NodeTag::DefineType:
                 case aura::ast::NodeTag::DefineModule:
                     needs = true;
                     return;
                 case aura::ast::NodeTag::Lambda:
-                    if (v.int_value != 0) { needs = true; return; }
+                    if (v.int_value != 0) {
+                        needs = true;
+                        return;
+                    }
                     break;
                 case aura::ast::NodeTag::TypeAnnotation:
-                    if (v.int_value != 0) { needs = true; return; }
+                    if (v.int_value != 0) {
+                        needs = true;
+                        return;
+                    }
                     break;
                 case aura::ast::NodeTag::Set:
                     needs = true;
                     return;
-                default: break;
+                default:
+                    break;
+            }
+            if (v.tag == aura::ast::NodeTag::Variable) {
+                auto var_name = pool.resolve(v.sym_id);
+                if (!var_name.empty() && var_name[0] == ':') {
+                    needs = true;
+                    return;
                 }
-                if (v.tag == aura::ast::NodeTag::Variable) {
-                    auto var_name = pool.resolve(v.sym_id);
-                    if (!var_name.empty() && var_name[0] == ':') {
+                if (user_bindings_.count(std::string(var_name))) {
+                    if (ir_cache_.count(std::string(var_name)) == 0 &&
+                        ir_value_cell_bindings_.count(std::string(var_name)) == 0) {
                         needs = true;
                         return;
                     }
-                    if (user_bindings_.count(std::string(var_name))) {
-                        if (ir_cache_.count(std::string(var_name)) == 0 &&
-                            ir_value_cell_bindings_.count(std::string(var_name)) == 0) {
+                }
+                auto vn = std::string(var_name);
+                if (ir_value_cell_bindings_.count(vn))
+                    return;
+                if (!vn.empty() &&
+                    evaluator_.primitives().slot_for_name(vn) >=
+                        evaluator_.primitives().slot_count() &&
+                    ir_cache_.count(vn) == 0 && !lowering_known.count(vn)) {
+                    needs = true;
+                    return;
+                }
+            }
+            if (v.tag == aura::ast::NodeTag::Call && v.children.empty() == false) {
+                auto callee = v.child(0);
+                if (callee != aura::ast::NULL_NODE && callee < flat.size()) {
+                    const auto callee_v = flat.get(callee);
+                    if (callee_v.tag == aura::ast::NodeTag::Variable) {
+                        auto name = std::string(pool.resolve(callee_v.sym_id));
+                        if (name.starts_with("query:") || name.starts_with("mutate:")) {
+                            needs = true;
+                            return;
+                        }
+                        if (tree_walker_only.count(name)) {
+                            needs = true;
+                            return;
+                        }
+                        if (name == "catch")
+                            return;
+                        if (evaluator_.primitives().slot_for_name(name) >=
+                                evaluator_.primitives().slot_count() &&
+                            ir_cache_.count(name) == 0 && !lowering_known.count(name)) {
                             needs = true;
                             return;
                         }
                     }
-                    auto vn = std::string(var_name);
-                    if (ir_value_cell_bindings_.count(vn)) return;
-                    if (!vn.empty() &&
-                        evaluator_.primitives().slot_for_name(vn) >=
-                            evaluator_.primitives().slot_count() &&
-                        ir_cache_.count(vn) == 0 && !lowering_known.count(vn)) {
-                        needs = true;
-                        return;
-                    }
                 }
-                if (v.tag == aura::ast::NodeTag::Call && v.children.empty() == false) {
-                    auto callee = v.child(0);
-                    if (callee != aura::ast::NULL_NODE && callee < flat.size()) {
-                        const auto callee_v = flat.get(callee);
-                        if (callee_v.tag == aura::ast::NodeTag::Variable) {
-                            auto name = std::string(pool.resolve(callee_v.sym_id));
-                            if (name.starts_with("query:") || name.starts_with("mutate:")) {
-                                needs = true;
-                                return;
-                            }
-                            if (tree_walker_only.count(name)) {
-                                needs = true;
-                                return;
-                            }
-                            if (name == "catch") return;
-                            if (evaluator_.primitives().slot_for_name(name) >=
-                                    evaluator_.primitives().slot_count() &&
-                                ir_cache_.count(name) == 0 && !lowering_known.count(name)) {
-                                needs = true;
-                                return;
-                            }
-                        }
-                    }
-                }
-            });
+            }
+        });
         // Issue #402 observability: record visited-node count
         // for the fast path. If visited < flat.size() (i.e.
         // subtree was smaller than flat), the fast path saved
@@ -1498,16 +1479,13 @@ public:
 
     // Issue #402: public counter accessor for tests.
     [[nodiscard]] std::uint64_t get_needs_tree_walker_fallback_calls() const noexcept {
-        return metrics_.needs_tree_walker_fallback_calls.load(
-            std::memory_order_relaxed);
+        return metrics_.needs_tree_walker_fallback_calls.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_needs_tree_walker_fast_path_hits() const noexcept {
-        return metrics_.needs_tree_walker_fast_path_hits.load(
-            std::memory_order_relaxed);
+        return metrics_.needs_tree_walker_fast_path_hits.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_needs_tree_walker_slow_path_hits() const noexcept {
-        return metrics_.needs_tree_walker_slow_path_hits.load(
-            std::memory_order_relaxed);
+        return metrics_.needs_tree_walker_slow_path_hits.load(std::memory_order_relaxed);
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
@@ -1840,9 +1818,8 @@ public:
         aura::compiler::TypeCheckWrap tc_pass;
         aura::diag::DiagnosticCollector diags;
         tc_pass.set_bidirectional_mode(bidirectional_mode_);
-        tc_pass.check_before_lowering(
-            *flat_ptr, *pool_ptr, expanded_root, type_registry_, diags,
-            mutation_epoch_.load(std::memory_order_relaxed), &metrics_);
+        tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_, diags,
+                                      mutation_epoch_.load(std::memory_order_relaxed), &metrics_);
         {
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
@@ -1964,20 +1941,18 @@ public:
         ShapeAwareFoldingPass saf;
         saf.run(ir_mod);
         if (saf.fold_count() > 0) {
-            metrics_.shape_fold_count.fetch_add(saf.fold_count(),
-                                                std::memory_order_relaxed);
+            metrics_.shape_fold_count.fetch_add(saf.fold_count(), std::memory_order_relaxed);
         }
         if (saf.linear_elide_count() > 0) {
-            metrics_.shape_linear_elide_count.fetch_add(
-                saf.linear_elide_count(), std::memory_order_relaxed);
+            metrics_.shape_linear_elide_count.fetch_add(saf.linear_elide_count(),
+                                                        std::memory_order_relaxed);
         }
         if (saf.narrow_check_count() > 0) {
-            metrics_.shape_narrow_check_count.fetch_add(
-                saf.narrow_check_count(), std::memory_order_relaxed);
+            metrics_.shape_narrow_check_count.fetch_add(saf.narrow_check_count(),
+                                                        std::memory_order_relaxed);
         }
         if (saf.guard_shape_hits() > 0) {
-            metrics_.guard_shape_hits.fetch_add(saf.guard_shape_hits(),
-                                                std::memory_order_relaxed);
+            metrics_.guard_shape_hits.fetch_add(saf.guard_shape_hits(), std::memory_order_relaxed);
         }
 
         last_ir_mod_ = ir_mod;
@@ -2218,9 +2193,9 @@ public:
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
             tc_pass.set_bidirectional_mode(bidirectional_mode_);
-            tc_pass.check_before_lowering(
-                *flat_ptr, *pool_ptr, flat_ptr->root, type_registry_, diags,
-                mutation_epoch_.load(std::memory_order_relaxed), &metrics_);
+            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
+                                          diags, mutation_epoch_.load(std::memory_order_relaxed),
+                                          &metrics_);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -2408,9 +2383,9 @@ public:
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
             tc_pass.set_bidirectional_mode(bidirectional_mode_);
-            tc_pass.check_before_lowering(
-                *flat_ptr, *pool_ptr, flat_ptr->root, type_registry_, diags,
-                mutation_epoch_.load(std::memory_order_relaxed), &metrics_);
+            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
+                                          diags, mutation_epoch_.load(std::memory_order_relaxed),
+                                          &metrics_);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -2494,12 +2469,14 @@ public:
                         if (precomputed_shape && instr.operands[0] < ir_fn.local_count) {
                             shape = precomputed_shape[instr.operands[0]];
                         }
-                        flat_instrs[bi].push_back(
-                            {static_cast<std::uint32_t>(instr.opcode),
-                             {instr.operands[0], instr.operands[1], instr.operands[2],
-                              instr.operands[3]},
-                             shape, instr.narrow_evidence, instr.type_id,
-                             instr.linear_ownership_state, 0});
+                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
+                                                   {instr.operands[0], instr.operands[1],
+                                                    instr.operands[2], instr.operands[3]},
+                                                   shape,
+                                                   instr.narrow_evidence,
+                                                   instr.type_id,
+                                                   instr.linear_ownership_state,
+                                                   0});
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
@@ -2627,11 +2604,9 @@ public:
                             if (!cache_it->second.has_shape_map &&
                                 shape_profiler_.is_stable(fn_key)) {
                                 // Drop shared lock; take unique for erase.
-                            } else if (jit_cache_shape_version_stale(cache_it->second,
-                                                                     fn_key)) {
+                            } else if (jit_cache_shape_version_stale(cache_it->second, fn_key)) {
                                 // Issue #605: shape version bumped by mutate — re-compile.
-                                shape::jit_shape_miss_count.fetch_add(
-                                    1, std::memory_order_relaxed);
+                                shape::jit_shape_miss_count.fetch_add(1, std::memory_order_relaxed);
                             } else {
                                 fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                                 need_compile = false;
@@ -2943,10 +2918,9 @@ public:
         // dedup_hits + instantiate) — avoids the
         // cross-module dependency on the full
         // CompilerMetrics struct.
-        type_registry_.set_poly_metrics(
-            &metrics_.poly_register_total,
-            &metrics_.poly_dedup_hits_total,
-            &metrics_.poly_instantiate_total);
+        type_registry_.set_poly_metrics(&metrics_.poly_register_total,
+                                        &metrics_.poly_dedup_hits_total,
+                                        &metrics_.poly_instantiate_total);
 
         auto result = tc.infer_flat(flat, pool, pr.root, diag);
 
@@ -2964,36 +2938,35 @@ public:
         metrics_.typecheck_stale_cache_total.fetch_add(tc.stats().stale_cache,
                                                        std::memory_order_relaxed);
         metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
-                                                    std::memory_order_relaxed);
+                                                     std::memory_order_relaxed);
         // Issue #386: narrowing observability. Mirror
         // the per-call stats into the lifetime
         // CompilerMetrics counters.
-        metrics_.narrowing_applied_total.fetch_add(
-            tc.stats().narrowing_applied, std::memory_order_relaxed);
-        metrics_.narrowing_skipped_total.fetch_add(
-            tc.stats().narrowing_skipped, std::memory_order_relaxed);
-        metrics_.narrowing_reanalyzed_total.fetch_add(
-            tc.stats().narrowing_reanalyzed, std::memory_order_relaxed);
+        metrics_.narrowing_applied_total.fetch_add(tc.stats().narrowing_applied,
+                                                   std::memory_order_relaxed);
+        metrics_.narrowing_skipped_total.fetch_add(tc.stats().narrowing_skipped,
+                                                   std::memory_order_relaxed);
+        metrics_.narrowing_reanalyzed_total.fetch_add(tc.stats().narrowing_reanalyzed,
+                                                      std::memory_order_relaxed);
         // Issue #338: and/or precision.
-        metrics_.and_or_meet_uses_total.fetch_add(
-            tc.stats().and_or_meet_uses, std::memory_order_relaxed);
-        metrics_.and_or_join_uses_total.fetch_add(
-            tc.stats().and_or_join_uses, std::memory_order_relaxed);
+        metrics_.and_or_meet_uses_total.fetch_add(tc.stats().and_or_meet_uses,
+                                                  std::memory_order_relaxed);
+        metrics_.and_or_join_uses_total.fetch_add(tc.stats().and_or_join_uses,
+                                                  std::memory_order_relaxed);
         // Issue #434: per-node occurrence dirty recovery.
-        metrics_.narrowing_dirty_recovery_total.fetch_add(
-            tc.stats().narrowing_dirty_recovery, std::memory_order_relaxed);
+        metrics_.narrowing_dirty_recovery_total.fetch_add(tc.stats().narrowing_dirty_recovery,
+                                                          std::memory_order_relaxed);
         // Issue #390: schema cache observability.
-        metrics_.schema_cache_lookups_total.fetch_add(
-            tc.stats().schema_cache_lookups, std::memory_order_relaxed);
-        metrics_.schema_cache_hits_total.fetch_add(
-            tc.stats().schema_cache_hits, std::memory_order_relaxed);
+        metrics_.schema_cache_lookups_total.fetch_add(tc.stats().schema_cache_lookups,
+                                                      std::memory_order_relaxed);
+        metrics_.schema_cache_hits_total.fetch_add(tc.stats().schema_cache_hits,
+                                                   std::memory_order_relaxed);
         // Issue #387: Type Dependency Graph observability.
         // Mirror the per-call TypeChecker counters into the
         // lifetime CompilerMetrics atomics.
-        metrics_.type_dep_graph_lookups.fetch_add(
-            tc.type_dep_graph_lookups(), std::memory_order_relaxed);
-        metrics_.type_dep_graph_hits.fetch_add(
-            tc.type_dep_graph_hits(), std::memory_order_relaxed);
+        metrics_.type_dep_graph_lookups.fetch_add(tc.type_dep_graph_lookups(),
+                                                  std::memory_order_relaxed);
+        metrics_.type_dep_graph_hits.fetch_add(tc.type_dep_graph_hits(), std::memory_order_relaxed);
         metrics_.type_dep_graph_size.store(
             std::max(metrics_.type_dep_graph_size.load(std::memory_order_relaxed),
                      static_cast<std::uint64_t>(tc.type_dep_graph_size())),
@@ -3065,10 +3038,8 @@ public:
         tc.set_bidirectional_mode(bidirectional_mode_);
         // Issue #518: wire Evaluator narrowing counters to the
         // actual re-narrow path in infer_flat_partial.
-        tc.set_on_narrowing_refresh(
-            [this]() { evaluator_.bump_narrowing_refresh_count(); });
-        tc.set_on_selective_recheck(
-            [this]() { evaluator_.bump_selective_recheck_count(); });
+        tc.set_on_narrowing_refresh([this]() { evaluator_.bump_narrowing_refresh_count(); });
+        tc.set_on_selective_recheck([this]() { evaluator_.bump_selective_recheck_count(); });
         tc.set_on_touched_roots_snapshot(
             [this](std::size_t n) { evaluator_.set_touched_roots_size(n); });
         tc.set_on_cross_delta_conflict(
@@ -3088,7 +3059,7 @@ public:
                                 : nullptr;
         auto n = tc.infer_flat_partial(*flat, *pool, rec, diag, tracker_ptr);
         metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
-                                                    std::memory_order_relaxed);
+                                                     std::memory_order_relaxed);
         // Issue #387: Type Dependency Graph observability.
         // Mirror the per-call TypeChecker counters into the
         // lifetime CompilerMetrics atomics. The graph is
@@ -3096,10 +3067,9 @@ public:
         // path; lookups happen during affected-set
         // computation (the actual O(affected) wiring is the
         // follow-up).
-        metrics_.type_dep_graph_lookups.fetch_add(
-            tc.type_dep_graph_lookups(), std::memory_order_relaxed);
-        metrics_.type_dep_graph_hits.fetch_add(
-            tc.type_dep_graph_hits(), std::memory_order_relaxed);
+        metrics_.type_dep_graph_lookups.fetch_add(tc.type_dep_graph_lookups(),
+                                                  std::memory_order_relaxed);
+        metrics_.type_dep_graph_hits.fetch_add(tc.type_dep_graph_hits(), std::memory_order_relaxed);
         metrics_.type_dep_graph_size.store(
             std::max(metrics_.type_dep_graph_size.load(std::memory_order_relaxed),
                      static_cast<std::uint64_t>(tc.type_dep_graph_size())),
@@ -3110,19 +3080,19 @@ public:
         // counters so the
         // (compile:per-symbol-reinfer-stats) Aura primitive
         // sees a single source of truth.
-        metrics_.per_symbol_reinfer_used_total.fetch_add(
-            tc.stats().per_symbol_used_total, std::memory_order_relaxed);
-        metrics_.per_symbol_reinfer_visited_total.fetch_add(
-            tc.stats().per_symbol_visited_total, std::memory_order_relaxed);
-        metrics_.ancestor_reinfer_used_total.fetch_add(
-            tc.stats().ancestor_used_total, std::memory_order_relaxed);
-        metrics_.ancestor_reinfer_visited_total.fetch_add(
-            tc.stats().ancestor_visited_total, std::memory_order_relaxed);
+        metrics_.per_symbol_reinfer_used_total.fetch_add(tc.stats().per_symbol_used_total,
+                                                         std::memory_order_relaxed);
+        metrics_.per_symbol_reinfer_visited_total.fetch_add(tc.stats().per_symbol_visited_total,
+                                                            std::memory_order_relaxed);
+        metrics_.ancestor_reinfer_used_total.fetch_add(tc.stats().ancestor_used_total,
+                                                       std::memory_order_relaxed);
+        metrics_.ancestor_reinfer_visited_total.fetch_add(tc.stats().ancestor_visited_total,
+                                                          std::memory_order_relaxed);
         // Issue #411 fu1 follow-up #3: per-DefUseIndex
         // path tracking. Mirror the per-call stats into
         // the lifetime CompilerMetrics counters.
-        metrics_.per_defuse_index_used_total.fetch_add(
-            tc.stats().per_defuse_index_used_total, std::memory_order_relaxed);
+        metrics_.per_defuse_index_used_total.fetch_add(tc.stats().per_defuse_index_used_total,
+                                                       std::memory_order_relaxed);
         metrics_.per_defuse_index_walk_fallback_total.fetch_add(
             tc.stats().per_defuse_index_walk_fallback_total, std::memory_order_relaxed);
         // Issue #411 fu1 fu4: per-DefUseIndex visited
@@ -3130,30 +3100,30 @@ public:
         // always 0 (the per-DefUseIndex path still did
         // the O(n) walk). Post-fu4 it's the real
         // wall-clock signal.
-        metrics_.per_defuse_index_visited_total.fetch_add(
-            tc.stats().per_defuse_index_visited_total, std::memory_order_relaxed);
+        metrics_.per_defuse_index_visited_total.fetch_add(tc.stats().per_defuse_index_visited_total,
+                                                          std::memory_order_relaxed);
         // Issue #386: narrowing observability. Mirror
         // the per-call stats into the lifetime
         // CompilerMetrics counters.
-        metrics_.narrowing_applied_total.fetch_add(
-            tc.stats().narrowing_applied, std::memory_order_relaxed);
-        metrics_.narrowing_skipped_total.fetch_add(
-            tc.stats().narrowing_skipped, std::memory_order_relaxed);
-        metrics_.narrowing_reanalyzed_total.fetch_add(
-            tc.stats().narrowing_reanalyzed, std::memory_order_relaxed);
+        metrics_.narrowing_applied_total.fetch_add(tc.stats().narrowing_applied,
+                                                   std::memory_order_relaxed);
+        metrics_.narrowing_skipped_total.fetch_add(tc.stats().narrowing_skipped,
+                                                   std::memory_order_relaxed);
+        metrics_.narrowing_reanalyzed_total.fetch_add(tc.stats().narrowing_reanalyzed,
+                                                      std::memory_order_relaxed);
         // Issue #338: and/or precision.
-        metrics_.and_or_meet_uses_total.fetch_add(
-            tc.stats().and_or_meet_uses, std::memory_order_relaxed);
-        metrics_.and_or_join_uses_total.fetch_add(
-            tc.stats().and_or_join_uses, std::memory_order_relaxed);
+        metrics_.and_or_meet_uses_total.fetch_add(tc.stats().and_or_meet_uses,
+                                                  std::memory_order_relaxed);
+        metrics_.and_or_join_uses_total.fetch_add(tc.stats().and_or_join_uses,
+                                                  std::memory_order_relaxed);
         // Issue #434: per-node occurrence dirty recovery.
-        metrics_.narrowing_dirty_recovery_total.fetch_add(
-            tc.stats().narrowing_dirty_recovery, std::memory_order_relaxed);
+        metrics_.narrowing_dirty_recovery_total.fetch_add(tc.stats().narrowing_dirty_recovery,
+                                                          std::memory_order_relaxed);
         // Issue #390: schema cache observability.
-        metrics_.schema_cache_lookups_total.fetch_add(
-            tc.stats().schema_cache_lookups, std::memory_order_relaxed);
-        metrics_.schema_cache_hits_total.fetch_add(
-            tc.stats().schema_cache_hits, std::memory_order_relaxed);
+        metrics_.schema_cache_lookups_total.fetch_add(tc.stats().schema_cache_lookups,
+                                                      std::memory_order_relaxed);
+        metrics_.schema_cache_hits_total.fetch_add(tc.stats().schema_cache_hits,
+                                                   std::memory_order_relaxed);
         return n;
     }
 
@@ -3334,7 +3304,7 @@ public:
                     if (ir_cache_.count(fname))
                         continue;
                     auto result = cache_define(source, flat, pool, node_id, fname,
-                                                 /*bind_in_env=*/true, name);
+                                               /*bind_in_env=*/true, name);
                     if (!result)
                         return result;
                     user_bindings_.insert(fname);
@@ -3395,10 +3365,9 @@ public:
                     sig_embed.assign((std::istreambuf_iterator<char>(sf)), {});
                 }
             }
-            aura::compiler::cache::write_cache(
-                cache_path, flat, pool, flat.root, 0,
-                disk_mod.functions.empty() ? nullptr : &disk_mod,
-                sig_embed.empty() ? nullptr : &sig_embed);
+            aura::compiler::cache::write_cache(cache_path, flat, pool, flat.root, 0,
+                                               disk_mod.functions.empty() ? nullptr : &disk_mod,
+                                               sig_embed.empty() ? nullptr : &sig_embed);
         }
 
         return EvalResult(types::make_void());
@@ -3662,7 +3631,10 @@ public:
             std::size_t n = 0;
             for (const auto& fb : block_dirty_per_func_) {
                 for (auto b : fb) {
-                    if (b) { ++n; break; }
+                    if (b) {
+                        ++n;
+                        break;
+                    }
                 }
             }
             return n;
@@ -3679,10 +3651,12 @@ public:
             for (const auto& fb : block_dirty_per_func_) {
                 std::size_t dirty = 0;
                 for (auto b : fb)
-                    if (b) ++dirty;
+                    if (b)
+                        ++dirty;
                 // estimate_relower_blocks(dirty): 0 if 0 dirty,
                 // (-1) if >= 8, else dirty (1..7).
-                if (dirty > 0 && dirty < 8) ++n;
+                if (dirty > 0 && dirty < 8)
+                    ++n;
             }
             return n;
         }
@@ -3743,8 +3717,7 @@ public:
             // on dirty). The ratio should_relower /
             // affected_subtree measures the dirty-
             // trigger rate.
-            metrics_.should_relower_total.fetch_add(
-                1, std::memory_order_relaxed);
+            metrics_.should_relower_total.fetch_add(1, std::memory_order_relaxed);
             return 1;
         }
         return 0; // hit
@@ -3806,13 +3779,11 @@ public:
         auto* flat = evaluator_.workspace_flat();
         if (!flat || root == aura::ast::NULL_NODE || root >= flat->size())
             return;
-        std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>>
-            source_to_ir;
+        std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>> source_to_ir;
         std::unordered_map<std::string, std::size_t> ir_cache_index;
         auto scope = compute_impact_scope(*flat, root, source_to_ir, ir_cache_index);
-        const std::uint64_t blocks = scope.affected_blocks.empty()
-                                         ? 1u
-                                         : scope.affected_blocks.size();
+        const std::uint64_t blocks =
+            scope.affected_blocks.empty() ? 1u : scope.affected_blocks.size();
         evaluator_.bump_impact_scope_calls(blocks);
     }
 
@@ -3823,8 +3794,7 @@ public:
             it->second.mark_all_blocks_dirty();
             // Issue #598: post-mutate linear runtime enforcement hook
             // on mutate:rebind / set-body paths (ir_cache_v2 dirty).
-            metrics_.linear_post_mutate_enforcements_total.fetch_add(
-                1, std::memory_order_relaxed);
+            metrics_.linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
         }
         // Issue #225 cycle 3: invalidate the bridge data for
         // the mutated function. The bridge_epoch_ field is
@@ -4141,7 +4111,8 @@ public:
                 ck_pass.compute_function(func);
                 const auto folded_before = cf_pass.folded_count();
                 cf_pass.fold_function(func);
-                if (cf_pass.folded_count() == folded_before && !entry.block_dirty_per_func_.empty()) {
+                if (cf_pass.folded_count() == folded_before &&
+                    !entry.block_dirty_per_func_.empty()) {
                     for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
                         if (!cf_pass.is_block_dirty(static_cast<std::uint32_t>(bi)))
                             ++clean_blocks_skipped;
@@ -4152,8 +4123,8 @@ public:
             }
             escape_pass.run(ir_mod);
             if (!entry.block_dirty_per_func_.empty()) {
-                metrics_.linear_post_mutate_enforcements_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                metrics_.linear_post_mutate_enforcements_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
             }
             if (clean_blocks_skipped > 0) {
                 metrics_.irsoa_cache_miss_reduction.fetch_add(clean_blocks_skipped,
@@ -4420,11 +4391,10 @@ public:
             // populate_dep_graph_from_workspace may have created a
             // source-only v2 shell (hash match, empty irs/bridges).
             // Require materialized IR before skipping cache_define.
-            const bool ir_materialized =
-                ir_cache_bridge_.count(name) > 0 ||
-                (it != ir_cache_v2_.end() && !it->second.irs.empty());
-            if (it != ir_cache_v2_.end() && !it->second.dirty &&
-                it->second.source_hash == hash && ir_materialized) {
+            const bool ir_materialized = ir_cache_bridge_.count(name) > 0 ||
+                                         (it != ir_cache_v2_.end() && !it->second.irs.empty());
+            if (it != ir_cache_v2_.end() && !it->second.dirty && it->second.source_hash == hash &&
+                ir_materialized) {
                 continue;
             }
             auto alloc = arena_.allocator();
@@ -4437,7 +4407,8 @@ public:
             // Pass bind_in_env=false: don't pollute the workspace's env
             // by calling eval_flat. The define is bound later by
             // eval-current which uses its own env.
-            (void)cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name, /*bind_in_env=*/false);
+            (void)cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name,
+                               /*bind_in_env=*/false);
             // Mirror cache_define output into v2 (dep_graph populate may have
             // left a source-only shell that previously blocked heavy populate).
             if (auto cit = ir_cache_.find(name); cit != ir_cache_.end()) {
@@ -4447,8 +4418,8 @@ public:
                 std::vector<std::string> strings_bundle;
                 if (auto st = ir_cache_strings_.find(name); st != ir_cache_strings_.end())
                     strings_bundle = st->second;
-                store_define_v2(name, canonical, std::move(cit->second),
-                                std::move(bridge_bundle), std::move(strings_bundle));
+                store_define_v2(name, canonical, std::move(cit->second), std::move(bridge_bundle),
+                                std::move(strings_bundle));
                 auto vit = ir_cache_v2_.find(name);
                 if (vit != ir_cache_v2_.end()) {
                     ir_cache_[name] = vit->second.irs;
@@ -4864,8 +4835,10 @@ public:
 
     void install_persistent_define_closure_bridge() {
         evaluator_.set_closure_bridge(
-            [this](aura::compiler::ClosureId cid, std::span<const types::EvalValue> args)
-                -> std::optional<types::EvalValue> { return dispatch_ir_define_closure(cid, args); });
+            [this](aura::compiler::ClosureId cid,
+                   std::span<const types::EvalValue> args) -> std::optional<types::EvalValue> {
+                return dispatch_ir_define_closure(cid, args);
+            });
     }
 
     std::size_t bind_define_value_in_env(const std::string& name, const types::EvalValue& value) {
@@ -4885,11 +4858,9 @@ public:
         return ir_value_cell_bindings_.empty() ? nullptr : &ir_value_cell_bindings_;
     }
 
-    [[nodiscard]] bool
-    define_body_needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
-                                           const aura::ast::StringPool& pool,
-                                           aura::ast::NodeId body_id,
-                                           const std::string& self_name = {}) const {
+    [[nodiscard]] bool define_body_needs_tree_walker_fallback(
+        const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+        aura::ast::NodeId body_id, const std::string& self_name = {}) const {
         if (body_id == aura::ast::NULL_NODE || body_id >= flat.size())
             return false;
         std::unordered_set<std::string> param_names;
@@ -4937,8 +4908,8 @@ public:
                     walk(c);
             }
         };
-        BodyWalker bw{flat,       pool,       self_name, param_names, evaluator_,
-                      ir_cache_,  ir_value_cell_bindings_};
+        BodyWalker bw{
+            flat, pool, self_name, param_names, evaluator_, ir_cache_, ir_value_cell_bindings_};
         bw.walk(body_id);
         return bw.needs_fallback;
     }
@@ -4989,9 +4960,8 @@ public:
         if (ir_mod.functions.empty())
             return false;
 
-        auto binding = std::make_unique<IRDefineEnvBinding>(ir_mod, evaluator_.primitives(),
-                                                            &type_registry_, &metrics_,
-                                                            &evaluator_);
+        auto binding = std::make_unique<IRDefineEnvBinding>(
+            ir_mod, evaluator_.primitives(), &type_registry_, &metrics_, &evaluator_);
         binding->interpreter =
             std::make_unique<aura::compiler::IRInterpreter>(binding->module, binding->context);
 
@@ -5050,9 +5020,9 @@ public:
                     auto& params = func_it->second[0].params;
                     for (std::size_t i = 0; i < params.size() && i < args.size(); ++i)
                         ne.bind(params[i], args[i]);
-                    auto r = evaluator_.eval_flat(*const_cast<aura::ast::FlatAST*>(bd.flat.get()),
-                                                  *const_cast<aura::ast::StringPool*>(bd.pool.get()),
-                                                  bd.body_id, ne);
+                    auto r = evaluator_.eval_flat(
+                        *const_cast<aura::ast::FlatAST*>(bd.flat.get()),
+                        *const_cast<aura::ast::StringPool*>(bd.pool.get()), bd.body_id, ne);
                     if (r)
                         return *r;
                 }
@@ -5088,9 +5058,9 @@ public:
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
             tc_pass.set_bidirectional_mode(bidirectional_mode_);
-            tc_pass.check_before_lowering(
-                flat, pool, expanded_root, type_registry_, diags,
-                mutation_epoch_.load(std::memory_order_relaxed), &metrics_);
+            tc_pass.check_before_lowering(flat, pool, expanded_root, type_registry_, diags,
+                                          mutation_epoch_.load(std::memory_order_relaxed),
+                                          &metrics_);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -5187,11 +5157,13 @@ public:
         // Issue #660 debug: dump IR after lowering
         if (name_str.empty()) {
             for (auto& func : ir_mod.functions) {
-                std::println(std::cerr, "[IR-DUMP] func id={} name='{}' blocks={}", func.id, func.name, func.blocks.size());
+                std::println(std::cerr, "[IR-DUMP] func id={} name='{}' blocks={}", func.id,
+                             func.name, func.blocks.size());
                 for (auto& blk : func.blocks) {
                     for (auto& inst : blk.instructions) {
-                        std::println(std::cerr, "  inst op={} ops=[{},{},{},{}]", static_cast<int>(inst.opcode),
-                                     inst.operands[0], inst.operands[1], inst.operands[2], inst.operands[3]);
+                        std::println(std::cerr, "  inst op={} ops=[{},{},{},{}]",
+                                     static_cast<int>(inst.opcode), inst.operands[0],
+                                     inst.operands[1], inst.operands[2], inst.operands[3]);
                     }
                 }
             }
@@ -5219,11 +5191,12 @@ public:
         std::vector<aura::ir::ClosureBridgeData> bridge_bundle;
         std::size_t own_pos = 0;
         for (auto& func : ir_mod.functions) {
-            if (func.id == ir_mod.entry_function_id) continue;
+            if (func.id == ir_mod.entry_function_id)
+                continue;
             // Override the default "__lambda__" name (or empty name) with
             // a unique stable name for cross-module closure identity.
             if (func.name.empty() || func.name == "__lambda__") {
-func.name = name_str + std::string("#") + std::to_string(own_pos++);
+                func.name = name_str + std::string("#") + std::to_string(own_pos++);
             }
             // Issue #660 follow-up: COPY instead of move (preserves ir_mod for binding)
             bundle.push_back(func);
@@ -5260,9 +5233,8 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             {
                 std::unique_lock cache_write(jit_cache_mtx_);
                 std::string prefix = name_str + "#";
-                for (auto it = jit_cache_.begin(); it != jit_cache_.end(); ) {
-                    if (it->first == "__lambda__" ||
-                        it->first.rfind(prefix, 0) == 0) {
+                for (auto it = jit_cache_.begin(); it != jit_cache_.end();) {
+                    if (it->first == "__lambda__" || it->first.rfind(prefix, 0) == 0) {
                         it = jit_cache_.erase(it);
                     } else {
                         ++it;
@@ -5308,9 +5280,7 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
     // currently alive. Useful for tests + agent
     // monitoring; the underlying flag is an atomic
     // bool on the Evaluator (cheap read).
-    bool mutation_boundary_held() const {
-        return evaluator_.mutation_boundary_held();
-    }
+    bool mutation_boundary_held() const { return evaluator_.mutation_boundary_held(); }
 
     // Issue #62 Iter 1: observability counters accessor.
     // Surfaced via --evo-explain (Iter 3) and AuraQuery (Iter 4).
@@ -5371,44 +5341,31 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         s.coercion_zerooverhead_win_total =
             metrics_.coercion_zerooverhead_win_total.load(std::memory_order_relaxed);
         s.coercion_post_narrow_elim_opportunities_total =
-            metrics_.coercion_post_narrow_elim_opportunities_total.load(
-                std::memory_order_relaxed);
+            metrics_.coercion_post_narrow_elim_opportunities_total.load(std::memory_order_relaxed);
         s.coercion_narrow_blame_chain_hits_total =
-            metrics_.coercion_narrow_blame_chain_hits_total.load(
-                std::memory_order_relaxed);
+            metrics_.coercion_narrow_blame_chain_hits_total.load(std::memory_order_relaxed);
         s.coercion_cast_elim_from_narrow_total =
-            metrics_.coercion_cast_elim_from_narrow_total.load(
-                std::memory_order_relaxed);
+            metrics_.coercion_cast_elim_from_narrow_total.load(std::memory_order_relaxed);
         // Issue #487: dirty propagation + IR re-lower
         // observability. Mirror the 2 lifetime
         // counters and compute the derived trigger
         // rate (basis points: should_relower /
         // affected_subtree * 10000).
-        s.should_relower_total =
-            metrics_.should_relower_total.load(
-                std::memory_order_relaxed);
-        s.affected_subtree_total =
-            metrics_.affected_subtree_total.load(
-                std::memory_order_relaxed);
+        s.should_relower_total = metrics_.should_relower_total.load(std::memory_order_relaxed);
+        s.affected_subtree_total = metrics_.affected_subtree_total.load(std::memory_order_relaxed);
         if (s.affected_subtree_total > 0) {
-            s.dirty_trigger_rate_bp =
-                (s.should_relower_total * 10000u) /
-                s.affected_subtree_total;
+            s.dirty_trigger_rate_bp = (s.should_relower_total * 10000u) / s.affected_subtree_total;
         } else {
             s.dirty_trigger_rate_bp = 0;
         }
         // Issue #387: Type Dependency Graph observability.
         // Mirrors the 3 atomics; derives type_dep_graph_hit_rate_bp.
-        s.type_dep_graph_lookups =
-            metrics_.type_dep_graph_lookups.load(std::memory_order_relaxed);
-        s.type_dep_graph_hits =
-            metrics_.type_dep_graph_hits.load(std::memory_order_relaxed);
-        s.type_dep_graph_size =
-            metrics_.type_dep_graph_size.load(std::memory_order_relaxed);
+        s.type_dep_graph_lookups = metrics_.type_dep_graph_lookups.load(std::memory_order_relaxed);
+        s.type_dep_graph_hits = metrics_.type_dep_graph_hits.load(std::memory_order_relaxed);
+        s.type_dep_graph_size = metrics_.type_dep_graph_size.load(std::memory_order_relaxed);
         if (s.type_dep_graph_lookups > 0) {
             s.type_dep_graph_hit_rate_bp =
-                (s.type_dep_graph_hits * 10000u) /
-                s.type_dep_graph_lookups;
+                (s.type_dep_graph_hits * 10000u) / s.type_dep_graph_lookups;
         } else {
             s.type_dep_graph_hit_rate_bp = 0;
         }
@@ -5439,8 +5396,7 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             // CompilerMetrics).
             s.current_generation = ws_flat->current_generation();
             s.generation_wrap_count = ws_flat->generation_wrap_count();
-            s.node_gen_stale_access_count =
-                ws_flat->node_gen_stale_access_count();
+            s.node_gen_stale_access_count = ws_flat->node_gen_stale_access_count();
             // Issue #368: current wrap_epoch_ so AI agents can
             // checkpoint / compact before the next wrap.
             s.current_wrap_epoch = ws_flat->wrap_epoch();
@@ -5486,8 +5442,7 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             metrics_.typecheck_gen_saved_total.load(std::memory_order_relaxed);
         const std::uint64_t gen_total = s.typecheck_stale_cache_total + s.typecheck_gen_saved_total;
         if (gen_total > 0) {
-            s.typecheck_gen_saved_ratio_bp =
-                (s.typecheck_gen_saved_total * 10000u) / gen_total;
+            s.typecheck_gen_saved_ratio_bp = (s.typecheck_gen_saved_total * 10000u) / gen_total;
         } else {
             s.typecheck_gen_saved_ratio_bp = 0;
         }
@@ -5514,16 +5469,13 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             binding_gen_bumps_from_flat = ws->binding_gen_bumps_total();
         }
         if (binding_gen_bumps_from_flat > last_per_binding_gen_bumps_) {
-            per_binding_gen_bumps_acc_ +=
-                binding_gen_bumps_from_flat - last_per_binding_gen_bumps_;
+            per_binding_gen_bumps_acc_ += binding_gen_bumps_from_flat - last_per_binding_gen_bumps_;
             last_per_binding_gen_bumps_ = binding_gen_bumps_from_flat;
         }
         s.per_binding_gen_bumps_total = per_binding_gen_bumps_acc_;
-        const std::uint64_t pb_total = s.per_binding_gen_hits_total +
-                                         s.typecheck_stale_cache_total;
+        const std::uint64_t pb_total = s.per_binding_gen_hits_total + s.typecheck_stale_cache_total;
         if (pb_total > 0) {
-            s.per_binding_gen_hit_ratio_bp =
-                (s.per_binding_gen_hits_total * 10000u) / pb_total;
+            s.per_binding_gen_hit_ratio_bp = (s.per_binding_gen_hits_total * 10000u) / pb_total;
         } else {
             s.per_binding_gen_hit_ratio_bp = 0;
         }
@@ -5555,10 +5507,8 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             metrics_.narrowing_reanalyzed_total.load(std::memory_order_relaxed);
         // Issue #338: mirror the 2 and/or precision
         // counters.
-        s.and_or_meet_uses_total =
-            metrics_.and_or_meet_uses_total.load(std::memory_order_relaxed);
-        s.and_or_join_uses_total =
-            metrics_.and_or_join_uses_total.load(std::memory_order_relaxed);
+        s.and_or_meet_uses_total = metrics_.and_or_meet_uses_total.load(std::memory_order_relaxed);
+        s.and_or_join_uses_total = metrics_.and_or_join_uses_total.load(std::memory_order_relaxed);
         // Issue #434: per-node occurrence dirty recovery.
         s.narrowing_dirty_recovery_total =
             metrics_.narrowing_dirty_recovery_total.load(std::memory_order_relaxed);
@@ -5569,8 +5519,7 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             metrics_.schema_cache_hits_total.load(std::memory_order_relaxed);
         if (s.schema_cache_lookups_total > 0) {
             s.schema_cache_hit_rate_bp =
-                (s.schema_cache_hits_total * 10000u) /
-                s.schema_cache_lookups_total;
+                (s.schema_cache_hits_total * 10000u) / s.schema_cache_lookups_total;
         } else {
             s.schema_cache_hit_rate_bp = 0;
         }
@@ -5580,11 +5529,9 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         // derived ratio (basis points: processed /
         // total * 10000).
         s.delta_constraints_processed_total =
-            metrics_.delta_constraints_processed_total.load(
-                std::memory_order_relaxed);
+            metrics_.delta_constraints_processed_total.load(std::memory_order_relaxed);
         s.delta_constraints_total =
-            metrics_.delta_constraints_total.load(
-                std::memory_order_relaxed);
+            metrics_.delta_constraints_total.load(std::memory_order_relaxed);
         s.delta_conflict_reverify_total =
             metrics_.delta_conflict_reverify_total.load(std::memory_order_relaxed);
         s.delta_conflict_detected_total =
@@ -5592,14 +5539,12 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         s.reverify_truncated_total =
             metrics_.reverify_truncated_total.load(std::memory_order_relaxed);
         s.constraint_blame_chain_complete_total =
-            metrics_.constraint_blame_chain_complete_total.load(
-                std::memory_order_relaxed);
+            metrics_.constraint_blame_chain_complete_total.load(std::memory_order_relaxed);
         s.solve_delta_full_solve_fallback_total =
             metrics_.solve_delta_full_solve_fallback_total.load(std::memory_order_relaxed);
         if (s.delta_constraints_total > 0) {
             s.delta_solve_constraints_ratio_bp =
-                (s.delta_constraints_processed_total * 10000u) /
-                s.delta_constraints_total;
+                (s.delta_constraints_processed_total * 10000u) / s.delta_constraints_total;
         } else {
             s.delta_solve_constraints_ratio_bp = 0;
         }
@@ -5608,102 +5553,73 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         // counters and compute the derived ratio
         // (basis points: narrowed / total * 10000).
         s.match_subject_narrowed_total =
-            metrics_.match_subject_narrowed_total.load(
-                std::memory_order_relaxed);
-        s.match_subject_total =
-            metrics_.match_subject_total.load(
-                std::memory_order_relaxed);
+            metrics_.match_subject_narrowed_total.load(std::memory_order_relaxed);
+        s.match_subject_total = metrics_.match_subject_total.load(std::memory_order_relaxed);
         if (s.match_subject_total > 0) {
             s.match_narrowed_ratio_bp =
-                (s.match_subject_narrowed_total * 10000u) /
-                s.match_subject_total;
+                (s.match_subject_narrowed_total * 10000u) / s.match_subject_total;
         } else {
             s.match_narrowed_ratio_bp = 0;
         }
         // Issue #612: ADT/match exhaustiveness post-mutation
         // reliability observability.
         s.adt_exhaust_rechecks_total =
-            metrics_.adt_exhaust_rechecks_total.load(
-                std::memory_order_relaxed);
+            metrics_.adt_exhaust_rechecks_total.load(std::memory_order_relaxed);
         s.adt_variant_mutate_impacts_total =
-            metrics_.adt_variant_mutate_impacts_total.load(
-                std::memory_order_relaxed);
+            metrics_.adt_variant_mutate_impacts_total.load(std::memory_order_relaxed);
         s.adt_stale_exhaust_prevented_total =
-            metrics_.adt_stale_exhaust_prevented_total.load(
-                std::memory_order_relaxed);
+            metrics_.adt_stale_exhaust_prevented_total.load(std::memory_order_relaxed);
         s.adt_occurrence_narrow_in_match_total =
-            metrics_.adt_occurrence_narrow_in_match_total.load(
-                std::memory_order_relaxed);
+            metrics_.adt_occurrence_narrow_in_match_total.load(std::memory_order_relaxed);
         s.adt_pattern_narrow_refreshes_total =
-            metrics_.adt_pattern_narrow_refreshes_total.load(
-                std::memory_order_relaxed);
+            metrics_.adt_pattern_narrow_refreshes_total.load(std::memory_order_relaxed);
         s.adt_non_exhaustive_caught_total =
-            metrics_.adt_non_exhaustive_caught_total.load(
-                std::memory_order_relaxed);
+            metrics_.adt_non_exhaustive_caught_total.load(std::memory_order_relaxed);
         s.adt_pattern_provenance_complete_total =
-            metrics_.adt_pattern_provenance_complete_total.load(
-                std::memory_order_relaxed);
+            metrics_.adt_pattern_provenance_complete_total.load(std::memory_order_relaxed);
         s.hardware_backend_hook_calls_total =
-            metrics_.hardware_backend_hook_calls_total.load(
-                std::memory_order_relaxed);
+            metrics_.hardware_backend_hook_calls_total.load(std::memory_order_relaxed);
         s.commercial_reemits_total =
             metrics_.commercial_reemits_total.load(std::memory_order_relaxed);
         s.feedback_mutate_hits_total =
             metrics_.feedback_mutate_hits_total.load(std::memory_order_relaxed);
-        s.ppa_savings_total =
-            metrics_.ppa_savings_total.load(std::memory_order_relaxed);
+        s.ppa_savings_total = metrics_.ppa_savings_total.load(std::memory_order_relaxed);
         s.verification_loop_success_total =
-            metrics_.verification_loop_success_total.load(
-                std::memory_order_relaxed);
+            metrics_.verification_loop_success_total.load(std::memory_order_relaxed);
         s.sv_emit_parse_success_total =
-            metrics_.sv_emit_parse_success_total.load(
-                std::memory_order_relaxed);
+            metrics_.sv_emit_parse_success_total.load(std::memory_order_relaxed);
         s.sv_emit_parse_fail_total =
             metrics_.sv_emit_parse_fail_total.load(std::memory_order_relaxed);
         s.commercial_simulator_runs_total =
-            metrics_.commercial_simulator_runs_total.load(
-                std::memory_order_relaxed);
-        s.sv_diff_emits_total =
-            metrics_.sv_diff_emits_total.load(std::memory_order_relaxed);
+            metrics_.commercial_simulator_runs_total.load(std::memory_order_relaxed);
+        s.sv_diff_emits_total = metrics_.sv_diff_emits_total.load(std::memory_order_relaxed);
         s.sva_structured_mutate_hits_total =
-            metrics_.sva_structured_mutate_hits_total.load(
-                std::memory_order_relaxed);
+            metrics_.sva_structured_mutate_hits_total.load(std::memory_order_relaxed);
         s.eda_sv_evolution_cycles_total =
-            metrics_.eda_sv_evolution_cycles_total.load(
-                std::memory_order_relaxed);
+            metrics_.eda_sv_evolution_cycles_total.load(std::memory_order_relaxed);
         s.eda_sv_verification_convergence_total =
-            metrics_.eda_sv_verification_convergence_total.load(
-                std::memory_order_relaxed);
+            metrics_.eda_sv_verification_convergence_total.load(std::memory_order_relaxed);
         s.eda_sv_feedback_mutate_success_total =
-            metrics_.eda_sv_feedback_mutate_success_total.load(
-                std::memory_order_relaxed);
+            metrics_.eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed);
         s.eda_sv_stable_ref_invalidation_total =
-            metrics_.eda_sv_stable_ref_invalidation_total.load(
-                std::memory_order_relaxed);
+            metrics_.eda_sv_stable_ref_invalidation_total.load(std::memory_order_relaxed);
         s.eda_sv_commercial_stub_latency_us_total =
-            metrics_.eda_sv_commercial_stub_latency_us_total.load(
-                std::memory_order_relaxed);
+            metrics_.eda_sv_commercial_stub_latency_us_total.load(std::memory_order_relaxed);
         s.eda_sv_corruption_detected_total =
-            metrics_.eda_sv_corruption_detected_total.load(
-                std::memory_order_relaxed);
+            metrics_.eda_sv_corruption_detected_total.load(std::memory_order_relaxed);
         s.primitive_skeleton_generations_total =
-            metrics_.primitive_skeleton_generations_total.load(
-                std::memory_order_relaxed);
+            metrics_.primitive_skeleton_generations_total.load(std::memory_order_relaxed);
         s.primitive_eda_meta_backfill_total =
-            metrics_.primitive_eda_meta_backfill_total.load(
-                std::memory_order_relaxed);
+            metrics_.primitive_eda_meta_backfill_total.load(std::memory_order_relaxed);
         // Issue #342: narrowing provenance
         // observability. Mirrors the lifetime
         // counter in CompilerMetrics.
         s.narrowing_provenance_total =
-            metrics_.narrowing_provenance_total.load(
-                std::memory_order_relaxed);
+            metrics_.narrowing_provenance_total.load(std::memory_order_relaxed);
         s.occurrence_stale_refreshes_total =
-            metrics_.occurrence_stale_refreshes_total.load(
-                std::memory_order_relaxed);
+            metrics_.occurrence_stale_refreshes_total.load(std::memory_order_relaxed);
         s.occurrence_blame_chain_complete_total =
-            metrics_.occurrence_blame_chain_complete_total.load(
-                std::memory_order_relaxed);
+            metrics_.occurrence_blame_chain_complete_total.load(std::memory_order_relaxed);
         // Issue #639: narrow blame + stale invalidation.
         s.narrow_stale_caught_total =
             metrics_.narrow_stale_caught_total.load(std::memory_order_relaxed);
@@ -5729,40 +5645,25 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         // consistent_unify observability. Mirror
         // the 3 lifetime counters in
         // CompilerMetrics.
-        s.consistent_unify_total =
-            metrics_.consistent_unify_total.load(
-                std::memory_order_relaxed);
+        s.consistent_unify_total = metrics_.consistent_unify_total.load(std::memory_order_relaxed);
         s.consistent_subtype_total =
-            metrics_.consistent_subtype_total.load(
-                std::memory_order_relaxed);
-        s.worklist_restart_total =
-            metrics_.worklist_restart_total.load(
-                std::memory_order_relaxed);
+            metrics_.consistent_subtype_total.load(std::memory_order_relaxed);
+        s.worklist_restart_total = metrics_.worklist_restart_total.load(std::memory_order_relaxed);
         // Issue #385: Let-Poly caching observability.
         // Mirror the 3 lifetime counters and compute
         // the derived dedup ratio (basis points:
         // dedup_hits / register * 10000).
-        s.poly_register_total =
-            metrics_.poly_register_total.load(
-                std::memory_order_relaxed);
-        s.poly_dedup_hits_total =
-            metrics_.poly_dedup_hits_total.load(
-                std::memory_order_relaxed);
-        s.poly_instantiate_total =
-            metrics_.poly_instantiate_total.load(
-                std::memory_order_relaxed);
+        s.poly_register_total = metrics_.poly_register_total.load(std::memory_order_relaxed);
+        s.poly_dedup_hits_total = metrics_.poly_dedup_hits_total.load(std::memory_order_relaxed);
+        s.poly_instantiate_total = metrics_.poly_instantiate_total.load(std::memory_order_relaxed);
         if (s.poly_register_total > 0) {
-            s.poly_dedup_ratio_bp =
-                (s.poly_dedup_hits_total * 10000u) /
-                s.poly_register_total;
+            s.poly_dedup_ratio_bp = (s.poly_dedup_hits_total * 10000u) / s.poly_register_total;
         } else {
             s.poly_dedup_ratio_bp = 0;
         }
-        const std::uint64_t narrow_total =
-            s.narrowing_applied_total + s.narrowing_skipped_total;
+        const std::uint64_t narrow_total = s.narrowing_applied_total + s.narrowing_skipped_total;
         if (narrow_total > 0) {
-            s.narrowing_applied_ratio_bp =
-                (s.narrowing_applied_total * 10000u) / narrow_total;
+            s.narrowing_applied_ratio_bp = (s.narrowing_applied_total * 10000u) / narrow_total;
         } else {
             s.narrowing_applied_ratio_bp = 0;
         }
@@ -5794,9 +5695,8 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
                 s.mark_dirty_total_nodes / s.mark_dirty_upward_call_count;
             const std::uint64_t est_ancestor_uses =
                 avg_ancestor_depth * s.per_symbol_dirty_lookups_total;
-            s.per_symbol_dirty_reduction_bp =
-                (s.per_symbol_dirty_uses_total * 10000u) /
-                (est_ancestor_uses > 0 ? est_ancestor_uses : 1);
+            s.per_symbol_dirty_reduction_bp = (s.per_symbol_dirty_uses_total * 10000u) /
+                                              (est_ancestor_uses > 0 ? est_ancestor_uses : 1);
         } else {
             s.per_symbol_dirty_reduction_bp = 0;
         }
@@ -5829,8 +5729,8 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             metrics_.ancestor_reinfer_used_total.load(std::memory_order_relaxed);
         s.ancestor_reinfer_visited_total =
             metrics_.ancestor_reinfer_visited_total.load(std::memory_order_relaxed);
-        const std::uint64_t total_visited = s.per_symbol_reinfer_visited_total +
-                                            s.ancestor_reinfer_visited_total;
+        const std::uint64_t total_visited =
+            s.per_symbol_reinfer_visited_total + s.ancestor_reinfer_visited_total;
         if (total_visited > 0) {
             s.per_symbol_path_share_bp =
                 (s.per_symbol_reinfer_visited_total * 10000u) / total_visited;
@@ -5851,8 +5751,7 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             metrics_.per_defuse_index_walk_fallback_total.load(std::memory_order_relaxed);
         if (s.per_defuse_index_used_total > 0) {
             s.per_defuse_index_visited_avg_bp =
-                (s.per_defuse_index_visited_total * 10000u) /
-                s.per_defuse_index_used_total;
+                (s.per_defuse_index_visited_total * 10000u) / s.per_defuse_index_used_total;
         } else {
             s.per_defuse_index_visited_avg_bp = 0;
         }
@@ -6072,14 +5971,13 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
     //
     // Returns the number of nodes re-inferred. The caller can
     // ignore the return value; the metrics are what matter.
-    std::size_t auto_invoke_incremental_typecheck_for(
-        aura::ast::FlatAST& flat,
-        aura::ast::StringPool& pool,
-        const aura::ast::MutationRecord& rec,
-        std::uint64_t mutation_id_for_log,
-        const char* source) {
-        (void)source;          // was: tag for the debug log (removed in #487 fix)
-        (void)mutation_id_for_log;  // ditto
+    std::size_t auto_invoke_incremental_typecheck_for(aura::ast::FlatAST& flat,
+                                                      aura::ast::StringPool& pool,
+                                                      const aura::ast::MutationRecord& rec,
+                                                      std::uint64_t mutation_id_for_log,
+                                                      const char* source) {
+        (void)source;              // was: tag for the debug log (removed in #487 fix)
+        (void)mutation_id_for_log; // ditto
         if (incremental_typecheck_mode_ != IncrementalTypecheckMode::Eager)
             return 0;
         aura::compiler::TypeChecker tc(type_registry_);
@@ -6097,10 +5995,8 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         tc.set_metrics(&metrics_);
         // Issue #518: wire Evaluator narrowing counters to the
         // actual re-narrow path in infer_flat_partial.
-        tc.set_on_narrowing_refresh(
-            [this]() { evaluator_.bump_narrowing_refresh_count(); });
-        tc.set_on_selective_recheck(
-            [this]() { evaluator_.bump_selective_recheck_count(); });
+        tc.set_on_narrowing_refresh([this]() { evaluator_.bump_narrowing_refresh_count(); });
+        tc.set_on_selective_recheck([this]() { evaluator_.bump_selective_recheck_count(); });
         tc.set_on_touched_roots_snapshot(
             [this](std::size_t n) { evaluator_.set_touched_roots_size(n); });
         tc.set_on_cross_delta_conflict(
@@ -6114,76 +6010,74 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
                                  ? static_cast<void*>(&per_defuse_index_tracker_)
                                  : nullptr;
         auto n = tc.infer_flat_partial(flat, pool, rec, diag, tracker_ptr2);
-        metrics_.typecheck_cache_hits_total.fetch_add(
-            tc.stats().cache_hits, std::memory_order_relaxed);
-        metrics_.typecheck_cache_misses_total.fetch_add(
-            tc.stats().cache_misses, std::memory_order_relaxed);
-        metrics_.typecheck_stale_cache_total.fetch_add(
-            tc.stats().stale_cache, std::memory_order_relaxed);
-        metrics_.typecheck_gen_saved_total.fetch_add(
-            tc.stats().gen_saved, std::memory_order_relaxed);
+        metrics_.typecheck_cache_hits_total.fetch_add(tc.stats().cache_hits,
+                                                      std::memory_order_relaxed);
+        metrics_.typecheck_cache_misses_total.fetch_add(tc.stats().cache_misses,
+                                                        std::memory_order_relaxed);
+        metrics_.typecheck_stale_cache_total.fetch_add(tc.stats().stale_cache,
+                                                       std::memory_order_relaxed);
+        metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
+                                                     std::memory_order_relaxed);
         // Issue #411 follow-up #1: per-symbol / ancestor
         // path tracking. The auto-invoke path also routes
         // through infer_flat_partial, so it benefits from
         // the per-symbol optimization. Mirror the per-call
         // stats into the lifetime counters (same as
         // incremental_infer above).
-        metrics_.per_symbol_reinfer_used_total.fetch_add(
-            tc.stats().per_symbol_used_total, std::memory_order_relaxed);
-        metrics_.per_symbol_reinfer_visited_total.fetch_add(
-            tc.stats().per_symbol_visited_total, std::memory_order_relaxed);
-        metrics_.ancestor_reinfer_used_total.fetch_add(
-            tc.stats().ancestor_used_total, std::memory_order_relaxed);
-        metrics_.ancestor_reinfer_visited_total.fetch_add(
-            tc.stats().ancestor_visited_total, std::memory_order_relaxed);
+        metrics_.per_symbol_reinfer_used_total.fetch_add(tc.stats().per_symbol_used_total,
+                                                         std::memory_order_relaxed);
+        metrics_.per_symbol_reinfer_visited_total.fetch_add(tc.stats().per_symbol_visited_total,
+                                                            std::memory_order_relaxed);
+        metrics_.ancestor_reinfer_used_total.fetch_add(tc.stats().ancestor_used_total,
+                                                       std::memory_order_relaxed);
+        metrics_.ancestor_reinfer_visited_total.fetch_add(tc.stats().ancestor_visited_total,
+                                                          std::memory_order_relaxed);
         // Issue #411 fu1 follow-up #3: per-DefUseIndex
         // path tracking. Mirror the per-call stats into
         // the lifetime CompilerMetrics counters.
-        metrics_.per_defuse_index_used_total.fetch_add(
-            tc.stats().per_defuse_index_used_total, std::memory_order_relaxed);
+        metrics_.per_defuse_index_used_total.fetch_add(tc.stats().per_defuse_index_used_total,
+                                                       std::memory_order_relaxed);
         metrics_.per_defuse_index_walk_fallback_total.fetch_add(
             tc.stats().per_defuse_index_walk_fallback_total, std::memory_order_relaxed);
         // Issue #411 fu1 fu4: per-DefUseIndex visited
         // count (the O(uses) signal).
-        metrics_.per_defuse_index_visited_total.fetch_add(
-            tc.stats().per_defuse_index_visited_total, std::memory_order_relaxed);
+        metrics_.per_defuse_index_visited_total.fetch_add(tc.stats().per_defuse_index_visited_total,
+                                                          std::memory_order_relaxed);
         // Issue #386: narrowing observability. Mirror
         // the per-call stats into the lifetime
         // CompilerMetrics counters.
-        metrics_.narrowing_applied_total.fetch_add(
-            tc.stats().narrowing_applied, std::memory_order_relaxed);
-        metrics_.narrowing_skipped_total.fetch_add(
-            tc.stats().narrowing_skipped, std::memory_order_relaxed);
-        metrics_.narrowing_reanalyzed_total.fetch_add(
-            tc.stats().narrowing_reanalyzed, std::memory_order_relaxed);
+        metrics_.narrowing_applied_total.fetch_add(tc.stats().narrowing_applied,
+                                                   std::memory_order_relaxed);
+        metrics_.narrowing_skipped_total.fetch_add(tc.stats().narrowing_skipped,
+                                                   std::memory_order_relaxed);
+        metrics_.narrowing_reanalyzed_total.fetch_add(tc.stats().narrowing_reanalyzed,
+                                                      std::memory_order_relaxed);
         // Issue #338: and/or precision.
-        metrics_.and_or_meet_uses_total.fetch_add(
-            tc.stats().and_or_meet_uses, std::memory_order_relaxed);
-        metrics_.and_or_join_uses_total.fetch_add(
-            tc.stats().and_or_join_uses, std::memory_order_relaxed);
+        metrics_.and_or_meet_uses_total.fetch_add(tc.stats().and_or_meet_uses,
+                                                  std::memory_order_relaxed);
+        metrics_.and_or_join_uses_total.fetch_add(tc.stats().and_or_join_uses,
+                                                  std::memory_order_relaxed);
         // Issue #434: per-node occurrence dirty recovery.
-        metrics_.narrowing_dirty_recovery_total.fetch_add(
-            tc.stats().narrowing_dirty_recovery, std::memory_order_relaxed);
+        metrics_.narrowing_dirty_recovery_total.fetch_add(tc.stats().narrowing_dirty_recovery,
+                                                          std::memory_order_relaxed);
         // Issue #390: schema cache observability.
-        metrics_.schema_cache_lookups_total.fetch_add(
-            tc.stats().schema_cache_lookups, std::memory_order_relaxed);
-        metrics_.schema_cache_hits_total.fetch_add(
-            tc.stats().schema_cache_hits, std::memory_order_relaxed);
+        metrics_.schema_cache_lookups_total.fetch_add(tc.stats().schema_cache_lookups,
+                                                      std::memory_order_relaxed);
+        metrics_.schema_cache_hits_total.fetch_add(tc.stats().schema_cache_hits,
+                                                   std::memory_order_relaxed);
         // Issue #387: Type Dependency Graph observability.
         // Mirror the per-call TypeChecker counters into the
         // lifetime CompilerMetrics atomics.
-        metrics_.type_dep_graph_lookups.fetch_add(
-            tc.type_dep_graph_lookups(), std::memory_order_relaxed);
-        metrics_.type_dep_graph_hits.fetch_add(
-            tc.type_dep_graph_hits(), std::memory_order_relaxed);
+        metrics_.type_dep_graph_lookups.fetch_add(tc.type_dep_graph_lookups(),
+                                                  std::memory_order_relaxed);
+        metrics_.type_dep_graph_hits.fetch_add(tc.type_dep_graph_hits(), std::memory_order_relaxed);
         metrics_.type_dep_graph_size.store(
             std::max(metrics_.type_dep_graph_size.load(std::memory_order_relaxed),
                      static_cast<std::uint64_t>(tc.type_dep_graph_size())),
             std::memory_order_relaxed);
-        metrics_.incremental_typecheck_auto_invocations_total.fetch_add(
-            1, std::memory_order_relaxed);
-        metrics_.incremental_typecheck_re_inferred_total.fetch_add(
-            n, std::memory_order_relaxed);
+        metrics_.incremental_typecheck_auto_invocations_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        metrics_.incremental_typecheck_re_inferred_total.fetch_add(n, std::memory_order_relaxed);
         // Note: a previous version of this method printed a
         // debug line to stderr ("IncrementalTypecheck: ...")
         // after the re-inference. That output was being
@@ -6224,9 +6118,11 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
         std::size_t entry_size;
         bool fired = false;
         PostEvalAutoInvokeGuard(CompilerService* s, std::size_t e)
-            : service(s), entry_size(e) {}
+            : service(s)
+            , entry_size(e) {}
         ~PostEvalAutoInvokeGuard() {
-            if (fired || service == nullptr) return;
+            if (fired || service == nullptr)
+                return;
             if (auto* ws_flat = service->evaluator_.workspace_flat()) {
                 if (auto* ws_pool = service->evaluator_.workspace_pool()) {
                     const auto& log = ws_flat->all_mutations();
@@ -6504,9 +6400,8 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
             // contract — it works because earlier entries already
             // got their status set by prior typed_mutate calls.
             // Issue #274: fold invariant checks via MutationVisitor pipeline.
-            aura::compiler::PostMutationInvariantVisitor invariant_visitor(*current_pool_,
-                                                                           type_registry_,
-                                                                           &metrics_);
+            aura::compiler::PostMutationInvariantVisitor invariant_visitor(
+                *current_pool_, type_registry_, &metrics_);
             aura::ast::run_mutation_pipeline(*ws_flat, invariant_visitor);
             invariant_visitor.apply_status_updates(*ws_flat);
             res.invariant_status = invariant_visitor.worst_status();
@@ -6594,10 +6489,9 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
                     // match exhaustiveness sees the post-mutate ctor
                     // list (not a stale pre-mutation snapshot).
                     if (ws_flat->root != aura::ast::NULL_NODE)
-                        register_adt_from_define_types(*ws_flat, *current_pool_,
-                                                       ws_flat->root);
-                    auto_invoke_incremental_typecheck_for(
-                        *ws_flat, *current_pool_, rec, mid, "typed_mutate");
+                        register_adt_from_define_types(*ws_flat, *current_pool_, ws_flat->root);
+                    auto_invoke_incremental_typecheck_for(*ws_flat, *current_pool_, rec, mid,
+                                                          "typed_mutate");
                     invoked = true;
                     break; // one record per typed_mutate
                 }
@@ -6713,27 +6607,24 @@ func.name = name_str + std::string("#") + std::to_string(own_pos++);
     // primitive + by C++ tests that need AoS-vs-compact numbers
     // without going through the primitive (which would clobber
     // last_ir_mod_ on its own compilation).
-    const aura::ir::IRStatsSnapshot& last_ir_stats() const noexcept {
-        return last_ir_stats_;
-    }
+    const aura::ir::IRStatsSnapshot& last_ir_stats() const noexcept { return last_ir_stats_; }
 
 private:
     // Issue #538: accumulate coercion zero-overhead metrics from a
     // TypeSpecializationWrap + DeadCoercionEliminationPass run.
-    void accumulate_coercion_pass_metrics(
-        const aura::compiler::TypeSpecializationWrap& ts,
-        const aura::compiler::DeadCoercionEliminationPass& dce) {
+    void accumulate_coercion_pass_metrics(const aura::compiler::TypeSpecializationWrap& ts,
+                                          const aura::compiler::DeadCoercionEliminationPass& dce) {
         if (dce.eliminated_count() > 0) {
             metrics_.dead_coercion_eliminated_total.fetch_add(dce.eliminated_count(),
-                                                                std::memory_order_relaxed);
+                                                              std::memory_order_relaxed);
         }
         if (dce.elapsed_us() > 0) {
             metrics_.dead_coercion_elapsed_us_total.fetch_add(dce.elapsed_us(),
                                                               std::memory_order_relaxed);
         }
         if (dce.kept_for_debug_count() > 0) {
-            metrics_.dead_coercion_kept_for_debug_total.fetch_add(
-                dce.kept_for_debug_count(), std::memory_order_relaxed);
+            metrics_.dead_coercion_kept_for_debug_total.fetch_add(dce.kept_for_debug_count(),
+                                                                  std::memory_order_relaxed);
         }
         if (ts.castop_emitted() > 0) {
             metrics_.coercion_castop_emitted_total.fetch_add(ts.castop_emitted(),
@@ -7262,23 +7153,19 @@ private:
         // (relaxed-ordering); the follow-up wires the actual
         // IRClosure::invalidate_if_stale walk + the
         // bridge_epoch_hit_count_ bump in apply_closure.
-        metrics_.closure_stale_refresh_count_.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.closure_stale_refresh_count_.fetch_add(1, std::memory_order_relaxed);
         // Issue #401: lifetime counter for invalidate_function entry.
         // Bumped here (before the dep_graph_ walk) so the count is
         // observable even if the walk short-circuits on an empty graph.
-        metrics_.invalidate_function_calls.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.invalidate_function_calls.fetch_add(1, std::memory_order_relaxed);
         // Issue #610: linear ownership JIT/closure refresh after
         // invalidate — pairs with closure_stale_refresh for the
         // post-mutate linear runtime contract path.
-        metrics_.linear_deopt_on_invalidate_total.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.linear_deopt_on_invalidate_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #598: post-mutate runtime enforcement hook on
         // invalidate_function — pairs with linear_deopt_on_invalidate
         // so GuardShape/linear state re-validates after re-lower.
-        metrics_.linear_post_mutate_enforcements_total.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #638: invalidate ShapeProfiler profiles so
         // GuardShape + linear_ownership_state re-specialize
         // after post-mutate shape/ownership change.
@@ -7487,10 +7374,10 @@ private:
         if (const auto* snap = aura::compiler::lower_last_soa_snapshot()) {
             if (snap->instructions_emitted == 0 && snap->functions_emitted == 0)
                 return;
-            metrics_.ir_soa_instructions_emitted.fetch_add(
-                snap->instructions_emitted, std::memory_order_relaxed);
-            metrics_.ir_soa_functions_emitted.fetch_add(
-                snap->functions_emitted, std::memory_order_relaxed);
+            metrics_.ir_soa_instructions_emitted.fetch_add(snap->instructions_emitted,
+                                                           std::memory_order_relaxed);
+            metrics_.ir_soa_functions_emitted.fetch_add(snap->functions_emitted,
+                                                        std::memory_order_relaxed);
             metrics_.irsoa_wired_hits.fetch_add(1, std::memory_order_relaxed);
             pending_soa_snapshot_ = *snap;
         }
@@ -7499,10 +7386,8 @@ private:
     // Issue #683: LinearOwnershipRevalidate after invalidate/re-lower.
     void run_linear_ownership_revalidate_after_invalidate(const std::string& name) {
         (void)name;
-        metrics_.linear_relower_revalidate_hits.fetch_add(
-            1, std::memory_order_relaxed);
-        metrics_.linear_post_mutate_revalidations_total.fetch_add(
-            1, std::memory_order_relaxed);
+        metrics_.linear_relower_revalidate_hits.fetch_add(1, std::memory_order_relaxed);
+        metrics_.linear_post_mutate_revalidations_total.fetch_add(1, std::memory_order_relaxed);
         evaluator_.probe_linear_ownership_at_gc_safepoint();
     }
 
@@ -7515,7 +7400,8 @@ private:
     std::vector<aura::compiler::ClosureSnapshot> last_closures_;
     std::vector<aura::compiler::CellSnapshot> last_cells_;
     std::optional<aura::ir::IRModule> last_ir_mod_;
-    aura::ir::IRStatsSnapshot last_ir_stats_; // Issue #375: snapshot taken on last_ir_mod_ assignment
+    aura::ir::IRStatsSnapshot
+        last_ir_stats_; // Issue #375: snapshot taken on last_ir_mod_ assignment
     std::vector<std::vector<std::uint8_t>> last_escape_maps_;
 
     // Set of loaded module names (for ArenaGroup tracking).
@@ -7550,8 +7436,7 @@ private:
     // results immediately after any (mutate:*) call. Set to Lazy
     // (manual (typecheck-incremental) needed) or Disabled (full
     // pre-#411 behavior) via set_incremental_typecheck_mode().
-    IncrementalTypecheckMode incremental_typecheck_mode_ =
-        IncrementalTypecheckMode::Eager;
+    IncrementalTypecheckMode incremental_typecheck_mode_ = IncrementalTypecheckMode::Eager;
 
     // Issue #411: per-eval mutation_log_ size snapshot. Set at
     // the entry of every public eval method (eval / eval_ir /
@@ -7636,9 +7521,7 @@ public:
 
     // Issue #298: total number of cached defines (used as
     // denominator for the recompile-ratio basis-points calc).
-    [[nodiscard]] std::size_t ir_cache_v2_size() const noexcept {
-        return ir_cache_v2_.size();
-    }
+    [[nodiscard]] std::size_t ir_cache_v2_size() const noexcept { return ir_cache_v2_.size(); }
 
     // Issue #293: count of functions that are "incremental
     // re-lower" candidates (1..7 dirty blocks per function).
@@ -7656,10 +7539,10 @@ public:
     // Returns nullptr if the function is not in the cache.
     // Used by (compile:relower-strategy) to look up
     // dirty_block_count for a specific function.
-    [[nodiscard]] const IRCacheEntry* ir_cache_v2_find(
-        const std::string& name) const noexcept {
+    [[nodiscard]] const IRCacheEntry* ir_cache_v2_find(const std::string& name) const noexcept {
         auto it = ir_cache_v2_.find(name);
-        if (it == ir_cache_v2_.end()) return nullptr;
+        if (it == ir_cache_v2_.end())
+            return nullptr;
         return &it->second;
     }
 
@@ -7714,22 +7597,21 @@ public:
                     const auto& fb = entry.block_dirty_per_func_[fi];
                     s.total_blocks += fb.size();
                     for (auto b : fb)
-                        if (b) ++s.dirty_blocks;
+                        if (b)
+                            ++s.dirty_blocks;
                 }
                 // Issue #684: per-instruction dirty from
                 // instruction_dirty_per_func_ (SoA cascade).
                 if (fi < entry.instruction_dirty_per_func_.size()) {
                     for (auto d : entry.instruction_dirty_per_func_[fi])
-                        if (d) ++s.dirty_instructions;
+                        if (d)
+                            ++s.dirty_instructions;
                 }
             }
         }
-        s.dirty_block_pct = s.total_blocks > 0
-            ? (s.dirty_blocks * 100) / s.total_blocks
-            : 0;
-        s.dirty_instruction_pct = s.total_instructions > 0
-            ? (s.dirty_instructions * 100) / s.total_instructions
-            : 0;
+        s.dirty_block_pct = s.total_blocks > 0 ? (s.dirty_blocks * 100) / s.total_blocks : 0;
+        s.dirty_instruction_pct =
+            s.total_instructions > 0 ? (s.dirty_instructions * 100) / s.total_instructions : 0;
         return s;
     }
     void public_invalidate_bridges_for(const std::string& name) { invalidate_bridge_for(name); }
@@ -7738,9 +7620,7 @@ public:
     // drive the BFS traversal directly without going through the Aura
     // (mutate:rebind) EDSL surface, which would also rebuild the function
     // body (mixing the traversal test with the rebind path).
-    void public_invalidate_function(const std::string& name) {
-        invalidate_function(name);
-    }
+    void public_invalidate_function(const std::string& name) { invalidate_function(name); }
 
     // Issue #401: public test accessors for the dep_graph_.
     //
@@ -7755,39 +7635,39 @@ public:
     // the unordered_map layout.
 
     // Number of entries currently in dep_graph_ (post-cleanup state).
-    [[nodiscard]] std::size_t public_dep_graph_size() const noexcept {
-        return dep_graph_.size();
-    }
+    [[nodiscard]] std::size_t public_dep_graph_size() const noexcept { return dep_graph_.size(); }
 
     // Whether a name is in dep_graph_.
-    [[nodiscard]] bool public_dep_graph_contains(
-        const std::string& name) const noexcept {
+    [[nodiscard]] bool public_dep_graph_contains(const std::string& name) const noexcept {
         return dep_graph_.find(name) != dep_graph_.end();
     }
 
     // Outgoing-edge count (this name calls N functions).
-    [[nodiscard]] std::size_t public_dep_graph_calls_for(
-        const std::string& name) const noexcept {
+    [[nodiscard]] std::size_t public_dep_graph_calls_for(const std::string& name) const noexcept {
         auto it = dep_graph_.find(name);
-        if (it == dep_graph_.end()) return 0;
+        if (it == dep_graph_.end())
+            return 0;
         return it->second.calls.size();
     }
 
     // Incoming-edge count (N functions call this name).
-    [[nodiscard]] std::size_t public_dep_graph_called_by_for(
-        const std::string& name) const noexcept {
+    [[nodiscard]] std::size_t
+    public_dep_graph_called_by_for(const std::string& name) const noexcept {
         auto it = dep_graph_.find(name);
-        if (it == dep_graph_.end()) return 0;
+        if (it == dep_graph_.end())
+            return 0;
         return it->second.called_by.size();
     }
 
     // Whether a directed edge caller → callee is recorded.
-    [[nodiscard]] bool public_dep_graph_has_edge(
-        const std::string& caller, const std::string& callee) const noexcept {
+    [[nodiscard]] bool public_dep_graph_has_edge(const std::string& caller,
+                                                 const std::string& callee) const noexcept {
         auto cit = dep_graph_.find(caller);
-        if (cit == dep_graph_.end()) return false;
+        if (cit == dep_graph_.end())
+            return false;
         for (auto& c : cit->second.calls) {
-            if (c == callee) return true;
+            if (c == callee)
+                return true;
         }
         return false;
     }
@@ -7813,15 +7693,16 @@ public:
     // uses these under the hood; tests can also use them
     // directly to verify the provenance-tracking contract.
     [[nodiscard]] std::size_t narrowing_count() const noexcept {
-        if (!evaluator_.workspace_flat()) return 0;
+        if (!evaluator_.workspace_flat())
+            return 0;
         return evaluator_.workspace_flat()->narrowing_count();
     }
-    [[nodiscard]] const std::pmr::vector<aura::ast::NarrowingRecord>&
-    all_narrowings() const {
+    [[nodiscard]] const std::pmr::vector<aura::ast::NarrowingRecord>& all_narrowings() const {
         // The vector is always non-null when workspace_flat() is,
         // but C++'s reference return requires a static.
         static const std::pmr::vector<aura::ast::NarrowingRecord> empty_log;
-        if (!evaluator_.workspace_flat()) return empty_log;
+        if (!evaluator_.workspace_flat())
+            return empty_log;
         return evaluator_.workspace_flat()->all_narrowings();
     }
 
@@ -7971,8 +7852,8 @@ public:
                 continue;
             add_closure(static_cast<std::int64_t>(bit->second->closure_id));
             if (bit->second->interpreter)
-                bit->second->interpreter->collect_active_gc_roots(
-                    out.compiler_closure_roots, current_epoch);
+                bit->second->interpreter->collect_active_gc_roots(out.compiler_closure_roots,
+                                                                  current_epoch);
         }
 
         for (auto& [name, binding] : ir_define_env_bindings_) {
@@ -8012,8 +7893,7 @@ public:
             if (bind_name != name || !binding || !binding->interpreter)
                 continue;
             if (binding->interpreter->has_active_frames()) {
-                metrics_.compiler_gc_safepoint_defer_count.fetch_add(
-                    1, std::memory_order_relaxed);
+                metrics_.compiler_gc_safepoint_defer_count.fetch_add(1, std::memory_order_relaxed);
                 (void)evaluator_.request_gc_safepoint();
             }
         }
@@ -8023,8 +7903,8 @@ public:
         std::vector<aura::ir::ClosureBridgeData>* bridges = nullptr;
         if (auto bit = ir_cache_bridge_.find(name); bit != ir_cache_bridge_.end())
             bridges = &bit->second;
-        else if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end() &&
-                                                      !vit->second.bridges.empty())
+        else if (auto vit = ir_cache_v2_.find(name);
+                 vit != ir_cache_v2_.end() && !vit->second.bridges.empty())
             bridges = &vit->second.bridges;
         if (!bridges || bridges->empty())
             return;
@@ -8040,8 +7920,7 @@ public:
         }
         metrics_.bridge_invalidations_count.fetch_add(1, std::memory_order_relaxed);
         metrics_.compiler_inval_bridge_epoch_total.fetch_add(
-            static_cast<std::uint64_t>(bridges->size()),
-            std::memory_order_relaxed);
+            static_cast<std::uint64_t>(bridges->size()), std::memory_order_relaxed);
     }
 
     // Issue #59 Iter 3: Mutation Lock. A mutate:* operation (which
@@ -8155,12 +8034,14 @@ public:
                         if (final_shape_map && instr.operands[0] < ir_fn.local_count) {
                             shape = final_shape_map[instr.operands[0]];
                         }
-                        flat_instrs[bi].push_back(
-                            {static_cast<std::uint32_t>(instr.opcode),
-                             {instr.operands[0], instr.operands[1], instr.operands[2],
-                              instr.operands[3]},
-                             shape, instr.narrow_evidence, instr.type_id,
-                             instr.linear_ownership_state, 0});
+                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
+                                                   {instr.operands[0], instr.operands[1],
+                                                    instr.operands[2], instr.operands[3]},
+                                                   shape,
+                                                   instr.narrow_evidence,
+                                                   instr.type_id,
+                                                   instr.linear_ownership_state,
+                                                   0});
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
@@ -8470,9 +8351,7 @@ public:
     [[nodiscard]] std::uint64_t get_mutation_shape_churn_count() const noexcept {
         return shape::mutation_shape_churn_count.load(std::memory_order_relaxed);
     }
-    void bump_shape_fiber_refresh() noexcept {
-        shape::record_shape_fiber_refresh();
-    }
+    void bump_shape_fiber_refresh() noexcept { shape::record_shape_fiber_refresh(); }
 
 
     // Register evaluator primitives with JIT runtime

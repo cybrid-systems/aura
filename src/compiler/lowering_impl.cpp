@@ -855,8 +855,8 @@ static std::uint32_t lower_flat_expr(
             // narrow_evidence field when there's no narrowing.
             if (state.current_narrowing_evidence != 0) {
                 state.emit_with_metadata(IROpcode::Branch, 0, 0, 0,
-                                         state.current_narrowing_evidence,
-                                         cond_slot, then_blk, else_blk);
+                                         state.current_narrowing_evidence, cond_slot, then_blk,
+                                         else_blk);
                 // Reset so nested IfExprs don't inherit the
                 // narrowing hint from their enclosing one.
                 state.current_narrowing_evidence = 0;
@@ -1517,8 +1517,8 @@ static IRModule lower_to_ir_impl(
         const auto v2_idx = state.cur_func_v2_idx;
         auto& soa_fn = state.module_v2.functions[v2_idx];
         if (!soa_fn.blocks_.empty()) {
-            state.module_v2.seal_block(
-                v2_idx, static_cast<std::uint32_t>(soa_fn.blocks_.size() - 1));
+            state.module_v2.seal_block(v2_idx,
+                                       static_cast<std::uint32_t>(soa_fn.blocks_.size() - 1));
         }
         soa_fn.local_count = state.local_count;
         if (!top_func.name.empty())
@@ -1574,8 +1574,8 @@ aura::diag::LowerResult<IRModule> lower_to_ir_result(FlatAST& flat, StringPool& 
                                                      ASTArena& arena, const Primitives* primitives,
                                                      const aura::core::TypeRegistry* type_reg,
                                                      std::uint32_t narrowing_evidence) { // #280
-    return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives, type_reg,
-                            nullptr, nullptr, nullptr, nullptr, narrowing_evidence);
+    return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives, type_reg, nullptr,
+                            nullptr, nullptr, nullptr, narrowing_evidence);
 }
 
 aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(

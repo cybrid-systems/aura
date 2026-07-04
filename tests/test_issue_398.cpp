@@ -19,8 +19,8 @@
 
 #include "test_harness.hpp"
 
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.compiler.value;
@@ -43,16 +43,16 @@ bool test_for_each_basic() {
     flat.insert_child(parent, 1, c1);
     flat.insert_child(parent, 2, c2);
     std::vector<aura::ast::NodeId> seen;
-    flat.for_each_stable_child(parent, [&](aura::ast::FlatAST::StableNodeRef r) {
-        seen.push_back(r.id);
-    });
+    flat.for_each_stable_child(parent,
+                               [&](aura::ast::FlatAST::StableNodeRef r) { seen.push_back(r.id); });
     std::vector<aura::ast::NodeId> want{c0, c1, c2};
     if (seen != want) {
-        ++g_failed; std::println("  FAIL: seen = {} entries, expected {}",
-                                 seen.size(), want.size());
+        ++g_failed;
+        std::println("  FAIL: seen = {} entries, expected {}", seen.size(), want.size());
         return false;
     }
-    ++g_passed; std::println("  PASS: 3 non-NULL children iterated in order");
+    ++g_passed;
+    std::println("  PASS: 3 non-NULL children iterated in order");
     return true;
 }
 
@@ -71,15 +71,15 @@ bool test_for_each_skips_null() {
     flat.insert_child(parent, 3, aura::ast::NULL_NODE);
     flat.insert_child(parent, 4, aura::ast::NULL_NODE);
     std::vector<aura::ast::NodeId> seen;
-    flat.for_each_stable_child(parent, [&](aura::ast::FlatAST::StableNodeRef r) {
-        seen.push_back(r.id);
-    });
+    flat.for_each_stable_child(parent,
+                               [&](aura::ast::FlatAST::StableNodeRef r) { seen.push_back(r.id); });
     if (seen.size() != 2 || seen[0] != c0 || seen[1] != c1) {
-        ++g_failed; std::println("  FAIL: seen = [{} entries], expected [{}, {}]",
-                                 seen.size(), c0, c1);
+        ++g_failed;
+        std::println("  FAIL: seen = [{} entries], expected [{}, {}]", seen.size(), c0, c1);
         return false;
     }
-    ++g_passed; std::println("  PASS: NULL_NODE children filtered (saw 2 of 5)");
+    ++g_passed;
+    std::println("  PASS: NULL_NODE children filtered (saw 2 of 5)");
     return true;
 }
 
@@ -89,15 +89,14 @@ bool test_for_each_out_of_range() {
     aura::ast::FlatAST flat;
     aura::ast::StringPool pool;
     int call_count = 0;
-    flat.for_each_stable_child(999999, [&](aura::ast::FlatAST::StableNodeRef) {
-        ++call_count;
-    });
+    flat.for_each_stable_child(999999, [&](aura::ast::FlatAST::StableNodeRef) { ++call_count; });
     if (call_count != 0) {
-        ++g_failed; std::println("  FAIL: callback called {} times for OOB id",
-                                 call_count);
+        ++g_failed;
+        std::println("  FAIL: callback called {} times for OOB id", call_count);
         return false;
     }
-    ++g_passed; std::println("  PASS: OOB id invokes callback 0 times");
+    ++g_passed;
+    std::println("  PASS: OOB id invokes callback 0 times");
     return true;
 }
 
@@ -112,25 +111,24 @@ bool test_for_each_captures_current_gen() {
     auto parent = flat.add_define(pool.intern("p"), c0);
     // First call: gen = 1.
     std::uint16_t seen1 = 0;
-    flat.for_each_stable_child(parent, [&](aura::ast::FlatAST::StableNodeRef r) {
-        seen1 = r.gen;
-    });
+    flat.for_each_stable_child(parent, [&](aura::ast::FlatAST::StableNodeRef r) { seen1 = r.gen; });
     // Manually bump the global gen.
     flat.bump_generation();
     // Second call: gen = 2.
     std::uint16_t seen2 = 0;
-    flat.for_each_stable_child(parent, [&](aura::ast::FlatAST::StableNodeRef r) {
-        seen2 = r.gen;
-    });
+    flat.for_each_stable_child(parent, [&](aura::ast::FlatAST::StableNodeRef r) { seen2 = r.gen; });
     if (seen1 != 1) {
-        ++g_failed; std::println("  FAIL: pre-bump gen = {} (expected 1)", seen1);
+        ++g_failed;
+        std::println("  FAIL: pre-bump gen = {} (expected 1)", seen1);
         return false;
     }
     if (seen2 != 2) {
-        ++g_failed; std::println("  FAIL: post-bump gen = {} (expected 2)", seen2);
+        ++g_failed;
+        std::println("  FAIL: post-bump gen = {} (expected 2)", seen2);
         return false;
     }
-    ++g_passed; std::println("  PASS: pre-bump gen=1, post-bump gen=2 (captured at call time)");
+    ++g_passed;
+    std::println("  PASS: pre-bump gen=1, post-bump gen=2 (captured at call time)");
     return true;
 }
 
@@ -147,15 +145,19 @@ bool test_stable_child_count() {
     flat.insert_child(parent, 3, aura::ast::NULL_NODE);
     auto n = flat.stable_child_count(parent);
     if (n != 2) {
-        ++g_failed; std::println("  FAIL: stable_child_count = {} (expected 2)", n);
+        ++g_failed;
+        std::println("  FAIL: stable_child_count = {} (expected 2)", n);
         return false;
     }
-    ++g_passed; std::println("  PASS: stable_child_count = 2 (matches manual)");
+    ++g_passed;
+    std::println("  PASS: stable_child_count = 2 (matches manual)");
     if (flat.stable_child_count(999999) != 0) {
-        ++g_failed; std::println("  FAIL: OOB count = 0 expected");
+        ++g_failed;
+        std::println("  FAIL: OOB count = 0 expected");
         return false;
     }
-    ++g_passed; std::println("  PASS: OOB id count = 0");
+    ++g_passed;
+    std::println("  PASS: OOB id count = 0");
     return true;
 }
 
@@ -167,33 +169,37 @@ bool test_primitive_unchanged() {
     std::println("\n--- AC6: (query:children-stable) regression check ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval(std::string("(set-code \"(define x (begin 1 2 3 4 5))\")")).has_value()) {
-        ++g_failed; std::println("  FAIL: set-code failed");
+        ++g_failed;
+        std::println("  FAIL: set-code failed");
         return false;
     }
     if (!cs.eval(std::string("(eval-current)")).has_value()) {
-        ++g_failed; std::println("  FAIL: eval-current failed");
+        ++g_failed;
+        std::println("  FAIL: eval-current failed");
         return false;
     }
     // Build the (query:children-stable x-id) call and
     // measure the result length + the first pair's id.
-    auto r = cs.eval(std::string(
-        "(let ((defs (query:defines))"
-        "      (x-id (car defs))"
-        "      (val-ref (car (query:children-stable x-id)))"
-        "      (val-id (car val-ref)))"
-        "  (let ((stable (query:children-stable val-id)))"
-        "    (let loop ((l stable) (n 0))"
-        "      (if (pair? l) (loop (cdr l) (+ n 1)) n))))"));
+    auto r = cs.eval(std::string("(let ((defs (query:defines))"
+                                 "      (x-id (car defs))"
+                                 "      (val-ref (car (query:children-stable x-id)))"
+                                 "      (val-id (car val-ref)))"
+                                 "  (let ((stable (query:children-stable val-id)))"
+                                 "    (let loop ((l stable) (n 0))"
+                                 "      (if (pair? l) (loop (cdr l) (+ n 1)) n))))"));
     if (!r) {
-        ++g_failed; std::println("  FAIL: eval failed");
+        ++g_failed;
+        std::println("  FAIL: eval failed");
         return false;
     }
     auto n = aura::compiler::types::as_int(*r);
     if (n != 5) {
-        ++g_failed; std::println("  FAIL: result length = {} (expected 5)", n);
+        ++g_failed;
+        std::println("  FAIL: result length = {} (expected 5)", n);
         return false;
     }
-    ++g_passed; std::println("  PASS: (query:children-stable) returns 5 pairs (regression OK)");
+    ++g_passed;
+    std::println("  PASS: (query:children-stable) returns 5 pairs (regression OK)");
     return true;
 }
 

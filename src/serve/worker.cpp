@@ -27,7 +27,7 @@ WorkerThread::WorkerThread(int id, Scheduler* scheduler)
         throw std::system_error(errno, std::generic_category(),
                                 "worker[" + std::to_string(id) + "] eventfd");
 #else
-    wake_evfd_ = -1;  // macOS: no eventfd
+    wake_evfd_ = -1; // macOS: no eventfd
 #endif
 }
 

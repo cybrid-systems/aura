@@ -21,22 +21,22 @@ namespace aura::compiler::shape {
 
 namespace {
 
-ShapeDeoptHook g_shape_deopt_hook = nullptr;
+    ShapeDeoptHook g_shape_deopt_hook = nullptr;
 
-void fire_shape_deopt_hook(FnKey fn, std::uint64_t version,
-                           std::uint32_t dirty_scope) noexcept {
-    shape_deopt_hook_fire_count.fetch_add(1, std::memory_order_relaxed);
-    if (dirty_scope != 0) {
-        shape_dirty_hook_fire_count.fetch_add(1, std::memory_order_relaxed);
+    void fire_shape_deopt_hook(FnKey fn, std::uint64_t version,
+                               std::uint32_t dirty_scope) noexcept {
+        shape_deopt_hook_fire_count.fetch_add(1, std::memory_order_relaxed);
+        if (dirty_scope != 0) {
+            shape_dirty_hook_fire_count.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (g_shape_deopt_hook)
+            g_shape_deopt_hook(fn, version, dirty_scope);
     }
-    if (g_shape_deopt_hook)
-        g_shape_deopt_hook(fn, version, dirty_scope);
-}
 
-ShapeID finish_inline_shape_id(ShapeID id) noexcept {
-    contract_assert(is_known_inline_shape_id(id));
-    return id;
-}
+    ShapeID finish_inline_shape_id(ShapeID id) noexcept {
+        contract_assert(is_known_inline_shape_id(id));
+        return id;
+    }
 
 } // namespace
 
@@ -59,8 +59,8 @@ ShapeDeoptHook shape_deopt_hook() noexcept {
 // Timing: ~2-5ns (bit ops + table dispatch, no heap access)
 
 ShapeID inline_shape_of(std::int64_t val) {
-    using aura::compiler::types::EvalValueTag;
     using aura::compiler::types::classify_eval_value_tag;
+    using aura::compiler::types::EvalValueTag;
     using aura::compiler::types::ref_type;
 
     const EvalValueTag tag = classify_eval_value_tag(val);
@@ -74,36 +74,36 @@ ShapeID inline_shape_of(std::int64_t val) {
         return finish_inline_shape_id(SHAPE_UNKNOWN);
 
     switch (tag) {
-    case EvalValueTag::Fixnum:
-        return finish_inline_shape_id(SHAPE_INT);
-    case EvalValueTag::Float:
-        return finish_inline_shape_id(SHAPE_FLOAT);
-    case EvalValueTag::StringV2:
-        return finish_inline_shape_id(SHAPE_STRING);
-    case EvalValueTag::Special:
-        if (val == 3 || val == 7)
-            return finish_inline_shape_id(SHAPE_BOOL);
-        if (val == 11)
-            return finish_inline_shape_id(SHAPE_VOID);
-        return finish_inline_shape_id(SHAPE_ANY);
-    case EvalValueTag::Ref: {
-        inline_shape_ref_dispatch_count.fetch_add(1, std::memory_order_relaxed);
-        const auto rt = ref_type(val);
-        switch (rt) {
-        case aura::compiler::types::RefPair:
-            return finish_inline_shape_id(SHAPE_PAIR);
-        case aura::compiler::types::RefVector:
-            return finish_inline_shape_id(SHAPE_VECTOR);
-        case aura::compiler::types::RefHash:
-            return finish_inline_shape_id(SHAPE_HASH);
-        case aura::compiler::types::RefClosure:
-            return finish_inline_shape_id(SHAPE_CLOSURE);
-        default:
-            return finish_inline_shape_id(SHAPE_REF);
+        case EvalValueTag::Fixnum:
+            return finish_inline_shape_id(SHAPE_INT);
+        case EvalValueTag::Float:
+            return finish_inline_shape_id(SHAPE_FLOAT);
+        case EvalValueTag::StringV2:
+            return finish_inline_shape_id(SHAPE_STRING);
+        case EvalValueTag::Special:
+            if (val == 3 || val == 7)
+                return finish_inline_shape_id(SHAPE_BOOL);
+            if (val == 11)
+                return finish_inline_shape_id(SHAPE_VOID);
+            return finish_inline_shape_id(SHAPE_ANY);
+        case EvalValueTag::Ref: {
+            inline_shape_ref_dispatch_count.fetch_add(1, std::memory_order_relaxed);
+            const auto rt = ref_type(val);
+            switch (rt) {
+                case aura::compiler::types::RefPair:
+                    return finish_inline_shape_id(SHAPE_PAIR);
+                case aura::compiler::types::RefVector:
+                    return finish_inline_shape_id(SHAPE_VECTOR);
+                case aura::compiler::types::RefHash:
+                    return finish_inline_shape_id(SHAPE_HASH);
+                case aura::compiler::types::RefClosure:
+                    return finish_inline_shape_id(SHAPE_CLOSURE);
+                default:
+                    return finish_inline_shape_id(SHAPE_REF);
+            }
         }
-    }
-    default:
-        return finish_inline_shape_id(SHAPE_ANY);
+        default:
+            return finish_inline_shape_id(SHAPE_ANY);
     }
 }
 
@@ -261,8 +261,7 @@ std::string format_shape_id(ShapeID id) {
 
 ShapeProfiler::ShapeProfiler() = default;
 
-void ShapeProfiler::ShapeHistoryRing::push(const ShapeRecord& rec,
-                                           std::uint32_t window_size) {
+void ShapeProfiler::ShapeHistoryRing::push(const ShapeRecord& rec, std::uint32_t window_size) {
     ensure_capacity(window_size);
     if (count < window_size) {
         slots[count++] = rec;
@@ -410,8 +409,7 @@ ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {
             if (rec.shape_id == dominant)
                 dominant_count++;
         });
-        m.shape_stability_ratio =
-            static_cast<double>(dominant_count) / p.history.size();
+        m.shape_stability_ratio = static_cast<double>(dominant_count) / p.history.size();
     }
 
     if (p.total_calls > 0 && p.deopt_count > 0) {

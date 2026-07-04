@@ -22,8 +22,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.core;
 import aura.core.ast;
 import aura.core.type;
@@ -32,9 +32,11 @@ import aura.compiler.pass_manager;
 import aura.diag;
 
 
-
 namespace aura_issue_163_detail {
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 // ── Test 1: concept AnalysisPass exists and is satisfied by analysis passes
 //
@@ -76,7 +78,9 @@ bool test_analysis_pass_subset_of_pass() {
 // ComputeKindWrap is a Pass but... actually it DOES have
 // has_error() and name(). So it satisfies AnalysisPass too.
 // We test a bare-minimum struct to verify rejection.
-struct BareStruct { void run(aura::ir::IRModule&) {} };
+struct BareStruct {
+    void run(aura::ir::IRModule&) {}
+};
 // No has_error, no name. Should fail AnalysisPass but pass Pass? No
 // — Pass requires has_error() too. So BareStruct fails both.
 // What we really want is a Pass that doesn't satisfy AnalysisPass.
@@ -176,7 +180,7 @@ bool test_mark_coercions_free_function() {
     CHECK(markers.empty(), "mark_coercions(NULL_NODE) returns empty markers");
     // Add a literal + a TypeAnnotation that don't need coercion
     auto lit = flat.add_literal(42);
-    flat.set_type(lit, 0);  // untyped — won't need coercion
+    flat.set_type(lit, 0); // untyped — won't need coercion
     auto markers2 = aura::compiler::mark_coercions(reg, flat, pool, lit);
     CHECK(markers2.empty(), "mark_coercions(untagged literal) returns empty markers");
     return true;
@@ -215,7 +219,8 @@ bool test_coercion_marker_struct() {
     // CoercionMarker doesn't define default member initializers —
     // it's a POD-style struct. We verify construction + mutation.
     m.source_node = 0;
-    CHECK(m.source_node == 0, "CoercionMarker default-constructs (uninit; we just set source_node)");
+    CHECK(m.source_node == 0,
+          "CoercionMarker default-constructs (uninit; we just set source_node)");
     m.source_node = 42;
     m.target_type_id = 7;
     m.context = aura::ast::NodeTag::TypeAnnotation;
@@ -403,7 +408,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_163_detail
+} // namespace aura_issue_163_detail
 
-int aura_issue_163_run() { return aura_issue_163_detail::run_tests(); }
-
+int aura_issue_163_run() {
+    return aura_issue_163_detail::run_tests();
+}

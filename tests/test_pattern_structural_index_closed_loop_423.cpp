@@ -43,8 +43,7 @@ static std::int64_t pattern_structural_index_stats(CompilerService& cs) {
 static bool setup_large_ast_workspace(CompilerService& cs) {
     std::string code = "(define root 0)";
     for (int i = 0; i < 200; ++i) {
-        code += " (define v" + std::to_string(i) + " " +
-                std::to_string(i) + ")";
+        code += " (define v" + std::to_string(i) + " " + std::to_string(i) + ")";
     }
     if (!cs.eval("(set-code \"" + code + "\")"))
         return false;
@@ -71,19 +70,17 @@ static void run_matrix(CompilerService& cs) {
     // Non-matching (tag, arity) uses the index miss fast path.
     (void)cs.eval("(query:pattern \"(+ 1 2)\")");
     const auto misses3b = ev.get_pattern_structural_index_misses();
-    CHECK(misses3b > misses3a,
-          "non-matching pattern bumps structural index misses");
+    CHECK(misses3b > misses3a, "non-matching pattern bumps structural index misses");
     // Matching define uses the index hit fast path (strict arity).
-    (void)cs.eval(
-        "(query:pattern \"(define v0 0)\" :strict-arity #t)");
+    (void)cs.eval("(query:pattern \"(define v0 0)\" :strict-arity #t)");
     const auto stats3b = pattern_structural_index_stats(cs);
     const auto hits3b = ev.get_pattern_structural_index_hits();
     const auto misses3c = ev.get_pattern_structural_index_misses();
     const auto fast3a = hits3a + misses3a;
     const auto fast3b = hits3b + misses3c;
     std::println("  structural stats: {} -> {}", stats3a, stats3b);
-    std::println("  fast-path: {} -> {} (hits {} -> {}, misses {} -> {})",
-                 fast3a, fast3b, hits3a, hits3b, misses3a, misses3c);
+    std::println("  fast-path: {} -> {} (hits {} -> {}, misses {} -> {})", fast3a, fast3b, hits3a,
+                 hits3b, misses3a, misses3c);
     CHECK(fast3b > fast3a, "query:pattern bumps structural index fast-path");
     CHECK(hits3b > hits3a, "matching define bumps structural index hits");
     CHECK(stats3b > stats3a, "structural index stats grow");
@@ -93,8 +90,7 @@ static void run_matrix(CompilerService& cs) {
     const auto buckets = ev.tag_arity_index_size();
     const auto entries = ev.tag_arity_index_entry_count();
     const auto synced = ev.tag_arity_index_synced_size();
-    std::println("  buckets = {}, entries = {}, synced_size = {}",
-                 buckets, entries, synced);
+    std::println("  buckets = {}, entries = {}, synced_size = {}", buckets, entries, synced);
     CHECK(buckets > 0, "index has buckets after build");
     CHECK(entries > 0, "index has entries after build");
     CHECK(synced == ws->size(), "synced_size matches flat size");
@@ -105,15 +101,14 @@ static void run_matrix(CompilerService& cs) {
           "zero pattern index consistency violations");
 
     std::println("\n--- AC6: multi-round pattern queries monotonic ---");
-    const auto fast6a = ev.get_pattern_structural_index_hits() +
-                        ev.get_pattern_structural_index_misses();
+    const auto fast6a =
+        ev.get_pattern_structural_index_hits() + ev.get_pattern_structural_index_misses();
     const auto stats6a = pattern_structural_index_stats(cs);
     for (int round = 0; round < 5; ++round) {
-        (void)cs.eval(
-            "(query:pattern \"(define v0 0)\" :strict-arity #t)");
+        (void)cs.eval("(query:pattern \"(define v0 0)\" :strict-arity #t)");
     }
-    const auto fast6b = ev.get_pattern_structural_index_hits() +
-                        ev.get_pattern_structural_index_misses();
+    const auto fast6b =
+        ev.get_pattern_structural_index_hits() + ev.get_pattern_structural_index_misses();
     const auto stats6b = pattern_structural_index_stats(cs);
     std::println("  fast-path: {} -> {}", fast6a, fast6b);
     CHECK(fast6b > fast6a, "fast-path grows over repeated pattern queries");

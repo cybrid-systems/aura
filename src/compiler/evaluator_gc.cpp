@@ -146,10 +146,11 @@ std::size_t Evaluator::gc_root_count() const {
     return n;
 }
 
-bool Evaluator::validate_linear_ownership_state(
-    std::uint8_t linear_state, std::uint64_t frame_version,
-    std::uint64_t current_version, std::uint64_t bridge_epoch,
-    std::uint64_t current_bridge_epoch) noexcept {
+bool Evaluator::validate_linear_ownership_state(std::uint8_t linear_state,
+                                                std::uint64_t frame_version,
+                                                std::uint64_t current_version,
+                                                std::uint64_t bridge_epoch,
+                                                std::uint64_t current_bridge_epoch) noexcept {
     if (linear_state == 0)
         return true;
     if (frame_version < current_version)
@@ -190,8 +191,8 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
         if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
             continue;
         const auto& fr = env_frames_[cl.env_id];
-        if (!validate_linear_ownership_state(1, fr.version_, current_ver,
-                                             cl.bridge_epoch, current_bridge)) {
+        if (!validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
+                                             current_bridge)) {
             violation = true;
             break;
         }
@@ -212,22 +213,20 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
         if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
             continue;
         const auto& fr = env_frames_[cl.env_id];
-        if (!validate_linear_ownership_state(1, fr.version_, current_ver,
-                                             cl.bridge_epoch, current_bridge)) {
+        if (!validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
+                                             current_bridge)) {
             violation = true;
             break;
         }
     }
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-    std::atomic<std::uint64_t>* site =
-        m ? &m->linear_steal_enforced : nullptr;
+    std::atomic<std::uint64_t>* site = m ? &m->linear_steal_enforced : nullptr;
     record_linear_gc_probe(*this, violation, site);
 }
 
-void Evaluator::collect_compiler_managed_gc_roots(
-    std::vector<std::int64_t>& closure_roots_out,
-    std::vector<std::int64_t>& env_roots_out,
-    std::uint64_t current_bridge_epoch) const {
+void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& closure_roots_out,
+                                                  std::vector<std::int64_t>& env_roots_out,
+                                                  std::uint64_t current_bridge_epoch) const {
     std::shared_lock<std::shared_mutex> lock(closures_mtx_);
     for (const auto& [id, cl] : closures_) {
         if (cl.bridge_epoch != 0 && cl.bridge_epoch != current_bridge_epoch)

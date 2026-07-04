@@ -80,7 +80,7 @@ bool test_synthesize_list_templates_removed() {
     // This AC verifies the migration path is documented.
     std::println("  (synthesize:list-templates) call: handled via stdlib wrapper");
     CHECK(true, "(synthesize:list-templates) demoted to stdlib "
-              "(use lib/std/synthesize.aura wrapper)");
+                "(use lib/std/synthesize.aura wrapper)");
     return true;
 }
 
@@ -90,24 +90,17 @@ bool test_stdlib_synthesize_file_present() {
     const std::string lib_path = "/home/dev/code/aura/lib/std/synthesize.aura";
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/synthesize.aura exists on disk");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     const bool has_export = content.find("(export") != std::string::npos;
-    const bool has_list_templates =
-        content.find("(synthesize:list-templates") != std::string::npos;
-    const bool has_list_help =
-        content.find("(synthesize:list-help") != std::string::npos;
-    const bool has_query_templates_ref =
-        content.find("(query:templates)") != std::string::npos;
+    const bool has_list_templates = content.find("(synthesize:list-templates") != std::string::npos;
+    const bool has_list_help = content.find("(synthesize:list-help") != std::string::npos;
+    const bool has_query_templates_ref = content.find("(query:templates)") != std::string::npos;
     std::println("  lib/synthesize.aura: present + exports + wrapper");
     CHECK(has_export, "stdlib/synthesize.aura has (export ...) line");
-    CHECK(has_list_templates,
-          "stdlib/synthesize.aura exports (synthesize:list-templates)");
-    CHECK(has_list_help,
-          "stdlib/synthesize.aura exports (synthesize:list-help)");
-    CHECK(has_query_templates_ref,
-          "stdlib/synthesize.aura wrapper calls (query:templates)");
+    CHECK(has_list_templates, "stdlib/synthesize.aura exports (synthesize:list-templates)");
+    CHECK(has_list_help, "stdlib/synthesize.aura exports (synthesize:list-help)");
+    CHECK(has_query_templates_ref, "stdlib/synthesize.aura wrapper calls (query:templates)");
     return true;
 }
 
@@ -131,14 +124,11 @@ bool test_remaining_synthesize_primitives() {
     // (they touch private state). Verify they're still
     // registered + reachable (don't error out).
     auto r1 = cs.eval("(synthesize:register-template)");
-    CHECK(r1.has_value(),
-          "(synthesize:register-template) still registered (engine hook)");
+    CHECK(r1.has_value(), "(synthesize:register-template) still registered (engine hook)");
     auto r2 = cs.eval("(synthesize:fill)");
-    CHECK(r2.has_value(),
-          "(synthesize:fill) still registered (engine hook + LLM call)");
+    CHECK(r2.has_value(), "(synthesize:fill) still registered (engine hook + LLM call)");
     auto r3 = cs.eval("(synthesize:optimize)");
-    CHECK(r3.has_value(),
-          "(synthesize:optimize) still registered (engine hook + genetic)");
+    CHECK(r3.has_value(), "(synthesize:optimize) still registered (engine hook + genetic)");
     return true;
 }
 
@@ -149,8 +139,7 @@ bool test_synthesize_pipeline_hint_removed() {
         "/home/dev/code/aura/src/compiler/evaluator_primitives_diagnostic.cpp";
     std::ifstream f(diag_path);
     CHECK(f.good(), "diagnostic.cpp exists");
-    std::string content((std::istreambuf_iterator<char>(f)),
-                        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
     // The lint-hint reference for synthesize:pipeline should
     // be removed (it was dead code pointing to non-existent
@@ -158,16 +147,14 @@ bool test_synthesize_pipeline_hint_removed() {
     // should be the comment block referring to Issue #561
     // explaining why the hint was removed.
     const bool has_active_lint_hint =
-        content.find("\"synthesize:pipeline\",\n             {\"missing-require\"")
-        != std::string::npos;
+        content.find("\"synthesize:pipeline\",\n             {\"missing-require\"") !=
+        std::string::npos;
     const bool has_active_fill_hint =
-        content.find("\"synthesize:fill\",\n             {\"missing-require\"")
-        != std::string::npos;
+        content.find("\"synthesize:fill\",\n             {\"missing-require\"") !=
+        std::string::npos;
     std::println("  diagnostic.cpp: synthesize:pipeline lint hint removed");
-    CHECK(!has_active_lint_hint,
-          "synthesize:pipeline active lint hint removed (was dead ref)");
-    CHECK(!has_active_fill_hint,
-          "synthesize:fill active lint hint removed (was dead ref)");
+    CHECK(!has_active_lint_hint, "synthesize:pipeline active lint hint removed (was dead ref)");
+    CHECK(!has_active_fill_hint, "synthesize:fill active lint hint removed (was dead ref)");
     return true;
 }
 
@@ -185,8 +172,7 @@ bool test_synthesize_namespace_surface_reduced() {
     const bool aura_ok = f1.good();
     const bool type_ok = f2.good();
     const bool doc_ok = f3.good();
-    std::println("  stdlib wrappers: aura={} type={} decision-doc={}",
-                 aura_ok, type_ok, doc_ok);
+    std::println("  stdlib wrappers: aura={} type={} decision-doc={}", aura_ok, type_ok, doc_ok);
     CHECK(aura_ok, "stdlib wrappers present");
     CHECK(type_ok, "stdlib type signatures present");
     CHECK(doc_ok, "decision doc present");
@@ -199,16 +185,12 @@ bool test_decision_doc_exists() {
     std::ifstream f("/home/dev/code/aura/docs/design/synthesize-namespace-decision.md");
     CHECK(f.good(), "decision doc exists");
     if (f.good()) {
-        std::string content((std::istreambuf_iterator<char>(f)),
-                            std::istreambuf_iterator<char>());
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         f.close();
-        const bool has_demoted =
-            content.find("DEMOTED to stdlib") != std::string::npos;
-        const bool has_stays =
-            content.find("STAYS in engine") != std::string::npos;
+        const bool has_demoted = content.find("DEMOTED to stdlib") != std::string::npos;
+        const bool has_stays = content.find("STAYS in engine") != std::string::npos;
         const bool has_candidate =
-            content.find("NON-TRIVIAL demotion candidate")
-                != std::string::npos;
+            content.find("NON-TRIVIAL demotion candidate") != std::string::npos;
         std::println("  decision doc: present + 3 sections");
         CHECK(has_demoted, "doc has DEMOTED section");
         CHECK(has_stays, "doc has STAYS section");
@@ -264,8 +246,12 @@ int run_tests() {
 
 } // namespace aura_issue_561_detail
 
-int aura_issue_561_run() { return aura_issue_561_detail::run_tests(); }
+int aura_issue_561_run() {
+    return aura_issue_561_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_561_run(); }
+int main() {
+    return aura_issue_561_run();
+}
 #endif

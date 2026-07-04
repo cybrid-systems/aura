@@ -84,7 +84,7 @@ struct HardwareAST {
     aura::ast::FlatAST flat;
     aura::ast::StringPool pool;
     std::vector<aura::ast::NodeId> define_nodes; // index by signal id
-    std::vector<aura::ast::SymId>   define_syms;  // index by signal id
+    std::vector<aura::ast::SymId> define_syms;   // index by signal id
     std::size_t total_nodes = 0;
 };
 
@@ -122,9 +122,12 @@ HardwareAST build_hardware_ast() {
             int ref_a = i / 2;
             int ref_b = i / 3;
             int ref_c = i / 4;
-            if (ref_a == i) ref_a = 0;
-            if (ref_b == i) ref_b = 0;
-            if (ref_c == i) ref_c = 0;
+            if (ref_a == i)
+                ref_a = 0;
+            if (ref_b == i)
+                ref_b = 0;
+            if (ref_c == i)
+                ref_c = 0;
             auto var_a = flat.add_variable(out.define_syms[ref_a]);
             auto var_b = flat.add_variable(out.define_syms[ref_b]);
             auto var_c = flat.add_variable(out.define_syms[ref_c]);
@@ -139,10 +142,9 @@ HardwareAST build_hardware_ast() {
 
     // Second pass: build a single Begin root with all defines
     // as children. add_begin(span) is the public API.
-    std::vector<aura::ast::NodeId> def_span(out.define_nodes.begin(),
-                                            out.define_nodes.end());
-    flat.root = flat.add_begin(std::span<const aura::ast::NodeId>(def_span.data(),
-                                                                   def_span.size()));
+    std::vector<aura::ast::NodeId> def_span(out.define_nodes.begin(), out.define_nodes.end());
+    flat.root =
+        flat.add_begin(std::span<const aura::ast::NodeId>(def_span.data(), def_span.size()));
 
     out.total_nodes = flat.size();
     return out;
@@ -187,8 +189,7 @@ void apply_rebind_mutation(HardwareAST& hw, int target, std::int64_t new_value) 
 
 // Run infer_flat recursively on every Define child of root, then
 // the root itself. Returns total elapsed microseconds.
-std::int64_t run_full_typecheck(aura::compiler::TypeChecker& tc,
-                                HardwareAST& hw) {
+std::int64_t run_full_typecheck(aura::compiler::TypeChecker& tc, HardwareAST& hw) {
     using namespace std::chrono;
     auto t0 = steady_clock::now();
     auto root = hw.flat.root;
@@ -204,11 +205,11 @@ std::int64_t run_full_typecheck(aura::compiler::TypeChecker& tc,
 // Run infer_flat_partial on the latest mutation. Returns elapsed
 // microseconds. Caller may have pushed multiple records; we
 // process the last one.
-std::int64_t run_partial_typecheck(aura::compiler::TypeChecker& tc,
-                                    HardwareAST& hw) {
+std::int64_t run_partial_typecheck(aura::compiler::TypeChecker& tc, HardwareAST& hw) {
     using namespace std::chrono;
     auto& log = hw.flat.all_mutations();
-    if (log.empty()) return 0;
+    if (log.empty())
+        return 0;
     auto t0 = steady_clock::now();
     aura::diag::DiagnosticCollector diag;
     tc.infer_flat_partial(hw.flat, hw.pool, log.back(), diag);
@@ -221,9 +222,8 @@ std::int64_t run_partial_typecheck(aura::compiler::TypeChecker& tc,
 // ═══════════════════════════════════════════════════════════════
 
 void write_json(const std::string& path, int n_signals, std::size_t total_nodes,
-                std::int64_t full_us, std::int64_t partial_us_first,
-                std::int64_t partial_us_total, std::uint64_t cache_hits,
-                std::uint64_t cache_misses, std::uint64_t stale_cache,
+                std::int64_t full_us, std::int64_t partial_us_first, std::int64_t partial_us_total,
+                std::uint64_t cache_hits, std::uint64_t cache_misses, std::uint64_t stale_cache,
                 std::uint64_t narrowing_applied, std::uint64_t re_inferred_total,
                 double partial_ratio_pct, double hit_rate_pct) {
     namespace fs = std::filesystem;
@@ -231,7 +231,8 @@ void write_json(const std::string& path, int n_signals, std::size_t total_nodes,
     std::ofstream out(path);
     out << "{\n";
     out << "  \"issue\": 307,\n";
-    out << "  \"title\": \"Fine-grained incremental type checking + IR re-lower pipeline for large-scale hardware designs\",\n";
+    out << "  \"title\": \"Fine-grained incremental type checking + IR re-lower pipeline for "
+           "large-scale hardware designs\",\n";
     out << "  \"config\": {\n";
     out << "    \"n_signals\": " << n_signals << ",\n";
     out << "    \"total_nodes\": " << total_nodes << ",\n";
@@ -277,8 +278,8 @@ int main() {
 
     // ── 1. Build the AST ─────────────────────────────────────
     auto hw = build_hardware_ast();
-    std::println("Built hardware-like AST: {} defines, {} total nodes",
-                 kNumSignals, hw.total_nodes);
+    std::println("Built hardware-like AST: {} defines, {} total nodes", kNumSignals,
+                 hw.total_nodes);
 
     // ── 2. Full typecheck (warm the cache) ───────────────────
     aura::core::TypeRegistry reg;
@@ -301,9 +302,9 @@ int main() {
     auto partial_us_first = run_partial_typecheck(tc, hw);
     auto stats_after_1 = tc.stats();
     std::println("1st partial (AC1):     {} µs", partial_us_first);
-    std::println("  hits={} misses={} stale={} narrowing_applied={}",
-                 stats_after_1.cache_hits, stats_after_1.cache_misses,
-                 stats_after_1.stale_cache, stats_after_1.narrowing_applied);
+    std::println("  hits={} misses={} stale={} narrowing_applied={}", stats_after_1.cache_hits,
+                 stats_after_1.cache_misses, stats_after_1.stale_cache,
+                 stats_after_1.narrowing_applied);
 
     // ── 4. AC2: chained mutations correctness ──────────────
     std::println("");
@@ -313,13 +314,10 @@ int main() {
         apply_rebind_mutation(hw, t, /*new_value=*/1000 + m);
         aura::diag::DiagnosticCollector d;
         tc.infer_flat_partial(hw.flat, hw.pool, hw.flat.all_mutations().back(), d);
-        const auto n_errs = std::count_if(d.diagnostics().begin(),
-                                          d.diagnostics().end(),
-                                          [](const auto& x) {
-                                              return x.kind != aura::diag::ErrorKind::Note;
-                                          });
-        std::println("  mutation #{}: target=sig_{} → {} errors",
-                     m + 1, t, n_errs);
+        const auto n_errs =
+            std::count_if(d.diagnostics().begin(), d.diagnostics().end(),
+                          [](const auto& x) { return x.kind != aura::diag::ErrorKind::Note; });
+        std::println("  mutation #{}: target=sig_{} → {} errors", m + 1, t, n_errs);
         if (n_errs > 0) {
             for (const auto& diag : d.diagnostics()) {
                 if (diag.kind != aura::diag::ErrorKind::Note) {
@@ -338,12 +336,13 @@ int main() {
     // CURRENT: ~100% (per-call engine setup is the floor for
     // tiny affected sets). The fix is a persistent engine
     // across many calls. Documented as follow-up.
-    const double partial_ratio_pct = (full_us > 0)
-        ? (100.0 * static_cast<double>(partial_us_first) / static_cast<double>(full_us))
-        : 0.0;
+    const double partial_ratio_pct =
+        (full_us > 0)
+            ? (100.0 * static_cast<double>(partial_us_first) / static_cast<double>(full_us))
+            : 0.0;
     const bool ac1 = partial_ratio_pct < 10.0;
-    std::println("AC1 partial/full ratio = {:.2f}% (target: <10%) → {}",
-                 partial_ratio_pct, ac1 ? "PASS" : "FAIL");
+    std::println("AC1 partial/full ratio = {:.2f}% (target: <10%) → {}", partial_ratio_pct,
+                 ac1 ? "PASS" : "FAIL");
 
     // AC4: cache hit rate > 80%.
     // CURRENT: 0% (per-call engine creates fresh
@@ -360,12 +359,13 @@ int main() {
     total_misses = tc.stats().cache_misses;
     total_stale = tc.stats().stale_cache;
     const auto total_lookups = total_hits + total_misses + total_stale;
-    const double hit_rate_pct = (total_lookups > 0)
-        ? (100.0 * static_cast<double>(total_hits) / static_cast<double>(total_lookups))
-        : 0.0;
+    const double hit_rate_pct =
+        (total_lookups > 0)
+            ? (100.0 * static_cast<double>(total_hits) / static_cast<double>(total_lookups))
+            : 0.0;
     const bool ac4 = hit_rate_pct > 80.0;
-    std::println("AC4 cache hit rate   = {:.2f}% (target: >80%) → {}",
-                 hit_rate_pct, ac4 ? "PASS" : "FAIL");
+    std::println("AC4 cache hit rate   = {:.2f}% (target: >80%) → {}", hit_rate_pct,
+                 ac4 ? "PASS" : "FAIL");
 
     // AC2: chained mutations don't blow up.
     aura::diag::DiagnosticCollector diag_final;
@@ -374,32 +374,28 @@ int main() {
     auto t_final_end = steady_clock::now();
     auto final_us = duration_cast<microseconds>(t_final_end - t_final).count();
     const bool ac2 = !diag_final.has_errors();
-    std::println("AC2 chained correct  = {} (post-chain full typecheck took {} µs, "
-                 "{} errors)",
-                 ac2 ? "PASS" : "FAIL", final_us,
-                 std::count_if(diag_final.diagnostics().begin(),
-                               diag_final.diagnostics().end(),
-                               [](const auto& d) {
-                                   return d.kind != aura::diag::ErrorKind::Note;
-                               }));
+    std::println(
+        "AC2 chained correct  = {} (post-chain full typecheck took {} µs, "
+        "{} errors)",
+        ac2 ? "PASS" : "FAIL", final_us,
+        std::count_if(diag_final.diagnostics().begin(), diag_final.diagnostics().end(),
+                      [](const auto& d) { return d.kind != aura::diag::ErrorKind::Note; }));
 
     // AC5: no perf regression on full recompile path.
-    const double ac5_ratio = (full_us > 0)
-        ? (static_cast<double>(final_us) / static_cast<double>(full_us))
-        : 0.0;
+    const double ac5_ratio =
+        (full_us > 0) ? (static_cast<double>(final_us) / static_cast<double>(full_us)) : 0.0;
     const bool ac5 = ac5_ratio < 2.0;
     std::println("AC5 no regression    = {} (post/full ratio = {:.2f}x, "
-                 "target: <2x)", ac5 ? "PASS" : "FAIL", ac5_ratio);
+                 "target: <2x)",
+                 ac5 ? "PASS" : "FAIL", ac5_ratio);
 
     // AC3: this benchmark file IS the deliverable.
     std::println("AC3 benchmark file   = PASS (this file: tests/bench/issue_307_bench.cpp)");
 
     // ── 6. JSON output ───────────────────────────────────────
-    write_json("tests/bench_results/issue_307_bench.json",
-               kNumSignals, hw.total_nodes, full_us, partial_us_first,
-               partial_us_first, total_hits, total_misses, total_stale,
-               tc.stats().narrowing_applied, 0,
-               partial_ratio_pct, hit_rate_pct);
+    write_json("tests/bench_results/issue_307_bench.json", kNumSignals, hw.total_nodes, full_us,
+               partial_us_first, partial_us_first, total_hits, total_misses, total_stale,
+               tc.stats().narrowing_applied, 0, partial_ratio_pct, hit_rate_pct);
     std::println("");
     std::println("JSON written to tests/bench_results/issue_307_bench.json");
 
@@ -418,7 +414,8 @@ int main() {
     const bool ac3 = true;
     const bool all_pass = ac1 && ac2 && ac3 && ac4 && ac5;
     std::println("");
-    std::println("Overall: {}", all_pass ? "PASS (all 5 ACs met)" : "see above (AC1/AC4 need follow-up)");
+    std::println("Overall: {}",
+                 all_pass ? "PASS (all 5 ACs met)" : "see above (AC1/AC4 need follow-up)");
     // The benchmark is a deliverable + regression check, not a hard
     // CI gate. Exit 0 so ctest stays green; the AC1/AC4 gap is
     // documented in the close comment + the output above.

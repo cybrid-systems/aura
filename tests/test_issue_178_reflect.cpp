@@ -22,12 +22,12 @@ void check(bool cond) {
         ++g_failed;
 }
 
-NodeViewWire make_wire(
-    std::uint32_t id, std::uint32_t tag, std::int64_t int_value, double float_value,
-    std::uint32_t sym_id, std::uint32_t line, std::uint32_t col, std::uint32_t type_id,
-    const std::uint32_t* children, std::size_t children_count,
-    const std::uint32_t* params, std::size_t params_count,
-    const std::uint32_t* annot, std::size_t annot_count, std::uint8_t marker) {
+NodeViewWire make_wire(std::uint32_t id, std::uint32_t tag, std::int64_t int_value,
+                       double float_value, std::uint32_t sym_id, std::uint32_t line,
+                       std::uint32_t col, std::uint32_t type_id, const std::uint32_t* children,
+                       std::size_t children_count, const std::uint32_t* params,
+                       std::size_t params_count, const std::uint32_t* annot,
+                       std::size_t annot_count, std::uint8_t marker) {
     NodeViewWire w;
     w.id = id;
     w.tag = static_cast<WireNodeTag>(tag);
@@ -55,7 +55,8 @@ bool roundtrip_wire(const NodeViewWire& original, std::size_t& out_bytes,
         return false;
     if (out)
         *out = rt;
-    if (rt.id != original.id || static_cast<std::uint32_t>(rt.tag) != static_cast<std::uint32_t>(original.tag))
+    if (rt.id != original.id ||
+        static_cast<std::uint32_t>(rt.tag) != static_cast<std::uint32_t>(original.tag))
         return false;
     if (rt.int_value != original.int_value || rt.float_value != original.float_value)
         return false;
@@ -63,16 +64,20 @@ bool roundtrip_wire(const NodeViewWire& original, std::size_t& out_bytes,
         return false;
     if (rt.type_id != original.type_id || rt.marker != original.marker)
         return false;
-    if (rt.children.size() != original.children.size() || rt.params.size() != original.params.size())
+    if (rt.children.size() != original.children.size() ||
+        rt.params.size() != original.params.size())
         return false;
     if (rt.param_annotations.size() != original.param_annotations.size())
         return false;
     for (std::size_t i = 0; i < rt.children.size(); ++i)
-        if (rt.children[i] != original.children[i]) return false;
+        if (rt.children[i] != original.children[i])
+            return false;
     for (std::size_t i = 0; i < rt.params.size(); ++i)
-        if (rt.params[i] != original.params[i]) return false;
+        if (rt.params[i] != original.params[i])
+            return false;
     for (std::size_t i = 0; i < rt.param_annotations.size(); ++i)
-        if (rt.param_annotations[i] != original.param_annotations[i]) return false;
+        if (rt.param_annotations[i] != original.param_annotations[i])
+            return false;
     return true;
 }
 
@@ -98,7 +103,9 @@ void issue178_reset_counters() {
     g_failed = 0;
 }
 
-int issue178_failed_count() { return g_failed; }
+int issue178_failed_count() {
+    return g_failed;
+}
 
 void issue178_run_reflect_member_tests() {
     constexpr auto members = aura::reflect::reflect_members<NodeViewWire>();
@@ -138,13 +145,13 @@ void issue178_run_ir_roundtrip_tests() {
     check(pos == buf.size());
 }
 
-int issue178_roundtrip_populated(
-    std::uint32_t id, std::uint32_t tag, std::int64_t int_value, double float_value,
-    std::uint32_t sym_id, std::uint32_t line, std::uint32_t col, std::uint32_t type_id,
-    const std::uint32_t* children, std::size_t children_count,
-    const std::uint32_t* params, std::size_t params_count,
-    const std::uint32_t* annot, std::size_t annot_count, std::uint8_t marker,
-    std::size_t* out_bytes) {
+int issue178_roundtrip_populated(std::uint32_t id, std::uint32_t tag, std::int64_t int_value,
+                                 double float_value, std::uint32_t sym_id, std::uint32_t line,
+                                 std::uint32_t col, std::uint32_t type_id,
+                                 const std::uint32_t* children, std::size_t children_count,
+                                 const std::uint32_t* params, std::size_t params_count,
+                                 const std::uint32_t* annot, std::size_t annot_count,
+                                 std::uint8_t marker, std::size_t* out_bytes) {
     auto wire = make_wire(id, tag, int_value, float_value, sym_id, line, col, type_id, children,
                           children_count, params, params_count, annot, annot_count, marker);
     const bool ok = roundtrip_wire(wire, *out_bytes);

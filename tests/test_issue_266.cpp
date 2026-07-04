@@ -5,8 +5,8 @@
 
 
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import std;
 import aura.compiler.evaluator;
@@ -16,7 +16,7 @@ import aura.diag;
 import aura.compiler.value;
 
 namespace aura_issue_266_detail {
-#define PRINTLN(msg) std::print( "%s\n", (msg))
+#define PRINTLN(msg) std::print("%s\n", (msg))
 
 bool test_sym_id_field_rollback() {
     PRINTLN("\n--- Test 1: sym_id_ per-record rollback ---");
@@ -97,9 +97,8 @@ bool test_rename_symbol_column_rollback() {
     {
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, true);
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (flat.sym_id(id) == alpha &&
-                (flat.tag(id) == aura::ast::NodeTag::Variable ||
-                 flat.tag(id) == aura::ast::NodeTag::Define))
+            if (flat.sym_id(id) == alpha && (flat.tag(id) == aura::ast::NodeTag::Variable ||
+                                             flat.tag(id) == aura::ast::NodeTag::Define))
                 flat.sym_id(id) = beta;
         }
         flat.rename_param(lam, alpha, beta, nullptr);
@@ -204,10 +203,14 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_266_detail
+} // namespace aura_issue_266_detail
 
-int aura_issue_266_run() { return aura_issue_266_detail::run_tests(); }
+int aura_issue_266_run() {
+    return aura_issue_266_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_266_run(); }
+int main() {
+    return aura_issue_266_run();
+}
 #endif

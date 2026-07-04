@@ -50,22 +50,24 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 
 namespace aura_issue_313_detail {
-#define CHECK_EQ_LOCAL(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (!(_a == _b)) { \
-        std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while (0)
+#define CHECK_EQ_LOCAL(a, b, msg)                                                                  \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (!(_a == _b)) {                                                                         \
+            std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__);        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════════
 // AC1: kVerificationDirty constant exists + bitmask layout
@@ -82,8 +84,7 @@ bool test_k_verification_dirty_constant() {
     //   kStructDirty = 0x20 is the collision the issue
     //   body flags; we keep the named identifier and
     //   rely on the orthogonal side-table.
-    CHECK_EQ_LOCAL(static_cast<int>(FlatAST::kGeneralDirty), 0x01,
-                   "kGeneralDirty still 0x01");
+    CHECK_EQ_LOCAL(static_cast<int>(FlatAST::kGeneralDirty), 0x01, "kGeneralDirty still 0x01");
     CHECK_EQ_LOCAL(static_cast<int>(FlatAST::kStructDirty), 0x20,
                    "kStructDirty still 0x20 (existing bit preserved)");
     return true;
@@ -104,14 +105,13 @@ bool test_mark_dirty_verification_upward() {
     auto mid = flat.add_begin({leaf});
     auto root = flat.add_begin({mid});
     flat.root = root;
-    (void)leaf; (void)mid; (void)root;
+    (void)leaf;
+    (void)mid;
+    (void)root;
     // Pre-condition: nothing is verification-dirty.
-    CHECK_EQ_LOCAL(flat.is_verification_dirty(leaf), false,
-                   "leaf starts NOT verification-dirty");
-    CHECK_EQ_LOCAL(flat.is_verification_dirty(mid), false,
-                   "mid starts NOT verification-dirty");
-    CHECK_EQ_LOCAL(flat.is_verification_dirty(root), false,
-                   "root starts NOT verification-dirty");
+    CHECK_EQ_LOCAL(flat.is_verification_dirty(leaf), false, "leaf starts NOT verification-dirty");
+    CHECK_EQ_LOCAL(flat.is_verification_dirty(mid), false, "mid starts NOT verification-dirty");
+    CHECK_EQ_LOCAL(flat.is_verification_dirty(root), false, "root starts NOT verification-dirty");
     // Mark the leaf as verification-dirty via the new
     // mark_dirty_verification(_upward) helper.
     flat.mark_dirty_verification_upward(leaf);
@@ -185,8 +185,7 @@ bool test_clear_verification_dirty() {
     StringPool pool;
     auto leaf = flat.add_variable(pool.intern("sig"));
     flat.mark_dirty_verification(leaf);
-    CHECK_EQ_LOCAL(flat.is_verification_dirty(leaf), true,
-                   "leaf is verification-dirty after mark");
+    CHECK_EQ_LOCAL(flat.is_verification_dirty(leaf), true, "leaf is verification-dirty after mark");
     // Clear all reasons.
     flat.clear_verification_dirty(leaf);
     CHECK_EQ_LOCAL(flat.is_verification_dirty(leaf), false,
@@ -220,10 +219,8 @@ bool test_existing_dirty_unchanged() {
     flat.mark_dirty_upward(leaf);
     CHECK_EQ_LOCAL(flat.is_dirty(leaf), true,
                    "mark_dirty_upward still marks leaf dirty (existing path)");
-    CHECK_EQ_LOCAL(flat.is_dirty(mid), true,
-                   "mark_dirty_upward still propagates to mid");
-    CHECK_EQ_LOCAL(flat.is_dirty(root), true,
-                   "mark_dirty_upward still propagates to root");
+    CHECK_EQ_LOCAL(flat.is_dirty(mid), true, "mark_dirty_upward still propagates to mid");
+    CHECK_EQ_LOCAL(flat.is_dirty(root), true, "mark_dirty_upward still propagates to root");
     // The verification path is independent: a fresh flat
     // should have mark_dirty_verification produce clean
     // results without touching the existing dirty byte.
@@ -253,10 +250,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_313_detail
+} // namespace aura_issue_313_detail
 
-int aura_issue_313_run() { return aura_issue_313_detail::run_tests(); }
+int aura_issue_313_run() {
+    return aura_issue_313_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_313_run(); }
+int main() {
+    return aura_issue_313_run();
+}
 #endif

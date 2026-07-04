@@ -43,8 +43,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.type;
@@ -56,18 +56,19 @@ import aura.compiler.type_checker;
 import aura.compiler.service;
 
 
-
 namespace aura_issue_147_detail {
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (!(_a == _b)) { \
-        std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (!(_a == _b)) {                                                                         \
+            std::println("  FAIL: {} (got {} expected {} line {})", msg, _a, _b, __LINE__);        \
+            ++g_failed;                                                                            \
+        } else {                                                                                   \
+            std::println("  PASS: {}", msg);                                                       \
+            ++g_passed;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // Helper: set up the workspace via the Aura (set-code ...) primitive.
 // This is the pattern used in tests/test_ir.cpp CS34 tests — the
@@ -121,8 +122,8 @@ void test_post_mutation_function_callable() {
     using namespace aura;
     // Compile-time coverage: if the function is not exported from
     // aura.compiler.type_checker, this translation unit won't build.
-    using Fn = ast::InvariantStatus (*)(ast::FlatAST&, const ast::StringPool&,
-                                        core::TypeRegistry&, const ast::MutationRecord&,
+    using Fn = ast::InvariantStatus (*)(ast::FlatAST&, const ast::StringPool&, core::TypeRegistry&,
+                                        const ast::MutationRecord&,
                                         std::vector<compiler::OwnershipNote>&, void*);
     Fn fn = &compiler::post_mutation_invariant_check;
     CHECK(fn != nullptr, "post_mutation_invariant_check address is non-null");
@@ -139,11 +140,9 @@ void test_simple_rebind_reports_ok() {
     setup_workspace(cs, "(define y 42)");
     auto mr = do_rebind(cs, "y", "99", "bump-y");
     CHECK(mr.success, "rebind mutation succeeds");
-    CHECK_EQ(static_cast<int>(mr.invariant_status),
-             static_cast<int>(ast::InvariantStatus::Ok),
+    CHECK_EQ(static_cast<int>(mr.invariant_status), static_cast<int>(ast::InvariantStatus::Ok),
              "rebind with no narrowing in scope: invariant_status is Ok");
-    CHECK(mr.invariant_diagnostics.empty(),
-          "rebind with no narrowing: no diagnostics");
+    CHECK(mr.invariant_diagnostics.empty(), "rebind with no narrowing: no diagnostics");
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -191,8 +190,7 @@ void test_strict_mode_blocks_on_diagnostic() {
              "Strict mode is set on the service");
     auto mr = do_rebind(cs, "foo", "2", "bump-foo");
     CHECK(mr.success, "clean mutation in Strict mode succeeds (no warnings)");
-    CHECK_EQ(static_cast<int>(mr.invariant_status),
-             static_cast<int>(ast::InvariantStatus::Ok),
+    CHECK_EQ(static_cast<int>(mr.invariant_status), static_cast<int>(ast::InvariantStatus::Ok),
              "clean mutation in Strict mode: status is Ok");
 }
 
@@ -211,8 +209,7 @@ void test_disabled_mode_skips_check() {
     CHECK_EQ(static_cast<int>(mr.invariant_status),
              static_cast<int>(ast::InvariantStatus::NotChecked),
              "Disabled mode: invariant_status is NotChecked");
-    CHECK(mr.invariant_diagnostics.empty(),
-          "Disabled mode: no diagnostics emitted");
+    CHECK(mr.invariant_diagnostics.empty(), "Disabled mode: no diagnostics emitted");
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -234,15 +231,13 @@ void test_per_record_invariant_status_queryable() {
     // underlying state. This is the path external --serve
     // protocol consumers hit.
     auto entries = cs.query_mutation_log();
-    CHECK(!entries.empty(),
-          "query_mutation_log returns the records added by typed_mutate");
+    CHECK(!entries.empty(), "query_mutation_log returns the records added by typed_mutate");
     if (!entries.empty()) {
         auto& last = entries.back();
         // The record was committed (rebind succeeded) and the
         // post-mutation check ran (WarningsOnly mode) and found
         // nothing to flag, so invariant_status should be "Ok".
-        CHECK_EQ(last.status, std::string("Committed"),
-                 "most recent log entry is Committed");
+        CHECK_EQ(last.status, std::string("Committed"), "most recent log entry is Committed");
         CHECK_EQ(last.invariant_status, std::string("Ok"),
                  "most recent log entry has invariant_status == Ok");
     }
@@ -264,14 +259,11 @@ void test_mode_persists_across_mutations() {
     // All three should have run the check (status Ok in Strict
     // mode, not NotChecked — that would mean the mode silently
     // got reset to Disabled).
-    CHECK_EQ(static_cast<int>(mr1.invariant_status),
-             static_cast<int>(ast::InvariantStatus::Ok),
+    CHECK_EQ(static_cast<int>(mr1.invariant_status), static_cast<int>(ast::InvariantStatus::Ok),
              "Strict mode: mutation 1 status is Ok");
-    CHECK_EQ(static_cast<int>(mr2.invariant_status),
-             static_cast<int>(ast::InvariantStatus::Ok),
+    CHECK_EQ(static_cast<int>(mr2.invariant_status), static_cast<int>(ast::InvariantStatus::Ok),
              "Strict mode: mutation 2 status is Ok");
-    CHECK_EQ(static_cast<int>(mr3.invariant_status),
-             static_cast<int>(ast::InvariantStatus::Ok),
+    CHECK_EQ(static_cast<int>(mr3.invariant_status), static_cast<int>(ast::InvariantStatus::Ok),
              "Strict mode: mutation 3 status is Ok");
     CHECK_EQ(static_cast<int>(cs.invariant_check_mode()),
              static_cast<int>(compiler::InvariantCheckMode::Strict),
@@ -298,8 +290,7 @@ void test_mutation_primitives_still_work() {
         setup_workspace(cs, "(define (f x) (+ x 1))");
         cs.set_invariant_check_mode(compiler::InvariantCheckMode::Strict);
         auto mr = do_rebind(cs, "f", "(lambda (x) (* x 3))", "triple-it");
-        CHECK(mr.success,
-              "mutate:rebind accepted in Strict mode (clean mutation, no narrowing)");
+        CHECK(mr.success, "mutate:rebind accepted in Strict mode (clean mutation, no narrowing)");
     }
     // Disabled mode.
     {
@@ -338,10 +329,9 @@ void test_occurrence_narrowing_invalidated() {
     auto mr = do_rebind(cs, "x", "2", "bump-x");
     CHECK(mr.success, "WarningsOnly rebind of top-level define succeeds");
     bool status_consistent =
-        (mr.invariant_status == ast::InvariantStatus::Ok
-         && mr.invariant_diagnostics.empty())
-        || (mr.invariant_status == ast::InvariantStatus::Warnings
-            && !mr.invariant_diagnostics.empty());
+        (mr.invariant_status == ast::InvariantStatus::Ok && mr.invariant_diagnostics.empty()) ||
+        (mr.invariant_status == ast::InvariantStatus::Warnings &&
+         !mr.invariant_diagnostics.empty());
     CHECK(status_consistent,
           "WarningsOnly: status and diagnostics are consistent (Ok/empty OR Warnings/non-empty)");
 }
@@ -380,12 +370,12 @@ int run_tests() {
     std::println("\n── AC #9: invalidated occurrence narrowing detected ──");
     test_occurrence_narrowing_invalidated();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_147_detail
+} // namespace aura_issue_147_detail
 
-int aura_issue_147_run() { return aura_issue_147_detail::run_tests(); }
-
+int aura_issue_147_run() {
+    return aura_issue_147_detail::run_tests();
+}

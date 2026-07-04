@@ -43,12 +43,10 @@ bool test_make_ref_unchanged() {
     std::println("\n--- Scenario 1: existing make_ref() unchanged ---");
     FlatAST ast;
     auto n0 = ast.add_raw_node(NodeTag::LiteralInt);
-    auto ref = ast.make_ref(n0);  // pre-#303 API
+    auto ref = ast.make_ref(n0); // pre-#303 API
     // fiber_id defaults to 0 (no fiber context)
-    CHECK(ref.fiber_id == 0,
-          "make_ref() default fiber_id = 0 (no fiber context)");
-    CHECK(ref.workspace_id == 0,
-          "make_ref() default workspace_id = 0");
+    CHECK(ref.fiber_id == 0, "make_ref() default fiber_id = 0 (no fiber context)");
+    CHECK(ref.workspace_id == 0, "make_ref() default workspace_id = 0");
     CHECK(ref.mutation_id_at_capture != 0,
           "make_ref() captures mutation_id_at_capture from current state");
     // Last validated is 0 — pre-#303 behavior preserved.
@@ -65,12 +63,11 @@ bool test_provenance_accessor() {
     FlatAST ast;
     auto n0 = ast.add_raw_node(NodeTag::LiteralInt);
     auto ref = ast.make_safe_ref(n0, /*workspace_id=*/2,
-                                  /*fiber_id=*/7);
+                                 /*fiber_id=*/7);
     auto prov = ref.get_provenance();
     std::println("  captured_id={} gen={} mutation_id={} ws={} fiber={} last_val={}",
-                 prov.captured_id, prov.captured_gen,
-                 prov.mutation_id_at_capture, prov.workspace_id,
-                 prov.fiber_id, prov.last_validated_generation);
+                 prov.captured_id, prov.captured_gen, prov.mutation_id_at_capture,
+                 prov.workspace_id, prov.fiber_id, prov.last_validated_generation);
     CHECK(prov.captured_id == n0, "Provenance.captured_id matches");
     CHECK(prov.workspace_id == 2, "Provenance.workspace_id = 2");
     CHECK(prov.fiber_id == 7, "Provenance.fiber_id = 7");

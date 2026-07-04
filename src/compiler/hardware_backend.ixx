@@ -34,12 +34,12 @@ export enum SvStructuralDirtyReason : std::uint8_t {
 };
 
 export [[nodiscard]] bool is_sv_structural_node(const aura::ast::FlatAST& flat,
-                                              aura::ast::NodeId id) noexcept;
+                                                aura::ast::NodeId id) noexcept;
 
-export [[nodiscard]] std::uint8_t
-sv_structural_dirty_reasons(const aura::ast::FlatAST& flat, aura::ast::NodeId id) noexcept;
+export [[nodiscard]] std::uint8_t sv_structural_dirty_reasons(const aura::ast::FlatAST& flat,
+                                                              aura::ast::NodeId id) noexcept;
 
-export [[nodiscard]] bool should_invoke_sv_closedloop_hook(
-    const aura::ast::FlatAST& flat, aura::ast::NodeId id) noexcept;
+export [[nodiscard]] bool should_invoke_sv_closedloop_hook(const aura::ast::FlatAST& flat,
+                                                           aura::ast::NodeId id) noexcept;
 
 } // namespace aura::compiler::hardware

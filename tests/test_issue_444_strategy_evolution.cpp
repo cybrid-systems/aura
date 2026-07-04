@@ -62,7 +62,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -73,15 +73,23 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:strategy-evolution-stats) '{}')", key));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cout, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cout, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════
 // AC1: fresh Evaluator — counters start at 0
@@ -177,19 +185,20 @@ bool test_eight_fields() {
     std::println("\n--- AC7: 8 fields present + non-negative ---");
     aura::compiler::CompilerService cs;
     static const char* kFields[] = {
-        "active-strategy", "greedy-hits", "greedy-successes",
-        "bugfix-hits", "bugfix-successes",
-        "minimal-hits", "minimal-successes", "escalations",
+        "active-strategy",  "greedy-hits",  "greedy-successes",  "bugfix-hits",
+        "bugfix-successes", "minimal-hits", "minimal-successes", "escalations",
     };
     int found = 0;
     for (auto* k : kFields) {
         // active-strategy is a string, others are ints.
         if (std::string(k) == "active-strategy") {
             auto r = run_on(cs, std::format("(hash-ref (query:strategy-evolution-stats) '{}')", k));
-            if (aura::compiler::types::is_string(r)) ++found;
+            if (aura::compiler::types::is_string(r))
+                ++found;
         } else {
             auto v = hash_int(cs, k);
-            if (v >= 0) ++found;
+            if (v >= 0)
+                ++found;
         }
     }
     CHECK(found == 8, "all 8 fields accessible");
@@ -214,14 +223,13 @@ bool test_idempotent_observable() {
 bool test_stats_list_includes() {
     std::println("\n--- AC9: stats:list includes the new primitive ---");
     aura::compiler::CompilerService cs;
-    auto r = run_on(cs,
-        "(letrec ((find? (lambda (needle hay) "
-        "                (if (pair? hay) "
-        "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
-        "                    #f)))) "
-        "  (if (find? \"query:strategy-evolution-stats\" (stats:list)) 1 0))");
-    bool included = aura::compiler::types::is_int(r) &&
-                    aura::compiler::types::as_int(r) == 1;
+    auto r = run_on(
+        cs, "(letrec ((find? (lambda (needle hay) "
+            "                (if (pair? hay) "
+            "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
+            "                    #f)))) "
+            "  (if (find? \"query:strategy-evolution-stats\" (stats:list)) 1 0))");
+    bool included = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) == 1;
     CHECK(included, "stats:list includes query:strategy-evolution-stats");
     return true;
 }
@@ -233,8 +241,7 @@ bool test_stats_count() {
     std::println("\n--- AC10: stats:count is up to date ---");
     aura::compiler::CompilerService cs;
     auto r = run_on(cs, "(stats:count)");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) >= 44;
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) >= 44;
     CHECK(ok, "stats:count >= 44 (was 43 in #440, now 44 in #444)");
     if (aura::compiler::types::is_int(r)) {
         std::println("    [stats:count = {}]", aura::compiler::types::as_int(r));
@@ -280,7 +287,7 @@ bool test_synthetic_coverage_curve() {
     return true;
 }
 
-}  // namespace aura_issue_444_detail
+} // namespace aura_issue_444_detail
 
 int main() {
     using namespace aura_issue_444_detail;

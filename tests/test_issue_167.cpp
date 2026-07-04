@@ -19,15 +19,17 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 import aura.compiler.ir;
 import aura.compiler.ir_soa;
 
 
-
 namespace aura_issue_167_detail {
-#define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
+#define PRINTLN(msg)                                                                               \
+    do {                                                                                           \
+        std::print("{}\n", std::string(msg));                                                      \
+    } while (0)
 
 // ── Test 1: empty IRModuleV2 ──
 bool test_empty_module() {
@@ -48,16 +50,11 @@ bool test_add_instructions() {
     mod.functions.push_back(std::move(fn));
 
     // Add 5 instructions
-    auto i0 = mod.add_instruction(0, aura::ir::IROpcode::ConstI64,
-                                  {0, 42, 0, 0});
-    auto i1 = mod.add_instruction(0, aura::ir::IROpcode::ConstI64,
-                                  {1, 100, 0, 0});
-    auto i2 = mod.add_instruction(0, aura::ir::IROpcode::Add,
-                                  {2, 0, 1, 0});
-    auto i3 = mod.add_instruction(0, aura::ir::IROpcode::Local,
-                                  {3, 2, 0, 0});
-    auto i4 = mod.add_instruction(0, aura::ir::IROpcode::Return,
-                                  {2, 0, 0, 0});
+    auto i0 = mod.add_instruction(0, aura::ir::IROpcode::ConstI64, {0, 42, 0, 0});
+    auto i1 = mod.add_instruction(0, aura::ir::IROpcode::ConstI64, {1, 100, 0, 0});
+    auto i2 = mod.add_instruction(0, aura::ir::IROpcode::Add, {2, 0, 1, 0});
+    auto i3 = mod.add_instruction(0, aura::ir::IROpcode::Local, {3, 2, 0, 0});
+    auto i4 = mod.add_instruction(0, aura::ir::IROpcode::Return, {2, 0, 0, 0});
 
     CHECK(i0 == 0 && i1 == 1 && i2 == 2 && i3 == 3 && i4 == 4,
           "instruction indices are 0,1,2,3,4 in order");
@@ -84,20 +81,17 @@ bool test_view_accessors() {
     fn.reserve(2);
     mod.functions.push_back(std::move(fn));
 
-    mod.add_instruction(0, aura::ir::IROpcode::ConstI64,
-                       {0, 42, 0, 0},
-                       /*source_node_id=*/100,
-                       /*type_id=*/200,
-                       /*shape_id=*/300,
-                       /*linear_state=*/1,
-                       /*adt_variant_id=*/2,
-                       /*narrow_evidence=*/4);
-    mod.add_instruction(0, aura::ir::IROpcode::Add,
-                       {1, 0, 1, 0}, 200, 201, 301, 0, 0, 0);
+    mod.add_instruction(0, aura::ir::IROpcode::ConstI64, {0, 42, 0, 0},
+                        /*source_node_id=*/100,
+                        /*type_id=*/200,
+                        /*shape_id=*/300,
+                        /*linear_state=*/1,
+                        /*adt_variant_id=*/2,
+                        /*narrow_evidence=*/4);
+    mod.add_instruction(0, aura::ir::IROpcode::Add, {1, 0, 1, 0}, 200, 201, 301, 0, 0, 0);
 
     auto v0 = mod.view_at(0, 0);
-    CHECK(v0.opcode() == aura::ir::IROpcode::ConstI64,
-          "v0.opcode() = ConstI64");
+    CHECK(v0.opcode() == aura::ir::IROpcode::ConstI64, "v0.opcode() = ConstI64");
     CHECK(v0.operand(0) == 0, "v0.operand(0) = 0 (result slot)");
     CHECK(v0.operand(1) == 42, "v0.operand(1) = 42 (the constant value)");
     CHECK(v0.operand(2) == 0, "v0.operand(2) = 0");
@@ -170,7 +164,7 @@ bool test_block_ranges() {
     std::uint32_t sum = 0;
     for (auto i = f.blocks_[0].start_idx; i < f.blocks_[0].end_idx; ++i) {
         auto v = mod.view_at(0, i);
-        sum += v.operand(1);  // sum the constant values (1 + 2 = 3)
+        sum += v.operand(1); // sum the constant values (1 + 2 = 3)
     }
     CHECK(sum == 3, "block 0 iterates opcodes with sum of constants = 3");
     return true;
@@ -185,13 +179,13 @@ bool test_full_metadata() {
 
     // Set every field
     mod.add_instruction(0, aura::ir::IROpcode::MakePair,
-                       /*operands*/ {99, 7, 8, 9},
-                       /*source_node_id*/ 12345,
-                       /*type_id*/ 678,
-                       /*shape_id*/ 901,
-                       /*linear_state*/ 3,        // MutBorrowed
-                       /*adt_variant_id*/ 42,
-                       /*narrow_evidence*/ 0xFF);  // all bits
+                        /*operands*/ {99, 7, 8, 9},
+                        /*source_node_id*/ 12345,
+                        /*type_id*/ 678,
+                        /*shape_id*/ 901,
+                        /*linear_state*/ 3, // MutBorrowed
+                        /*adt_variant_id*/ 42,
+                        /*narrow_evidence*/ 0xFF); // all bits
     auto v = mod.view_at(0, 0);
     CHECK(v.operand(0) == 99, "operand(0) = 99");
     CHECK(v.operand(1) == 7, "operand(1) = 7");
@@ -226,10 +220,8 @@ bool test_instruction_dirty_basic() {
     }
     auto& f = mod.functions[0];
     CHECK(f.size() == 4, "function has 4 instructions");
-    CHECK(f.instruction_dirty_.size() == 4,
-          "instruction_dirty_ column is parallel to opcodes_");
-    CHECK(f.dirty_instruction_count() == 0,
-          "all 4 new instructions start clean");
+    CHECK(f.instruction_dirty_.size() == 4, "instruction_dirty_ column is parallel to opcodes_");
+    CHECK(f.dirty_instruction_count() == 0, "all 4 new instructions start clean");
     CHECK(!f.is_instruction_dirty(0), "instruction 0 is clean");
     CHECK(!f.is_instruction_dirty(3), "instruction 3 is clean");
 
@@ -240,20 +232,16 @@ bool test_instruction_dirty_basic() {
     CHECK(f.is_instruction_dirty(1), "instruction 1 is dirty");
     CHECK(f.is_instruction_dirty(2), "instruction 2 is dirty");
     CHECK(!f.is_instruction_dirty(3), "instruction 3 still clean");
-    CHECK(f.dirty_instruction_count() == 2,
-          "dirty_instruction_count = 2 after selective mark");
+    CHECK(f.dirty_instruction_count() == 2, "dirty_instruction_count = 2 after selective mark");
 
     // Clear instruction 1 (re-emit happy path).
     f.clear_instruction_dirty(1);
-    CHECK(!f.is_instruction_dirty(1),
-          "instruction 1 is clean after clear_instruction_dirty");
-    CHECK(f.dirty_instruction_count() == 1,
-          "dirty_instruction_count = 1 after clear");
+    CHECK(!f.is_instruction_dirty(1), "instruction 1 is clean after clear_instruction_dirty");
+    CHECK(f.dirty_instruction_count() == 1, "dirty_instruction_count = 1 after clear");
 
     // Out-of-range query is clean (consistent with per-block
     // is_block_dirty behavior — unknown = clean).
-    CHECK(!f.is_instruction_dirty(100),
-          "out-of-range idx returns clean (safe default)");
+    CHECK(!f.is_instruction_dirty(100), "out-of-range idx returns clean (safe default)");
 
     // Lazy resize: marking idx 10 dirty (beyond current size 4)
     // grows the column to 11, FILLED WITH 1s — so the new
@@ -270,11 +258,9 @@ bool test_instruction_dirty_basic() {
     // explicitly set to 1. Total dirty: {2, 4, 5, 6, 7, 8, 9, 10}
     // = 8 dirty bits.
     f.mark_instruction_dirty(10);
-    CHECK(f.instruction_dirty_.size() == 11,
-          "instruction_dirty_ grew to 11 on out-of-range mark");
+    CHECK(f.instruction_dirty_.size() == 11, "instruction_dirty_ grew to 11 on out-of-range mark");
     CHECK(f.is_instruction_dirty(10), "instruction 10 is dirty");
-    CHECK(f.dirty_instruction_count() == 8,
-          "dirty count = 1 (orig #2) + 7 (lazy-fill 4..10) = 8");
+    CHECK(f.dirty_instruction_count() == 8, "dirty count = 1 (orig #2) + 7 (lazy-fill 4..10) = 8");
 
     // mark_all_instructions_dirty flips everything to 1.
     f.mark_all_instructions_dirty();
@@ -311,8 +297,7 @@ bool test_block_dirty_cascade() {
     mod.seal_block(0, 1);
 
     auto& f = mod.functions[0];
-    CHECK(f.dirty_instruction_count() == 0,
-          "all 5 instructions start clean");
+    CHECK(f.dirty_instruction_count() == 0, "all 5 instructions start clean");
     CHECK(f.dirty_block_count() == 0, "both blocks start clean");
 
     // Mark block 0 dirty — should cascade to instructions 0, 1, 2.
@@ -321,10 +306,8 @@ bool test_block_dirty_cascade() {
     CHECK(f.is_instruction_dirty(0), "instruction 0 dirty (block 0 cascade)");
     CHECK(f.is_instruction_dirty(1), "instruction 1 dirty (block 0 cascade)");
     CHECK(f.is_instruction_dirty(2), "instruction 2 dirty (block 0 cascade)");
-    CHECK(!f.is_instruction_dirty(3),
-          "instruction 3 NOT dirty (block 1 untouched)");
-    CHECK(!f.is_instruction_dirty(4),
-          "instruction 4 NOT dirty (block 1 untouched)");
+    CHECK(!f.is_instruction_dirty(3), "instruction 3 NOT dirty (block 1 untouched)");
+    CHECK(!f.is_instruction_dirty(4), "instruction 4 NOT dirty (block 1 untouched)");
     CHECK(f.dirty_instruction_count() == 3,
           "dirty_instruction_count = 3 (block 0's 3 instructions)");
 
@@ -335,15 +318,13 @@ bool test_block_dirty_cascade() {
     f.mark_block_dirty(1);
     f.mark_all_blocks_dirty();
     CHECK(f.dirty_block_count() == 2, "both blocks dirty");
-    CHECK(f.dirty_instruction_count() == 5,
-          "all 5 instructions dirty after mark_all_blocks_dirty");
+    CHECK(f.dirty_instruction_count() == 5, "all 5 instructions dirty after mark_all_blocks_dirty");
 
     // clear_block_dirty does NOT cascade (the per-instruction
     // mask is independent — smarter re-lower manages it).
     f.clear_block_dirty(0);
     CHECK(!f.is_block_dirty(0), "block 0 clean after clear");
-    CHECK(f.is_instruction_dirty(0),
-          "instruction 0 still dirty (clear_block doesn't cascade)");
+    CHECK(f.is_instruction_dirty(0), "instruction 0 still dirty (clear_block doesn't cascade)");
 
     // Out-of-range block_id: resizes block_dirty_ to block_id+1
     // with 1s, no-op on instructions since blocks_[block_id]
@@ -372,7 +353,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_167_detail
+} // namespace aura_issue_167_detail
 
-int aura_issue_167_run() { return aura_issue_167_detail::run_tests(); }
-
+int aura_issue_167_run() {
+    return aura_issue_167_detail::run_tests();
+}

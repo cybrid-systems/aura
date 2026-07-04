@@ -64,7 +64,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -75,22 +75,30 @@ static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& 
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (query:seva-audit-log) '{}')", key));
-    if (!r) return -1;
-    if (!aura::compiler::types::is_int(*r)) return -1;
+    if (!r)
+        return -1;
+    if (!aura::compiler::types::is_int(*r))
+        return -1;
     return aura::compiler::types::as_int(*r);
 }
 
 static std::string read_file(const std::filesystem::path& p) {
     std::ifstream f(p);
-    if (!f) return std::string();
-    return std::string((std::istreambuf_iterator<char>(f)),
-                       std::istreambuf_iterator<char>());
+    if (!f)
+        return std::string();
+    return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println(std::cout, "  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cout, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println(std::cout, "  PASS: {}", msg);                                            \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cout, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 // ═══════════════════════════════════════════════════════════
 // AC1: seva:achieve-coverage returns a hash
@@ -115,8 +123,7 @@ bool test_gap_zero_on_clean() {
     run_on(cs, "(set-code \"(define (f x) (+ x 1))\")");
     run_on(cs, "(eval-current)");
     auto r = run_on(cs, "(hash-ref (seva:achieve-coverage \"FIFO\" 95) 'gap)");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) == 0;
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) == 0;
     CHECK(ok, "clean workspace: gap == 0");
     return true;
 }
@@ -156,14 +163,11 @@ bool test_approve_mutation_flags() {
     auto r_force = run_on(cs, "(seva:approve-mutation 0 \"force\")");
     auto r_auto = run_on(cs, "(seva:approve-mutation 0 \"auto\")");
     auto r_deny = run_on(cs, "(seva:approve-mutation 0 \"deny\")");
-    CHECK(aura::compiler::types::is_bool(r_force) &&
-          aura::compiler::types::as_bool(r_force),
+    CHECK(aura::compiler::types::is_bool(r_force) && aura::compiler::types::as_bool(r_force),
           "approve-mutation \"force\" → #t");
-    CHECK(aura::compiler::types::is_bool(r_auto) &&
-          aura::compiler::types::as_bool(r_auto),
+    CHECK(aura::compiler::types::is_bool(r_auto) && aura::compiler::types::as_bool(r_auto),
           "approve-mutation \"auto\" → #t");
-    CHECK(aura::compiler::types::is_bool(r_deny) &&
-          !aura::compiler::types::as_bool(r_deny),
+    CHECK(aura::compiler::types::is_bool(r_deny) && !aura::compiler::types::as_bool(r_deny),
           "approve-mutation \"deny\" → #f");
     return true;
 }
@@ -177,13 +181,16 @@ bool test_seva_audit_log_fields() {
     run_on(cs, "(set-code \"(define (f x) (+ x 1))\")");
     run_on(cs, "(eval-current)");
     static const char* kFields[] = {
-        "mutations-total", "verify-dirty-total",
-        "auto-evolve-cycles", "auto-evolve-fixed",
+        "mutations-total",
+        "verify-dirty-total",
+        "auto-evolve-cycles",
+        "auto-evolve-fixed",
     };
     int found = 0;
     for (auto* k : kFields) {
         auto v = hash_int(cs, k);
-        if (v >= 0) ++found;
+        if (v >= 0)
+            ++found;
     }
     CHECK(found == 4, "all 4 audit-log fields present + non-negative");
     return true;
@@ -195,14 +202,13 @@ bool test_seva_audit_log_fields() {
 bool test_stats_list_includes() {
     std::println("\n--- AC9: stats:list includes query:seva-audit-log ---");
     aura::compiler::CompilerService cs;
-    auto r = run_on(cs,
-        "(letrec ((find? (lambda (needle hay) "
-        "                (if (pair? hay) "
-        "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
-        "                    #f)))) "
-        "  (if (find? \"query:seva-audit-log\" (stats:list)) 1 0))");
-    bool included = aura::compiler::types::is_int(r) &&
-                    aura::compiler::types::as_int(r) == 1;
+    auto r = run_on(
+        cs, "(letrec ((find? (lambda (needle hay) "
+            "                (if (pair? hay) "
+            "                    (if (string=? (car hay) needle) #t (find? needle (cdr hay))) "
+            "                    #f)))) "
+            "  (if (find? \"query:seva-audit-log\" (stats:list)) 1 0))");
+    bool included = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) == 1;
     CHECK(included, "stats:list includes query:seva-audit-log");
     return true;
 }
@@ -214,8 +220,7 @@ bool test_stats_count() {
     std::println("\n--- AC10: stats:count is up to date ---");
     aura::compiler::CompilerService cs;
     auto r = run_on(cs, "(stats:count)");
-    bool ok = aura::compiler::types::is_int(r) &&
-              aura::compiler::types::as_int(r) >= 45;
+    bool ok = aura::compiler::types::is_int(r) && aura::compiler::types::as_int(r) >= 45;
     CHECK(ok, "stats:count >= 45 (was 44 in #444, now 45 in #445)");
     if (aura::compiler::types::is_int(r)) {
         std::println("    [stats:count = {}]", aura::compiler::types::as_int(r));
@@ -232,16 +237,14 @@ bool test_end_to_end_loop() {
     run_on(cs, "(set-code \"(define (f x) (+ x 1))\")");
     run_on(cs, "(eval-current)");
     // Step 1: read coverage gap
-    auto gap = run_on(cs,
-        "(hash-ref (seva:achieve-coverage \"FIFO\" 95) 'gap)");
+    auto gap = run_on(cs, "(hash-ref (seva:achieve-coverage \"FIFO\" 95) 'gap)");
     // Step 2: apply strategy
     run_on(cs, "(strategy:set-strategy \"coverage-greedy\")");
     run_on(cs, "(strategy:report-success \"coverage-greedy\")");
     // Step 3: query audit log
     auto audit = hash_int(cs, "mutations-total");
     // Step 4: read readiness
-    auto dbr = run_on(cs,
-        "(hash-ref (query:edsl-readiness) 'dirty-block-rate)");
+    auto dbr = run_on(cs, "(hash-ref (query:edsl-readiness) 'dirty-block-rate)");
     CHECK(aura::compiler::types::is_int(gap), "step 1: gap is an int");
     CHECK(audit >= 0, "step 3: audit log mutations-total >= 0");
     CHECK(aura::compiler::types::is_int(dbr), "step 4: dirty-block-rate is an int");
@@ -259,10 +262,8 @@ bool test_openclaw_skill_exists() {
     if (exists) {
         auto content = read_file(p);
         CHECK(!content.empty(), "seva_skill.py is non-empty");
-        CHECK(content.find("AuraServer") != std::string::npos,
-              "seva_skill.py defines AuraServer");
-        CHECK(content.find("parse_goal") != std::string::npos,
-              "seva_skill.py has parse_goal");
+        CHECK(content.find("AuraServer") != std::string::npos, "seva_skill.py defines AuraServer");
+        CHECK(content.find("parse_goal") != std::string::npos, "seva_skill.py has parse_goal");
         CHECK(content.find("seva:achieve-coverage") != std::string::npos,
               "seva_skill.py calls seva:achieve-coverage");
         CHECK(content.find("query:seva-audit-log") != std::string::npos,
@@ -271,7 +272,7 @@ bool test_openclaw_skill_exists() {
     return true;
 }
 
-}  // namespace aura_issue_445_detail
+} // namespace aura_issue_445_detail
 
 int main() {
     using namespace aura_issue_445_detail;

@@ -17,13 +17,13 @@ import aura.compiler.service;
 
 namespace aura_538_detail {
 
+using aura::compiler::CompilerService;
+using aura::compiler::DeadCoercionEliminationPass;
+using aura::compiler::IRModuleV2;
 using aura::ir::IRFunction;
 using aura::ir::IRInstruction;
 using aura::ir::IRModule;
 using aura::ir::IROpcode;
-using aura::compiler::CompilerService;
-using aura::compiler::DeadCoercionEliminationPass;
-using aura::compiler::IRModuleV2;
 
 static std::size_t count_cast_ops(const IRModule& mod) {
     std::size_t n = 0;

@@ -32,10 +32,16 @@ namespace aura_330_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println(std::cerr, "  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println(std::cerr, "  FAIL: {}", msg);                                            \
+        }                                                                                          \
+    } while (0)
 
 using aura::ast::FlatAST;
 
@@ -64,7 +70,7 @@ bool test_guard_bumps_generation() {
     {
         auto guard = ast.begin_structural_mutation();
         (void)guard;
-    }  // dtor runs here
+    } // dtor runs here
     std::uint16_t g1 = ast.generation();
     std::println("  generation: {} → {}", g0, g1);
     CHECK(g1 == g0 + 1, "generation_ incremented by 1 after dtor");
@@ -86,8 +92,7 @@ bool test_guard_move_semantics() {
     }
     std::uint16_t g1_after = ast.generation();
     std::println("  generation: {} → {}", g0, g1_after);
-    CHECK(g1_after == g0 + 1,
-          "after move, exactly one guard (g2) bumps on dtor");
+    CHECK(g1_after == g0 + 1, "after move, exactly one guard (g2) bumps on dtor");
     return true;
 }
 
@@ -117,11 +122,11 @@ bool test_guard_lock_release() {
     {
         auto g = ast.begin_structural_mutation();
         (void)g;
-    }  // g dtor bumps gen by +1
+    } // g dtor bumps gen by +1
     {
         auto g2 = ast.begin_structural_mutation();
         (void)g2;
-    }  // g2 dtor bumps gen by another +1
+    } // g2 dtor bumps gen by another +1
     std::uint16_t g1 = ast.generation();
     std::println("  generation: {} → {}", g0, g1);
     CHECK(g1 == g0 + 2, "second guard acquires + bumps after first released");
@@ -152,7 +157,9 @@ bool test_reader_lock_multiple_readers() {
     auto r1 = ast.try_acquire_reader_lock();
     auto r2 = ast.try_acquire_reader_lock();
     auto r3 = ast.try_acquire_reader_lock();
-    (void)r1; (void)r2; (void)r3;
+    (void)r1;
+    (void)r2;
+    (void)r3;
     // We can't directly observe bool() without exporting
     // the type, but if any of these couldn't acquire
     // concurrently, the call would block (deadlock on a
@@ -204,7 +211,7 @@ bool test_writer_handoff_after_reader() {
         // don't try to acquire one here (would deadlock
         // on a single thread) — we just verify the
         // reader can be released cleanly.
-    }  // r dtor releases the shared lock
+    } // r dtor releases the shared lock
     {
         auto w = ast.begin_structural_mutation();
         (void)w;
@@ -249,7 +256,6 @@ int main() {
     test_writer_handoff_after_reader();
     test_nested_default_guards();
     std::println("\nStructuralMutationGuard + ReaderLockGuard (#330): {}/{} passed, {}/{} failed",
-                 g_passed, g_passed + g_failed,
-                 g_failed, g_passed + g_failed);
+                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

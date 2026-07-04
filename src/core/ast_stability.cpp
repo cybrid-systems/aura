@@ -91,11 +91,9 @@ bool FlatAST::StableNodeRef::validate_with_provenance(const FlatAST& ast) noexce
 // Issue #303: get provenance snapshot. Returns a tuple
 // describing where the ref came from. Pure read — does
 // not validate the ref.
-FlatAST::StableNodeRef::Provenance
-FlatAST::StableNodeRef::get_provenance() const noexcept {
-    return Provenance{id, gen, mutation_id_at_capture,
-                      workspace_id, fiber_id,
-                      last_validated_generation};
+FlatAST::StableNodeRef::Provenance FlatAST::StableNodeRef::get_provenance() const noexcept {
+    return Provenance{id,           gen,      mutation_id_at_capture,
+                      workspace_id, fiber_id, last_validated_generation};
 }
 
 // ── StableNodeRef serialization (moved from ast.ixx) ────────
@@ -139,8 +137,7 @@ std::size_t FlatAST::serialize_stable_ref(const StableNodeRef& ref,
     // serializer — upper bits were already lost in practice
     // because of the byte-range overlap with the "reserved"
     // slot). The writer is explicit about it now.
-    std::uint32_t mid_lo = static_cast<std::uint32_t>(
-        ref.mutation_id_at_capture & 0xFFFFFFFFu);
+    std::uint32_t mid_lo = static_cast<std::uint32_t>(ref.mutation_id_at_capture & 0xFFFFFFFFu);
     std::memcpy(out + 12, &mid_lo, sizeof(mid_lo));
     // Issue #392: subtree_gen_at_capture round-trips through
     // bytes 16..17 (the previously-reserved slot). Pre-#392
@@ -148,8 +145,7 @@ std::size_t FlatAST::serialize_stable_ref(const StableNodeRef& ref,
     // field's default-0 contract — old refs are still
     // accepted by is_valid_subtree() because subtree_gen_
     // starts at 0 in fresh FlatASTs.
-    std::memcpy(out + 16, &ref.subtree_gen_at_capture,
-                sizeof(ref.subtree_gen_at_capture));
+    std::memcpy(out + 16, &ref.subtree_gen_at_capture, sizeof(ref.subtree_gen_at_capture));
     // Bytes 18..19 still reserved for future fields (fiber_id,
     // last_validated_generation, etc.). #291/#303 deliberately
     // left those fields out of the wire format — they're
@@ -171,13 +167,14 @@ std::size_t FlatAST::serialize_stable_ref(const StableNodeRef& ref,
 // repurposed byte range (16..17). mutation_id_at_capture is
 // reconstructed from its lower 32 bits only (upper 32 zero-
 // filled on deserialize).
-bool FlatAST::deserialize_stable_ref(const std::uint8_t* buf,
-                                     std::size_t buf_size,
+bool FlatAST::deserialize_stable_ref(const std::uint8_t* buf, std::size_t buf_size,
                                      StableNodeRef& out) const noexcept {
-    if (buf_size < kStableRefSerializedSize) return false;
+    if (buf_size < kStableRefSerializedSize)
+        return false;
     std::uint32_t magic = 0;
     std::memcpy(&magic, buf, 4);
-    if (magic != kStableRefMagic) return false;
+    if (magic != kStableRefMagic)
+        return false;
     StableNodeRef r{};
     std::memcpy(&r.id, buf + 4, sizeof(r.id));
     std::memcpy(&r.gen, buf + 8, sizeof(r.gen));
@@ -187,8 +184,7 @@ bool FlatAST::deserialize_stable_ref(const std::uint8_t* buf,
     std::memcpy(&mid_lo, buf + 12, sizeof(mid_lo));
     r.mutation_id_at_capture = static_cast<std::uint64_t>(mid_lo);
     // Subtree-gen-at-capture round-trips through bytes 16..17.
-    std::memcpy(&r.subtree_gen_at_capture, buf + 16,
-                sizeof(r.subtree_gen_at_capture));
+    std::memcpy(&r.subtree_gen_at_capture, buf + 16, sizeof(r.subtree_gen_at_capture));
     std::memcpy(&r.workspace_id, buf + 20, sizeof(r.workspace_id));
     out = r;
     return true;

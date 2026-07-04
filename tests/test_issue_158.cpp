@@ -22,8 +22,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core.ast;
 import aura.core.arena;
@@ -36,10 +36,9 @@ import aura.compiler.type_checker;
 import aura.parser.parser;
 
 
-
 namespace aura_issue_158_detail {
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -66,10 +65,9 @@ static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src
 bool test_qq_legacy_inner_macro() {
     std::println("\n--- Test 1: legacy defmacro + qq + inner macro call ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(defmacro (bar x) `(* ,x 2)) "
-        "(defmacro (foo x) `(bar ,x)) "
-        "(foo 5)");
+    int64_t r = run_int(cs, "(defmacro (bar x) `(* ,x 2)) "
+                            "(defmacro (foo x) `(bar ,x)) "
+                            "(foo 5)");
     CHECK(r == 10, "qq inner macro call: (foo 5) → bar → (* 5 2) = 10");
     return true;
 }
@@ -80,10 +78,9 @@ bool test_qq_legacy_inner_macro() {
 bool test_qq_hygienic_inner_macro() {
     std::println("\n--- Test 2: hygienic macro + qq + inner macro call ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(define-hygienic-macro (bar x) `(* ,x 2)) "
-        "(define-hygienic-macro (foo x) `(bar ,x)) "
-        "(foo 5)");
+    int64_t r = run_int(cs, "(define-hygienic-macro (bar x) `(* ,x 2)) "
+                            "(define-hygienic-macro (foo x) `(bar ,x)) "
+                            "(foo 5)");
     CHECK(r == 10, "hygienic qq inner macro: (foo 5) → bar → 10");
     return true;
 }
@@ -95,9 +92,8 @@ bool test_qq_hygienic_inner_macro() {
 bool test_qq_function_call_still_works() {
     std::println("\n--- Test 3: qq + function call (regression) ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(defmacro (double x) `(+ ,x ,x)) "
-        "(double 21)");
+    int64_t r = run_int(cs, "(defmacro (double x) `(+ ,x ,x)) "
+                            "(double 21)");
     CHECK(r == 42, "qq + function call still works: (double 21) = 42");
     return true;
 }
@@ -110,10 +106,9 @@ bool test_qq_function_call_still_works() {
 bool test_qq_inner_macro_multi_args() {
     std::println("\n--- Test 4: qq + inner macro + multi-arg ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(defmacro (add3 a b c) `(+ ,a ,b ,c)) "
-        "(defmacro (sum3 x)     `(add3 ,x 1 2)) "
-        "(sum3 10)");
+    int64_t r = run_int(cs, "(defmacro (add3 a b c) `(+ ,a ,b ,c)) "
+                            "(defmacro (sum3 x)     `(add3 ,x 1 2)) "
+                            "(sum3 10)");
     CHECK(r == 13, "(sum3 10) → add3 10 1 2 → (+ 10 1 2) = 13");
     return true;
 }
@@ -131,17 +126,18 @@ bool test_qq_inner_macro_multi_args() {
 bool test_qq_special_form_still_works() {
     std::println("\n--- Test 5: qq + special form (regression, known limit) ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(defmacro (mylet x) `(let ((y ,x)) (* y y))) "
-        "(mylet 7)");
+    int64_t r = run_int(cs, "(defmacro (mylet x) `(let ((y ,x)) (* y y))) "
+                            "(mylet 7)");
     // Expected: 49. Currently fails with type-mismatch (pre-existing bug).
     // Mark as PASS only if it works; otherwise note the limit.
     if (r == 49) {
         CHECK(r == 49, "qq + let: (mylet 7) → let y=7 in y*y = 49");
     } else {
-        std::println("  KNOWN LIMIT: (mylet 7) returned {} (expected 49). Pre-existing let bug, separate from #158.", r);
+        std::println("  KNOWN LIMIT: (mylet 7) returned {} (expected 49). Pre-existing let bug, "
+                     "separate from #158.",
+                     r);
         // Don't count as a fail — the limit is documented.
-        ++g_passed;  // count as pass since it's a documented limit
+        ++g_passed; // count as pass since it's a documented limit
     }
     return true;
 }
@@ -155,16 +151,15 @@ bool test_qq_special_form_still_works() {
 bool test_qq_nested_inner_macro() {
     std::println("\n--- Test 6: nested qq + inner macro (deferred) ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs,
-        "(defmacro (bar x) `(* ,x 2)) "
-        "(defmacro (foo x) ```(bar ,,x)) "
-        "(foo 5)");
+    int64_t r = run_int(cs, "(defmacro (bar x) `(* ,x 2)) "
+                            "(defmacro (foo x) ```(bar ,,x)) "
+                            "(foo 5)");
     // 5 → bar 5 → (* 5 2) = 10
     if (r == 10) {
         CHECK(r == 10, "nested qq + inner macro: (foo 5) → 10");
     } else {
         std::println("  KNOWN LIMIT: nested qq not yet supported. Returned {} (expected 10).", r);
-        ++g_passed;  // count as pass since it's a documented limit
+        ++g_passed; // count as pass since it's a documented limit
     }
     return true;
 }
@@ -183,7 +178,8 @@ int run_tests() {
     std::println("Total: %d passed, %d failed", g_passed, g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_158_detail
+} // namespace aura_issue_158_detail
 
-int aura_issue_158_run() { return aura_issue_158_detail::run_tests(); }
-
+int aura_issue_158_run() {
+    return aura_issue_158_detail::run_tests();
+}

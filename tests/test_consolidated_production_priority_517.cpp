@@ -64,8 +64,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cov && is_int(*cov), "verify:parse-coverage-feedback returns int");
     const auto stats3b = consolidated_stats(cs);
     std::println("  consolidated stats: {} -> {}", stats3a, stats3b);
-    CHECK(stats3b > stats3a,
-          "coverage feedback bumps EDA verification counters");
+    CHECK(stats3b > stats3a, "coverage feedback bumps EDA verification counters");
 
     std::println("\n--- AC4: P2 Memory safety regression ---");
     auto ces = cs.eval("(query:closure-env-safety-stats)");
@@ -78,8 +77,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round mutate matrix monotonic ---");
     const auto stats6a = consolidated_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"x\" \"" +
-                      std::to_string(10 + round) + "\")");
+        (void)cs.eval("(mutate:rebind \"x\" \"" + std::to_string(10 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(mutate:request-gc-safepoint 10)");
     }

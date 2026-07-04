@@ -17,14 +17,14 @@ using namespace types;
 
 namespace {
 
-constexpr std::uint64_t kTagArityKeyNone = ~std::uint64_t{0};
+    constexpr std::uint64_t kTagArityKeyNone = ~std::uint64_t{0};
 
-[[nodiscard]] std::uint64_t tag_arity_key(aura::ast::NodeTag tag, std::size_t arity) noexcept {
-    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tag)) << 32) |
-           static_cast<std::uint64_t>(arity);
-}
+    [[nodiscard]] std::uint64_t tag_arity_key(aura::ast::NodeTag tag, std::size_t arity) noexcept {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tag)) << 32) |
+               static_cast<std::uint64_t>(arity);
+    }
 
-}  // namespace
+} // namespace
 
 void Evaluator::tag_arity_index_insert_node(const aura::ast::FlatAST& flat,
                                             aura::ast::NodeId id) const {
@@ -47,9 +47,8 @@ void Evaluator::tag_arity_index_insert_node(const aura::ast::FlatAST& flat,
     // bodies that macro_expand_all forgot to splice in). Also
     // skip the check entirely when the flat has no root set
     // (test fixture scenario).
-    if (flat.root != aura::ast::NULL_NODE &&
-        id != flat.root && flat.parent_of(id) == aura::ast::NULL_NODE &&
-        !flat.is_macro_introduced(id))
+    if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
+        flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
         return;
     const auto node = flat.get(id);
     const auto key = tag_arity_key(node.tag, node.children.size());
@@ -105,19 +104,20 @@ void Evaluator::tag_arity_index_prune_stale_entries(const aura::ast::FlatAST& fl
     for (auto it = tag_arity_index_.begin(); it != tag_arity_index_.end();) {
         auto& bucket = it->second;
         bucket.erase(std::remove_if(bucket.begin(), bucket.end(),
-                                  [&](aura::ast::NodeId id) {
-                                      if (id >= flat.size()) {
-                                          if (id < tag_arity_indexed_key_.size())
-                                              tag_arity_indexed_key_[id] = kTagArityKeyNone;
-                                          return true;
-                                      }
-                                      if (id != root && flat.parent_of(id) == aura::ast::NULL_NODE) {
-                                          if (id < tag_arity_indexed_key_.size())
-                                              tag_arity_indexed_key_[id] = kTagArityKeyNone;
-                                          return true;
-                                      }
-                                      return false;
-                                  }),
+                                    [&](aura::ast::NodeId id) {
+                                        if (id >= flat.size()) {
+                                            if (id < tag_arity_indexed_key_.size())
+                                                tag_arity_indexed_key_[id] = kTagArityKeyNone;
+                                            return true;
+                                        }
+                                        if (id != root &&
+                                            flat.parent_of(id) == aura::ast::NULL_NODE) {
+                                            if (id < tag_arity_indexed_key_.size())
+                                                tag_arity_indexed_key_[id] = kTagArityKeyNone;
+                                            return true;
+                                        }
+                                        return false;
+                                    }),
                      bucket.end());
         if (bucket.empty())
             it = tag_arity_index_.erase(it);
@@ -184,8 +184,7 @@ void Evaluator::build_tag_arity_index() const {
     tag_arity_index_sync_after_mutation(flat);
 }
 
-void Evaluator::verify_pattern_result_hygiene(const aura::ast::FlatAST& flat,
-                                              EvalValue result,
+void Evaluator::verify_pattern_result_hygiene(const aura::ast::FlatAST& flat, EvalValue result,
                                               bool with_markers) noexcept {
     auto walk = [&](EvalValue cur) {
         while (is_pair(cur)) {
@@ -199,11 +198,9 @@ void Evaluator::verify_pattern_result_hygiene(const aura::ast::FlatAST& flat,
                     item = pairs_[iidx].car;
             }
             if (is_int(item)) {
-                const auto id =
-                    static_cast<aura::ast::NodeId>(as_int(item));
+                const auto id = static_cast<aura::ast::NodeId>(as_int(item));
                 if (id < flat.size() && flat.is_macro_introduced(id)) {
-                    pattern_macro_filter_violations_.fetch_add(
-                        1, std::memory_order_relaxed);
+                    pattern_macro_filter_violations_.fetch_add(1, std::memory_order_relaxed);
                 }
             }
             cur = pairs_[pidx].cdr;
@@ -221,8 +218,7 @@ void Evaluator::ensure_pattern_macro_filter_consistency(
     // to assert the post-split filter contract is wired.
 }
 
-void Evaluator::ensure_pattern_index_consistency(
-    const aura::ast::FlatAST& flat) const noexcept {
+void Evaluator::ensure_pattern_index_consistency(const aura::ast::FlatAST& flat) const noexcept {
     // Issue #423: verify Evaluator-side tag_arity_index_
     // stays in sync with the workspace flat after
     // query:pattern fast-path builds and incremental sync.
@@ -231,8 +227,7 @@ void Evaluator::ensure_pattern_index_consistency(
         return;
 
     auto bump_violation = [&]() noexcept {
-        pattern_index_consistency_violations_.fetch_add(
-            1, std::memory_order_relaxed);
+        pattern_index_consistency_violations_.fetch_add(1, std::memory_order_relaxed);
     };
 
     if (tag_arity_index_workspace_ != workspace_flat_)
@@ -243,22 +238,19 @@ void Evaluator::ensure_pattern_index_consistency(
         bump_violation();
 
     for (const auto& [key, bucket] : tag_arity_index_) {
-        const auto expected_tag =
-            static_cast<aura::ast::NodeTag>(key >> 32);
-        const auto expected_arity =
-            static_cast<std::size_t>(key & 0xFFFFFFFFu);
+        const auto expected_tag = static_cast<aura::ast::NodeTag>(key >> 32);
+        const auto expected_arity = static_cast<std::size_t>(key & 0xFFFFFFFFu);
         for (aura::ast::NodeId id : bucket) {
             if (id >= flat.size()) {
                 bump_violation();
                 continue;
             }
             const auto node = flat.get(id);
-            if (node.tag != expected_tag ||
-                node.children.size() != expected_arity) {
+            if (node.tag != expected_tag || node.children.size() != expected_arity) {
                 bump_violation();
             }
         }
     }
 }
 
-}  // namespace aura::compiler
+} // namespace aura::compiler

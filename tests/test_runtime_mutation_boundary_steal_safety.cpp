@@ -58,8 +58,7 @@ bool test_per_fiber_depth_probe_on_victim() {
         aura_evaluator_test_push_mutation_checkpoint();
         CHECK(aura::serve::g_current_fiber != nullptr, "fiber context active");
         if (aura::serve::g_current_fiber) {
-            aura::serve::g_current_fiber->set_yield_reason(
-                YieldReason::MutationBoundary);
+            aura::serve::g_current_fiber->set_yield_reason(YieldReason::MutationBoundary);
             const bool safe = aura::serve::g_current_fiber->is_at_mutation_boundary_safe();
             CHECK(!safe, "inner guard depth > 0 → not safe at MutationBoundary");
             const auto depth = aura_evaluator_mutation_stack_depth_from_ptr(
@@ -91,24 +90,25 @@ bool test_inner_guard_yield_steal_deferred() {
     constexpr int k_fibers = 8;
     for (int i = 0; i < k_fibers; ++i) {
         // Pin to worker 0 so idle workers 1..7 attempt steals.
-        sched.spawn_with_affinity([&]() {
-            for (int j = 0; j < 30; ++j) {
-                aura_evaluator_test_push_mutation_checkpoint();
-                Fiber::yield(YieldReason::MutationBoundary);
-                aura_evaluator_test_pop_mutation_checkpoint();
-            }
-            if (aura::serve::g_current_fiber) {
-                std::lock_guard lock(mtx);
-                deferred_total.fetch_add(
-                    aura::serve::g_current_fiber->steal_deferred_mutation_boundary_count());
-            }
-            done.fetch_add(1);
-        }, 0);
+        sched.spawn_with_affinity(
+            [&]() {
+                for (int j = 0; j < 30; ++j) {
+                    aura_evaluator_test_push_mutation_checkpoint();
+                    Fiber::yield(YieldReason::MutationBoundary);
+                    aura_evaluator_test_pop_mutation_checkpoint();
+                }
+                if (aura::serve::g_current_fiber) {
+                    std::lock_guard lock(mtx);
+                    deferred_total.fetch_add(
+                        aura::serve::g_current_fiber->steal_deferred_mutation_boundary_count());
+                }
+                done.fetch_add(1);
+            },
+            0);
     }
     std::thread io([&sched]() { sched.run(); });
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while (done.load() < k_fibers &&
-           std::chrono::steady_clock::now() < deadline) {
+    while (done.load() < k_fibers && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     sched.stop();
@@ -134,28 +134,28 @@ bool test_outermost_mutation_boundary_steal_allowed() {
     std::mutex mtx;
     constexpr int k_fibers = 8;
     for (int i = 0; i < k_fibers; ++i) {
-        sched.spawn_with_affinity([&]() {
-            if (aura::serve::g_current_fiber) {
-                aura::serve::g_current_fiber->set_yield_reason(
-                    YieldReason::MutationBoundary);
-                CHECK(aura::serve::g_current_fiber->is_at_mutation_boundary_safe(),
-                      "depth==0 outermost MutationBoundary is steal-safe");
-            }
-            for (int j = 0; j < 30; ++j) {
-                Fiber::yield(YieldReason::MutationBoundary);
-            }
-            if (aura::serve::g_current_fiber) {
-                std::lock_guard lock(mtx);
-                steal_success_total.fetch_add(
-                    aura::serve::g_current_fiber->steal_success_count());
-            }
-            done.fetch_add(1);
-        }, 0);
+        sched.spawn_with_affinity(
+            [&]() {
+                if (aura::serve::g_current_fiber) {
+                    aura::serve::g_current_fiber->set_yield_reason(YieldReason::MutationBoundary);
+                    CHECK(aura::serve::g_current_fiber->is_at_mutation_boundary_safe(),
+                          "depth==0 outermost MutationBoundary is steal-safe");
+                }
+                for (int j = 0; j < 30; ++j) {
+                    Fiber::yield(YieldReason::MutationBoundary);
+                }
+                if (aura::serve::g_current_fiber) {
+                    std::lock_guard lock(mtx);
+                    steal_success_total.fetch_add(
+                        aura::serve::g_current_fiber->steal_success_count());
+                }
+                done.fetch_add(1);
+            },
+            0);
     }
     std::thread io([&sched]() { sched.run(); });
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while (done.load() < k_fibers &&
-           std::chrono::steady_clock::now() < deadline) {
+    while (done.load() < k_fibers && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     sched.stop();
@@ -229,8 +229,7 @@ bool test_eight_fiber_mixed_steal_matrix() {
     }
     std::thread io([&sched]() { sched.run(); });
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(45);
-    while (done.load() < k_fibers &&
-           std::chrono::steady_clock::now() < deadline) {
+    while (done.load() < k_fibers && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     sched.stop();
@@ -310,8 +309,7 @@ bool test_fiber_migration_stats_monotonic() {
     auto r1 = cs.eval("(query:fiber-migration-stats)");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(query:fiber-migration-stats) after fiber load");
-    if (r0 && r1 && aura::compiler::types::is_int(*r0) &&
-        aura::compiler::types::is_int(*r1)) {
+    if (r0 && r1 && aura::compiler::types::is_int(*r0) && aura::compiler::types::is_int(*r1)) {
         const auto v0 = aura::compiler::types::as_int(*r0);
         const auto v1 = aura::compiler::types::as_int(*r1);
         CHECK(v1 >= v0, "fiber-migration-stats monotonic");
@@ -349,10 +347,14 @@ int run_tests() {
     return RUN_ALL_TESTS();
 }
 
-}  // namespace aura_issue_588_detail
+} // namespace aura_issue_588_detail
 
-int aura_issue_588_run() { return aura_issue_588_detail::run_tests(); }
+int aura_issue_588_run() {
+    return aura_issue_588_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_588_run(); }
+int main() {
+    return aura_issue_588_run();
+}
 #endif

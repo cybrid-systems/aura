@@ -18,8 +18,8 @@
 #include "test_harness.hpp"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -64,9 +64,8 @@ bool test_metrics_bump() {
     auto before = ev.get_panic_checkpoint_transfer_count();
     ev.bump_panic_checkpoint_transfer_count();
     auto after = ev.get_panic_checkpoint_transfer_count();
-    CHECK(after == before + 1,
-          "bump_panic_checkpoint_transfer_count: " + std::to_string(before) +
-              " -> " + std::to_string(after));
+    CHECK(after == before + 1, "bump_panic_checkpoint_transfer_count: " + std::to_string(before) +
+                                   " -> " + std::to_string(after));
     return true;
 }
 
@@ -78,9 +77,8 @@ bool test_gc_block_bump() {
     auto before = ev.get_gc_blocked_by_pending_panic();
     ev.bump_gc_blocked_by_pending_panic();
     auto after = ev.get_gc_blocked_by_pending_panic();
-    CHECK(after == before + 1,
-          "bump_gc_blocked_by_pending_panic: " + std::to_string(before) +
-              " -> " + std::to_string(after));
+    CHECK(after == before + 1, "bump_gc_blocked_by_pending_panic: " + std::to_string(before) +
+                                   " -> " + std::to_string(after));
     return true;
 }
 
@@ -170,8 +168,12 @@ int run_tests() {
 
 } // namespace aura_issue_453_detail
 
-int aura_issue_453_run() { return aura_issue_453_detail::run_tests(); }
+int aura_issue_453_run() {
+    return aura_issue_453_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_453_run(); }
+int main() {
+    return aura_issue_453_run();
+}
 #endif

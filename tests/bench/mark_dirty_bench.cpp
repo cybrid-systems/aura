@@ -62,8 +62,7 @@ Workload build_workload() {
     return w;
 }
 
-template <typename F>
-long long time_us(F&& fn) {
+template <typename F> long long time_us(F&& fn) {
     using namespace std::chrono;
     auto t0 = steady_clock::now();
     fn();
@@ -75,8 +74,7 @@ long long time_us(F&& fn) {
 
 int main() {
     std::println("=== Issue #399 bench: mark_dirty no-resize hot path ===");
-    std::println("workload: {} nodes (deep chain of Defines) × {} rounds",
-                 kNumNodes, kRounds);
+    std::println("workload: {} nodes (deep chain of Defines) × {} rounds", kNumNodes, kRounds);
 
     auto wl = build_workload();
 
@@ -88,9 +86,7 @@ int main() {
     long long total_us = 0;
     long long max_per_call_us = 0;
     for (int round = 0; round < kRounds; ++round) {
-        long long us = time_us([&]() {
-            wl.flat.mark_dirty_upward(wl.deep_root);
-        });
+        long long us = time_us([&]() { wl.flat.mark_dirty_upward(wl.deep_root); });
         total_us += us;
         if (us > max_per_call_us)
             max_per_call_us = us;
@@ -110,12 +106,10 @@ int main() {
 
     // ── Report ────────────────────────────────────────────────
     std::println("");
-    std::println("  mark_dirty_upward (deep chain, {} ancestors):",
-                 kNumNodes + 1);
+    std::println("  mark_dirty_upward (deep chain, {} ancestors):", kNumNodes + 1);
     std::println("    total {:>10} \u00b5s  (avg {:>4} \u00b5s/call, max {:>4} \u00b5s/call)",
                  total_us, avg_per_call_us, max_per_call_us);
-    std::println("  bulk mark_dirty on all {} nodes (steady state):",
-                 kNumNodes);
+    std::println("  bulk mark_dirty on all {} nodes (steady state):", kNumNodes);
     std::println("    total {:>10} \u00b5s  (avg {:>4} \u00b5s/round, {} nodes/round)",
                  bulk_total_us, bulk_avg_per_round_us, kNumNodes);
     std::println("");
@@ -124,7 +118,7 @@ int main() {
     // We use a generous bound: 500 ns per ancestor (so
     // 1001 ancestors * 500ns = ~500 us per call, but
     // modern cache effects make this much faster).
-    const auto upper_bound_us = (kNumNodes + 1) * 5;  // 5 us/ancestor (very loose)
+    const auto upper_bound_us = (kNumNodes + 1) * 5; // 5 us/ancestor (very loose)
     const bool hot_path_ok = avg_per_call_us <= upper_bound_us;
 
     // AC2: no outliers (max <= 5x avg).
@@ -140,13 +134,12 @@ int main() {
     std::println("");
 
     const bool ac_met = hot_path_ok && no_outliers;
-    std::println("AC check: hot path avg <= {} \u00b5s AND max <= 5x avg : {}",
-                 upper_bound_us, ac_met ? "PASS" : "FAIL");
-    std::println("  hot_path avg = {} \u00b5s (upper bound = {} \u00b5s): {}",
-                 avg_per_call_us, upper_bound_us, hot_path_ok);
+    std::println("AC check: hot path avg <= {} \u00b5s AND max <= 5x avg : {}", upper_bound_us,
+                 ac_met ? "PASS" : "FAIL");
+    std::println("  hot_path avg = {} \u00b5s (upper bound = {} \u00b5s): {}", avg_per_call_us,
+                 upper_bound_us, hot_path_ok);
     std::println("  max/avg ratio = {}/100 (<= 500/100): {}",
-                 max_per_call_us * 100 / std::max<long long>(avg_per_call_us, 1),
-                 no_outliers);
+                 max_per_call_us * 100 / std::max<long long>(avg_per_call_us, 1), no_outliers);
 
     std::println("");
     std::println("verdict: mark_dirty hot path is steady under #399 reserve strategy");

@@ -42,16 +42,29 @@ namespace aura_411fu2_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (cond) { ++g_passed; std::println("  PASS: {}", msg); } \
-    else      { ++g_failed; std::println("  FAIL: {}", msg); } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { ++g_passed; std::println("  PASS: {}  ({} = {})", msg, _a, _b); } \
-    else          { ++g_failed; std::println("  FAIL: {}  ({} != {})", msg, _a, _b); } \
-} while (0)
+#define CHECK_EQ(a, b, msg)                                                                        \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  ({} = {})", msg, _a, _b);                                    \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  ({} != {})", msg, _a, _b);                                   \
+        }                                                                                          \
+    } while (0)
 
 bool test_initial_counters_zero() {
     std::println("\n--- AC1: per-DefUseIndex counters start at 0 ---");
@@ -59,7 +72,8 @@ bool test_initial_counters_zero() {
     auto snap = cs.snapshot();
     CHECK_EQ(snap.per_defuse_index_used_total, 0u, "per_defuse_index_used_total == 0");
     CHECK_EQ(snap.per_defuse_index_visited_total, 0u, "per_defuse_index_visited_total == 0");
-    CHECK_EQ(snap.per_defuse_index_walk_fallback_total, 0u, "per_defuse_index_walk_fallback_total == 0");
+    CHECK_EQ(snap.per_defuse_index_walk_fallback_total, 0u,
+             "per_defuse_index_walk_fallback_total == 0");
     CHECK_EQ(snap.per_defuse_index_visited_avg_bp, 0u, "per_defuse_index_visited_avg_bp == 0");
     return true;
 }
@@ -76,9 +90,9 @@ bool test_add_caller_primitive() {
     // Now read back via the stats primitive — total-size should be 1.
     auto r = cs.eval("(hash-ref (compile:per-defuse-index-stats) \"total-size\")");
     if (!r || !aura::compiler::types::is_int(*r)) {
-        std::println("  FAIL: hash-ref total-size did not return int (val={})",
-                     r ? r->val : -1);
-        ++g_failed; return false;
+        std::println("  FAIL: hash-ref total-size did not return int (val={})", r ? r->val : -1);
+        ++g_failed;
+        return false;
     }
     std::int64_t total_size = aura::compiler::types::as_int(*r);
     CHECK_EQ(total_size, 1, "after one add, total-size == 1");
@@ -89,16 +103,16 @@ bool test_callers_primitive() {
     std::println("\n--- AC3: (compile:per-defuse-index-callers) returns hash ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(begin (compile:per-defuse-index-add \\\"foo\\\" 101) "
-             "(compile:per-defuse-index-add \\\"foo\\\" 102))\")");
+            "(compile:per-defuse-index-add \\\"foo\\\" 102))\")");
     cs.eval("(eval-current)");
     // Define a helper that returns the callers hash.
     cs.eval("(set-code \"(define cs_hash (compile:per-defuse-index-callers \\\"foo\\\"))\")");
     cs.eval("(eval-current)");
     auto rh = cs.eval("(hash? cs_hash)");
-    if (!rh || !aura::compiler::types::is_bool(*rh) ||
-        !aura::compiler::types::as_bool(*rh)) {
+    if (!rh || !aura::compiler::types::is_bool(*rh) || !aura::compiler::types::as_bool(*rh)) {
         std::println("  FAIL: (hash? cs_hash) did not return #t");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:per-defuse-index-callers) returns a hash");
     // Verify the 2 callers exist. hash-ref keys are
@@ -130,9 +144,9 @@ bool test_per_index_isolation_via_auras() {
     std::println("\n--- AC4: per-DefUseIndex isolation via Aura surface ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(begin "
-             "  (compile:per-defuse-index-add \\\"foo\\\" 201) "
-             "  (compile:per-defuse-index-add \\\"foo\\\" 202) "
-             "  (compile:per-defuse-index-add \\\"bar\\\" 301))\")");
+            "  (compile:per-defuse-index-add \\\"foo\\\" 201) "
+            "  (compile:per-defuse-index-add \\\"foo\\\" 202) "
+            "  (compile:per-defuse-index-add \\\"bar\\\" 301))\")");
     cs.eval("(eval-current)");
     // Per-DefUseIndex isolation: 201 IS in foo, 301 is NOT
     // in foo, 201 is NOT in bar, 301 IS in bar.
@@ -160,18 +174,22 @@ bool test_stats_primitive() {
     std::println("\n--- AC5: (compile:per-defuse-index-stats) returns hash ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(begin "
-             "  (compile:per-defuse-index-add \\\"s1\\\" 11) "
-             "  (compile:per-defuse-index-add \\\"s1\\\" 12) "
-             "  (compile:per-defuse-index-add \\\"s2\\\" 13))\")");
+            "  (compile:per-defuse-index-add \\\"s1\\\" 11) "
+            "  (compile:per-defuse-index-add \\\"s1\\\" 12) "
+            "  (compile:per-defuse-index-add \\\"s2\\\" 13))\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(define st (compile:per-defuse-index-stats))");
-    if (!r) { std::println("  FAIL: define st failed"); ++g_failed; return false; }
+    if (!r) {
+        std::println("  FAIL: define st failed");
+        ++g_failed;
+        return false;
+    }
     cs.eval("(eval-current)");
     auto rh = cs.eval("(hash? st)");
-    if (!rh || !aura::compiler::types::is_bool(*rh) ||
-        !aura::compiler::types::as_bool(*rh)) {
+    if (!rh || !aura::compiler::types::is_bool(*rh) || !aura::compiler::types::as_bool(*rh)) {
         std::println("  FAIL: (hash? st) did not return #t");
-        ++g_failed; return false;
+        ++g_failed;
+        return false;
     }
     CHECK(true, "(compile:per-defuse-index-stats) returns a hash");
     // Verify the 3 keys.
@@ -193,21 +211,20 @@ bool test_stats_primitive() {
     }
     auto ric = cs.eval("(hash-ref st \"index-count\")");
     if (ric && aura::compiler::types::is_int(*ric)) {
-        CHECK_EQ(aura::compiler::types::as_int(*ric), 2,
-                 "index-count == 2 (s1 + s2)");
+        CHECK_EQ(aura::compiler::types::as_int(*ric), 2, "index-count == 2 (s1 + s2)");
     }
     return true;
 }
 
 bool test_per_symbol_reinfer_stats_has_new_keys() {
-    std::println("\n--- AC6: (compile:per-symbol-reinfer-stats) has 4 new per-DefUseIndex keys ---");
+    std::println(
+        "\n--- AC6: (compile:per-symbol-reinfer-stats) has 4 new per-DefUseIndex keys ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define h (compile:per-symbol-reinfer-stats))\")");
     cs.eval("(eval-current)");
-    for (const char* key : {"per-defuse-index-used-total",
-                            "per-defuse-index-visited-total",
-                            "per-defuse-index-walk-fallback-total",
-                            "per-defuse-index-visited-avg-bp"}) {
+    for (const char* key :
+         {"per-defuse-index-used-total", "per-defuse-index-visited-total",
+          "per-defuse-index-walk-fallback-total", "per-defuse-index-visited-avg-bp"}) {
         std::string check = std::string("(hash-ref h \"") + key + "\")";
         auto rv = cs.eval(check);
         if (!rv || !aura::compiler::types::is_int(*rv)) {
@@ -224,7 +241,8 @@ bool test_snapshot_has_new_fields() {
     std::println("\n--- AC7: snapshot has 4 new per-DefUseIndex fields ---");
     aura::compiler::CompilerService cs;
     auto snap = cs.snapshot();
-    std::println("  per_defuse_index_used={} per_defuse_index_visited={} per_defuse_index_walk_fallback={} per_defuse_index_visited_avg_bp={}",
+    std::println("  per_defuse_index_used={} per_defuse_index_visited={} "
+                 "per_defuse_index_walk_fallback={} per_defuse_index_visited_avg_bp={}",
                  snap.per_defuse_index_used_total, snap.per_defuse_index_visited_total,
                  snap.per_defuse_index_walk_fallback_total, snap.per_defuse_index_visited_avg_bp);
     CHECK(true, "snapshot has per_defuse_index_used_total field");
@@ -240,8 +258,7 @@ bool test_eval_still_works() {
     cs.eval("(set-code \"(define x 42)\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(eval-current)");
-    CHECK(r && aura::compiler::types::is_int(*r) &&
-              aura::compiler::types::as_int(*r) == 42,
+    CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 42,
           "plain (define x 42) + (eval-current) returns 42");
     return true;
 }
@@ -259,7 +276,7 @@ int main() {
     test_per_symbol_reinfer_stats_has_new_keys();
     test_snapshot_has_new_fields();
     test_eval_still_works();
-    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===",
-                 g_passed, g_passed + g_failed, g_failed, g_passed + g_failed);
+    std::println("\n=== Summary: {}/{} passed, {}/{} failed ===", g_passed, g_passed + g_failed,
+                 g_failed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -50,8 +50,8 @@
 // g_passed / g_failed / CHECK macro above are removed;
 // this file now uses the harness's versions.
 #include "test_harness.hpp"
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 // Hand-written analogue of the production FlatAST::children_
 // field: per-node std::pmr::vector<NodeId>. We use std::vector
@@ -76,7 +76,8 @@ struct FlatASTLike {
 
     // Walk a node's children. Returns a span (contiguous view).
     std::vector<NodeId> children(NodeId id) const {
-        if (id >= children_.size()) return {};
+        if (id >= children_.size())
+            return {};
         return children_[id];
     }
 
@@ -84,7 +85,8 @@ struct FlatASTLike {
     // O(1) for the per-node list; does NOT shift any other
     // node's children_ entry.
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
-        if (id >= children_.size()) return;
+        if (id >= children_.size())
+            return;
         auto& list = children_[id];
         auto pos = std::min(static_cast<std::uint32_t>(list.size()), idx);
         list.insert(list.begin() + pos, child);
@@ -96,7 +98,8 @@ struct FlatASTLike {
     // Erase a child at position idx. The slot is gone; elements
     // after idx shift left within THIS node's list only.
     void remove_child(NodeId id, std::uint32_t idx) {
-        if (id >= children_.size()) return;
+        if (id >= children_.size())
+            return;
         auto& list = children_[id];
         if (idx < list.size()) {
             auto cid = list[idx];
@@ -107,7 +110,6 @@ struct FlatASTLike {
         }
     }
 };
-
 
 
 #define PRINTLN(msg) std::println("{}", (msg))
@@ -211,9 +213,8 @@ void test_4_no_cross_shift() {
     ast.parent_.resize(100, NULL_NODE);
     // Fill each node with 3 children
     for (std::size_t i = 0; i < 100; ++i) {
-        ast.children_[i] = {static_cast<NodeId>(i*3),
-                            static_cast<NodeId>(i*3+1),
-                            static_cast<NodeId>(i*3+2)};
+        ast.children_[i] = {static_cast<NodeId>(i * 3), static_cast<NodeId>(i * 3 + 1),
+                            static_cast<NodeId>(i * 3 + 2)};
     }
     // Snapshot children of nodes 50, 51, 52 BEFORE
     auto c50_before = ast.children(50);
@@ -242,9 +243,8 @@ void test_5_perf_insert() {
     ast.int_val_.resize(5000, 0);
     ast.parent_.resize(5000, NULL_NODE);
     for (std::size_t i = 0; i < 5000; ++i) {
-        ast.children_[i] = {static_cast<NodeId>(i*3),
-                            static_cast<NodeId>(i*3+1),
-                            static_cast<NodeId>(i*3+2)};
+        ast.children_[i] = {static_cast<NodeId>(i * 3), static_cast<NodeId>(i * 3 + 1),
+                            static_cast<NodeId>(i * 3 + 2)};
     }
     // Warm-up
     std::mt19937 rng(12345);
@@ -275,17 +275,18 @@ void test_6_perf_remove() {
     ast.int_val_.resize(5000, 0);
     ast.parent_.resize(5000, NULL_NODE);
     for (std::size_t i = 0; i < 5000; ++i) {
-        ast.children_[i] = {static_cast<NodeId>(i*3),
-                            static_cast<NodeId>(i*3+1),
-                            static_cast<NodeId>(i*3+2)};
+        ast.children_[i] = {static_cast<NodeId>(i * 3), static_cast<NodeId>(i * 3 + 1),
+                            static_cast<NodeId>(i * 3 + 2)};
     }
     std::mt19937 rng(54321);
     std::uniform_int_distribution<std::uint32_t> pos_dist(0, 3);
     std::uniform_int_distribution<std::uint32_t> node_dist(0, 4999);
     // Warm-up
-    for (int i = 0; i < 5; ++i) ast.remove_child(node_dist(rng), pos_dist(rng));
+    for (int i = 0; i < 5; ++i)
+        ast.remove_child(node_dist(rng), pos_dist(rng));
     auto start = std::chrono::steady_clock::now();
-    for (int i = 0; i < 100; ++i) ast.remove_child(node_dist(rng), pos_dist(rng));
+    for (int i = 0; i < 100; ++i)
+        ast.remove_child(node_dist(rng), pos_dist(rng));
     auto end = std::chrono::steady_clock::now();
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     auto per_op_us = static_cast<double>(us) / 100.0;
@@ -303,19 +304,23 @@ void test_7_mixed() {
     std::uniform_int_distribution<std::uint32_t> node_dist(0, 4999);
     std::uniform_int_distribution<int> op_dist(0, 1);
     for (int i = 0; i < 5; ++i) {
-        if (op_dist(rng) == 0) ast.insert_child(node_dist(rng), pos_dist(rng), 99999);
-        else ast.remove_child(node_dist(rng), pos_dist(rng));
+        if (op_dist(rng) == 0)
+            ast.insert_child(node_dist(rng), pos_dist(rng), 99999);
+        else
+            ast.remove_child(node_dist(rng), pos_dist(rng));
     }
     auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < 100; ++i) {
-        if (op_dist(rng) == 0) ast.insert_child(node_dist(rng), pos_dist(rng), 99999);
-        else ast.remove_child(node_dist(rng), pos_dist(rng));
+        if (op_dist(rng) == 0)
+            ast.insert_child(node_dist(rng), pos_dist(rng), 99999);
+        else
+            ast.remove_child(node_dist(rng), pos_dist(rng));
     }
     auto end = std::chrono::steady_clock::now();
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     auto per_op_us = static_cast<double>(us) / 100.0;
-    std::fprintf(stdout, "  INFO: 100 mixed took %ld µs (%.3f µs/op)\n",
-                 static_cast<long>(us), per_op_us);
+    std::fprintf(stdout, "  INFO: 100 mixed took %ld µs (%.3f µs/op)\n", static_cast<long>(us),
+                 per_op_us);
     CHECK(per_op_us < 1.0, "per-op < 1µs (mixed insert/erase)");
 }
 
@@ -330,7 +335,7 @@ void test_8_wire_format() {
     original.parent_ = {NULL_NODE, 2, NULL_NODE};
     original.children_[0] = {};  // no children
     original.children_[1] = {};  // no children
-    original.children_[2] = {1};  // Call's child is Variable(1)
+    original.children_[2] = {1}; // Call's child is Variable(1)
 
     // Serialize using the new wire format:
     //   per-node count column + flat children column
@@ -339,24 +344,21 @@ void test_8_wire_format() {
     // Per-node count
     {
         std::uint32_t count = num_nodes;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                   reinterpret_cast<char*>(&count) + 4);
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
         for (NodeId i = 0; i < num_nodes; ++i) {
             std::uint32_t c = static_cast<std::uint32_t>(original.children_[i].size());
-            buf.insert(buf.end(), reinterpret_cast<char*>(&c),
-                       reinterpret_cast<char*>(&c) + 4);
+            buf.insert(buf.end(), reinterpret_cast<char*>(&c), reinterpret_cast<char*>(&c) + 4);
         }
     }
     // Flat children
     {
         std::uint32_t total = 0;
-        for (NodeId i = 0; i < num_nodes; ++i) total += static_cast<std::uint32_t>(original.children_[i].size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&total),
-                   reinterpret_cast<char*>(&total) + 4);
+        for (NodeId i = 0; i < num_nodes; ++i)
+            total += static_cast<std::uint32_t>(original.children_[i].size());
+        buf.insert(buf.end(), reinterpret_cast<char*>(&total), reinterpret_cast<char*>(&total) + 4);
         for (NodeId i = 0; i < num_nodes; ++i) {
             for (auto c : original.children_[i]) {
-                buf.insert(buf.end(), reinterpret_cast<char*>(&c),
-                           reinterpret_cast<char*>(&c) + 4);
+                buf.insert(buf.end(), reinterpret_cast<char*>(&c), reinterpret_cast<char*>(&c) + 4);
             }
         }
     }
@@ -365,15 +367,21 @@ void test_8_wire_format() {
     rt.children_.resize(num_nodes);
     std::size_t pos = 0;
     {
-        std::uint32_t count; std::memcpy(&count, &buf[pos], 4); pos += 4;
+        std::uint32_t count;
+        std::memcpy(&count, &buf[pos], 4);
+        pos += 4;
         std::vector<std::uint32_t> child_counts(count);
         for (std::uint32_t i = 0; i < count; ++i) {
-            std::memcpy(&child_counts[i], &buf[pos], 4); pos += 4;
+            std::memcpy(&child_counts[i], &buf[pos], 4);
+            pos += 4;
         }
-        std::uint32_t total; std::memcpy(&total, &buf[pos], 4); pos += 4;
+        std::uint32_t total;
+        std::memcpy(&total, &buf[pos], 4);
+        pos += 4;
         std::vector<NodeId> flat_children(total);
         for (std::uint32_t i = 0; i < total; ++i) {
-            std::memcpy(&flat_children[i], &buf[pos], 4); pos += 4;
+            std::memcpy(&flat_children[i], &buf[pos], 4);
+            pos += 4;
         }
         std::size_t offset = 0;
         for (NodeId i = 0; i < num_nodes; ++i) {
@@ -415,7 +423,8 @@ void test_9_walker() {
 
     // Sum the children (a common walker pattern)
     std::uint32_t sum = 0;
-    for (auto cid : ast.children(5)) sum += cid;
+    for (auto cid : ast.children(5))
+        sum += cid;
     CHECK(sum == 19, "sum of children (3+7+9) == 19");
 }
 

@@ -23,16 +23,11 @@ int main() {
         int (*run)();
     };
     Member members[] = {
-        {"test_issue_144", aura_issue_144_run},
-        {"test_issue_252", aura_issue_252_run},
-        {"test_issue_253", aura_issue_253_run},
-        {"test_issue_254", aura_issue_254_run},
-        {"test_issue_255", aura_issue_255_run},
-        {"test_issue_256", aura_issue_256_run},
-        {"test_issue_258", aura_issue_258_run},
-        {"test_issue_259", aura_issue_259_run},
-        {"test_issue_273", aura_issue_273_run},
-        {"test_issue_274", aura_issue_274_run},
+        {"test_issue_144", aura_issue_144_run}, {"test_issue_252", aura_issue_252_run},
+        {"test_issue_253", aura_issue_253_run}, {"test_issue_254", aura_issue_254_run},
+        {"test_issue_255", aura_issue_255_run}, {"test_issue_256", aura_issue_256_run},
+        {"test_issue_258", aura_issue_258_run}, {"test_issue_259", aura_issue_259_run},
+        {"test_issue_273", aura_issue_273_run}, {"test_issue_274", aura_issue_274_run},
         {"test_issue_275", aura_issue_275_run},
     };
 

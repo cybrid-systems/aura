@@ -17,19 +17,19 @@ using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
 using namespace types;
 
-void register_vector_and_hash_primitives(
-    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-    std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
-    std::vector<std::vector<EvalValue>>& vector_heap,
-    std::atomic<std::uint64_t>* primitive_error_counter) {
+void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                         std::pmr::vector<std::string>& string_heap,
+                                         std::vector<EvalValue>& error_values,
+                                         std::vector<std::vector<EvalValue>>& vector_heap,
+                                         std::atomic<std::uint64_t>* primitive_error_counter) {
     add("vector", [&vector_heap](std::span<const EvalValue> a) {
         std::vector<EvalValue> elems(a.begin(), a.end());
         auto idx = vector_heap.size();
         vector_heap.push_back(std::move(elems));
         return make_vector(idx);
     });
-    add("vector-ref", [&vector_heap, &string_heap, &error_values, primitive_error_counter](
-                          std::span<const EvalValue> a) {
+    add("vector-ref", [&vector_heap, &string_heap, &error_values,
+                       primitive_error_counter](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_vector(a[0])) {
             return make_primitive_error(string_heap, error_values, "vector-ref: not a vector",
                                         primitive_error_counter);
@@ -42,8 +42,8 @@ void register_vector_and_hash_primitives(
         }
         return vector_heap[idx][pos];
     });
-    add("vector-set!", [&vector_heap, &string_heap, &error_values, primitive_error_counter](
-                           std::span<const EvalValue> a) {
+    add("vector-set!", [&vector_heap, &string_heap, &error_values,
+                        primitive_error_counter](std::span<const EvalValue> a) {
         if (a.size() < 3 || !is_vector(a[0])) {
             return make_primitive_error(string_heap, error_values, "vector-set!: not a vector",
                                         primitive_error_counter);
@@ -52,7 +52,8 @@ void register_vector_and_hash_primitives(
         auto pos = static_cast<std::size_t>(as_int(a[1]));
         if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
             return make_primitive_error(string_heap, error_values,
-                                        "vector-set!: index out of bounds", primitive_error_counter);
+                                        "vector-set!: index out of bounds",
+                                        primitive_error_counter);
         }
         vector_heap[idx][pos] = a[2];
         return make_void();
@@ -375,4 +376,4 @@ void register_vector_and_hash_primitives(
     });
 }
 
-}  // namespace aura::compiler::primitives_detail
+} // namespace aura::compiler::primitives_detail

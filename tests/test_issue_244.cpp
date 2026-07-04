@@ -70,7 +70,7 @@ static int g_passed = 0;
 static int g_failed = 0;
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
-                                                std::string_view src) {
+                                               std::string_view src) {
     auto r = cs.eval(src);
     if (!r) {
         std::println(std::cerr, "    [eval error: {}]", r.error().format());
@@ -100,36 +100,39 @@ static EvalResult try_run(aura::compiler::CompilerService& cs, std::string_view 
 // Aura errors are encoded as tagged pairs (e.g. ("bad-arg" .
 // "usage: ...")), so this distinguishes "returned an error"
 // from "returned a regular value or void".
-static std::int64_t is_pair_result(aura::compiler::CompilerService& cs,
-                                    std::string_view expr) {
-    std::string script = std::string("(let ((r ") + std::string(expr) +
-                         ")) (if (pair? r) 1 0))";
+static std::int64_t is_pair_result(aura::compiler::CompilerService& cs, std::string_view expr) {
+    std::string script = std::string("(let ((r ") + std::string(expr) + ")) (if (pair? r) 1 0))";
     auto r = try_run(cs, script);
-    if (!r.ok) return -1;
-    if (!aura::compiler::types::is_int(r.v)) return -1;
+    if (!r.ok)
+        return -1;
+    if (!aura::compiler::types::is_int(r.v))
+        return -1;
     return aura::compiler::types::as_int(r.v);
 }
 
-#define CHECK(cond, msg) do { \
-    if (cond) { \
-        ++g_passed; \
-        std::println("  PASS: {}", msg); \
-    } else { \
-        ++g_failed; \
-        std::println("  FAIL: {}", msg); \
-    } \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+    do {                                                                                           \
+        if (cond) {                                                                                \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}", msg);                                                       \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}", msg);                                                       \
+        }                                                                                          \
+    } while (0)
 
-#define CHECK_EQ_INT(a, b, msg) do { \
-    auto _a = (a); auto _b = (b); \
-    if (_a == _b) { \
-        ++g_passed; \
-        std::println("  PASS: {}  (got {} = {})", msg, _a, _b); \
-    } else { \
-        ++g_failed; \
-        std::println("  FAIL: {}  (got {} != {})", msg, _a, _b); \
-    } \
-} while (0)
+#define CHECK_EQ_INT(a, b, msg)                                                                    \
+    do {                                                                                           \
+        auto _a = (a);                                                                             \
+        auto _b = (b);                                                                             \
+        if (_a == _b) {                                                                            \
+            ++g_passed;                                                                            \
+            std::println("  PASS: {}  (got {} = {})", msg, _a, _b);                                \
+        } else {                                                                                   \
+            ++g_failed;                                                                            \
+            std::println("  FAIL: {}  (got {} != {})", msg, _a, _b);                               \
+        }                                                                                          \
+    } while (0)
 
 // Helper: eval `(set-code "...source...")` and return whether
 // it succeeded. After this call, the workspace_flat_ is set
@@ -177,9 +180,8 @@ bool test_by_marker_user() {
         ++g_failed;
         return false;
     }
-    auto r = try_run(cs,
-        "(+ (length (query:by-marker \"User\")) "
-        "   (length (query:by-marker \"MacroIntroduced\")))");
+    auto r = try_run(cs, "(+ (length (query:by-marker \"User\")) "
+                         "   (length (query:by-marker \"MacroIntroduced\")))");
     if (!aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int");
         ++g_failed;
@@ -245,14 +247,12 @@ bool test_by_marker_bad_args() {
 bool test_macro_introduced_shortcut() {
     std::println("\n--- AC6: query:macro-introduced is shortcut for by-marker ---");
     aura::compiler::CompilerService cs;
-    if (!set_source(cs,
-        "(define x 5) (define-hygienic-macro (d y) (* y 2)) (d 7)")) {
+    if (!set_source(cs, "(define x 5) (define-hygienic-macro (d y) (* y 2)) (d 7)")) {
         ++g_failed;
         return false;
     }
-    auto r = try_run(cs,
-        "(if (equal? (length (query:macro-introduced)) "
-        "              (length (query:by-marker \"MacroIntroduced\"))) 1 0)");
+    auto r = try_run(cs, "(if (equal? (length (query:macro-introduced)) "
+                         "              (length (query:by-marker \"MacroIntroduced\"))) 1 0)");
     if (!aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int");
         ++g_failed;
@@ -269,8 +269,7 @@ bool test_macro_introduced_limit() {
     std::println("\n--- AC7: query:macro-introduced with limit ---");
     aura::compiler::CompilerService cs;
     // AC7a: limit=0 → 0 items
-    if (!set_source(cs,
-        "(define-hygienic-macro (d y) (* y 2)) (d 1)")) {
+    if (!set_source(cs, "(define-hygienic-macro (d y) (* y 2)) (d 1)")) {
         ++g_failed;
         return false;
     }
@@ -280,8 +279,7 @@ bool test_macro_introduced_limit() {
         ++g_failed;
         return false;
     }
-    CHECK_EQ_INT(aura::compiler::types::as_int(r0.v), 0,
-                 "limit=0 returns 0 items (empty list)");
+    CHECK_EQ_INT(aura::compiler::types::as_int(r0.v), 0, "limit=0 returns 0 items (empty list)");
 
     // AC7b: limit=1 with 3 macro calls. Note the limitation
     // described in AC1: macro-introduced nodes from
@@ -312,9 +310,9 @@ bool test_where_marker() {
         ++g_failed;
         return false;
     }
-    auto r = try_run(cs,
-        "(if (equal? (length (query:filter (query:where :marker \"MacroIntroduced\"))) "
-        "              (length (query:macro-introduced))) 1 0)");
+    auto r =
+        try_run(cs, "(if (equal? (length (query:filter (query:where :marker \"MacroIntroduced\"))) "
+                    "              (length (query:macro-introduced))) 1 0)");
     if (!aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int");
         ++g_failed;
@@ -334,8 +332,7 @@ bool test_where_marker_case_sensitive() {
         ++g_failed;
         return false;
     }
-    auto r = try_run(cs,
-        "(length (query:filter (query:where :marker \"macrointroduced\")))");
+    auto r = try_run(cs, "(length (query:filter (query:where :marker \"macrointroduced\")))");
     if (!aura::compiler::types::is_int(r.v)) {
         std::println("  FAIL: result is not an int");
         ++g_failed;
@@ -397,12 +394,12 @@ int run_tests() {
     std::println("\nAC #9: :marker field case-sensitive");
     test_where_marker_case_sensitive();
 
-    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
-                 g_passed, g_passed + g_failed,
+    std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══", g_passed, g_passed + g_failed,
                  g_failed, g_passed + g_failed);
     return g_failed > 0 ? 1 : 0;
 }
-}  // namespace aura_issue_244_detail
+} // namespace aura_issue_244_detail
 
-int aura_issue_244_run() { return aura_issue_244_detail::run_tests(); }
-
+int aura_issue_244_run() {
+    return aura_issue_244_detail::run_tests();
+}

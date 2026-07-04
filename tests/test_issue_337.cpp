@@ -58,8 +58,8 @@
 #include "compiler/shape_profiler.h"
 
 import std;
-using aura::test::g_passed;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 import aura.core;
 import aura.core.ast;
@@ -70,12 +70,10 @@ namespace aura_issue_337_detail {
 
 // Build a small workspace + a few defines so the
 // FlatAST has populated columns.
-static int build_workspace(
-    aura::compiler::CompilerService& cs, int n_defines) {
+static int build_workspace(aura::compiler::CompilerService& cs, int n_defines) {
     std::string code = "(begin ";
     for (int i = 0; i < n_defines; ++i) {
-        code += "(define v_" + std::to_string(i) + " " +
-                std::to_string(i) + ") ";
+        code += "(define v_" + std::to_string(i) + " " + std::to_string(i) + ") ";
     }
     code += ")";
     if (!cs.eval(std::string("(set-code \"") + code + "\")").has_value())
@@ -104,12 +102,9 @@ bool test_shape_profiler_uses_flat_map() {
     // broke when the container was switched to
     // flat_map; the test confirms the fix.
     const auto keys = profiler.tracked_fns();
-    CHECK(keys.size() == 2,
-          "tracked_fns returns 2 keys");
-    CHECK(keys[0] == 0x1000,
-          "first key is 0x1000 (sorted)");
-    CHECK(keys[1] == 0x2000,
-          "second key is 0x2000 (sorted)");
+    CHECK(keys.size() == 2, "tracked_fns returns 2 keys");
+    CHECK(keys[0] == 0x1000, "first key is 0x1000 (sorted)");
+    CHECK(keys[1] == 0x2000, "second key is 0x2000 (sorted)");
     return true;
 }
 
@@ -124,10 +119,8 @@ bool test_dirty_view() {
     flat.add_variable(0);
     flat.add_variable(1);
     const auto view = flat.dirty_view();
-    CHECK(!view.empty(),
-          "dirty_view is non-empty after add_node");
-    CHECK(view.size() == 2,
-          "dirty_view size matches the flat size");
+    CHECK(!view.empty(), "dirty_view is non-empty after add_node");
+    CHECK(view.size() == 2, "dirty_view size matches the flat size");
     return true;
 }
 
@@ -143,14 +136,11 @@ bool test_last_seen_epoch_view() {
     flat.add_variable(1);
     flat.mark_dirty(static_cast<aura::ast::NodeId>(0));
     const auto view = flat.last_seen_epoch_view();
-    CHECK(view.size() == 2,
-          "last_seen_epoch_view size matches the flat size");
+    CHECK(view.size() == 2, "last_seen_epoch_view size matches the flat size");
     // The marked node's epoch should be 1 (the
     // mark_dirty bump), the other should be 0.
-    CHECK(view[0] == 1,
-          "marked node epoch is 1");
-    CHECK(view[1] == 0,
-          "untouched node epoch is 0");
+    CHECK(view[0] == 1, "marked node epoch is 1");
+    CHECK(view[1] == 0, "untouched node epoch is 0");
     return true;
 }
 
@@ -163,17 +153,14 @@ bool test_tracked_fns_no_regression() {
     using namespace aura;
     compiler::shape::ShapeProfiler profiler;
     // Empty profiler.
-    CHECK(profiler.tracked_fns().empty(),
-          "empty profiler: tracked_fns is empty");
+    CHECK(profiler.tracked_fns().empty(), "empty profiler: tracked_fns is empty");
     // Add one profile, check it appears.
     profiler.record_shape(42, 7);
     const auto keys = profiler.tracked_fns();
-    CHECK(keys.size() == 1 && keys[0] == 42,
-          "1 profile: tracked_fns = [42]");
+    CHECK(keys.size() == 1 && keys[0] == 42, "1 profile: tracked_fns = [42]");
     // Reset clears.
     profiler.reset();
-    CHECK(profiler.tracked_fns().empty(),
-          "after reset: tracked_fns is empty");
+    CHECK(profiler.tracked_fns().empty(), "after reset: tracked_fns is empty");
     return true;
 }
 
@@ -186,18 +173,22 @@ bool test_end_to_end_views_via_compiler_service() {
     std::println("\n--- AC5: end-to-end views via CompilerService ---");
     using namespace aura;
     compiler::CompilerService cs;
-    if (!build_workspace(cs, 5)) { ++g_failed; return false; }
+    if (!build_workspace(cs, 5)) {
+        ++g_failed;
+        return false;
+    }
     auto* ws = cs.workspace_flat();
-    if (!ws) { ++g_failed; return false; }
+    if (!ws) {
+        ++g_failed;
+        return false;
+    }
     // Mark a node dirty + check the view reflects it.
     if (ws->size() > 0) {
         ws->mark_dirty(static_cast<aura::ast::NodeId>(0));
     }
     const auto view = ws->dirty_view();
-    CHECK(!view.empty(),
-          "workspace dirty_view non-empty");
-    CHECK(view[0] != 0,
-          "marked node shows non-zero dirty byte");
+    CHECK(!view.empty(), "workspace dirty_view non-empty");
+    CHECK(view[0] != 0, "marked node shows non-zero dirty byte");
     return true;
 }
 
@@ -213,10 +204,14 @@ int run_tests() {
     return g_failed == 0 ? 0 : 1;
 }
 
-}  // namespace aura_issue_337_detail
+} // namespace aura_issue_337_detail
 
-int aura_issue_337_run() { return aura_issue_337_detail::run_tests(); }
+int aura_issue_337_run() {
+    return aura_issue_337_detail::run_tests();
+}
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() { return aura_issue_337_run(); }
+int main() {
+    return aura_issue_337_run();
+}
 #endif
