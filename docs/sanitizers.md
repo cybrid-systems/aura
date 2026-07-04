@@ -86,11 +86,11 @@ job. The recommended setup is:
 sanitizer_matrix:
   runs-on: ubuntu-latest
   steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Run sanitizer matrix
       run: tests/run_sanitizer_matrix.sh all
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v7
       with:
         name: sanitizer-logs
         path: |
